@@ -7,6 +7,8 @@ members = [
     "crates/cutforge-cli",
     "crates/cutforge-mcp",
     "crates/cutforge-script",
+    "crates/cutforge-wasm",
+    "crates/cutforge-render",
     # 后续加入:plugin-host / wasm(M5) / render(M6)
     # M5 加入:apps/desktop(与上游 members 形状对齐)
 ]

@@ -1,0 +1,15 @@
+[package]
+name = "cutforge-render"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "CutForge 渲染后端(计划书 6.2/6.3/6.5):七步管线(probe→segment→concat→compose→mix→subtitle→encode)编排 ffmpeg/ffprobe;段级内容寻址缓存;headless 批量;结构化进度事件"
+
+[[bin]]
+name = "cutforge-render"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+cutforge-core = { path = "../cutforge-core" }
+cutforge-io = { path = "../cutforge-io" }

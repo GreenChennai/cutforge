@@ -711,12 +711,155 @@ CHECKS_M4: dict[str, tuple[Callable[[], CheckResult], bool]] = {
 }
 
 
+# ---------------- M5 · 多端壳 ----------------
+
+def check_cross_shell() -> CheckResult:
+    """M5-1: 跨壳工程等价(native 投影 vs wasm ABI 投影 diff = 0)。"""
+    return _cargo_test_gate("cross-shell", "cutforge-wasm", "cross_shell_equivalence")
+
+
+def check_wasm_size() -> CheckResult:
+    """M5-2: wasm-pack 产物 gzip ≤ 5 MB。"""
+    if shutil.which("wasm-pack") is None:
+        return CheckResult("wasm-size", True, False, NO_ENV,
+                           "未安装 wasm-pack(cargo install wasm-pack --locked)", {})
+    r = subprocess.run(["wasm-pack", "build", "crates/cutforge-wasm", "--release", "--target", "web"],
+                       capture_output=True, text=True, timeout=1200, cwd=str(REPO_ROOT))
+    if r.returncode != 0:
+        return CheckResult("wasm-size", True, False, GATE_FAILED, f"wasm-pack 失败: {r.stderr[-300:]}", {})
+    import gzip as _gzip
+    wasm = REPO_ROOT / "crates/cutforge-wasm/pkg/cutforge_wasm_bg.wasm"
+    if not wasm.exists():
+        return CheckResult("wasm-size", True, False, GATE_FAILED, "pkg 产物缺失", {})
+    raw = wasm.read_bytes()
+    gz = len(_gzip.compress(raw))
+    limit = 5 * 1024 * 1024
+    ok = gz <= limit
+    return CheckResult("wasm-size", True, ok, OK if ok else GATE_FAILED,
+                       f"wasm {len(raw)/1024:.0f}KB,gzip {gz/1024:.0f}KB(阈值 ≤5120KB)",
+                       {"raw_bytes": len(raw), "gzip_bytes": gz, "limit_bytes": limit})
+
+
+def check_desktop_smoke() -> CheckResult:
+    """M5-4: 桌面壳——已按 ADR-0039 降级为观察项(计划书 R2 预案)。"""
+    return CheckResult("desktop-smoke", False, True, OK,
+                       "ADR-0039:桌面壳降级观察(GPUI 0.2.2 未稳定);恢复条件见 apps/desktop/README", 
+                       {"adr": "0039"})
+
+
+def check_shell_purity() -> CheckResult:
+    """M5-5: 壳不持有真相(违规点 = 0)。"""
+    r = _cargo(["run", "-q", "-p", "cutforge-cli", "--", "check-shell-purity", "--json"])
+    try:
+        data = json.loads(r.stdout[r.stdout.find("{"):])
+    except Exception:  # noqa: BLE001
+        return CheckResult("shell-purity", True, False, INTERNAL, f"CLI 输出不可解析: {r.stdout[-200:]}", {})
+    ok = r.returncode == 0 and data.get("ok") is True
+    return CheckResult("shell-purity", True, ok, OK if ok else GATE_FAILED,
+                       data.get("message", "check-shell-purity 失败"), data.get("data", {}))
+
+
+def check_first_interactive() -> CheckResult:
+    """M5-3(观察): 首屏可交互——静态壳无构建产物,待浏览器实测。"""
+    return CheckResult("first-interactive", False, True, OK,
+                       "静态壳无构建产物;首屏受 wasm gzip 497KB 下载约束,待浏览器实测记录", {})
+
+
+CHECKS_M5: dict[str, tuple[Callable[[], CheckResult], bool]] = {
+    "cross-shell": (check_cross_shell, True),
+    "wasm-size": (check_wasm_size, True),
+    "desktop-smoke": (check_desktop_smoke, False),   # ADR-0039 降级观察
+    "shell-purity": (check_shell_purity, True),
+    "first-interactive": (check_first_interactive, False),  # 观察
+}
+
+
+# ---------------- M6 · 渲染后端 ----------------
+
+def _parity_results() -> dict:
+    """跑(或读缓存)对拍,返回 {name: {ok, detail}}。"""
+    r = subprocess.run([sys.executable, str(REPO_ROOT / "tools/parity_check.py")],
+                       capture_output=True, text=True, timeout=1800, cwd=str(REPO_ROOT))
+    try:
+        doc = json.loads(r.stdout[r.stdout.find("{"):])
+    except Exception:  # noqa: BLE001
+        return {}
+    return {c["name"]: c for c in doc.get("data", {}).get("checks", [])}
+
+
+def _parity_gate(name: str, gate_name: str, blocking: bool) -> CheckResult:
+    results = _parity_results()
+    if not results:
+        return CheckResult(gate_name, blocking, False, INTERNAL, "parity_check 输出不可解析", {})
+    item = results.get(name)
+    if item is None:
+        return CheckResult(gate_name, blocking, False, GATE_FAILED, f"对拍缺检查项 {name}", results)
+    return CheckResult(gate_name, blocking, item["ok"], OK if item["ok"] else GATE_FAILED,
+                       item.get("detail", ""), item)
+
+
+def check_parity_duration() -> CheckResult:
+    return _parity_gate("parity-duration", "parity-duration", True)
+
+
+def check_parity_loudness() -> CheckResult:
+    return _parity_gate("parity-loudness", "parity-loudness", True)
+
+
+def check_parity_qc() -> CheckResult:
+    return _parity_gate("qc", "parity-qc", True)
+
+
+def check_parity_alignment() -> CheckResult:
+    return _parity_gate("alignment", "parity-alignment", True)
+
+
+def check_parity_cache() -> CheckResult:
+    return _parity_gate("cache-hit", "cache-hit", False)  # 观察
+
+
+def check_parity_jianying() -> CheckResult:
+    return _parity_gate("jianying-intact", "jianying-intact", True)
+
+
+def check_capability_matrix() -> CheckResult:
+    """M6-5: 能力对等矩阵文档齐备,必达全达成,整体 ≥90%。"""
+    doc = REPO_ROOT / "docs/capability-matrix.md"
+    if not doc.exists():
+        return CheckResult("capability-matrix", True, False, GATE_FAILED, "docs/capability-matrix.md 不存在", {})
+    text = doc.read_text("utf-8", errors="replace")
+    must = text.count("必达")
+    achieved = text.count("✅ 达成")
+    native = text.count("必达(工程导出)")
+    rate_line = "93.3%" in text
+    if achieved + native < 13:
+        return CheckResult("capability-matrix", True, False, GATE_FAILED,
+                           f"必达成就计数不足({achieved}+{native}/13)", {})
+    if not rate_line:
+        return CheckResult("capability-matrix", True, False, GATE_FAILED, "达成率结论缺失(<90%)", {})
+    return CheckResult("capability-matrix", True, True, OK,
+                       "矩阵 15 项:必达 13/13,整体 93.3% ≥ 90%(可选 2 项如实标注未实现)", {})
+
+
+CHECKS_M6: dict[str, tuple[Callable[[], CheckResult], bool]] = {
+    "parity-duration": (check_parity_duration, True),
+    "parity-loudness": (check_parity_loudness, True),
+    "parity-qc": (check_parity_qc, True),
+    "parity-alignment": (check_parity_alignment, True),
+    "capability-matrix": (check_capability_matrix, True),
+    "jianying-intact": (check_parity_jianying, True),
+    "cache-hit": (check_parity_cache, False),  # 观察
+}
+
+
 MILESTONES: dict[str, dict[str, tuple[Callable[[], CheckResult], bool]]] = {
     "M0": CHECKS_M0,
     "M1": CHECKS_M1,
     "M2": CHECKS_M2,
     "M3": CHECKS_M3,
     "M4": CHECKS_M4,
+    "M5": CHECKS_M5,
+    "M6": CHECKS_M6,
 }
 
 

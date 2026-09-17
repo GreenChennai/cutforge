@@ -1,0 +1,28 @@
+/* CutForge Web 壳(最小可用;计划书 7.6)。
+   纯度纪律:本文件不做时间线运算,一切 id/startMs/endMs 来自内核投影。 */
+:root { --bg:#111418; --fg:#e8eaed; --panel:#1b1f24; --acc:#4f8cff; --warn:#ffb454; }
+* { box-sizing: border-box; }
+body { margin:0; font:14px/1.5 "Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+header { padding:10px 16px; border-bottom:1px solid #2a2f36; display:flex; gap:12px; align-items:baseline; }
+header .sub { color:#9aa4ae; font-size:12px; }
+#tabs { display:flex; gap:4px; padding:8px 16px 0; }
+#tabs button { background:var(--panel); color:var(--fg); border:1px solid #2a2f36; padding:6px 14px; border-radius:6px 6px 0 0; cursor:pointer; }
+#tabs button.active { background:var(--acc); border-color:var(--acc); }
+#loader { display:flex; gap:16px; padding:10px 16px; background:var(--panel); border-bottom:1px solid #2a2f36; flex-wrap:wrap; }
+#status { color:var(--warn); }
+main { padding:16px; }
+.tab { display:none; }
+.tab.active { display:block; }
+.track { margin:14px 0; }
+.track h3 { margin:0 0 6px; font-size:13px; color:#9aa4ae; }
+.lane { position:relative; height:44px; background:#0d1013; border-radius:6px; overflow:hidden; }
+.clip { position:absolute; top:4px; bottom:4px; background:linear-gradient(180deg,#4f8cff,#3a6fd8);
+        border-radius:4px; font-size:11px; padding:2px 6px; overflow:hidden; white-space:nowrap; cursor:default; }
+.clip.sfx { background:linear-gradient(180deg,#ffb454,#e09133); }
+.op { border:1px solid #2a2f36; border-radius:6px; padding:8px 10px; margin:8px 0; }
+.op .meta { color:#9aa4ae; font-size:12px; }
+.note { border-left:3px solid var(--acc); padding:6px 10px; margin:8px 0; background:var(--panel); }
+.note.orphan { border-left-color:var(--warn); }
+.note .id { color:#9aa4ae; font-size:12px; }
+textarea { width:100%; min-height:180px; background:#0d1013; color:var(--fg); border:1px solid #2a2f36; border-radius:6px; font-family:Consolas,monospace; }
+pre { background:#0d1013; padding:10px; border-radius:6px; overflow:auto; }

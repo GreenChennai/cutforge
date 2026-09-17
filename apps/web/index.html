@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CutForge Web 壳</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<header>
+  <h1>CutForge</h1>
+  <span class="sub">壳只做展示;真相在工程文件,投影来自 wasm 内核</span>
+</header>
+<nav id="tabs">
+  <button data-tab="timeline" class="active">时间线</button>
+  <button data-tab="diff">差异面板</button>
+  <button data-tab="notes">标注</button>
+  <button data-tab="conflicts">冲突</button>
+  <button data-tab="script">脚本页</button>
+</nav>
+
+<section id="loader">
+  <label>project.json <input type="file" id="f-project" accept=".json"></label>
+  <label>notes.json <input type="file" id="f-notes" accept=".json"></label>
+  <label>oplog.jsonl <input type="file" id="f-oplog" accept=".jsonl"></label>
+  <label>conflicts.json <input type="file" id="f-conflicts" accept=".json"></label>
+  <span id="status">加载 pkg/cutforge_wasm.js …</span>
+</section>
+
+<main>
+  <div id="tab-timeline" class="tab active"><div id="timeline"></div></div>
+  <div id="tab-diff" class="tab"><div id="diff"></div></div>
+  <div id="tab-notes" class="tab"><div id="notes"></div></div>
+  <div id="tab-conflicts" class="tab"><div id="conflicts">无冲突快照加载</div></div>
+  <div id="tab-script" class="tab">
+    <p>cutforge-script-v1 批式查询(沙箱:仅查询工具/无副作用):</p>
+    <textarea id="script-in">{
+  "format": "cutforge-script-v1",
+  "steps": [
+    {"tool": "project_get", "args": {}}
+  ]
+}</textarea>
+    <button id="script-run">运行</button>
+    <pre id="script-out"></pre>
+  </div>
+</main>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

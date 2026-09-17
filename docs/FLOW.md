@@ -148,6 +148,7 @@ schemas/*.json(唯一手写)
 | mcp-tools / mcp-e2e-visible / mcp-note-loop / sandbox-escape / protocol / bridge-doctor | M4 | 28 工具双 schema 齐备;双通道一致;≤1s/≤3s 闭环;逃逸=0;协议 ∈5.4 表;桥 4/4 登记 | ✅ |
 
 结果协议:`{"ok","code","message","data"}`;退出码 0 通过 / 2 门禁失败 / 3 环境缺失 / 4 内部错误。
+CI 只跑 M0+M1(跨仓检查拉 CutFlow;M2-M6 依赖本机 ffmpeg/wasm-pack/llvm-cov/CutFlow 工程,为本地阻断项——CI 上缺依赖会以退出码 3 如实暴露,不会误报通过)。
 
 ## 八、观察项与已知占位(诚实清单)
 

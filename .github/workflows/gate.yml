@@ -14,8 +14,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - name: Milestone gates
-        run: python tools/gates/gate.py M0 --json
+      - name: Milestone gates (CI-runnable subset; M2-M6 本地阻断,见 docs/FLOW.md)
+        run: |
+          python tools/gates/gate.py M0 --json
+          python tools/gates/gate.py M1 --json
       - name: Python tests (cutflow-side bridge scripts live in CutFlow repo)
         if: hashFiles('tests/**/*.py') != ''
         run: |
@@ -32,3 +34,30 @@ jobs:
         run: |
           cargo build --workspace --locked
           cargo test --workspace --locked
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p cutforge-render -p cutforge-cli
+      - name: Package
+        shell: bash
+        run: |
+          dir=$(pwd)
+          mkdir -p dist
+          for bin in cutforge-render cutforge-cli; do
+            src=target/release/$bin.exe
+            [ -f "$src" ] || src=target/release/$bin
+            cp "$src" dist/
+          done
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cutforge-${{ matrix.os }}
+          path: dist/

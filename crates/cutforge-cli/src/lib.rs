@@ -206,6 +206,7 @@ pub fn run(argv: Vec<String>) -> i32 {
         "notes-resolve" => notes_resolve(&args),
         "notes-reject" => notes_reject(&args),
         "conflicts" => conflicts_list(&args),
+        "check-shell-purity" => check_shell_purity(args.json),
         "check-write-paths" => check_write_paths(args.json),
         "check-deps" => check_deps(args.json),
         other => emit(false, args.json, "USAGE", &format!("未知子命令: {other}"), serde_json::json!({})),
@@ -307,6 +308,61 @@ fn conflicts_list(a: &Args) -> i32 {
     }
 }
 
+/// M5-5 判定器:壳不持有真相——apps/ 与 cutforge-wasm 禁文件系统/子进程/时间线语义运算。
+fn check_shell_purity(json: bool) -> i32 {
+    let root = repo_root();
+    // (模式串拼接构造,避免本文件自匹配;时间线语义模式针对 JS 侧手算)
+    let js_pats: Vec<String> = vec![
+        ["node", "fs"].join(":"), ["requ", "ire(\"fs\")"].join(""), ["child_process"].join(""),
+        ["startMs", "+"].join(" "), ["startMs", "+"].join(""), ["endMs", " ="].join(" "),
+        ["durationMs", " +"].join(" "),
+    ];
+    let rs_pats: Vec<String> = vec![["std", "fs"].join("::"), ["fs", "read_to_string"].join("::")];
+    let mut violations: Vec<serde_json::Value> = Vec::new();
+    let mut scan_dir = |dir: &Path, pats: &[String], is_rs: bool| {
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                    continue;
+                }
+                let ext_ok = if is_rs {
+                    p.extension().is_some_and(|x| x == "rs")
+                } else {
+                    p.extension().is_some_and(|x| x == "js" || x == "html")
+                };
+                if !ext_ok || p.file_name().is_some_and(|n| n.to_string_lossy().contains("min.")) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&p) else { continue };
+                for line in text.lines() {
+                    if pats.iter().any(|pat| line.contains(pat.as_str())) {
+                        violations.push(serde_json::json!({
+                            "file": p.strip_prefix(&root).map(|r| r.to_string_lossy()).unwrap_or_default(),
+                            "line": line.trim().chars().take(80).collect::<String>(),
+                        }));
+                        break;
+                    }
+                }
+            }
+        }
+    };
+    // JS 壳:禁 node 能力面与时间线手算
+    scan_dir(&root.join("apps/web"), &js_pats, false);
+    // wasm 绑定:禁文件系统(RS 侧)
+    scan_dir(&root.join("crates/cutforge-wasm/src"), &rs_pats, true);
+    let data = serde_json::json!({"violations": violations,
+        "rule": "壳禁文件系统/子进程/时间线语义运算;一切投影来自内核(计划书 2.6/7.6)"});
+    if violations.is_empty() {
+        emit(json, true, "OK", "壳纯度合规:违规点 = 0", data)
+    } else {
+        emit(json, false, "SHELL_PURITY_VIOLATION", &format!("违规 {} 处", violations.len()), data)
+    }
+}
+
 /// M2-4 判定器:文件写入 API 只允许出现在 cutforge-io 的 atomic.rs(唯一落盘点)。
 /// 注意:模式串在此处拼接构造,避免本文件自匹配。
 fn check_write_paths(json: bool) -> i32 {
@@ -379,9 +435,9 @@ fn check_deps(json: bool) -> i32 {
         ("cutforge-cli", vec!["cutforge-core", "cutforge-io"]),
         ("cutforge-mcp", vec!["cutforge-core", "cutforge-io", "cutforge-script", "cutforge-schema"]),
         ("cutforge-script", vec!["cutforge-core"]),
-        ("cutforge-wasm", vec!["cutforge-core"]),
+        ("cutforge-wasm", vec!["cutforge-core", "cutforge-script"]),
         ("cutforge-plugin-host", vec!["cutforge-core"]),
-        ("cutforge-render", vec!["cutforge-core", "cutforge-io"]),
+        ("cutforge-render", vec!["cutforge-core", "cutforge-io"]), // M6:已实现,合法边
     ]
     .into_iter()
     .collect();

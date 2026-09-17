@@ -1,0 +1,10 @@
+[package]
+name = "cutforge-schema"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "CutForge 契约层:五份 JSON Schema 的加载、代码生成与迁移(契约层是叶子,不得依赖其他 cutforge crate)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

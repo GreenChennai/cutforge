@@ -1,0 +1,17 @@
+# CutForge 同步与审计状态(可安全删除重建,不是交付物)
+.cutforge/
+
+# Rust
+target/
+**/*.rs.bk
+
+# Node / bun
+node_modules/
+dist/
+.gate/
+
+# 本机配置
+config.json
+
+# 参考仓库不进本仓(它们在仓库外的 _ref/,双保险)
+_ref/

@@ -1,0 +1,12 @@
+[package]
+name = "cutforge-io"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "CutForge IO 层:工程目录读写、原子写入(全仓唯一落盘点)、锁、备份、媒体探测、轮询 watcher;不做业务决策"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cutforge-core = { path = "../cutforge-core" }
+cutforge-schema = { path = "../cutforge-schema" }

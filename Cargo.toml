@@ -1,6 +1,9 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/cutforge-core",
+    "crates/cutforge-io",
+    "crates/cutforge-cli",
     "crates/cutforge-schema",
     # 'crates/*' 其余成员随 M2+ 逐里程碑加入
     # 'apps/desktop',     ← M5 加入(与上游一致,当前尚不存在)

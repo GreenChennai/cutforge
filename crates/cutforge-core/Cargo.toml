@@ -1,0 +1,14 @@
+[package]
+name = "cutforge-core"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "CutForge 内核(ARL-CORE):领域模型、命令通道、撤销栈、OpLog、三路合并骨架、锚点模型;不碰文件系统、不调 ffmpeg、不认识剪映(ADR-0033)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cutforge-schema = { path = "../cutforge-schema" }
+
+[package.metadata.arl]
+core = true

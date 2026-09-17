@@ -1,0 +1,15 @@
+[package]
+name = "cutforge-cli"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "CutForge 命令行入口:打开/查询/应用命令/撤销重做/OpLog;check-write-paths 与 check-deps 是门禁判定器"
+
+[[bin]]
+name = "cutforge-cli"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+cutforge-core = { path = "../cutforge-core" }
+cutforge-io = { path = "../cutforge-io" }

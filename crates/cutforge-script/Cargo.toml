@@ -1,0 +1,11 @@
+[package]
+name = "cutforge-script"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+description = "CutForge 脚本宿主与沙箱(计划书 5.6):批式脚本(cutforge-script-v1)只能调用命令通道工具;路径白名单限工程内;禁编排工具(默认)/子进程/网络——逃逸面结构性为零"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cutforge-core = { path = "../cutforge-core" }

@@ -17,7 +17,7 @@
 | M1 | 契约固化(五份 schema/双端生成/常量单源/迁移器) | ✅ | `gate.py M1` |
 | M2 | Rust 内核(模型/命令通道/撤销栈/OpLog/IO/CLI) | ✅ | `gate.py M2` |
 | M3 | 双向同步与标注(合并/冲突/notes/阶段脏传播/延迟) | ✅ | `gate.py M3` |
-| M4 | MCP 与脚本(27 工具/沙箱/桥脚本) | ⬜ 下一步 | `gate.py M4` |
+| M4 | MCP 与脚本(28 工具双通道/批式脚本沙箱/桥脚本) | ✅ | `gate.py M4` |
 | M5 | 多端壳(wasm/Web/GPUI 桌面) | ⬜ | — |
 | M6 | 渲染后端(七步管线/能力对等矩阵) | ⬜ | — |
 | M7 | 开源发布(非 Fork/CI 全绿/律师复核) | ⬜ | — |
@@ -46,7 +46,9 @@ cutforge/
 │   │   ├── notes.rs            NotesStore(创建/结案回执绑 opIds/重定位联动)
 │   │   └── timeutil.rs         RFC3339/紧凑日期(全仓唯一日期算法)
 │   ├── cutforge-io/            IO 层:原子写唯一落盘点 + 锁/备份/探测/轮询 watcher + Workspace 编排 + stage.rs 脏传播
-│   └── cutforge-cli/           CLI(lib+bin):查询/命令/撤销/OpLog/标注/冲突 + check-write-paths/check-deps 判定器
+│   ├── cutforge-cli/           CLI(lib+bin):查询/命令/撤销/OpLog/标注/冲突 + check-write-paths/check-deps 判定器
+│   ├── cutforge-mcp/           MCP 层:单注册表 28 工具,stdio 主通道 + 内嵌 HTTP 辅通道(127.0.0.1+token)共用同一 dispatch
+│   └── cutforge-script/        脚本宿主:cutforge-script-v1 批式步骤 + 策略沙箱(白名单/路径/步数/超时,逃逸面结构性为零)
 ├── tools/
 │   ├── gates/gate.py           ★ 统一门禁入口(M0–M3 已注册)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
@@ -143,6 +145,7 @@ schemas/*.json(唯一手写)
 | sync-latency | M3 | AI 可见 P95 ≤100ms(实测 ~9ms) | ✅ |
 | merge-property | M3 | 12,000 组零静默覆盖 | ✅ |
 | oplog-replay / merge-table / notes-anchor / workspace-rebuildable / stage-dirty / e2e-note-cli | M3 | 各自测试全绿 | ✅ |
+| mcp-tools / mcp-e2e-visible / mcp-note-loop / sandbox-escape / protocol / bridge-doctor | M4 | 28 工具双 schema 齐备;双通道一致;≤1s/≤3s 闭环;逃逸=0;协议 ∈5.4 表;桥 4/4 登记 | ✅ |
 
 结果协议:`{"ok","code","message","data"}`;退出码 0 通过 / 2 门禁失败 / 3 环境缺失 / 4 内部错误。
 

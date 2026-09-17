@@ -41,10 +41,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "cutforge-mcp"
+version = "0.1.0"
+dependencies = [
+ "cutforge-core",
+ "cutforge-io",
+ "cutforge-schema",
+ "cutforge-script",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cutforge-schema"
 version = "0.1.0"
 dependencies = [
  "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cutforge-script"
+version = "0.1.0"
+dependencies = [
+ "cutforge-core",
  "serde",
  "serde_json",
 ]

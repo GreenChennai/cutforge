@@ -1,37 +1,989 @@
 {
- "version": 1,
- "_doc": "MCP 工具契约(G5-1 比对基准)。M1 仅落骨架:工具名/类别/幂等性来自计划书 5.2 全表;inputSchema/outputSchema 在 M4 填充。命名与 CutFlow rs_* 语义对齐。",
- "channels": ["stdio", "embedded-ws"],
+ "version": 2,
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。27 工具 = 9 查询 + 12 写 + 6 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
+ "channels": [
+  "stdio",
+  "embedded-http"
+ ],
+ "definitions": {
+  "envelope": {
+   "type": "object",
+   "required": [
+    "ok",
+    "code",
+    "message",
+    "data"
+   ],
+   "properties": {
+    "ok": {
+     "type": "boolean"
+    },
+    "code": {
+     "enum": [
+      "OK",
+      "CONFLICT",
+      "SCHEMA_INVALID",
+      "PRECONDITION_FAILED",
+      "GUARD_FAILED",
+      "JIANYING_RUNNING",
+      "NO_CONFIG",
+      "DEP_MISSING",
+      "GREEN_SCREEN_INPUT",
+      "INTERNAL"
+     ]
+    },
+    "message": {
+     "type": "string"
+    },
+    "data": {
+     "type": "object"
+    }
+   }
+  }
+ },
  "tools": [
-  {"name": "project_get",     "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "wordline_get",    "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "cutlist_get",     "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "notes_list",      "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "stage_status",    "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "oplog_tail",      "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "conflict_list",   "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "render_probe",    "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "capability_matrix", "kind": "query",    "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-
-  {"name": "clip_update",     "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "clip_split",      "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "clip_delete",     "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "cut_apply",       "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "subtitle_set",    "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "subtitle_retime", "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "overlay_add",     "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
-  {"name": "sfx_add",         "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
-  {"name": "notes_add",       "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
-  {"name": "notes_resolve",   "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "notes_reject",    "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "undo",            "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
-  {"name": "redo",            "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
-
-  {"name": "stage_run",       "kind": "orchestrate", "idempotent": false, "inputSchema": {}, "outputSchema": {}},
-  {"name": "stage_rebuild",   "kind": "orchestrate", "idempotent": false, "inputSchema": {}, "outputSchema": {}},
-  {"name": "verify_run",      "kind": "orchestrate", "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "sync_check",      "kind": "orchestrate", "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
-  {"name": "render",          "kind": "orchestrate", "idempotent": false, "inputSchema": {}, "outputSchema": {}},
-  {"name": "export_jianying", "kind": "orchestrate", "idempotent": false, "inputSchema": {}, "outputSchema": {}}
+  {
+   "name": "project_get",
+   "kind": "query",
+   "idempotent": true,
+   "description": "工程视图(可按轨道/时间窗裁剪)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "view": {
+      "enum": [
+       "full",
+       "timeline"
+      ]
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "wordline_get",
+   "kind": "query",
+   "idempotent": true,
+   "description": "字级时间轴+校准痕迹(唯一时间来源)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "range_": {
+      "type": "object",
+      "description": "{fromMs,toMs} 时间窗"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "cutlist_get",
+   "kind": "query",
+   "idempotent": true,
+   "description": "粗剪决策+guard 结果",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "applied": {
+      "type": "boolean",
+      "description": "true 读 cutlist.applied.json"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "notes_list",
+   "kind": "query",
+   "idempotent": true,
+   "description": "标注清单(含锚点与状态)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "state": {
+      "enum": [
+       "open",
+       "resolved",
+       "rejected",
+       "orphan"
+      ]
+     },
+     "author": {
+      "enum": [
+       "user",
+       "agent"
+      ]
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "stage_status",
+   "kind": "query",
+   "idempotent": true,
+   "description": "CutFlow 阶段状态(_state/S*.json 存在性)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "oplog_tail",
+   "kind": "query",
+   "idempotent": true,
+   "description": "OpLog tail(AI 感知用户改动的入口)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "sinceRev": {
+      "type": "integer"
+     },
+     "actor": {
+      "enum": [
+       "user",
+       "agent",
+       "script"
+      ]
+     },
+     "limit": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "conflict_list",
+   "kind": "query",
+   "idempotent": true,
+   "description": "当前冲突与三方快照引用",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "render_probe",
+   "kind": "query",
+   "idempotent": true,
+   "description": "06_output 产物清单+媒体信息",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "capability_matrix",
+   "kind": "query",
+   "idempotent": true,
+   "description": "后端能力对等矩阵(ADR-0038)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_update",
+   "kind": "write",
+   "idempotent": true,
+   "description": "改片段属性(同 patch 重复应用结果一致)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string"
+     },
+     "patch": {
+      "type": "object",
+      "properties": {
+       "startMs": {
+        "type": "integer"
+       },
+       "durationMs": {
+        "type": "integer"
+       },
+       "sourceInMs": {
+        "type": "integer"
+       },
+       "speed": {
+        "type": "number"
+       },
+       "volume": {
+        "type": "number"
+       },
+       "opacity": {
+        "type": "number"
+       },
+       "scale": {
+        "type": "number"
+       },
+       "text": {
+        "type": "string"
+       },
+       "freezeMs": {
+        "type": "integer"
+       }
+      }
+     },
+     "summary": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "expectRev": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "root",
+     "clipId"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_split",
+   "kind": "write",
+   "idempotent": true,
+   "description": "在时间点切分片段(已切则幂等返回)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string"
+     },
+     "tMs": {
+      "type": "integer"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "clipId",
+     "tMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_delete",
+   "kind": "write",
+   "idempotent": true,
+   "description": "删除片段",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "clipId"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "cut_apply",
+   "kind": "write",
+   "idempotent": true,
+   "description": "应用粗剪决策(RFC7386 merge-patch 到 cutlist.json)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "patch": {
+      "type": "object"
+     },
+     "summary": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "root",
+     "patch"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "subtitle_set",
+   "kind": "write",
+   "idempotent": true,
+   "description": "改字幕卡文本(text 轨片段的 text 字段)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string"
+     },
+     "text": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "clipId",
+     "text"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "subtitle_retime",
+   "kind": "write",
+   "idempotent": true,
+   "description": "改字幕卡时间(受卡时间余量规则约束)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string"
+     },
+     "startMs": {
+      "type": "integer"
+     },
+     "durationMs": {
+      "type": "integer"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "clipId"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "overlay_add",
+   "kind": "write",
+   "idempotent": false,
+   "description": "新增叠加元素(贴图/卡片/Logo;需 requestId 去重)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "trackId": {
+      "type": "string"
+     },
+     "element": {
+      "type": "object",
+      "required": [
+       "src",
+       "atMs",
+       "durationMs"
+      ],
+      "properties": {
+       "src": {
+        "type": "string"
+       },
+       "atMs": {
+        "type": "integer"
+       },
+       "durationMs": {
+        "type": "integer"
+       },
+       "overlay": {
+        "type": "object",
+        "properties": {
+         "x": {
+          "type": "integer"
+         },
+         "y": {
+          "type": "integer"
+         },
+         "w": {
+          "type": "integer"
+         },
+         "h": {
+          "type": "integer"
+         },
+         "opacity": {
+          "type": "number"
+         }
+        }
+       }
+      }
+     },
+     "requestId": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "trackId",
+     "element"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "sfx_add",
+   "kind": "write",
+   "idempotent": false,
+   "description": "加音效落点(密度 ≤2 个/15s;需 requestId 去重)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "tMs": {
+      "type": "integer"
+     },
+     "src": {
+      "type": "string"
+     },
+     "volume": {
+      "type": "number"
+     },
+     "requestId": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "tMs",
+     "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "notes_add",
+   "kind": "write",
+   "idempotent": false,
+   "description": "创建标注(AI 反向提问走 author=agent)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "anchor": {
+      "type": "object",
+      "required": [
+       "kind",
+       "tMs"
+      ],
+      "properties": {
+       "kind": {
+        "enum": [
+         "clip",
+         "track",
+         "time",
+         "word",
+         "subtitleCard"
+        ]
+       },
+       "ref": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "tMs": {
+        "type": "integer"
+       }
+      }
+     },
+     "body": {
+      "type": "string"
+     },
+     "author": {
+      "enum": [
+       "user",
+       "agent"
+      ]
+     },
+     "tags": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "requestId": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "root",
+     "anchor",
+     "body"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "notes_resolve",
+   "kind": "write",
+   "idempotent": true,
+   "description": "结案标注(reply + opIds 回执)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "noteId": {
+      "type": "string"
+     },
+     "reply": {
+      "type": "string"
+     },
+     "opIds": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "noteId",
+     "reply",
+     "opIds"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "notes_reject",
+   "kind": "write",
+   "idempotent": true,
+   "description": "否决标注",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "noteId": {
+      "type": "string"
+     },
+     "reason": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "root",
+     "noteId",
+     "reason"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "undo",
+   "kind": "write",
+   "idempotent": false,
+   "description": "撤销(可按 actor 批量撤销 AI 改动)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "batch": {
+      "type": "integer",
+      "description": "连续撤销 N 步"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "redo",
+   "kind": "write",
+   "idempotent": false,
+   "description": "重做",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "batch": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "stage_run",
+   "kind": "orchestrate",
+   "idempotent": false,
+   "description": "调 rs_run.py --only <stage>",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "stage": {
+      "enum": [
+       "S0",
+       "S1",
+       "S2",
+       "S3",
+       "S4",
+       "S5",
+       "S6",
+       "S7",
+       "S8",
+       "S9",
+       "S10",
+       "S11"
+      ]
+     },
+     "params": {
+      "type": "object"
+     }
+    },
+    "required": [
+     "root",
+     "stage"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "stage_rebuild",
+   "kind": "orchestrate",
+   "idempotent": false,
+   "description": "调对应目录 rebuild.py",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "dir": {
+      "enum": [
+       "03_assets/artboard",
+       "04_cut",
+       "05_ir",
+       "06_output"
+      ]
+     }
+    },
+    "required": [
+     "root",
+     "dir"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "verify_run",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "调 rs_verify.py 分级自检",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "level": {
+      "enum": [
+       "L0",
+       "L1",
+       "L2"
+      ]
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "sync_check",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "调 rs_sync.py(对齐断言/音频闸/QC)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "video": {
+      "type": "string"
+     },
+     "qc": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "root",
+     "video"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "render",
+   "kind": "orchestrate",
+   "idempotent": false,
+   "description": "调 rs_render.py 或 cutforge-render",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "backend": {
+      "enum": [
+       "ffmpeg",
+       "cutforge"
+      ]
+     },
+     "ratio": {
+      "enum": [
+       "9x16",
+       "3x4",
+       "16x9"
+      ]
+     },
+     "allVariants": {
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "export_jianying",
+   "kind": "orchestrate",
+   "idempotent": false,
+   "description": "调 rs_jy_draft.py(前置:剪映未运行)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "name": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "root",
+     "name"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  }
  ]
 }

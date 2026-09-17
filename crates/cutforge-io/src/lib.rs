@@ -124,6 +124,11 @@ impl Workspace {
         &self.engine
     }
 
+    /// 当前工程(只读视图)。
+    pub fn project(&self) -> &Project {
+        self.engine.project()
+    }
+
     pub fn rev(&self) -> u64 {
         self.engine.rev()
     }
@@ -167,11 +172,23 @@ impl Workspace {
         author: NoteAuthor,
         tags: Vec<String>,
         actor: Actor,
+        request_id: Option<String>,
     ) -> io::Result<String> {
+        // 幂等:同 request_id 已登记过 → 不再新增,返回既有末条 id
+        if request_id
+            .as_deref()
+            .is_some_and(|rid| self.engine.oplog().has_request_id(rid))
+        {
+            let id = self.notes.notes().last().map(|n| n.id.clone()).unwrap_or_default();
+            return Ok(id);
+        }
         let before = self.notes.to_value();
         let note_id = self.notes.next_id();
         self.notes.add(anchor, body, author, tags);
-        self.record_notes_change(&before, OpKind::Insert, actor, format!("创建标注 {note_id}"), None)?;
+        self.record_notes_change(
+            &before, OpKind::Insert, actor,
+            format!("创建标注 {note_id}"), None, request_id,
+        )?;
         Ok(note_id)
     }
 
@@ -191,14 +208,14 @@ impl Workspace {
                 return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("REJECTED: {e:?}")))
             }
         }
-        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 结案"), None)?;
+        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 结案"), None, None)?;
         Ok(())
     }
 
     pub fn notes_reject(&mut self, note_id: &str, reason: String, actor: Actor) -> io::Result<()> {
         let before = self.notes.to_value();
         self.notes.reject(note_id, reason).map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("{e:?}")))?;
-        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 否决"), None)?;
+        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 否决"), None, None)?;
         Ok(())
     }
 
@@ -212,7 +229,7 @@ impl Workspace {
                 OpKind::Set,
                 actor,
                 format!("锚点重定位:跟随/重挂 {moved},转孤儿 {orphaned}"),
-                None,
+                None, None,
             )?;
         }
         Ok(())
@@ -225,11 +242,13 @@ impl Workspace {
         actor: Actor,
         summary: String,
         caused_by: Option<Vec<String>>,
+        request_id: Option<String>,
     ) -> io::Result<()> {
         let after = self.notes.to_value();
         let opts = ApplyOpts {
             caused_by: caused_by.unwrap_or_default(),
             summary: Some(summary),
+            request_id,
             ..Default::default()
         };
         self.engine
@@ -238,6 +257,29 @@ impl Workspace {
         self.notes_dirty = true;
         self.persist()?;
         Ok(())
+    }
+
+    /// 非 project.json 真相源(如 cutlist.json)的复合写:锁内登记审计 Op 并持久化。
+    /// 文件本体由调用方原子落盘(`atomic::atomic_write`)。
+    // 参数与 Op 字段一一对应(同 record_file_change 的理由)。
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_change(
+        &mut self,
+        file: &str,
+        path: &str,
+        before: serde_json::Value,
+        after: serde_json::Value,
+        kind: cutforge_core::oplog::OpKind,
+        actor: Actor,
+        opts: ApplyOpts,
+    ) -> io::Result<OpReceipt> {
+        let _guard = lock::acquire(&self.root, 30_000, 20)?;
+        let receipt = self
+            .engine
+            .record_file_change(file, path, before, after, kind, actor, opts)
+            .map_err(reject_to_io)?;
+        self.persist()?;
+        Ok(receipt)
     }
 
     // ---------- 冲突(4.7) ----------

@@ -256,7 +256,7 @@ fn notes_add(a: &Args) -> i32 {
     };
     let tags = a.flags.get("tag").map(|s| vec![s.clone()]).unwrap_or_default();
     match Workspace::open(Path::new(root)) {
-        Ok(mut ws) => match ws.notes_add(anchor, body, author, tags, actor_from(a.flags.get("actor"))) {
+        Ok(mut ws) => match ws.notes_add(anchor, body, author, tags, actor_from(a.flags.get("actor")), None) {
             Ok(id) => emit(a.json, true, "OK", "标注已创建", serde_json::json!({"noteId": id, "rev": ws.rev()})),
             Err(e) => emit(a.json, false, "REJECTED", &e.to_string(), serde_json::json!({})),
         },
@@ -377,7 +377,7 @@ fn check_deps(json: bool) -> i32 {
         ("cutforge-core", vec!["cutforge-schema"]),
         ("cutforge-io", vec!["cutforge-core", "cutforge-schema"]),
         ("cutforge-cli", vec!["cutforge-core", "cutforge-io"]),
-        ("cutforge-mcp", vec!["cutforge-core"]),
+        ("cutforge-mcp", vec!["cutforge-core", "cutforge-io", "cutforge-script", "cutforge-schema"]),
         ("cutforge-script", vec!["cutforge-core"]),
         ("cutforge-wasm", vec!["cutforge-core"]),
         ("cutforge-plugin-host", vec!["cutforge-core"]),

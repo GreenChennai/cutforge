@@ -96,10 +96,10 @@ fn random_walk_undo_reduces_to_initial() {
             _ => Command::ClipMove { clip_id: targets[which].into(), new_start_ms: lcg() % 500, to_track: None },
         };
         // 幂等短路(无实际变化)的 Op 不进撤销栈,不计入 undo 次数
-        if let Ok(r) = eng.apply(cmd, agent(), ApplyOpts::default()) {
-            if !r.idempotent {
-                applied += 1;
-            }
+        if let Ok(r) = eng.apply(cmd, agent(), ApplyOpts::default())
+            && !r.idempotent
+        {
+            applied += 1;
         }
     }
     for _ in 0..applied {

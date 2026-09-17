@@ -1,0 +1,235 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "CutFlow cutlist v1(粗剪决策表;每刀 reason/conf/guard,ADR-0012)",
+ "type": "object",
+ "additionalProperties": false,
+ "x-keepCoversTimeline": true,
+ "required": [
+  "version",
+  "source",
+  "detector",
+  "cuts",
+  "keep",
+  "removedMs",
+  "srcTotalMs",
+  "script"
+ ],
+ "properties": {
+  "version": {
+   "const": 1
+  },
+  "source": {
+   "type": "string",
+   "description": "透传 wordline.source"
+  },
+  "detector": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "version",
+    "params"
+   ],
+   "properties": {
+    "version": {
+     "type": "string",
+     "description": "检测器版本,当前 cutflow-1.1(rules/roughcut.md 示例的 cutflow-1.0 已过时,代码为准)"
+    },
+    "params": {
+     "type": "object",
+     "description": "检测参数快照(silenceMinMs/tailKeepMs/retakeRatio/confRemove/confReview;--from-text 路径为 {mode:'from-text'});自由键值,不做封闭"
+    }
+   }
+  },
+  "cuts": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "x-removeRequiresGuardOk": true,
+    "required": [
+     "id",
+     "inMs",
+     "outMs",
+     "reason",
+     "conf",
+     "action",
+     "note",
+     "guard",
+     "text"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "pattern": "^c[0-9]{3}$",
+      "description": "c001 起顺序编号"
+     },
+     "inMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "源域;防碎切 margin(前 150ms)已体现在取值里,无独立 margin 字段"
+     },
+     "outMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "inMs < outMs ≤ srcTotalMs(--apply 校验);后留 margin 300ms 同上"
+     },
+     "reason": {
+      "enum": [
+       "silence",
+       "breath",
+       "filler",
+       "false_start",
+       "retake",
+       "stumble",
+       "repetition",
+       "off_topic",
+       "manual"
+      ],
+      "description": "检测器九类封闭枚举"
+     },
+     "conf": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+     },
+     "action": {
+      "enum": [
+       "remove",
+       "review",
+       "keep"
+      ],
+      "description": "三态:conf ≥0.90 且 guard 过→remove;0.60–0.90 或 guard 拦下→review;<0.60→keep(SKILL.md Hard Rule 3)"
+     },
+     "note": {
+      "type": "string",
+      "description": "自由文本,约定标记:[guard 未过:…]/[rhetorical_pause_suspect]/; smooth合并 等,消费者按子串匹配"
+     },
+     "guard": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "guard 三项保护 + 判定痕迹;空对象 {} 是合法历史形态(guard_passed 视为未过,action 不得为 remove)",
+      "properties": {
+       "inSilence": {
+        "type": "boolean",
+        "description": "入点 ±120ms 内有静音 gap 或片头/片尾"
+       },
+       "outSilence": {
+        "type": "boolean"
+       },
+       "wordClipped": {
+        "type": "boolean",
+        "description": "true=切点落在某字 (startMs+1,endMs-1) 内;任何 reason 下硬失败"
+       },
+       "tailKeepMs": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "出点到下一字起点余量;刀后无字时写哨兵值 10^9"
+       },
+       "required": {
+        "type": "array",
+        "items": {
+         "enum": [
+          "inSilence",
+          "outSilence",
+          "wordClipped",
+          "tailKeep"
+         ]
+        },
+        "description": "该 reason 的硬过项名列表"
+       },
+       "ok": {
+        "type": "boolean",
+        "description": "保守口径:四项全过"
+       },
+       "okByReason": {
+        "type": "boolean",
+        "description": "分类用硬过项判定;guard_passed() 优先读它,回退 ok"
+       }
+      }
+     },
+     "text": {
+      "type": "string",
+      "description": "文本化删改稿(v0.11 R5):刀口前后各 1.2s 的 chars 拼接上下文"
+     }
+    }
+   }
+  },
+  "keep": {
+   "type": "array",
+   "items": {
+    "type": "array",
+    "items": {
+     "type": "integer"
+    },
+    "minItems": 2,
+    "maxItems": 2
+   },
+   "description": "由 action==remove 推导的保留区间 [start,end] 列表;x-keepCoversTimeline 断言:有序、不重叠、覆盖 [0, srcTotalMs]"
+  },
+  "removedMs": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "sum(remove 刀时长)"
+  },
+  "srcTotalMs": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "wordline.srcDurationMs(无 chars 时回退末字 endMs)"
+  },
+  "script": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "action",
+     "text"
+    ],
+    "properties": {
+     "action": {
+      "enum": [
+       "keep",
+       "remove",
+       "review"
+      ]
+     },
+     "text": {
+      "type": "string",
+      "description": "按 42 字切行的删改稿行(~~删~~/待审/保留)"
+     }
+    }
+   }
+  },
+  "fromText": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "仅 --from-text/--from-text-file 路径写:文本定位留痕",
+   "required": [
+    "quote",
+    "charsSpan",
+    "ms"
+   ],
+   "properties": {
+    "quote": {
+     "type": "string"
+    },
+    "charsSpan": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     },
+     "minItems": 2,
+     "maxItems": 2
+    },
+    "ms": {
+     "type": "array",
+     "items": {
+      "type": "integer"
+     },
+     "minItems": 2,
+     "maxItems": 2
+    }
+   }
+  }
+ }
+}

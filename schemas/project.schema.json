@@ -1,0 +1,422 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "CutForge/CutFlow 项目 IR v2(毫秒级时间线;version 恒为 1 兼容旧读法,schemaVersion 表达契约演进)",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "version",
+  "schemaVersion",
+  "slug",
+  "fps",
+  "canvas",
+  "tracks"
+ ],
+ "properties": {
+  "version": {
+   "const": 1,
+   "description": "整数版本恒为 1,兼容 CutFlow 既有工程的读法;schema 自身演进用 schemaVersion 表达(计划书 3.3 第 5 项)"
+  },
+  "schemaVersion": {
+   "type": "string",
+   "const": "2.0.0",
+   "description": "schema 契约版本(semver);v1 工程由迁移器补齐"
+  },
+  "slug": {
+   "type": "string",
+   "description": "工程标识(工程目录名)"
+  },
+  "fps": {
+   "type": "integer",
+   "enum": [
+    24,
+    25,
+    30,
+    50,
+    60
+   ],
+   "description": "允许集来自 schemas/constants.ratios.json(由 rs_common/platforms 生成,零漂移门禁)"
+  },
+  "canvas": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "width",
+    "height"
+   ],
+   "properties": {
+    "width": {
+     "type": "integer",
+     "enum": [
+      1080,
+      1440,
+      1920
+     ]
+    },
+    "height": {
+     "type": "integer",
+     "enum": [
+      1080,
+      1440,
+      1920
+     ]
+    }
+   }
+  },
+  "backends": {
+   "type": "array",
+   "items": {
+    "enum": [
+     "ffmpeg",
+     "jianying",
+     "cutforge"
+    ]
+   },
+   "minItems": 1,
+   "description": "N 后端注册表(ADR-0037):本工程声明启用的 IR 消费者;枚举封闭,扩集先升 schema。v1 工程由迁移器补默认 [\"ffmpeg\"]"
+  },
+  "notes": {
+   "type": "string",
+   "default": "notes.json",
+   "description": "时间轴标注文件路径(相对工程根);允许内联模式由 notes.schema.json 的 items 数组承接,单文件工程可指向自身小节(计划书 3.3 第 3 项)"
+  },
+  "tracks": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "kind",
+     "clips"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "pattern": "^[VAT][0-9]+$",
+      "description": "轨道稳定 id,确定性生成规则:<kind 首字母大写><轨道序号+1>,如 V1/A1/T2(计划书 3.3 第 2 项);首次生成后写回,此后不变——标注锚点依赖它"
+     },
+     "kind": {
+      "enum": [
+       "video",
+       "audio",
+       "text"
+      ]
+     },
+     "name": {
+      "type": "string"
+     },
+     "clips": {
+      "type": "array",
+      "items": {
+       "$ref": "#/$defs/clip"
+      }
+     }
+    }
+   }
+  },
+  "bgm": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "src": {
+     "type": "string"
+    },
+    "gainDb": {
+     "type": "number",
+     "default": -18
+    },
+    "ducking": {
+     "type": "boolean",
+     "default": true
+    },
+    "loop": {
+     "type": "boolean",
+     "default": true
+    }
+   }
+  },
+  "outputs": {
+   "type": "array",
+   "items": {
+    "enum": [
+     "9x16",
+     "3x4",
+     "16x9"
+    ]
+   },
+   "description": "要产出的比例;canvas 是主比例,第二个比例走 reframe 重构图"
+  },
+  "markers": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "ms",
+     "label"
+    ],
+    "properties": {
+     "ms": {
+      "type": "number"
+     },
+     "label": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "subtitle": {
+   "type": "object",
+   "additionalProperties": false,
+   "properties": {
+    "ass": {
+     "type": "string",
+     "description": "ASS 文件路径;由 rs_subtitle.py 先生成"
+    },
+    "source": {
+     "type": "string",
+     "description": "字幕源文件路径(tts manifest / transcript json);rs_jy_draft 经它回读 wordline 的 sentences/segments 求卡时间(v0.15 起纳入契约,此前实现已读写但 schema 缺失)"
+    },
+    "style": {
+     "type": "string"
+    }
+   }
+  },
+  "joinCrossfadeMs": {
+   "type": "number",
+   "minimum": 0,
+   "default": 120,
+   "description": "0<joinCrossfadeMs<1帧 的转场提升为该时长的交叉溶解(ADR-0023);0=显式禁用提升(回退硬切)。transition 唯一合法时长字段是 durMs——ms 是幽灵字段,因 additionalProperties:false 而显式报错(计划书 3.3 第 7/8 项)"
+  }
+ },
+ "$defs": {
+  "clip": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "id",
+    "startMs",
+    "durationMs"
+   ],
+   "properties": {
+    "id": {
+     "type": "string",
+     "pattern": "^[VAT][0-9]+-[0-9]{3}$",
+     "description": "片段稳定 id,确定性生成规则:<轨道 id>-<片段序号+1 三位零填>,如 V1-003;锚点(kind=clip)与 Op target 均引用它,禁止依赖数组下标"
+    },
+    "sourceHash": {
+     "type": "string",
+     "description": "可选:源文件内容寻址 hash;供缓存与'文件变了但时间没变'检测,语义与 artboard manifest 的 sourceHash 一致(计划书 3.3 第 6 项)"
+    },
+    "src": {
+     "type": "string"
+    },
+    "startMs": {
+     "type": "number",
+     "minimum": 0
+    },
+    "durationMs": {
+     "type": "number",
+     "exclusiveMinimum": 0
+    },
+    "sourceInMs": {
+     "type": "number",
+     "minimum": 0
+    },
+    "speed": {
+     "type": "number",
+     "minimum": 0.25,
+     "maximum": 4
+    },
+    "volume": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 2
+    },
+    "role": {
+     "enum": [
+      "voice",
+      "sfx",
+      "music",
+      "ambient"
+     ]
+    },
+    "text": {
+     "type": "string"
+    },
+    "position": {
+     "type": "object",
+     "additionalProperties": false,
+     "properties": {
+      "x": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      },
+      "y": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      }
+     }
+    },
+    "scale": {
+     "type": "number",
+     "minimum": 0.05,
+     "maximum": 4
+    },
+    "reframe": {
+     "type": "object",
+     "additionalProperties": false,
+     "properties": {
+      "anchorY": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1
+      }
+     }
+    },
+    "motion": {
+     "type": "object",
+     "additionalProperties": false,
+     "properties": {
+      "in": {
+       "enum": [
+        "none",
+        "fadeIn",
+        "slideInLeft",
+        "slideInRight",
+        "scaleIn",
+        "zoomIn"
+       ]
+      },
+      "inMs": {
+       "type": "number",
+       "default": 400
+      },
+      "out": {
+       "enum": [
+        "none",
+        "fadeOut",
+        "slideOutLeft",
+        "slideOutRight"
+       ]
+      },
+      "outMs": {
+       "type": "number",
+       "default": 400
+      }
+     }
+    },
+    "transition": {
+     "type": "object",
+     "additionalProperties": false,
+     "description": "与前一片段的转场(xfade)。v0.10(ADR-0023):尾帧扩展保证零时间漂移;v0.11(ADR-0026)三级语法:reason=jumpcut(源间隙<1s 的同段跳切)→ 1 帧软切;reason=topic(≥1s 真切换)→ 按 durMs 溶解(默认 300);无 reason 的亚帧转场仍提升为 joinCrossfadeMs;type=cut/none 显式硬切。durMs 是唯一合法时长字段",
+     "properties": {
+      "type": {
+       "enum": [
+        "fade",
+        "wipeleft",
+        "wipeup",
+        "slideleft",
+        "circleopen",
+        "cut",
+        "none"
+       ]
+      },
+      "durMs": {
+       "type": "number",
+       "default": 500
+      },
+      "reason": {
+       "enum": [
+        "jumpcut",
+        "topic"
+       ],
+       "description": "转场语法制(generated by rs_ir --from-cutlist)"
+      }
+     }
+    },
+    "overlay": {
+     "type": "object",
+     "additionalProperties": false,
+     "description": "绝对像素落点(rs_brand 变体轨产出);存在时优先于 scale/position",
+     "properties": {
+      "x": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "y": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "w": {
+       "type": "integer",
+       "exclusiveMinimum": 0
+      },
+      "h": {
+       "type": "integer",
+       "exclusiveMinimum": 0
+      },
+      "opacity": {
+       "type": "number",
+       "minimum": 0,
+       "maximum": 1,
+       "default": 1
+      }
+     }
+    },
+    "opacity": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 1,
+     "description": "overlay 层整体不透明度(scale/position 路径也生效)"
+    },
+    "fade": {
+     "type": "object",
+     "additionalProperties": false,
+     "description": "音频淡入淡出(毫秒);仅 5.9 草稿后端写入,FFmpeg 后端暂忽略",
+     "properties": {
+      "inMs": {
+       "type": "number",
+       "default": 0
+      },
+      "outMs": {
+       "type": "number",
+       "default": 0
+      }
+     }
+    },
+    "loop": {
+     "type": "boolean",
+     "default": false,
+     "description": "视频素材循环播放(如 6s 无缝循环背景铺满整段时长)"
+    },
+    "punchIn": {
+     "type": "object",
+     "additionalProperties": false,
+     "description": "v0.11 R3 punch-in:该段变焦取紧构图,掩饰 jump cut(Hitchcock:重点句才用)",
+     "properties": {
+      "factor": {
+       "type": "number",
+       "minimum": 1.0,
+       "maximum": 2.0,
+       "default": 1.4
+      },
+      "source": {
+       "enum": [
+        "auto",
+        "manual"
+       ]
+      }
+     }
+    },
+    "freezeMs": {
+     "type": "number",
+     "minimum": 1,
+     "description": "v0.12(ADR-0027)冻结帧补长:源正常播放到该毫秒,其后 tpad 克隆尾帧补足到 durationMs(-t 在输入侧);纯动画卡片比旁白短时由 rs_ir build --from-cards 写入,冻结须在出场动画开始前(组装器预留 950ms)"
+    }
+   }
+  }
+ }
+}

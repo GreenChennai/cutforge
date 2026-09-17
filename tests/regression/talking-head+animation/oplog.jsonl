@@ -1,0 +1,1 @@
+{"opId": "op-9001", "ts": "2026-09-17T11:02:00.000+08:00", "actor": {"kind": "script", "id": "rs_ir --from-cards"}, "target": {"file": "project.json", "path": "/tracks/0/clips/1/freezeMs"}, "opKind": "set", "before": null, "after": 3850, "baseRev": "rev-3", "rev": 4, "summary": "冻结帧补长 3850ms(卡片 3.85s < 旁白 4.8s)"}

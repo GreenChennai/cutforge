@@ -1,0 +1,88 @@
+{
+ "version": 1,
+ "source": "01_materials/a.mp4",
+ "detector": {
+  "version": "cutflow-1.1",
+  "params": {
+   "silenceMinMs": 600,
+   "tailKeepMs": 60,
+   "retakeRatio": 0.6,
+   "confRemove": 0.9,
+   "confReview": 0.6
+  }
+ },
+ "cuts": [
+  {
+   "id": "c001",
+   "inMs": 4200,
+   "outMs": 4820,
+   "reason": "silence",
+   "conf": 0.93,
+   "action": "remove",
+   "note": "",
+   "guard": {
+    "inSilence": true,
+    "outSilence": true,
+    "wordClipped": false,
+    "tailKeepMs": 80,
+    "required": [
+     "inSilence",
+     "outSilence",
+     "wordClipped",
+     "tailKeep"
+    ],
+    "ok": true,
+    "okByReason": true
+   },
+   "text": "大家好，[620ms 静音]今天讲重点。"
+  },
+  {
+   "id": "c002",
+   "inMs": 9100,
+   "outMs": 9350,
+   "reason": "filler",
+   "conf": 0.72,
+   "action": "review",
+   "note": "[rhetorical_pause_suspect]",
+   "guard": {
+    "inSilence": true,
+    "outSilence": false,
+    "wordClipped": false,
+    "tailKeepMs": 45,
+    "required": [
+     "wordClipped",
+     "tailKeep"
+    ],
+    "ok": false,
+    "okByReason": true
+   },
+   "text": "讲重点。嗯…收尾"
+  }
+ ],
+ "keep": [
+  [
+   0,
+   4200
+  ],
+  [
+   4820,
+   9100
+  ],
+  [
+   9350,
+   15200
+  ]
+ ],
+ "removedMs": 870,
+ "srcTotalMs": 15200,
+ "script": [
+  {
+   "action": "keep",
+   "text": "大家好，(删 620ms 静音)今天讲重点。"
+  },
+  {
+   "action": "review",
+   "text": "'嗯'待审"
+  }
+ ]
+}

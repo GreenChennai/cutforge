@@ -1,0 +1,160 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "CutForge notes v1(时间轴标注:锚点 + 人机对话;需求 1 的核心载体)",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "version",
+  "items"
+ ],
+ "properties": {
+  "version": {
+   "const": 1
+  },
+  "items": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "anchor",
+     "body",
+     "author",
+     "state",
+     "createdAt"
+    ],
+    "properties": {
+     "id": {
+      "type": "string",
+      "pattern": "^n-[0-9]{4,}$",
+      "description": "n-0001 起单调分配;标注的稳定标识"
+     },
+     "anchor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "kind",
+       "ref",
+       "tMs"
+      ],
+      "properties": {
+       "kind": {
+        "enum": [
+         "clip",
+         "track",
+         "time",
+         "word",
+         "subtitleCard"
+        ],
+        "description": "五类:time=纯时间点(用户在时间轴点了一下);clip/subtitleCard/word=元素;track=整条轨(如'BGM 整体太吵')"
+       },
+       "ref": {
+        "type": [
+         "string",
+         "null"
+        ],
+        "description": "目标对象的稳定 id;kind=time 时为 null;禁止用数组下标做引用"
+       },
+       "tMs": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "时间点(ms);kind=track 时可省略,但 schema 层保留必填以简化消费(编辑器写 0)"
+       },
+       "span": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "startMs",
+         "endMs"
+        ],
+        "properties": {
+         "startMs": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "endMs": {
+          "type": "integer",
+          "minimum": 0
+         }
+        },
+        "description": "可选:区间锚点"
+       }
+      }
+     },
+     "body": {
+      "type": "string",
+      "minLength": 1,
+      "description": "标注正文:'这里要怎么改'"
+     },
+     "author": {
+      "enum": [
+       "user",
+       "agent"
+      ],
+      "description": "user=用户提需求;agent=AI 反向提问(如'这里语速过快,是否删 300ms?')"
+     },
+     "state": {
+      "enum": [
+       "open",
+       "resolved",
+       "rejected",
+       "orphan"
+      ],
+      "description": "orphan=锚点重定位失败;显式保留,编辑器'孤儿标注'面板必须可见,禁止静默丢弃"
+     },
+     "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 含时区"
+     },
+     "relocated": {
+      "enum": [
+       true
+      ],
+      "description": "锚点重定位痕迹:元素仅时间位移→跟随保持相对偏移;id 消失但 ≤500ms(可配)有邻近元素→重挂最近元素;两种成功情形都标 relocated:true"
+     },
+     "orphanReason": {
+      "type": "string",
+      "description": "state=orphan 时的原因(如'id 消失且 500ms 内无邻近元素'/'cutlist 重跑导致被锚定文件整体消失')"
+     },
+     "resolvedBy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "结案回执:把'标注结案'与'哪几个 Op 导致结案'绑定,使 AI 回执可审计",
+      "required": [
+       "reply",
+       "opIds"
+      ],
+      "properties": {
+       "reply": {
+        "type": "string",
+        "description": "人话回执,如'已删除 320ms 静音并重烧字幕'"
+       },
+       "opIds": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+         "type": "string",
+         "pattern": "^op-[0-9]+$"
+         },
+        "description": "导致结案的具体 Op 列表(必须 ≥1;结案必须有动作支撑)"
+       }
+      }
+     },
+     "rejectedReason": {
+      "type": "string",
+      "description": "state=rejected 时的否决理由"
+     },
+     "tags": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "自由标签(如'节奏')"
+     }
+    }
+   }
+  }
+ }
+}

@@ -1,0 +1,75 @@
+{
+ "version": 1,
+ "slug": "20260820-口播样板-talking-head",
+ "fps": 30,
+ "canvas": {
+  "width": 1080,
+  "height": 1920
+ },
+ "outputs": [
+  "9x16"
+ ],
+ "joinCrossfadeMs": 120,
+ "tracks": [
+  {
+   "kind": "video",
+   "name": "主轨",
+   "clips": [
+    {
+     "src": "01_materials/a.mp4",
+     "startMs": 0,
+     "durationMs": 8400,
+     "sourceInMs": 12000,
+     "volume": 1.0,
+     "role": "voice"
+    },
+    {
+     "src": "01_materials/a.mp4",
+     "startMs": 8400,
+     "durationMs": 6200,
+     "sourceInMs": 21600,
+     "volume": 1.0,
+     "role": "voice",
+     "transition": {
+      "type": "fade",
+      "durMs": 300,
+      "reason": "topic"
+     },
+     "punchIn": {
+      "factor": 1.4,
+      "source": "auto"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "audio",
+   "clips": [
+    {
+     "src": "03_assets/sfx/whoosh.mp3",
+     "startMs": 8400,
+     "durationMs": 400,
+     "role": "sfx",
+     "volume": 0.8
+    }
+   ]
+  }
+ ],
+ "bgm": {
+  "src": "03_assets/bgm/loop1.mp3",
+  "gainDb": -18,
+  "ducking": true,
+  "loop": true
+ },
+ "markers": [
+  {
+   "ms": 8400,
+   "label": "要点2"
+  }
+ ],
+ "subtitle": {
+  "ass": "06_output/subtitles.ass",
+  "source": "02_sensed/transcript_corrected.json",
+  "style": "talkshow-bold"
+ }
+}

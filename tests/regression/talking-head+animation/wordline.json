@@ -1,0 +1,175 @@
+{
+ "version": 1,
+ "source": "01_materials/b.mp4",
+ "space": "source",
+ "fps": 30,
+ "chars": [
+  {
+   "i": 0,
+   "ch": "大",
+   "startMs": 200,
+   "endMs": 380,
+   "srcStartMs": 200,
+   "srcEndMs": 380,
+   "conf": 0.86
+  },
+  {
+   "i": 1,
+   "ch": "家",
+   "startMs": 380,
+   "endMs": 560,
+   "srcStartMs": 380,
+   "srcEndMs": 560,
+   "conf": 0.86
+  },
+  {
+   "i": 2,
+   "ch": "好",
+   "startMs": 560,
+   "endMs": 760,
+   "srcStartMs": 560,
+   "srcEndMs": 760,
+   "conf": 0.86
+  },
+  {
+   "i": 3,
+   "ch": "，",
+   "startMs": 760,
+   "endMs": 800,
+   "srcStartMs": 760,
+   "srcEndMs": 800,
+   "conf": 0.86
+  },
+  {
+   "i": 4,
+   "ch": "今",
+   "startMs": 1420,
+   "endMs": 1600,
+   "srcStartMs": 1420,
+   "srcEndMs": 1600,
+   "conf": 0.86
+  },
+  {
+   "i": 5,
+   "ch": "天",
+   "startMs": 1600,
+   "endMs": 1760,
+   "srcStartMs": 1600,
+   "srcEndMs": 1760,
+   "conf": 0.86
+  },
+  {
+   "i": 6,
+   "ch": "讲",
+   "startMs": 1760,
+   "endMs": 1940,
+   "srcStartMs": 1760,
+   "srcEndMs": 1940,
+   "conf": 0.86
+  },
+  {
+   "i": 7,
+   "ch": "重",
+   "startMs": 1940,
+   "endMs": 2120,
+   "srcStartMs": 1940,
+   "srcEndMs": 2120,
+   "conf": 0.86
+  },
+  {
+   "i": 8,
+   "ch": "点",
+   "startMs": 2120,
+   "endMs": 2320,
+   "srcStartMs": 2120,
+   "srcEndMs": 2320,
+   "conf": 0.86
+  },
+  {
+   "i": 9,
+   "ch": "。",
+   "startMs": 2320,
+   "endMs": 2360,
+   "srcStartMs": 2320,
+   "srcEndMs": 2360,
+   "conf": 0.86
+  }
+ ],
+ "gaps": [
+  {
+   "after": 3,
+   "ms": 620,
+   "kind": "silence"
+  }
+ ],
+ "sentences": [
+  {
+   "id": 0,
+   "span": [
+    0,
+    4
+   ],
+   "punc": "，",
+   "text": "大家好，"
+  },
+  {
+   "id": 1,
+   "span": [
+    4,
+    10
+   ],
+   "punc": "。",
+   "text": "今天讲重点。"
+  }
+ ],
+ "speakers": [],
+ "srcDurationMs": 16200,
+ "finalDurationMs": 14600,
+ "stats": {
+  "charCount": 8,
+  "coverage": 0.9951,
+  "confMedian": 0.88
+ },
+ "degraded": false,
+ "degradeReasons": [],
+ "charTimingEstimated": false,
+ "asr": {
+  "backend": "pkg",
+  "capabilities": {
+   "charTimestamps": true,
+   "hotwords": true,
+   "speaker": false
+  },
+  "elapsedSec": 12.4,
+  "segmentCount": 2,
+  "asrDegraded": false,
+  "asrDegradeReasons": [],
+  "hotwords": "安信德 GEO优化"
+ },
+ "calibration": {
+  "sentences": 2,
+  "snapped": 1,
+  "skipped": 0,
+  "medianBeforeMs": 210.0,
+  "medianAfterMs": 12.0,
+  "p95BeforeMs": 240.0,
+  "windowMs": 500.0,
+  "minShiftMs": 40.0,
+  "shifts": [
+   {
+    "charRange": [
+     4,
+     10
+    ],
+    "shiftMs": -198.0
+   }
+  ]
+ },
+ "calibrated": true,
+ "smooth": {
+  "applied": true,
+  "zeroWidthPunct": 2,
+  "clampedOverlap": 1,
+  "minWidthFixed": 0
+ }
+}

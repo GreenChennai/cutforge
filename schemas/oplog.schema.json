@@ -1,0 +1,121 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "CutForge oplog v1(操作日志:双向合并与审计的唯一依据;append-only .jsonl 按天切分)",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "opId",
+  "ts",
+  "actor",
+  "target",
+  "opKind",
+  "before",
+  "after",
+  "baseRev",
+  "summary"
+ ],
+ "properties": {
+  "opId": {
+   "type": "string",
+   "pattern": "^op-[0-9]+$",
+   "description": "全工程唯一;重复应用以 opId 去重(幂等)"
+  },
+  "ts": {
+   "type": "string",
+   "description": "ISO 8601 含时区与毫秒;仅审计用,排序一律按 rev,禁止依赖文件系统时间戳"
+  },
+  "actor": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "kind",
+    "id"
+   ],
+   "properties": {
+    "kind": {
+     "enum": [
+      "user",
+      "agent",
+      "script"
+     ]
+    },
+    "id": {
+     "type": "string",
+     "description": "具体来源:cutflow-rs_cut / claude / user-ui 等;AI 改动必须写明具体脚本/工具 id"
+    }
+   }
+  },
+  "target": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "file",
+    "path"
+   ],
+   "properties": {
+    "file": {
+     "enum": [
+      "project.json",
+      "wordline.json",
+      "cutlist.json",
+      "cutlist.applied.json",
+      "notes.json"
+     ],
+     "description": "真相源文件;oplog 只允许记录对这五个文件的变更(封闭枚举)"
+    },
+     "path": {
+     "type": "string",
+     "pattern": "^(/[^/]+)+$|^/$",
+     "description": "JSON Pointer 叶路径,如 /tracks/0/clips/3/durationMs;三路 diff 的字段级粒度"
+    }
+   }
+  },
+  "opKind": {
+   "enum": [
+    "set",
+    "insert",
+    "delete",
+    "move",
+    "split",
+    "merge",
+    "resolve-conflict",
+    "undo",
+    "redo"
+   ],
+   "description": "封闭枚举;每个 kind 必须有确定逆操作,split/merge 的逆必须无损(保留被合并片段原始边界);undo/redo 也产生新 Op"
+  },
+  "before": {
+   "description": "变更前值(set/replace 场景为标量或节点;delete 场景为被删子树)"
+  },
+  "after": {
+   "description": "变更后值"
+  },
+  "baseRev": {
+   "type": "string",
+   "pattern": "^rev-[0-9]+$",
+   "description": "硬约束:必填。本 Op 基于的共同祖先版本(三路 diff 的关键);缺失即退化为最后写入者获胜,禁止"
+  },
+  "rev": {
+   "type": "integer",
+   "minimum": 1,
+   "description": "本 Op 应用后的工程修订号(单调递增);写入器在步骤 7 分配"
+  },
+  "causedBy": {
+   "type": "array",
+   "items": {
+    "type": "string",
+    "pattern": "^n-[0-9]{4,}$"
+   },
+   "description": "可选:因哪条标注而做(把标注与改动链起来,4.8 差异面板据此聚合)"
+  },
+  "summary": {
+   "type": "string",
+   "minLength": 1,
+   "description": "人可读摘要(如'删除 320ms 静音(rs_cut remove conf=0.93)');编辑器改动摘要直接展示"
+  },
+  "requestId": {
+   "type": "string",
+   "description": "可选:非幂等写操作(overlay_add/sfx_add 等)的调用方去重键"
+  }
+ }
+}

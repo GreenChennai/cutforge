@@ -1,0 +1,74 @@
+{
+ "version": 1,
+ "slug": "20260825-口播加动画-talking-head+animation",
+ "fps": 30,
+ "canvas": {
+  "width": 1080,
+  "height": 1920
+ },
+ "outputs": [
+  "9x16",
+  "3x4"
+ ],
+ "joinCrossfadeMs": 120,
+ "tracks": [
+  {
+   "kind": "video",
+   "name": "主轨",
+   "clips": [
+    {
+     "src": "01_materials/b.mp4",
+     "startMs": 0,
+     "durationMs": 9200,
+     "sourceInMs": 3000,
+     "volume": 1.0,
+     "role": "voice"
+    },
+    {
+     "src": "03_assets/artboard/cards/kc01.mp4",
+     "startMs": 9200,
+     "durationMs": 4800,
+     "volume": 0.0,
+     "role": "ambient",
+     "motion": {
+      "in": "scaleIn",
+      "inMs": 400,
+      "out": "fadeOut",
+      "outMs": 300
+     },
+     "transition": {
+      "durMs": 300,
+      "reason": "topic"
+     },
+     "freezeMs": 3850
+    }
+   ]
+  },
+  {
+   "kind": "text",
+   "clips": [
+    {
+     "text": "重点一:口径统一",
+     "startMs": 9400,
+     "durationMs": 2400,
+     "position": {
+      "x": 0.5,
+      "y": 0.82
+     },
+     "scale": 1.0
+    }
+   ]
+  }
+ ],
+ "bgm": {
+  "src": "03_assets/bgm/loop2.mp3",
+  "gainDb": -20,
+  "ducking": true,
+  "loop": true
+ },
+ "subtitle": {
+  "ass": "06_output/subtitles.ass",
+  "source": "02_sensed/transcript_corrected.json",
+  "style": "talkshow-bold"
+ }
+}

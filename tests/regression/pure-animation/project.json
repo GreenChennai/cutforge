@@ -1,0 +1,66 @@
+{
+ "version": 1,
+ "slug": "20260901-安信德GEO-pure-animation",
+ "fps": 30,
+ "canvas": {
+  "width": 1080,
+  "height": 1920
+ },
+ "outputs": [
+  "9x16"
+ ],
+ "joinCrossfadeMs": 120,
+ "tracks": [
+  {
+   "kind": "video",
+   "name": "卡片轨",
+   "clips": [
+    {
+     "src": "03_assets/artboard/cards/geo01.mp4",
+     "startMs": 0,
+     "durationMs": 5600,
+     "volume": 0.0,
+     "motion": {
+      "in": "fadeIn",
+      "inMs": 350
+     },
+     "freezeMs": 2300
+    },
+    {
+     "src": "03_assets/artboard/cards/geo02.mp4",
+     "startMs": 5600,
+     "durationMs": 6100,
+     "volume": 0.0,
+     "transition": {
+      "type": "circleopen",
+      "durMs": 500
+     },
+     "freezeMs": 3050
+    }
+   ]
+  },
+  {
+   "kind": "audio",
+   "clips": [
+    {
+     "src": "03_assets/tts/vo01.wav",
+     "startMs": 0,
+     "durationMs": 11700,
+     "volume": 1.0,
+     "role": "voice"
+    }
+   ]
+  }
+ ],
+ "bgm": {
+  "src": "03_assets/bgm/tech.mp3",
+  "gainDb": -22,
+  "ducking": true,
+  "loop": true
+ },
+ "subtitle": {
+  "ass": "06_output/subtitles.ass",
+  "source": "03_assets/tts/manifest.json",
+  "style": "tutorial-clean"
+ }
+}

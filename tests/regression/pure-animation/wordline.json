@@ -1,0 +1,135 @@
+{
+ "version": 1,
+ "source": "03_assets/tts/manifest.json",
+ "space": "source",
+ "fps": 30,
+ "chars": [
+  {
+   "i": 0,
+   "ch": "纯",
+   "startMs": 300,
+   "endMs": 520,
+   "srcStartMs": 300,
+   "srcEndMs": 520,
+   "conf": 0.4,
+   "estimated": true
+  },
+  {
+   "i": 1,
+   "ch": "动",
+   "startMs": 560,
+   "endMs": 780,
+   "srcStartMs": 560,
+   "srcEndMs": 780,
+   "conf": 0.4,
+   "estimated": true
+  },
+  {
+   "i": 2,
+   "ch": "画",
+   "startMs": 820,
+   "endMs": 1040,
+   "srcStartMs": 820,
+   "srcEndMs": 1040,
+   "conf": 0.4,
+   "estimated": true
+  },
+  {
+   "i": 3,
+   "ch": "配",
+   "startMs": 1080,
+   "endMs": 1300,
+   "srcStartMs": 1080,
+   "srcEndMs": 1300,
+   "conf": 0.4,
+   "estimated": true
+  },
+  {
+   "i": 4,
+   "ch": "音",
+   "startMs": 1340,
+   "endMs": 1560,
+   "srcStartMs": 1340,
+   "srcEndMs": 1560,
+   "conf": 0.4,
+   "estimated": true
+  },
+  {
+   "i": 5,
+   "ch": "样",
+   "startMs": 1600,
+   "endMs": 1820,
+   "srcStartMs": 1600,
+   "srcEndMs": 1820,
+   "conf": 0.4,
+   "estimated": true
+  },
+  {
+   "i": 6,
+   "ch": "例",
+   "startMs": 1860,
+   "endMs": 2080,
+   "srcStartMs": 1860,
+   "srcEndMs": 2080,
+   "conf": 0.4,
+   "estimated": true
+  }
+ ],
+ "gaps": [
+  {
+   "after": 3,
+   "ms": 900,
+   "kind": "silence"
+  }
+ ],
+ "sentences": [
+  {
+   "id": 0,
+   "span": [
+    0,
+    4
+   ],
+   "punc": "，",
+   "text": "纯动画，"
+  },
+  {
+   "id": 1,
+   "span": [
+    4,
+    8
+   ],
+   "punc": "。",
+   "text": "配音样例。"
+  }
+ ],
+ "speakers": [],
+ "srcDurationMs": 11700,
+ "finalDurationMs": 11700,
+ "stats": {
+  "charCount": 6,
+  "coverage": 0.9918,
+  "confMedian": 0.4
+ },
+ "degraded": true,
+ "degradeReasons": [
+  "TTS 路径：句级时间 + 句内均分",
+  "字级时间戳缺失：句内按均分估算(不可当字级用)"
+ ],
+ "charTimingEstimated": true,
+ "dub": {
+  "similarity": 0.94,
+  "rows": [
+   {
+    "sentence": "今天讲重点。",
+    "estStartMs": 4200,
+    "realStartMs": 4310,
+    "driftMs": 110,
+    "needsReview": false
+   }
+  ],
+  "medianDriftMs": 110,
+  "p95DriftMs": 110,
+  "needsReview": [],
+  "source": "03_assets/tts/manifest.json"
+ }
+}

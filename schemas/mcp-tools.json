@@ -1,0 +1,37 @@
+{
+ "version": 1,
+ "_doc": "MCP 工具契约(G5-1 比对基准)。M1 仅落骨架:工具名/类别/幂等性来自计划书 5.2 全表;inputSchema/outputSchema 在 M4 填充。命名与 CutFlow rs_* 语义对齐。",
+ "channels": ["stdio", "embedded-ws"],
+ "tools": [
+  {"name": "project_get",     "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "wordline_get",    "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "cutlist_get",     "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "notes_list",      "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "stage_status",    "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "oplog_tail",      "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "conflict_list",   "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "render_probe",    "kind": "query",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "capability_matrix", "kind": "query",    "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+
+  {"name": "clip_update",     "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "clip_split",      "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "clip_delete",     "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "cut_apply",       "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "subtitle_set",    "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "subtitle_retime", "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "overlay_add",     "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
+  {"name": "sfx_add",         "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
+  {"name": "notes_add",       "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
+  {"name": "notes_resolve",   "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "notes_reject",    "kind": "write",      "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "undo",            "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
+  {"name": "redo",            "kind": "write",      "idempotent": false, "inputSchema": {}, "outputSchema": {}},
+
+  {"name": "stage_run",       "kind": "orchestrate", "idempotent": false, "inputSchema": {}, "outputSchema": {}},
+  {"name": "stage_rebuild",   "kind": "orchestrate", "idempotent": false, "inputSchema": {}, "outputSchema": {}},
+  {"name": "verify_run",      "kind": "orchestrate", "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "sync_check",      "kind": "orchestrate", "idempotent": true,  "inputSchema": {}, "outputSchema": {}},
+  {"name": "render",          "kind": "orchestrate", "idempotent": false, "inputSchema": {}, "outputSchema": {}},
+  {"name": "export_jianying", "kind": "orchestrate", "idempotent": false, "inputSchema": {}, "outputSchema": {}}
+ ]
+}

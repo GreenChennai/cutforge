@@ -1,0 +1,69 @@
+{
+ "version": 1,
+ "source": "03_assets/tts/manifest.json",
+ "detector": {
+  "version": "cutflow-1.1",
+  "params": {
+   "silenceMinMs": 600,
+   "tailKeepMs": 60,
+   "retakeRatio": 0.6,
+   "confRemove": 0.9,
+   "confReview": 0.6
+  }
+ },
+ "cuts": [
+  {
+   "id": "c001",
+   "inMs": 6000,
+   "outMs": 6900,
+   "reason": "manual",
+   "conf": 1.0,
+   "action": "remove",
+   "note": "人工:删中段空拍",
+   "guard": {
+    "inSilence": true,
+    "outSilence": true,
+    "wordClipped": false,
+    "tailKeepMs": 200,
+    "required": [
+     "inSilence",
+     "outSilence",
+     "wordClipped",
+     "tailKeep"
+    ],
+    "ok": true,
+    "okByReason": true
+   },
+   "text": "空拍 900ms"
+  }
+ ],
+ "keep": [
+  [
+   0,
+   6000
+  ],
+  [
+   6900,
+   11700
+  ]
+ ],
+ "removedMs": 900,
+ "srcTotalMs": 11700,
+ "script": [
+  {
+   "action": "keep",
+   "text": "(空拍已删)"
+  }
+ ],
+ "fromText": {
+  "quote": "空拍",
+  "charsSpan": [
+   4,
+   6
+  ],
+  "ms": [
+   6000,
+   6900
+  ]
+ }
+}

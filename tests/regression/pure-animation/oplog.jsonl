@@ -1,0 +1,1 @@
+{"opId": "op-9101", "ts": "2026-09-17T12:03:00.000+08:00", "actor": {"kind": "agent", "id": "claude"}, "target": {"file": "notes.json", "path": "/items/0"}, "opKind": "insert", "before": null, "after": {"id": "n-0001"}, "baseRev": "rev-11", "rev": 12, "causedBy": ["n-0001"], "summary": "AI 反向提问:冻结帧偏久"}

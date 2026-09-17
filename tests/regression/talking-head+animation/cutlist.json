@@ -1,0 +1,58 @@
+{
+ "version": 1,
+ "source": "01_materials/b.mp4",
+ "detector": {
+  "version": "cutflow-1.1",
+  "params": {
+   "silenceMinMs": 600,
+   "tailKeepMs": 60,
+   "retakeRatio": 0.6,
+   "confRemove": 0.9,
+   "confReview": 0.6
+  }
+ },
+ "cuts": [
+  {
+   "id": "c001",
+   "inMs": 11200,
+   "outMs": 13050,
+   "reason": "retake",
+   "conf": 0.97,
+   "action": "remove",
+   "note": "",
+   "guard": {
+    "inSilence": true,
+    "outSilence": true,
+    "wordClipped": false,
+    "tailKeepMs": 120,
+    "required": [
+     "inSilence",
+     "outSilence",
+     "wordClipped",
+     "tailKeep"
+    ],
+    "ok": true,
+    "okByReason": true
+   },
+   "text": "重录段整段删除"
+  }
+ ],
+ "keep": [
+  [
+   0,
+   11200
+  ],
+  [
+   13050,
+   16200
+  ]
+ ],
+ "removedMs": 1850,
+ "srcTotalMs": 16200,
+ "script": [
+  {
+   "action": "keep",
+   "text": "(重录段已删)"
+  }
+ ]
+}

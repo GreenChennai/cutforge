@@ -1,0 +1,551 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "CutFlow wordline v1(字级对齐时间轴;全片时间唯一真相源,ADR-0011/0030)",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "version",
+  "source",
+  "space",
+  "fps",
+  "chars",
+  "gaps",
+  "sentences",
+  "speakers",
+  "srcDurationMs",
+  "finalDurationMs",
+  "stats",
+  "degraded",
+  "degradeReasons",
+  "charTimingEstimated"
+ ],
+ "properties": {
+  "version": {
+   "const": 1
+  },
+  "source": {
+   "type": "string",
+   "description": "素材/转写稿/tts manifest 路径(透传留痕)"
+  },
+  "space": {
+   "enum": [
+    "source",
+    "final"
+   ],
+   "description": "坐标域:chars[].startMs/endMs 的语义随本字段变化(remap 后置 final,此时 src*Ms 为 remap 前旧值)。任何模块禁止自行换算时间,必须经 map_src_to_final 等价实现"
+  },
+  "fps": {
+   "type": "integer",
+   "minimum": 1
+  },
+  "sampleRate": {
+   "type": "integer",
+   "description": "可选:rules/align.md 示例提及但 rs_align 生产者当前从不写(仅测试构造);保留为可选,不得当必填报"
+  },
+  "chars": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "i",
+     "ch",
+     "startMs",
+     "endMs",
+     "srcStartMs",
+     "srcEndMs",
+     "conf"
+    ],
+    "properties": {
+     "i": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "全局下标,构建时 = len(chars)"
+     },
+     "ch": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1,
+      "description": "单字符;标点/空白也占条目(标点零宽由 smooth 保证,重叠由钳制处理)"
+     },
+     "startMs": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "endMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "构建保底 max(b, a+20);space=final 时为成片域"
+     },
+     "srcStartMs": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "srcEndMs": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "conf": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "真实锚点取 segment conf;句内均分估算恒 0.40;retext 插入字 0.85"
+     },
+     "estimated": {
+      "enum": [
+       true
+      ],
+      "description": "仅句内均分估算的字写 true(真实锚点无此键);与 conf=0.40 共同构成'不可当字级用'的可判定信号"
+     }
+    }
+   }
+  },
+  "gaps": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "after",
+     "ms",
+     "kind"
+    ],
+    "properties": {
+     "after": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "前一个字的 i"
+     },
+     "ms": {
+      "type": "integer",
+      "minimum": 150,
+      "description": "间隔毫秒,≥ GAP_MIN_MS(150) 才成 gap"
+     },
+     "kind": {
+      "enum": [
+       "silence",
+       "pause"
+      ],
+      "description": "≥600ms 为 silence,否则 pause。rules/align.md 提到的 breath 永不出现于 gaps(它是 cutlist 的 reason,文档-代码差异已核,代码为准)"
+     }
+    }
+   }
+  },
+  "sentences": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+     "id",
+     "span",
+     "punc",
+     "text"
+    ],
+    "properties": {
+     "id": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "span": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      },
+      "minItems": 2,
+      "maxItems": 2,
+      "description": "chars 半开区间 [起,止);空句退化为 [0,0]"
+     },
+     "punc": {
+      "type": "string",
+      "description": "句内最后一个句读标点,无则空串"
+     },
+     "text": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "speakers": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "sorted 去重说话人清单(双声源架构 ADR-0006);无说话人时为空数组。注意:chars/sentences 上没有 role/speaker 字段,角色归属只在顶层"
+  },
+  "srcDurationMs": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "源域总时长(含结尾静音)"
+  },
+  "finalDurationMs": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "build 时 = srcDurationMs;remap 时 = sum(keep)"
+  },
+  "stats": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+    "charCount",
+    "coverage",
+    "confMedian"
+   ],
+   "properties": {
+    "charCount": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "非空白硬字数"
+    },
+    "coverage": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 1,
+     "description": "跨度覆盖率;S1 门禁硬约束:≥ 0.99(SKILL.md 阶段表)"
+    },
+    "confMedian": {
+     "type": "number",
+     "minimum": 0,
+     "maximum": 1
+    },
+    "monotonic": {
+     "enum": [
+      true
+     ],
+     "description": "remap 后追加:单调性断言留痕"
+    }
+   }
+  },
+  "degraded": {
+   "type": "boolean",
+   "description": "硬约束:onnx 等后端无字级时间戳时必须为 true;degraded=true 的 wordline 禁止被当作字级对齐结果消费"
+  },
+  "degradeReasons": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "sorted(set) 的降级原因;均分估算时固定含'字级时间戳缺失:句内按均分估算(不可当字级用)'"
+  },
+  "charTimingEstimated": {
+   "type": "boolean",
+   "description": "无字级时间戳、句内均分时为 true;rs_dub --write 显式置 False 并清空 degradeReasons(配音重对齐后)"
+  },
+  "asr": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "仅 --media 路径写入的 ASR 元数据",
+   "required": [
+    "backend",
+    "capabilities",
+    "elapsedSec",
+    "segmentCount",
+    "asrDegraded",
+    "asrDegradeReasons"
+   ],
+   "properties": {
+    "backend": {
+     "type": [
+      "string",
+      "null"
+     ],
+     "description": "pkg / onnx / server / null"
+    },
+    "capabilities": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "charTimestamps",
+      "hotwords",
+      "speaker"
+     ],
+     "properties": {
+      "charTimestamps": {
+       "type": "boolean"
+      },
+      "hotwords": {
+       "type": "boolean"
+      },
+      "speaker": {
+       "type": "boolean"
+      }
+     }
+    },
+    "elapsedSec": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "segmentCount": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "asrDegraded": {
+     "type": "boolean"
+    },
+    "asrDegradeReasons": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "hotwords": {
+     "type": "string",
+     "description": "有 --hotwords/--terms-file 时的热词留痕"
+    }
+   }
+  },
+  "calibration": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "校准痕迹(v0.13 ADR-0030:按音频能量起点校准,系统性偏移在门禁前修掉);必须可审计,故入契约",
+   "required": [
+    "sentences",
+    "snapped",
+    "skipped",
+    "medianBeforeMs",
+    "medianAfterMs"
+   ],
+   "properties": {
+    "sentences": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "snapped": {
+     "type": "integer",
+     "minimum": 0,
+     "description": "修正句数"
+    },
+    "skipped": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "medianBeforeMs": {
+     "type": [
+      "number",
+      "null"
+     ],
+     "description": "null = 无法测(静音素材)"
+    },
+    "medianAfterMs": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "p95BeforeMs": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "windowMs": {
+     "type": "number"
+    },
+    "minShiftMs": {
+     "type": "number"
+    },
+    "shifts": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "charRange",
+       "shiftMs"
+      ],
+      "properties": {
+       "charRange": {
+        "type": "array",
+        "items": {
+         "type": "integer"
+        },
+        "minItems": 2,
+        "maxItems": 2
+       },
+       "shiftMs": {
+        "type": "number"
+       }
+      }
+     }
+    },
+    "note": {
+     "type": "string",
+     "description": "仅静音素材早退分支写(如'音频无可检测的语音能量…');注意:该分支只写 calibration 不写 calibrated"
+    }
+   }
+  },
+  "calibrated": {
+   "enum": [
+    true
+   ],
+   "description": "仅能量修正正常完成时写 true;必须可选(静音早退分支不写)"
+  },
+  "smooth": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "smooth 子命令留痕:标点零宽/重叠钳制/最小宽度修复统计",
+   "required": [
+    "applied",
+    "zeroWidthPunct",
+    "clampedOverlap",
+    "minWidthFixed"
+   ],
+   "properties": {
+    "applied": {
+     "enum": [
+      true
+     ]
+    },
+    "zeroWidthPunct": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "clampedOverlap": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "minWidthFixed": {
+     "type": "integer",
+     "minimum": 0
+    }
+   }
+  },
+  "retext": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "retext 子命令统计(平铺,无嵌套 stats 层,align.md §5)",
+   "required": [
+    "similarity",
+    "replace",
+    "delete",
+    "insert",
+    "editChars",
+    "chars"
+   ],
+   "properties": {
+    "similarity": {
+     "type": "number"
+    },
+    "replace": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "delete": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "insert": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "editChars": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "chars": {
+     "type": "string",
+     "description": "形如 '123->118' 的前后字数"
+    }
+   }
+  },
+  "dub": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "rs_dub align --write 写回的配音对齐报告",
+   "required": [
+    "rows",
+    "medianDriftMs",
+    "p95DriftMs",
+    "needsReview",
+    "source"
+   ],
+   "properties": {
+    "similarity": {
+     "type": "number"
+    },
+    "rows": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "sentence",
+       "estStartMs",
+       "realStartMs",
+       "driftMs",
+       "needsReview"
+      ],
+      "properties": {
+       "sentence": {
+        "type": "string"
+       },
+       "estStartMs": {
+        "type": "number"
+       },
+       "realStartMs": {
+        "type": "number"
+       },
+       "driftMs": {
+        "type": "number"
+       },
+       "needsReview": {
+        "type": "boolean"
+       }
+      }
+     }
+    },
+    "medianDriftMs": {
+     "type": "number"
+    },
+    "p95DriftMs": {
+     "type": "number"
+    },
+    "needsReview": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "sentence",
+       "estStartMs",
+       "realStartMs",
+       "driftMs",
+       "needsReview"
+      ],
+      "properties": {
+       "sentence": {
+        "type": "string"
+       },
+       "estStartMs": {
+        "type": "number"
+       },
+       "realStartMs": {
+        "type": "number"
+       },
+       "driftMs": {
+        "type": "number"
+       },
+       "needsReview": {
+        "type": "boolean"
+       }
+      }
+     }
+    },
+    "source": {
+     "type": "string"
+    }
+   }
+  },
+  "cutlist": {
+   "type": [
+    "string",
+    "integer"
+   ],
+   "description": "remap 子命令写:cutlist.source(路径)或 cutlist.version,留痕'本 final 域 wordline 由哪份 cutlist 映射而来'"
+  }
+ }
+}

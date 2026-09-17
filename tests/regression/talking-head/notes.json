@@ -1,0 +1,42 @@
+{
+ "version": 1,
+ "items": [
+  {
+   "id": "n-0001",
+   "anchor": {
+    "kind": "clip",
+    "ref": "V1-002",
+    "tMs": 12340,
+    "span": {
+     "startMs": 12000,
+     "endMs": 13500
+    }
+   },
+   "body": "这里语速太快，把这一段后面 300ms 的空白再删一点",
+   "author": "user",
+   "state": "open",
+   "createdAt": "2026-09-17T10:00:00+08:00",
+   "tags": [
+    "节奏"
+   ]
+  },
+  {
+   "id": "n-0002",
+   "anchor": {
+    "kind": "track",
+    "ref": "A1",
+    "tMs": 0
+   },
+   "body": "这条音效声音偏大",
+   "author": "user",
+   "state": "resolved",
+   "createdAt": "2026-09-17T10:05:00+08:00",
+   "resolvedBy": {
+    "reply": "音量 0.8→0.6 已改",
+    "opIds": [
+     "op-8821"
+    ]
+   }
+  }
+ ]
+}

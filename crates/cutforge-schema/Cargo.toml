@@ -8,3 +8,8 @@ description = "CutForge 契约层:五份 JSON Schema 的加载、代码生成与
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# ADR-0034:schema pattern 断言所需;契约层最小依赖集 = serde + serde_json + regex
+regex = "1"
+
+[package.metadata.arl]
+core = true

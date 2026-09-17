@@ -159,7 +159,7 @@ def check_repo_size() -> CheckResult:
     if shallow:
         # CI 场景:checkout 是浅克隆,无法二次 clone;改用 pack 体积近似(等价于网络传输量)
         r = subprocess.run(["git", "-C", str(CUTFLOW_REPO), "count-objects", "-v"],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", encoding="utf-8", errors="replace")
         info = dict(line.split(": ") for line in r.stdout.strip().splitlines() if ": " in line)
         total = int(info.get("size-pack", "0")) * 1024  # KB → B
         ok = total <= REPO_SIZE_LIMIT_BYTES
@@ -357,7 +357,7 @@ def check_cargo_schema_tests() -> CheckResult:
     if shutil.which("cargo") is None:
         return CheckResult("cargo-schema-tests", True, False, NO_ENV, "未找到 cargo", {})
     r = subprocess.run(["cargo", "test", "-p", "cutforge-schema", "--quiet"],
-                       capture_output=True, text=True, timeout=1800, cwd=str(REPO_ROOT))
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800, cwd=str(REPO_ROOT))
     tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
     if r.returncode != 0:
         return CheckResult("cargo-schema-tests", True, False, GATE_FAILED,
@@ -484,7 +484,7 @@ CHECKS_M1: dict[str, tuple[Callable[[], CheckResult], bool]] = {
 # ---------------- M2 · Rust 内核 ----------------
 
 def _cargo(args: list[str], timeout: int = 2400) -> subprocess.CompletedProcess:
-    return subprocess.run(["cargo", *args], capture_output=True, text=True,
+    return subprocess.run(["cargo", *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
                           timeout=timeout, cwd=str(REPO_ROOT))
 
 
@@ -694,7 +694,7 @@ def check_bridge_doctor() -> CheckResult:
         return CheckResult("bridge-doctor", True, False, NO_ENV, f"CutFlow 仓库不存在: {CUTFLOW_REPO}", {})
     r = subprocess.run(
         [sys.executable, str(CUTFLOW_REPO / "skills/cutflow/scripts/rs_doctor.py")],
-        capture_output=True, text=True, timeout=300, cwd=str(CUTFLOW_REPO),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, cwd=str(CUTFLOW_REPO),
     )
     try:
         out = json.loads(r.stdout[r.stdout.find("{"):])
@@ -740,7 +740,7 @@ def check_wasm_size() -> CheckResult:
         return CheckResult("wasm-size", True, False, NO_ENV,
                            "未安装 wasm-pack(cargo install wasm-pack --locked)", {})
     r = subprocess.run(["wasm-pack", "build", "crates/cutforge-wasm", "--release", "--target", "web"],
-                       capture_output=True, text=True, timeout=1200, cwd=str(REPO_ROOT))
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1200, cwd=str(REPO_ROOT))
     if r.returncode != 0:
         return CheckResult("wasm-size", True, False, GATE_FAILED, f"wasm-pack 失败: {r.stderr[-300:]}", {})
     import gzip as _gzip
@@ -795,7 +795,7 @@ CHECKS_M5: dict[str, tuple[Callable[[], CheckResult], bool]] = {
 def _parity_results() -> dict:
     """跑(或读缓存)对拍,返回 {name: {ok, detail}}。"""
     r = subprocess.run([sys.executable, str(REPO_ROOT / "tools/parity_check.py")],
-                       capture_output=True, text=True, timeout=1800, cwd=str(REPO_ROOT))
+                       capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800, cwd=str(REPO_ROOT))
     try:
         doc = json.loads(r.stdout[r.stdout.find("{"):])
     except Exception:  # noqa: BLE001
@@ -874,7 +874,7 @@ GITHUB_REPO = os.environ.get("CUTFORGE_GH", "GreenChennai/cutforge")
 
 
 def _gh(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(["gh", *args], capture_output=True, text=True, timeout=300)
+    return subprocess.run(["gh", *args], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300)
 
 
 def check_not_fork() -> CheckResult:
@@ -886,7 +886,7 @@ def check_not_fork() -> CheckResult:
         return CheckResult("not-fork", True, False, NO_ENV, f"仓库不存在或不可访问: {GITHUB_REPO}", {})
     doc = json.loads(r.stdout)
     fork = doc.get("fork")
-    remotes = subprocess.run(["git", "remote", "-v"], capture_output=True, text=True, cwd=str(REPO_ROOT)).stdout
+    remotes = subprocess.run(["git", "remote", "-v"], capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(REPO_ROOT)).stdout
     has_upstream = "upstream" in remotes
     if fork or has_upstream:
         return CheckResult("not-fork", True, False, GATE_FAILED,

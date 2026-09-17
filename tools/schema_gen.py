@@ -15,6 +15,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +43,10 @@ import json
 import re
 import sys
 from pathlib import Path
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 SCHEMAS = json.loads(r{SQS}{SCHEMAS}{SQS})
 

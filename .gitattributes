@@ -1,3 +1,4 @@
 * text=auto eol=lf
+LICENSE-OPENCUT.MIT -text
 *.png binary
 *.ico binary

@@ -6,7 +6,6 @@ jobs:
     runs-on: windows-latest
     env:
       PYTHONUTF8: "1"
-    env:
       # 跨仓检查(repo-size / tests-layout)依赖 CutFlow 仓库
       CUTFLOW_REPO: ${{ github.workspace }}/../CutFlow
     steps:

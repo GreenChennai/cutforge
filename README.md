@@ -33,7 +33,7 @@ M0–M3 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 
 ## 开发
 
-工具链与上游 OpenCut 保持一致（`proto` + `moon` + `bun` + `rust 1.97.0`，edition 2024），保留未来接口层回流上游的可能。
+工具链与上游 OpenCut 保持一致（`proto` + `moon` + `bun` + `rust 1.97.0`，edition 2024），保留未来接口层回流上游的可能。**整体流程与工作区地图见 [docs/FLOW.md](docs/FLOW.md)。**
 
 ```bash
 # 门禁(统一完成判定入口,人眼判断不作为通过依据)

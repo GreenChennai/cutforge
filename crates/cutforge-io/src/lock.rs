@@ -27,16 +27,13 @@ pub fn acquire(root: &Path, stale_after_ms: u64, retries: u32) -> io::Result<Loc
             Ok(()) => return Ok(LockGuard { path }),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 // 死锁残留(时间戳超过阈值)→ 接管,不计入重试次数
-                if let Ok(meta) = fs::read(&path) {
-                    if let Ok(text) = String::from_utf8(meta) {
-                        if let Some(ts) = text.split(" ts=").nth(1).and_then(|s| s.trim().parse::<u64>().ok()) {
-                            if now_ms().saturating_sub(ts) > stale_after_ms {
+                if let Ok(meta) = fs::read(&path)
+                    && let Ok(text) = String::from_utf8(meta)
+                        && let Some(ts) = text.split(" ts=").nth(1).and_then(|s| s.trim().parse::<u64>().ok())
+                            && now_ms().saturating_sub(ts) > stale_after_ms {
                                 let _ = crate::atomic::remove(&path);
                                 continue;
                             }
-                        }
-                    }
-                }
                 if attempt == retries {
                     return Err(io::Error::new(io::ErrorKind::AlreadyExists, "工程被其他进程锁定"));
                 }

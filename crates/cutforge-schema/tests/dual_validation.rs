@@ -111,9 +111,8 @@ fn dual_validation_equivalence() {
 fn dual_negative_injection_agrees() {
     // 注入非法字段与非法枚举:双端都必须拒绝
     let dir = &regression_dirs()[0];
-    let mut project = read_json(&dir.join("project.json"));
+    let project = read_json(&dir.join("project.json"));
     let migrated = migrate_project(&project);
-    drop(&mut project);
     let mut bad = migrated;
     bad["bogusField"] = Value::String("x".into());
     assert!(!validate("project", &bad).is_empty());

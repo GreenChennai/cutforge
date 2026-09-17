@@ -16,7 +16,7 @@ pub mod timeutil;
 
 pub use command::Command;
 pub use engine::{Answer, ApplyOpts, Engine, OpReceipt, Query, Reject};
-pub use model::{Backend, Canvas, Clip, ClipKind, Motion, Project, Ratio, Role, Track, TrackKind};
+pub use model::{Backend, Canvas, Clip, Motion, Project, Ratio, Role, Track, TrackKind};
 pub use notes::{Note, NotesStore};
 pub use oplog::{Actor, ActorKind, Op, OpLog};
 

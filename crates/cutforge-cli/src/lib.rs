@@ -21,7 +21,7 @@ fn emit(json: bool, ok: bool, code: &str, message: &str, data: serde_json::Value
     }
     match code {
         "NO_ENV" => EXIT_ENV,
-        c if c == "OK" => EXIT_OK,
+        "OK" => EXIT_OK,
         _ => EXIT_FAIL,
     }
 }
@@ -212,9 +212,6 @@ pub fn run(argv: Vec<String>) -> i32 {
     }
 }
 
-/// M2-4 判定器:文件写入 API 只允许出现在 cutforge-io 的 atomic.rs(唯一落盘点)。
-/// 注意:模式串在此处拼接构造,避免本文件自匹配。
-
 // ---------- 标注与冲突(计划书 4.9 / 4.7) ----------
 
 fn notes_list(a: &Args) -> i32 {
@@ -235,7 +232,7 @@ fn notes_add(a: &Args) -> i32 {
     let usage = "用法: notes-add <工程目录> --kind clip --ref V1-001 --t-ms 4000 --body \"...\" [--author user] [--tag 节奏]";
     let Some(root) = a.positional.first() else { return emit(a.json, false, "USAGE", usage, serde_json::json!({})) };
     let kind = a.flags.get("kind").cloned().unwrap_or_else(|| "clip".into());
-    let ref_id = a.flags.get("ref").filter(|s| !s.is_empty()).map(|s| s.clone());
+    let ref_id = a.flags.get("ref").filter(|s| !s.is_empty()).cloned();
     let t_ms: u64 = a.flags.get("t-ms").and_then(|s| s.parse().ok()).unwrap_or(0);
     let body = a.flags.get("body").cloned().unwrap_or_default();
     if body.is_empty() {
@@ -252,7 +249,7 @@ fn notes_add(a: &Args) -> i32 {
         },
         Err(_) => return emit(a.json, false, "USAGE", "kind 解析失败", serde_json::json!({})),
     };
-    let anchor = cutforge_core::anchor::Anchor { kind: anchor_kind, ref_: ref_id, t_ms: t_ms, span: None };
+    let anchor = cutforge_core::anchor::Anchor { kind: anchor_kind, ref_: ref_id, t_ms, span: None };
     let author = match a.flags.get("author").map(|s| s.as_str()) {
         Some("agent") => cutforge_core::notes::NoteAuthor::Agent,
         _ => cutforge_core::notes::NoteAuthor::User,
@@ -310,6 +307,8 @@ fn conflicts_list(a: &Args) -> i32 {
     }
 }
 
+/// M2-4 判定器:文件写入 API 只允许出现在 cutforge-io 的 atomic.rs(唯一落盘点)。
+/// 注意:模式串在此处拼接构造,避免本文件自匹配。
 fn check_write_paths(json: bool) -> i32 {
     let root = repo_root();
     let pats: Vec<String> = vec![
@@ -406,18 +405,17 @@ fn check_deps(json: bool) -> i32 {
                 in_deps = t == "[dependencies]";
                 continue;
             }
-            if in_deps && t.starts_with("cutforge-") {
-                if let Some((dep, _)) = t.split_once('=') {
+            if in_deps && t.starts_with("cutforge-")
+                && let Some((dep, _)) = t.split_once('=') {
                     edges.push((name.clone(), dep.trim().to_string()));
                 }
-            }
         }
     }
     let mut violations: Vec<serde_json::Value> = Vec::new();
     for (from, to) in &edges {
         let ok = allowed
             .get(from.as_str())
-            .is_some_and(|list| list.iter().any(|d| d == &to));
+            .is_some_and(|list| list.iter().any(|d| d == to));
         if !ok {
             violations.push(serde_json::json!({"from": from, "to": to}));
         }
@@ -430,7 +428,3 @@ fn check_deps(json: bool) -> i32 {
     }
 }
 
-fn main() {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    std::process::exit(run(argv));
-}

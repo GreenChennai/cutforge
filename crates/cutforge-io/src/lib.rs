@@ -3,6 +3,7 @@
 //! 唯一写入路径(4.2 八步,本文件为编排者;所有落盘经 `atomic::atomic_write`):
 //! 1. 申请工程锁 → 2/3. Engine 校验前置与不变量 → 4. Op 追加 oplog →
 //! 5. 新内容生成 → 6. 原子写入 project.json → 7. rev 落盘 → 8. 释放锁。
+//!
 //! `.cutforge/` 可安全删除重建(仅丢同步历史)——`workspace_state_rebuildable` 测试保证。
 
 pub mod atomic;
@@ -17,7 +18,7 @@ use cutforge_core::command::Command;
 use cutforge_core::engine::{ApplyOpts, Engine, OpReceipt};
 use cutforge_core::merge::{Conflict, ConflictCode, MergeOutcome};
 use cutforge_core::model::Project;
-use cutforge_core::notes::{Note, NoteAuthor, NoteReject, NotesStore};
+use cutforge_core::notes::{NoteAuthor, NoteReject, NotesStore};
 use cutforge_core::oplog::{Actor, Op, OpKind, OpLog};
 use cutforge_core::anchor::Anchor;
 use std::io;
@@ -91,13 +92,11 @@ impl Workspace {
         // rev 对账:文件 rev < oplog rev → 上次写入中断,以 oplog 为准修复
         let rev_path = root.join(".cutforge/rev");
         let mut rev = log.last_rev().unwrap_or(0);
-        if let Ok(text) = std::fs::read_to_string(&rev_path) {
-            if let Ok(disk_rev) = text.trim().parse::<u64>() {
-                if disk_rev > rev {
+        if let Ok(text) = std::fs::read_to_string(&rev_path)
+            && let Ok(disk_rev) = text.trim().parse::<u64>()
+                && disk_rev > rev {
                     rev = disk_rev;
                 }
-            }
-        }
         let undo_stack: Vec<String> = cutforge_core::engine::rebuild_undo_stack(log.ops());
         let persisted = log.len();
         let engine = Engine::restore(project, log, rev, undo_stack)
@@ -132,27 +131,24 @@ impl Workspace {
     /// 命令接口(唯一写入口的 IO 编排,4.2 八步);成功后联动标注重定位(4.9)。
     pub fn apply(&mut self, cmd: Command, actor: Actor, opts: ApplyOpts) -> io::Result<OpReceipt> {
         let _guard = lock::acquire(&self.root, 30_000, 20)?;
-        let before_project = self.engine.project().clone();
-        let receipt = self.engine.apply(cmd, actor.clone(), opts).map_err(reject_to_io)?;
-        self.sync_notes_after_change(&before_project, actor)?;
+                let receipt = self.engine.apply(cmd, actor.clone(), opts).map_err(reject_to_io)?;
+        self.sync_notes_after_change(actor)?;
         self.persist()?;
         Ok(receipt)
     }
 
     pub fn undo(&mut self, actor: Actor) -> io::Result<OpReceipt> {
         let _guard = lock::acquire(&self.root, 30_000, 20)?;
-        let before_project = self.engine.project().clone();
-        let receipt = self.engine.undo(actor.clone()).map_err(reject_to_io)?;
-        self.sync_notes_after_change(&before_project, actor)?;
+                let receipt = self.engine.undo(actor.clone()).map_err(reject_to_io)?;
+        self.sync_notes_after_change(actor)?;
         self.persist()?;
         Ok(receipt)
     }
 
     pub fn redo(&mut self, actor: Actor) -> io::Result<OpReceipt> {
         let _guard = lock::acquire(&self.root, 30_000, 20)?;
-        let before_project = self.engine.project().clone();
-        let receipt = self.engine.redo(actor.clone()).map_err(reject_to_io)?;
-        self.sync_notes_after_change(&before_project, actor)?;
+                let receipt = self.engine.redo(actor.clone()).map_err(reject_to_io)?;
+        self.sync_notes_after_change(actor)?;
         self.persist()?;
         Ok(receipt)
     }
@@ -179,7 +175,7 @@ impl Workspace {
         Ok(note_id)
     }
 
-    /// 结案回执(绑定 opIds;幂等)。
+    /// 结案回执(绑定 opIds;同内容重复结案视为幂等成功,其余错误如实上报)。
     pub fn notes_resolve(
         &mut self,
         note_id: &str,
@@ -190,10 +186,10 @@ impl Workspace {
         let before = self.notes.to_value();
         match self.notes.resolve(note_id, reply, op_ids) {
             Ok(_) => {}
-            Err(NoteReject::UnknownNote(_)) => {
-                return Err(io::Error::new(io::ErrorKind::NotFound, format!("标注不存在: {note_id}")))
+            Err(NoteReject::AlreadyResolved(_)) => return Ok(()), // 幂等回执
+            Err(e) => {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("REJECTED: {e:?}")))
             }
-            Err(_) => return Ok(()), // 已按相同内容结案 → 幂等
         }
         self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 结案"), None)?;
         Ok(())
@@ -207,8 +203,7 @@ impl Workspace {
     }
 
     /// apply/undo/redo 成功后:open 态标注按 3.6 规则重定位;有变化则落盘并留痕。
-    fn sync_notes_after_change(&mut self, before_project: &Project, actor: Actor) -> io::Result<()> {
-        let _ = before_project;
+    fn sync_notes_after_change(&mut self, actor: Actor) -> io::Result<()> {
         let before = self.notes.to_value();
         let (moved, orphaned) = self.notes.relocate_all(self.engine.project(), 500);
         if moved > 0 || orphaned > 0 {
@@ -219,8 +214,6 @@ impl Workspace {
                 format!("锚点重定位:跟随/重挂 {moved},转孤儿 {orphaned}"),
                 None,
             )?;
-        } else {
-            self.notes_dirty = false;
         }
         Ok(())
     }
@@ -234,7 +227,11 @@ impl Workspace {
         caused_by: Option<Vec<String>>,
     ) -> io::Result<()> {
         let after = self.notes.to_value();
-        let opts = ApplyOpts { caused_by: caused_by.unwrap_or_default(), ..Default::default() };
+        let opts = ApplyOpts {
+            caused_by: caused_by.unwrap_or_default(),
+            summary: Some(summary),
+            ..Default::default()
+        };
         self.engine
             .record_file_change("notes.json", "/items", before.clone(), after, kind, actor, opts)
             .map_err(reject_to_io)?;
@@ -310,7 +307,11 @@ impl Workspace {
                             return Err(vec![(id, c)]);
                         }
                     };
-                    let new_engine = match Engine::new(project) {
+                    // 采纳外部改动:保留 OpLog/rev/撤销栈的历史连续性(不得重置 rev)
+                    let log = self.engine.oplog().clone();
+                    let undo_stack =
+                        cutforge_core::engine::rebuild_undo_stack(log.ops());
+                    let new_engine = match Engine::restore(project, log, self.engine.rev(), undo_stack) {
                         Ok(e) => e,
                         Err(errs) => {
                             let c = Conflict {
@@ -325,7 +326,6 @@ impl Workspace {
                         }
                     };
                     self.engine = new_engine;
-                    self.notes = NotesStore::new();
                     self.persisted = self.engine.oplog().len();
                     let _ = self.persist();
                     Ok(Some(self.engine.rev()))
@@ -370,11 +370,10 @@ impl Workspace {
     fn persist(&mut self) -> io::Result<()> {
         let ops = self.engine.oplog().ops();
         // 备份旧 project.json(全局约定 B.8:可回滚)
-        if self.persisted == 0 || self.persisted < ops.len() {
-            if let Ok(old) = std::fs::read(self.root.join(PROJECT_REL)) {
+        if (self.persisted == 0 || self.persisted < ops.len())
+            && let Ok(old) = std::fs::read(self.root.join(PROJECT_REL)) {
                 backup::backup_file(&self.root, PROJECT_REL, &old)?;
             }
-        }
         let value = self.engine.query(cutforge_core::engine::Query::ProjectView);
         let cutforge_core::engine::Answer::Project(ref v) = value else { unreachable!() };
         let mut buf = serde_json::to_vec_pretty(v)?;
@@ -441,9 +440,9 @@ fn reject_to_io(r: cutforge_core::engine::Reject) -> io::Error {    use cutforge
     io::Error::new(kind, msg)
 }
 
-/// UTC 紧凑日期 YYYYMMDD(oplog 按天切分)。
+/// UTC 紧凑日期 YYYYMMDD(oplog 按天切分;算法唯一来源 core::timeutil)。
 fn today_compact() -> String {
-    cutforge_core::timeutil::now_rfc3339()[..10].replace('-', "")
+    cutforge_core::timeutil::now_date_compact()
 }
 
 #[cfg(test)]

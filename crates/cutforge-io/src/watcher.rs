@@ -86,7 +86,7 @@ impl Watcher {
                 _ => {}
             }
         }
-        for (rel, _) in self.last.iter() {
+        for rel in self.last.keys() {
             if !cur.contains_key(rel) {
                 events.push((rel.clone(), EventKind::Removed));
             }

@@ -77,11 +77,10 @@ pub fn relocate(project: &Project, anchor: &Anchor, nearest_ms: u64) -> Relocati
             return Relocation { state: AnchorState::Resolved, anchor: anchor.clone(), orphan_reason: None };
         }
         AnchorKind::Track => {
-            if let Some(id) = anchor.ref_.as_deref() {
-                if project.find_track(id).is_some() {
+            if let Some(id) = anchor.ref_.as_deref()
+                && project.find_track(id).is_some() {
                     return Relocation { state: AnchorState::Resolved, anchor: anchor.clone(), orphan_reason: None };
                 }
-            }
             return Relocation {
                 state: AnchorState::Orphan,
                 anchor: anchor.clone(),
@@ -111,11 +110,7 @@ pub fn relocate(project: &Project, anchor: &Anchor, nearest_ms: u64) -> Relocati
             let end = c.start_ms + c.duration_ms;
             let dist = if anchor.t_ms < c.start_ms {
                 c.start_ms - anchor.t_ms
-            } else if anchor.t_ms > end {
-                anchor.t_ms - end
-            } else {
-                0
-            };
+            } else { anchor.t_ms.saturating_sub(end) };
             if dist <= nearest_ms && best.map(|(d, _)| dist < d).unwrap_or(true) {
                 best = Some((dist, (ti, ci)));
             }

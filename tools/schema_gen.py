@@ -243,7 +243,10 @@ def build_generated() -> str:
             raise FileNotFoundError(f"schema 缺失: {p}")
         schemas[name] = json.loads(p.read_text("utf-8"))
     payload = json.dumps(schemas, ensure_ascii=False, sort_keys=True)
-    return TEMPLATE.format(SCHEMAS=payload, SQS="'''" if "'''" not in payload else "```")
+    if "'''" in payload:
+        # 原始三引号字符串无法安全承载;契约描述里出现 ''' 属于契约缺陷,拒绝生成
+        raise ValueError("schema 描述包含 ''' 字符,请改写描述后再生成")
+    return TEMPLATE.format(SCHEMAS=payload, SQS="'''")
 
 
 def main(argv: list[str] | None = None) -> int:

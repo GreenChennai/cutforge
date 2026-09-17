@@ -143,23 +143,20 @@ impl Engine {
     /// 命令接口:唯一写入口。
     pub fn apply(&mut self, cmd: Command, actor: Actor, opts: ApplyOpts) -> Result<OpReceipt, Reject> {
         // 幂等 1:request_id 去重(非幂等写操作,计划书 5.2)
-        if let Some(rid) = opts.request_id.as_deref() {
-            if self.log.has_request_id(rid) {
+        if let Some(rid) = opts.request_id.as_deref()
+            && self.log.has_request_id(rid) {
                 return Ok(OpReceipt { op_ids: Vec::new(), rev: self.rev, idempotent: true });
             }
-        }
         // 前置条件:相对 baseRev 已失效 → 拒绝(不存在静默覆盖)
-        if let Some(expect) = opts.expect_rev {
-            if expect != self.rev {
+        if let Some(expect) = opts.expect_rev
+            && expect != self.rev {
                 return Err(Reject::PreconditionFailed { expected: expect, actual: self.rev });
             }
-        }
         // 幂等 2:显式 op_id 已存在 → 原样回执
-        if let Some(id) = opts.op_id.as_deref() {
-            if self.log.ops().iter().any(|o| o.op_id == id) {
+        if let Some(id) = opts.op_id.as_deref()
+            && self.log.ops().iter().any(|o| o.op_id == id) {
                 return Ok(OpReceipt { op_ids: vec![id.to_string()], rev: self.rev, idempotent: true });
             }
-        }
 
         let snapshot = self.project.clone();
         let outcome = self.mutate(cmd.clone());
@@ -304,6 +301,8 @@ impl Engine {
 
     /// 非 project.json 真相源(notes.json 等)的变更登记:进 OpLog 审计链、
     /// 升 rev,但不改工程文档(工程文档只能走 `apply`)。
+    // 参数与 Op 字段一一对应(显式契约面),收拢成结构体反而遮蔽字段名。
+    #[allow(clippy::too_many_arguments)]
     pub fn record_file_change(
         &mut self,
         file: &str,
@@ -320,16 +319,14 @@ impl Engine {
         if !KNOWN.contains(&file) {
             return Err(Reject::InvariantViolation(format!("未知真相源文件: {file}")));
         }
-        if let Some(rid) = opts.request_id.as_deref() {
-            if self.log.has_request_id(rid) {
+        if let Some(rid) = opts.request_id.as_deref()
+            && self.log.has_request_id(rid) {
                 return Ok(OpReceipt { op_ids: Vec::new(), rev: self.rev, idempotent: true });
             }
-        }
-        if let Some(expect) = opts.expect_rev {
-            if expect != self.rev {
+        if let Some(expect) = opts.expect_rev
+            && expect != self.rev {
                 return Err(Reject::PreconditionFailed { expected: expect, actual: self.rev });
             }
-        }
         if before == after {
             return Ok(OpReceipt { op_ids: Vec::new(), rev: self.rev, idempotent: true });
         }

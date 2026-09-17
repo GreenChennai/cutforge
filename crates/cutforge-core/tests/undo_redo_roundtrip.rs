@@ -87,7 +87,6 @@ fn random_walk_undo_reduces_to_initial() {
     let mut applied = 0usize;
     for _ in 0..50 {
         let which = (lcg() as usize) % targets.len();
-        let dur = 100 + lcg() % 2000;
         let cmd = match (lcg() as usize) % 3 {
             0 => Command::ClipUpdate {
                 clip_id: targets[which].into(),
@@ -96,8 +95,11 @@ fn random_walk_undo_reduces_to_initial() {
             1 => Command::ClipSplit { clip_id: targets[which].into(), t_ms: 100 + lcg() % 1000 },
             _ => Command::ClipMove { clip_id: targets[which].into(), new_start_ms: lcg() % 500, to_track: None },
         };
-        if eng.apply(cmd, agent(), ApplyOpts::default()).is_ok() {
-            applied += 1;
+        // 幂等短路(无实际变化)的 Op 不进撤销栈,不计入 undo 次数
+        if let Ok(r) = eng.apply(cmd, agent(), ApplyOpts::default()) {
+            if !r.idempotent {
+                applied += 1;
+            }
         }
     }
     for _ in 0..applied {
@@ -105,5 +107,4 @@ fn random_walk_undo_reduces_to_initial() {
     }
     assert_eq!(eng.state_hash(), initial_hash, "{applied} 次操作后全部 undo 必须还原");
     assert_eq!(eng.rev(), (applied * 2) as u64);
-    let _ = &mut lcg;
 }

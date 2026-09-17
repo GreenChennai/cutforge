@@ -37,6 +37,9 @@ impl ClipPatch {
 }
 
 /// 高层命令(M2 集合;编排类命令 stage_run/render 等属于 MCP 层,不进内核)。
+// ClipPatch 携带九个可选字段导致变体尺寸差;命令按值传递、调用频率为人类编辑量级,
+// 装箱反而增加分配,故保留内联。
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     /// 改片段属性(幂等:同 patch 重复应用结果一致)。
@@ -51,20 +54,6 @@ pub enum Command {
     ClipInsert { to_track: String, clip: Clip, request_id: Option<String> },
     /// 合并相邻两片段(left 在前且边界相接;无损逆操作)。
     ClipMerge { left_id: String, right_id: String },
-}
-
-/// 命令对应的 opKind(计划书 3.7)。
-pub fn op_kind_of(cmd: &Command) -> crate::oplog::OpKind {
-    use crate::oplog::OpKind;
-    use Command::*;
-    match cmd {
-        ClipUpdate { .. } => OpKind::Set,
-        ClipInsert { .. } => OpKind::Insert,
-        ClipDelete { .. } => OpKind::Delete,
-        ClipMove { .. } => OpKind::Move,
-        ClipSplit { .. } => OpKind::Split,
-        ClipMerge { .. } => OpKind::Merge,
-    }
 }
 
 /// 从 patch 派生的字段级变更(指针片段 → before/after),用于生成叶级 Op。
@@ -133,7 +122,7 @@ fn json_num(v: u64) -> Value {
 }
 
 fn opt_json_num(v: Option<u64>) -> Value {
-    v.map(|n| json_num(n)).unwrap_or(Value::Null)
+    v.map(json_num).unwrap_or(Value::Null)
 }
 
 fn json_f64(v: f64) -> Value {

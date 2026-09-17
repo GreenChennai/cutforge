@@ -33,7 +33,7 @@ fn gen_doc(rng: &mut Rng) -> Value {
         .map(|i| {
             json!({
                 "id": format!("V1-{i:03}"),
-                "startMs": (i * 100) as u64,
+                "startMs": (i * 100),
                 "durationMs": 80 + rng.below(40),
                 "volume": 1,
             })
@@ -210,7 +210,7 @@ fn conflicts_all_detected() {
         "迭代 {ITERATIONS}:静默覆盖 {silent_overwrites};分歧场景检出 {divergent_checked}(冲突值样本 {divergent_detected});id 集混合 {mixed_id_sets}"
     );
     assert_eq!(silent_overwrites, 0, "静默覆盖必须为 0(北极星指标)");
-    assert!(ITERATIONS >= 10_000);
+    const { assert!(ITERATIONS >= 10_000) }
 }
 
 fn leaves_of(v: &Value) -> BTreeMap<String, Value> {

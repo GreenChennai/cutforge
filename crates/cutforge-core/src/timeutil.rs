@@ -24,6 +24,18 @@ pub fn format_unix_ms(ms: u64) -> String {
     )
 }
 
+
+/// 当前 UTC 紧凑日期 `YYYYMMDD`(oplog 按天切分的文件名;全仓唯一日期算法出口)。
+pub fn now_date_compact() -> String {
+    now_rfc3339()[..10].replace('-', "")
+}
+
+/// 当前 UTC 紧凑日期时间 `YYYYMMDD-HHMMSS`(备份目录名;同上唯一出口)。
+pub fn now_datetime_compact() -> String {
+    let s = now_rfc3339();
+    format!("{}-{}", s[..10].replace('-', ""), s[11..19].replace(':', ""))
+}
+
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
@@ -53,6 +65,18 @@ mod tests {
     fn leap_day() {
         // 2024-02-29T12:00:00Z = 1709208000
         assert_eq!(format_unix_ms(1_709_208_000_000), "2024-02-29T12:00:00.000Z");
+    }
+
+    #[test]
+    fn compact_variants() {
+        assert_eq!(
+            { let s = format_unix_ms(1_789_603_200_123); s[..10].replace('-', "") + "-" + &s[11..19].replace(':', "") },
+            "20260917-000000"
+        );
+        let d = now_date_compact();
+        assert_eq!(d.len(), 8);
+        let dt = now_datetime_compact();
+        assert_eq!(dt.len(), 15, "YYYYMMDD-HHMMSS");
     }
 
     #[test]

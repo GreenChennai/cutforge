@@ -4,8 +4,7 @@
 //! 供 Rust 侧校验与 v1→v2 迁移;与 Python 生成校验器(tools/_generated/cf_validate.py)
 //! 双端对拍(M1-3)。不含业务逻辑;不内联第二份常量表(常量经 constants.ratios.json)。
 //!
-//! schema 文件在编译期经 `schemas!` 宏 include_str! 嵌入;build.rs 校验其存在性,
-//! 生成物不得手工编辑。
+//! schema 文件在编译期经 include_str! 嵌入 `SCHEMA_SOURCES`;build.rs 校验其存在性。
 
 pub mod engine;
 pub mod migrate;

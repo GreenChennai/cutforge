@@ -79,16 +79,6 @@ pub struct Op {
     pub request_id: Option<String>,
 }
 
-impl Op {
-    /// 逆 Op(用于 undo):before↔after 互换,kind 映射 undo/redo 由引擎决定。
-    pub fn inverted(&self) -> Op {
-        let mut op = self.clone();
-        op.before = self.after.clone();
-        op.after = self.before.clone();
-        op
-    }
-}
-
 /// OpLog:内存中的追加式序列;持久化(.jsonl)由 cutforge-io 负责。
 #[derive(Debug, Clone, Default)]
 pub struct OpLog {
@@ -143,11 +133,10 @@ impl OpLog {
         if self.seen.contains(&op.op_id) {
             return false;
         }
-        if let Some(n) = op.op_id.strip_prefix("op-").and_then(|s| s.parse::<u64>().ok()) {
-            if n >= self.next_op {
+        if let Some(n) = op.op_id.strip_prefix("op-").and_then(|s| s.parse::<u64>().ok())
+            && n >= self.next_op {
                 self.next_op = n + 1;
             }
-        }
         self.seen.insert(op.op_id.clone());
         self.ops.push(op);
         true
@@ -223,11 +212,4 @@ mod tests {
         assert_eq!(log.last_rev(), Some(2));
     }
 
-    #[test]
-    fn inverted_swaps_before_after() {
-        let op = mk("op-1", 0, ActorKind::User);
-        let inv = op.inverted();
-        assert_eq!(inv.before, op.after);
-        assert_eq!(inv.after, op.before);
-    }
 }

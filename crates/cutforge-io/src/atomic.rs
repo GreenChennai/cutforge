@@ -62,8 +62,3 @@ pub fn create_exclusive(path: &Path, data: &[u8]) -> io::Result<()> {
 pub fn remove(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
-
-/// 读文件(只读 API 不限位置,列在这里仅为统一入口)。
-pub fn read(path: &Path) -> io::Result<Vec<u8>> {
-    fs::read(path)
-}

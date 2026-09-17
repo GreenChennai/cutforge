@@ -46,18 +46,16 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
     let mut errors: Vec<String> = Vec::new();
     let schema = resolve(schema, root);
 
-    if let Some(c) = schema.get("const") {
-        if c != data {
+    if let Some(c) = schema.get("const")
+        && c != data {
             errors.push(format!("{path}: const 期望 {c} 实际 {data}"));
             return errors;
         }
-    }
-    if let Some(en) = schema.get("enum").and_then(Value::as_array) {
-        if !en.contains(data) {
+    if let Some(en) = schema.get("enum").and_then(Value::as_array)
+        && !en.contains(data) {
             errors.push(format!("{path}: enum {en:?} 不含 {data}"));
             return errors;
         }
-    }
     if let Some(t) = schema.get("type") {
         let ok = match t {
             Value::String(s) => type_matches(&[s.as_str()], data),
@@ -74,29 +72,25 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
     }
 
     for (key, op) in [("minimum", std::cmp::Ordering::Less), ("maximum", std::cmp::Ordering::Greater)] {
-        if let (Some(limit), Some(d)) = (schema.get(key).and_then(num_of), num_of(data)) {
-            if d.partial_cmp(&limit) == Some(op) {
+        if let (Some(limit), Some(d)) = (schema.get(key).and_then(num_of), num_of(data))
+            && d.partial_cmp(&limit) == Some(op) {
                 errors.push(format!("{path}: {key} {limit} 实际 {d}"));
             }
-        }
     }
-    if let (Some(limit), Some(d)) = (schema.get("exclusiveMinimum").and_then(num_of), num_of(data)) {
-        if d <= limit {
+    if let (Some(limit), Some(d)) = (schema.get("exclusiveMinimum").and_then(num_of), num_of(data))
+        && d <= limit {
             errors.push(format!("{path}: exclusiveMinimum {limit} 实际 {d}"));
         }
-    }
 
     if let Some(s) = data.as_str() {
-        if let Some(min) = schema.get("minLength").and_then(Value::as_u64) {
-            if (s.chars().count() as u64) < min {
+        if let Some(min) = schema.get("minLength").and_then(Value::as_u64)
+            && (s.chars().count() as u64) < min {
                 errors.push(format!("{path}: minLength {min} 实际长度 {}", s.chars().count()));
             }
-        }
-        if let Some(max) = schema.get("maxLength").and_then(Value::as_u64) {
-            if (s.chars().count() as u64) > max {
+        if let Some(max) = schema.get("maxLength").and_then(Value::as_u64)
+            && (s.chars().count() as u64) > max {
                 errors.push(format!("{path}: maxLength {max} 实际长度 {}", s.chars().count()));
             }
-        }
         if let Some(pat) = schema.get("pattern").and_then(Value::as_str) {
             let re = regex::Regex::new(pat).expect("schema pattern 必须合法");
             if !re.is_match(s) {
@@ -106,16 +100,14 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
     }
 
     if let Some(arr) = data.as_array() {
-        if let Some(min) = schema.get("minItems").and_then(Value::as_u64) {
-            if (arr.len() as u64) < min {
+        if let Some(min) = schema.get("minItems").and_then(Value::as_u64)
+            && (arr.len() as u64) < min {
                 errors.push(format!("{path}: minItems {min} 实际 {}", arr.len()));
             }
-        }
-        if let Some(max) = schema.get("maxItems").and_then(Value::as_u64) {
-            if (arr.len() as u64) > max {
+        if let Some(max) = schema.get("maxItems").and_then(Value::as_u64)
+            && (arr.len() as u64) > max {
                 errors.push(format!("{path}: maxItems {max} 实际 {}", arr.len()));
             }
-        }
         if let Some(item) = schema.get("items").filter(|v| v.is_object()) {
             for (i, el) in arr.iter().enumerate() {
                 errors.extend(validate_node(item, root, el, &format!("{path}[{i}]")));
@@ -146,9 +138,9 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
     }
 
     // ---- 自定义跨字段断言(与 Python 引擎一致) ----
-    if schema.get("x-removeRequiresGuardOk") == Some(&Value::Bool(true)) {
-        if let Some(obj) = data.as_object() {
-            if obj.get("action").and_then(Value::as_str) == Some("remove") {
+    if schema.get("x-removeRequiresGuardOk") == Some(&Value::Bool(true))
+        && let Some(obj) = data.as_object()
+            && obj.get("action").and_then(Value::as_str) == Some("remove") {
                 let guard = obj.get("guard");
                 match guard.and_then(Value::as_object) {
                     None => errors.push(format!("{path}: action=remove 但 guard 为空(guard_passed 视为未过)")),
@@ -166,11 +158,9 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
                     }
                 }
             }
-        }
-    }
-    if schema.get("x-keepCoversTimeline") == Some(&Value::Bool(true)) {
-        if let Some(obj) = data.as_object() {
-            if let (Some(keep), Some(total)) =
+    if schema.get("x-keepCoversTimeline") == Some(&Value::Bool(true))
+        && let Some(obj) = data.as_object()
+            && let (Some(keep), Some(total)) =
                 (obj.get("keep").and_then(Value::as_array), obj.get("srcTotalMs").and_then(Value::as_i64))
             {
                 let mut cur: i64 = 0;
@@ -193,8 +183,6 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
                     errors.push(format!("{path}: keep 覆盖到 {cur} ≠ srcTotalMs {total}"));
                 }
             }
-        }
-    }
     errors
 }
 

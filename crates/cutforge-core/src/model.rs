@@ -43,17 +43,6 @@ pub enum Ratio {
     SixteenByNine,
 }
 
-/// 封闭枚举(videoType):`talking-head` / `talking-head+animation` / `pure-animation`。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ClipKind {
-    #[serde(rename = "talking-head")]
-    TalkingHead,
-    #[serde(rename = "talking-head+animation")]
-    TalkingHeadAnimation,
-    #[serde(rename = "pure-animation")]
-    PureAnimation,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Canvas {
     pub width: u32,

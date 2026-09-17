@@ -190,13 +190,13 @@ fn merge_id_array(
         match (bm.get(id), lm.get(id)) {
             (Some(_), Some(_)) => {
                 // 三方都在:递归合并该元素
-                let bv: &Value = *bm.get(id).unwrap();
-                let lv: &Value = *lm.get(id).unwrap();
+                let bv: &Value = bm.get(id).unwrap();
+                let lv: &Value = lm.get(id).unwrap();
                 result.push(merge_node(bv, el, lv, &format!("{ptr}[{id}]"), out));
             }
             (Some(_), None) => {
                 // 本地删,磁盘在:若磁盘未改 → 删除(表 6);磁盘改了 → CF-002
-                let bv: &Value = *bm.get(id).unwrap();
+                let bv: &Value = bm.get(id).unwrap();
                 if bv == el {
                     // 采用删除:跳过
                 } else {
@@ -215,12 +215,12 @@ fn merge_id_array(
     }
     // 再吸收本地独有(磁盘没有的新增):保持本地顺序附加
     for (id, lv) in &lm {
-        let lv: &Value = *lv;
+        let lv: &Value = lv;
         if !dm.contains_key(id) && !bm.contains_key(id) {
             result.push(lv.clone());
         } else if !dm.contains_key(id) && bm.contains_key(id) {
             // 磁盘删了该元素,本地改了 → CF-002
-            let bv: &Value = *bm.get(id).unwrap();
+            let bv: &Value = bm.get(id).unwrap();
             if bv != lv {
                 out.push(Conflict {
                     code: ConflictCode::DeleteModify,
@@ -232,7 +232,7 @@ fn merge_id_array(
             }
         } else if dm.contains_key(id) && !bm.contains_key(id) {
             // 表 9 行:两侧都新增同 id(结果里已有磁盘版;冲突则以裁决为准)
-            let dv: &Value = *dm.get(id).unwrap();
+            let dv: &Value = dm.get(id).unwrap();
             if dv != lv {
                 out.push(Conflict {
                     code: ConflictCode::DupId,

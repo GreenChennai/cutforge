@@ -159,7 +159,7 @@ def check_repo_size() -> CheckResult:
     if shallow:
         # CI 场景:checkout 是浅克隆,无法二次 clone;改用 pack 体积近似(等价于网络传输量)
         r = subprocess.run(["git", "-C", str(CUTFLOW_REPO), "count-objects", "-v"],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace", encoding="utf-8", errors="replace")
+                           capture_output=True, text=True, encoding="utf-8", errors="replace" )
         info = dict(line.split(": ") for line in r.stdout.strip().splitlines() if ": " in line)
         total = int(info.get("size-pack", "0")) * 1024  # KB → B
         ok = total <= REPO_SIZE_LIMIT_BYTES

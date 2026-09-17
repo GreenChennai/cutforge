@@ -10,12 +10,14 @@ pub mod command;
 pub mod engine;
 pub mod merge;
 pub mod model;
+pub mod notes;
 pub mod oplog;
 pub mod timeutil;
 
 pub use command::Command;
 pub use engine::{Answer, ApplyOpts, Engine, OpReceipt, Query, Reject};
 pub use model::{Backend, Canvas, Clip, ClipKind, Motion, Project, Ratio, Role, Track, TrackKind};
+pub use notes::{Note, NotesStore};
 pub use oplog::{Actor, ActorKind, Op, OpLog};
 
 /// 生成 opId:op-<序号>(全工程唯一,单调分配)。

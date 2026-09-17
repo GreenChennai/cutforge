@@ -16,11 +16,12 @@ CutForge 是一个以 Rust 内核为单一实现、服务 Web/桌面/脚本/MCP 
 
 ## 状态
 
-M0–M2 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约固化 ✓ → M2 Rust 内核 ✓ → M3 双向同步与标注 → M4 MCP 与脚本 → M5 多端壳 → M6 渲染后端 → M7 开源发布。
+M0–M3 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约固化 ✓ → M2 Rust 内核 ✓ → M3 双向同步与标注 ✓ → M4 MCP 与脚本 → M5 多端壳 → M6 渲染后端 → M7 开源发布。
 
 - **M0**:ARL-1.0 混合授权三件套、命名核查存档、工具链 pin(与上游一致)、统一门禁入口、CI 骨架。
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
 - **M2**:`cutforge-core`(领域模型/命令通道/撤销栈/OpLog/三路合并骨架/锚点,行覆盖 ≥80%,wasm32 可构建)+ `cutforge-io`(工程读写/原子写唯一落盘点/锁/备份/媒体探测/轮询 watcher)+ `cutforge-cli`(打开/查询/应用/撤销重做/OpLog + 门禁判定器)。
+- **M3**:双向同步全链——三路合并九行判定表零静默覆盖(12,000 组属性测试)、OpLog 回放等价(含 undo/redo 混入)、冲突三方快照落盘(`.cutforge/conflicts/`)、标注(notes.json)读写/结案回执绑定 opIds/锚点重定位(100 组场景零丢失)、阶段脏传播(改 IR 只标 S3+;改字幕只重烧 S8)、往返延迟基准(AI 可见 P95 ≤100ms,实测个位数毫秒)。
 
 ## 许可
 
@@ -39,6 +40,7 @@ M0–M2 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 python tools/gates/gate.py M0 --json
 python tools/gates/gate.py M1 --json
 python tools/gates/gate.py M2 --json
+python tools/gates/gate.py M3 --json
 ```
 
 结果协议:`{"ok":bool,"code":str,"message":str,"data":object}`;退出码 `0`=通过、`2`=门禁失败、`3`=前置/环境缺失、`4`=内部错误。

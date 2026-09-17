@@ -280,15 +280,13 @@ impl Engine {
         Ok(OpReceipt { op_ids: vec![op_id], rev: self.rev, idempotent: false })
     }
 
-    /// 从空工程 + 完整 OpLog 回放,得到与逐步 apply 语义一致的状态(计划书 4.4 可回放)。
+    /// 从工程 + 完整 OpLog 回放,得到与逐步 apply 语义一致的状态(计划书 4.4 可回放)。
+    /// undo/redo Op 的 after 本身就是当时的状态转移,故全部照序应用;
+    /// 撤销栈按日志语义模拟重建(Undo 弹栈、Redo 压回)。
     pub fn replay(base: Project, ops: &[Op]) -> Result<Self, Reject> {
         let mut eng = Engine::new(base).map_err(Reject::SchemaInvalid)?;
         eng.rev = 0;
         for op in ops {
-            // 只重放真实变更(undo/redo 是原 Op 的镜像,重放原序列时跳过)
-            if matches!(op.op_kind, OpKind::Undo | OpKind::Redo) {
-                continue;
-            }
             let mut project = eng.project.clone();
             apply_value_at(&mut project, &op.target.path, op.after.clone())
                 .map_err(Reject::InvariantViolation)?;
@@ -297,14 +295,71 @@ impl Engine {
             }
             eng.project = project;
             eng.rev = op.rev.unwrap_or(eng.rev + 1);
+            eng.log.push_loaded(op.clone());
         }
-        // 重建撤销栈:非 undo/redo 的 opId 依序入栈
-        eng.undo_stack = ops.iter()
-            .filter(|o| !matches!(o.op_kind, OpKind::Undo | OpKind::Redo))
-            .map(|o| o.op_id.clone())
-            .collect();
-        eng.redo_stack.clear();
+        eng.undo_stack = rebuild_undo_stack(ops);
+        eng.redo_stack = Vec::new();
         Ok(eng)
+    }
+
+    /// 非 project.json 真相源(notes.json 等)的变更登记:进 OpLog 审计链、
+    /// 升 rev,但不改工程文档(工程文档只能走 `apply`)。
+    pub fn record_file_change(
+        &mut self,
+        file: &str,
+        path: &str,
+        before: Value,
+        after: Value,
+        kind: OpKind,
+        actor: Actor,
+        opts: ApplyOpts,
+    ) -> Result<OpReceipt, Reject> {
+        const KNOWN: [&str; 5] = [
+            "project.json", "wordline.json", "cutlist.json", "cutlist.applied.json", "notes.json",
+        ];
+        if !KNOWN.contains(&file) {
+            return Err(Reject::InvariantViolation(format!("未知真相源文件: {file}")));
+        }
+        if let Some(rid) = opts.request_id.as_deref() {
+            if self.log.has_request_id(rid) {
+                return Ok(OpReceipt { op_ids: Vec::new(), rev: self.rev, idempotent: true });
+            }
+        }
+        if let Some(expect) = opts.expect_rev {
+            if expect != self.rev {
+                return Err(Reject::PreconditionFailed { expected: expect, actual: self.rev });
+            }
+        }
+        if before == after {
+            return Ok(OpReceipt { op_ids: Vec::new(), rev: self.rev, idempotent: true });
+        }
+        self.rev += 1;
+        let op = Op {
+            op_id: opts.op_id.unwrap_or_else(|| self.log.next_op_id()),
+            ts: crate::timeutil::now_rfc3339(),
+            actor,
+            target: OpTarget { file: file.to_string(), path: path.to_string() },
+            op_kind: kind,
+            before,
+            after,
+            base_rev: crate::format_rev(self.rev - 1),
+            rev: Some(self.rev),
+            caused_by: if opts.caused_by.is_empty() { None } else { Some(opts.caused_by) },
+            summary: opts.summary.unwrap_or_else(|| format!("{file} 变更")),
+            request_id: opts.request_id,
+        };
+        let op_id = op.op_id.clone();
+        match self.log.push(op) {
+            Some(_) => {
+                self.undo_stack.push(op_id.clone());
+                self.redo_stack.clear();
+                Ok(OpReceipt { op_ids: vec![op_id], rev: self.rev, idempotent: false })
+            }
+            None => {
+                self.rev -= 1;
+                Ok(OpReceipt { op_ids: vec![op_id], rev: self.rev, idempotent: true })
+            }
+        }
     }
 
     /// 状态语义 hash(测试与 M3 回放等价门禁的基础)。
@@ -500,6 +555,28 @@ fn enforce_no_overlap(p: &Project, ti: usize) -> Result<(), Reject> {
         Err(Reject::InvariantViolation(format!(
             "同轨时间重叠(CF-004): {:?}", ov)))
     }
+}
+
+/// 按日志语义重建撤销栈(Undo 弹栈、Redo 压回;io 打开工程与 replay 共用)。
+pub fn rebuild_undo_stack(ops: &[Op]) -> Vec<String> {
+    let mut undo_stack: Vec<String> = Vec::new();
+    let mut redo_stack: Vec<String> = Vec::new();
+    for op in ops {
+        match op.op_kind {
+            OpKind::Undo => {
+                if let Some(x) = undo_stack.pop() {
+                    redo_stack.push(x);
+                }
+            }
+            OpKind::Redo => {
+                if let Some(x) = redo_stack.pop() {
+                    undo_stack.push(x);
+                }
+            }
+            _ => undo_stack.push(op.op_id.clone()),
+        }
+    }
+    undo_stack
 }
 
 /// 规范化 JSON 文本(键序无关,数值保持 Value 语义)。

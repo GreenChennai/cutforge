@@ -10,12 +10,16 @@ pub mod backup;
 pub mod fsutil;
 pub mod lock;
 pub mod probe;
+pub mod stage;
 pub mod watcher;
 
 use cutforge_core::command::Command;
 use cutforge_core::engine::{ApplyOpts, Engine, OpReceipt};
+use cutforge_core::merge::{Conflict, ConflictCode, MergeOutcome};
 use cutforge_core::model::Project;
-use cutforge_core::oplog::{Actor, Op, OpLog};
+use cutforge_core::notes::{Note, NoteAuthor, NoteReject, NotesStore};
+use cutforge_core::oplog::{Actor, Op, OpKind, OpLog};
+use cutforge_core::anchor::Anchor;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -44,6 +48,8 @@ pub struct Workspace {
     engine: Engine,
     /// 已持久化的 Op 数(oplog 追增用)。
     persisted: usize,
+    notes: NotesStore,
+    notes_dirty: bool,
 }
 
 impl Workspace {
@@ -92,14 +98,23 @@ impl Workspace {
                 }
             }
         }
-        let undo_stack: Vec<String> = log.ops().iter()
-            .filter(|o| !matches!(o.op_kind, cutforge_core::oplog::OpKind::Undo | cutforge_core::oplog::OpKind::Redo))
-            .map(|o| o.op_id.clone())
-            .collect();
+        let undo_stack: Vec<String> = cutforge_core::engine::rebuild_undo_stack(log.ops());
         let persisted = log.len();
         let engine = Engine::restore(project, log, rev, undo_stack)
             .map_err(|errs| io::Error::other(errs.join("; ")))?;
-        Ok(Self { root: root.to_path_buf(), engine, persisted })
+
+        // notes.json(标注):缺失 = 空存储;存在则必须过 notes.schema
+        let (notes, notes_dirty) = match std::fs::read_to_string(root.join(NOTES_REL)) {
+            Ok(text) => {
+                let v: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| io::Error::other(format!("notes.json 非法 JSON: {e}")))?;
+                let store = NotesStore::from_value(&v)
+                    .map_err(|errs| io::Error::other(format!("CF-005 SCHEMA_DRIFT(notes.json): {}", errs.join("; "))))?;
+                (store, false)
+            }
+            Err(_) => (NotesStore::new(), false),
+        };
+        Ok(Self { root: root.to_path_buf(), engine, persisted, notes, notes_dirty })
     }
 
     pub fn root(&self) -> &Path {
@@ -114,26 +129,241 @@ impl Workspace {
         self.engine.rev()
     }
 
-    /// 命令接口(唯一写入口的 IO 编排,4.2 八步)。
+    /// 命令接口(唯一写入口的 IO 编排,4.2 八步);成功后联动标注重定位(4.9)。
     pub fn apply(&mut self, cmd: Command, actor: Actor, opts: ApplyOpts) -> io::Result<OpReceipt> {
         let _guard = lock::acquire(&self.root, 30_000, 20)?;
-        let receipt = self.engine.apply(cmd, actor, opts).map_err(reject_to_io)?;
+        let before_project = self.engine.project().clone();
+        let receipt = self.engine.apply(cmd, actor.clone(), opts).map_err(reject_to_io)?;
+        self.sync_notes_after_change(&before_project, actor)?;
         self.persist()?;
         Ok(receipt)
     }
 
     pub fn undo(&mut self, actor: Actor) -> io::Result<OpReceipt> {
         let _guard = lock::acquire(&self.root, 30_000, 20)?;
-        let receipt = self.engine.undo(actor).map_err(reject_to_io)?;
+        let before_project = self.engine.project().clone();
+        let receipt = self.engine.undo(actor.clone()).map_err(reject_to_io)?;
+        self.sync_notes_after_change(&before_project, actor)?;
         self.persist()?;
         Ok(receipt)
     }
 
     pub fn redo(&mut self, actor: Actor) -> io::Result<OpReceipt> {
         let _guard = lock::acquire(&self.root, 30_000, 20)?;
-        let receipt = self.engine.redo(actor).map_err(reject_to_io)?;
+        let before_project = self.engine.project().clone();
+        let receipt = self.engine.redo(actor.clone()).map_err(reject_to_io)?;
+        self.sync_notes_after_change(&before_project, actor)?;
         self.persist()?;
         Ok(receipt)
+    }
+
+    // ---------- 标注(4.9) ----------
+
+    pub fn notes(&self) -> &NotesStore {
+        &self.notes
+    }
+
+    /// 创建标注(user 提需求 / agent 反向提问),写入 notes.json 并登记 Op。
+    pub fn notes_add(
+        &mut self,
+        anchor: Anchor,
+        body: String,
+        author: NoteAuthor,
+        tags: Vec<String>,
+        actor: Actor,
+    ) -> io::Result<String> {
+        let before = self.notes.to_value();
+        let note_id = self.notes.next_id();
+        self.notes.add(anchor, body, author, tags);
+        self.record_notes_change(&before, OpKind::Insert, actor, format!("创建标注 {note_id}"), None)?;
+        Ok(note_id)
+    }
+
+    /// 结案回执(绑定 opIds;幂等)。
+    pub fn notes_resolve(
+        &mut self,
+        note_id: &str,
+        reply: String,
+        op_ids: Vec<String>,
+        actor: Actor,
+    ) -> io::Result<()> {
+        let before = self.notes.to_value();
+        match self.notes.resolve(note_id, reply, op_ids) {
+            Ok(_) => {}
+            Err(NoteReject::UnknownNote(_)) => {
+                return Err(io::Error::new(io::ErrorKind::NotFound, format!("标注不存在: {note_id}")))
+            }
+            Err(_) => return Ok(()), // 已按相同内容结案 → 幂等
+        }
+        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 结案"), None)?;
+        Ok(())
+    }
+
+    pub fn notes_reject(&mut self, note_id: &str, reason: String, actor: Actor) -> io::Result<()> {
+        let before = self.notes.to_value();
+        self.notes.reject(note_id, reason).map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("{e:?}")))?;
+        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 否决"), None)?;
+        Ok(())
+    }
+
+    /// apply/undo/redo 成功后:open 态标注按 3.6 规则重定位;有变化则落盘并留痕。
+    fn sync_notes_after_change(&mut self, before_project: &Project, actor: Actor) -> io::Result<()> {
+        let _ = before_project;
+        let before = self.notes.to_value();
+        let (moved, orphaned) = self.notes.relocate_all(self.engine.project(), 500);
+        if moved > 0 || orphaned > 0 {
+            self.record_notes_change(
+                &before,
+                OpKind::Set,
+                actor,
+                format!("锚点重定位:跟随/重挂 {moved},转孤儿 {orphaned}"),
+                None,
+            )?;
+        } else {
+            self.notes_dirty = false;
+        }
+        Ok(())
+    }
+
+    fn record_notes_change(
+        &mut self,
+        before: &serde_json::Value,
+        kind: OpKind,
+        actor: Actor,
+        summary: String,
+        caused_by: Option<Vec<String>>,
+    ) -> io::Result<()> {
+        let after = self.notes.to_value();
+        let opts = ApplyOpts { caused_by: caused_by.unwrap_or_default(), ..Default::default() };
+        self.engine
+            .record_file_change("notes.json", "/items", before.clone(), after, kind, actor, opts)
+            .map_err(reject_to_io)?;
+        self.notes_dirty = true;
+        self.persist()?;
+        Ok(())
+    }
+
+    // ---------- 冲突(4.7) ----------
+
+    /// 当前持久化的冲突清单。
+    pub fn conflict_list(&self) -> io::Result<Vec<(String, Conflict)>> {
+        let dir = self.root.join(".cutforge/conflicts");
+        let mut out = Vec::new();
+        if !dir.is_dir() {
+            return Ok(out);
+        }
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+        files.sort();
+        for f in files {
+            let text = std::fs::read_to_string(&f)?;
+            let v: serde_json::Value = serde_json::from_str(&text)?;
+            let id = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let conflict = serde_json::from_value::<PersistedConflict>(v)?.into_conflict();
+            out.push((id, conflict));
+        }
+        Ok(out)
+    }
+
+    /// 三路合并(M2 骨架的直接消费入口):磁盘文件与内存模型按 baseRev 合并。
+    /// 冲突时写入 `.cutforge/conflicts/<id>.json` 三方快照并停写(4.7)。
+    pub fn merge_from_disk(&mut self) -> Result<Option<u64>, Vec<(String, Conflict)>> {
+        let disk_text = match std::fs::read_to_string(self.root.join(PROJECT_REL)) {
+            Ok(t) => t,
+            Err(_) => return Ok(None),
+        };
+        let disk: serde_json::Value = match serde_json::from_str(&disk_text) {
+            Ok(v) => v,
+            Err(e) => {
+                let c = Conflict {
+                    code: ConflictCode::FieldConflict,
+                    pointer: "$".into(),
+                    base: None,
+                    disk: Some(serde_json::Value::String(format!("CF-005 SCHEMA_DRIFT: {e}"))),
+                    local: None,
+                };
+                let id = self.persist_conflict(&c);
+                return Err(vec![(id, c)]);
+            }
+        };
+        let local = match self.engine.query(cutforge_core::engine::Query::ProjectView) {
+            cutforge_core::engine::Answer::Project(v) => v,
+            _ => unreachable!(),
+        };
+        // M2 骨架以"本地"同时充当 base;完整 baseRev 快照链在 M4 引入。
+        let base = local.clone();
+        match cutforge_core::merge::three_way_merge(&base, &disk, &local) {
+            MergeOutcome::Merged(v) => {
+                if v == local {
+                    Ok(None)
+                } else {
+                    let project = match Project::from_value(&v) {
+                        Ok(p) => p,
+                        Err(errs) => {
+                            let c = Conflict {
+                                code: ConflictCode::FieldConflict,
+                                pointer: "$".into(),
+                                disk: Some(v),
+                                local: None,
+                                base: Some(serde_json::Value::String(format!("CF-005 SCHEMA_DRIFT: {}", errs.join("; ")))),
+                            };
+                            let id = self.persist_conflict(&c);
+                            return Err(vec![(id, c)]);
+                        }
+                    };
+                    let new_engine = match Engine::new(project) {
+                        Ok(e) => e,
+                        Err(errs) => {
+                            let c = Conflict {
+                                code: ConflictCode::FieldConflict,
+                                pointer: "$".into(),
+                                base: None,
+                                disk: None,
+                                local: Some(serde_json::Value::String(format!("CF-005 SCHEMA_DRIFT: {}", errs.join("; ")))),
+                            };
+                            let id = self.persist_conflict(&c);
+                            return Err(vec![(id, c)]);
+                        }
+                    };
+                    self.engine = new_engine;
+                    self.notes = NotesStore::new();
+                    self.persisted = self.engine.oplog().len();
+                    let _ = self.persist();
+                    Ok(Some(self.engine.rev()))
+                }
+            }
+            MergeOutcome::Conflicts(conflicts) => {
+                let persisted: Vec<(String, Conflict)> = conflicts
+                    .iter()
+                    .map(|c| (self.persist_conflict(c), c.clone()))
+                    .collect();
+                Err(persisted)
+            }
+        }
+    }
+
+    /// 冲突三方快照落盘(4.7:冲突产生时在任何写入发生之前停止)。
+    fn persist_conflict(&self, c: &Conflict) -> String {
+        let id = format!(
+            "cf-{}-{}",
+            self.engine.rev(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+        );
+        let payload = serde_json::json!({
+            "conflictId": id,
+            "code": c.code.code(),
+            "pointer": c.pointer,
+            "base": c.base,
+            "disk": c.disk,
+            "local": c.local,
+            "createdAt": cutforge_core::timeutil::now_rfc3339(),
+        });
+        let dir = self.root.join(".cutforge/conflicts");
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = atomic::atomic_write(&dir.join(format!("{id}.json")), payload.to_string().as_bytes());
+        id
     }
 
     /// 步骤 4-7:备份 → 原子写 project.json → 追加 oplog → rev 落盘。
@@ -160,69 +390,43 @@ impl Workspace {
             atomic::append_line(&oplog_file, &format!("{line}\n"))?;
             self.persisted += 1;
         }
-        atomic::atomic_write(&self.root.join(".cutforge/rev"), format!("{}\n", self.engine.rev()).as_bytes())?;
-        Ok(())
-    }
-
-    /// 三路合并(M2 骨架的直接消费入口):磁盘文件与内存模型按 baseRev 合并。
-    /// 返回 Ok(Some(rev)) 表示已合并采纳;Ok(None) 表示无差异;冲突以 Err 返回。
-    pub fn merge_from_disk(&mut self) -> Result<Option<u64>, Vec<cutforge_core::merge::Conflict>> {
-        let disk_text = match std::fs::read_to_string(self.root.join(PROJECT_REL)) {
-            Ok(t) => t,
-            Err(_) => return Ok(None),
-        };
-        let disk: serde_json::Value = serde_json::from_str(&disk_text).map_err(|e| {
-            vec![cutforge_core::merge::Conflict {
-                code: cutforge_core::merge::ConflictCode::FieldConflict,
-                pointer: "$".into(),
-                base: None,
-                disk: Some(serde_json::Value::String(e.to_string())),
-                local: None,
-            }]
-        })?;
-        let local = match self.engine.query(cutforge_core::engine::Query::ProjectView) {
-            cutforge_core::engine::Answer::Project(v) => v,
-            _ => unreachable!(),
-        };
-        // 共同祖先 = 本地当前状态在最近一次外部读取时的样子;M2 骨架以 rev 记录的
-        // 快照占位(完整 baseRev 快照链在 M3 引入)。此处以"本地"同时充当 base,
-        // 行为等价于"磁盘无本地未见的修改时无操作;有修改则以磁盘为冲突候选"。
-        let base = local.clone();
-        match cutforge_core::merge::three_way_merge(&base, &disk, &local) {
-            cutforge_core::merge::MergeOutcome::Merged(v) => {
-                if v == local {
-                    Ok(None)
-                } else {
-                    let project = Project::from_value(&v).map_err(|errs| {
-                        vec![cutforge_core::merge::Conflict {
-                            code: cutforge_core::merge::ConflictCode::FieldConflict,
-                            pointer: "$".into(),
-                            disk: Some(v),
-                            local: None,
-                            base: Some(serde_json::Value::String(errs.join("; "))),
-                        }]
-                    })?;
-                    self.engine = Engine::new(project).map_err(|errs| {
-                        vec![cutforge_core::merge::Conflict {
-                            code: cutforge_core::merge::ConflictCode::FieldConflict,
-                            pointer: "$".into(),
-                            base: None,
-                            disk: None,
-                            local: Some(serde_json::Value::String(errs.join("; "))),
-                        }]
-                    })?;
-                    self.persisted = self.engine.oplog().len();
-                    let _ = self.persist();
-                    Ok(Some(self.engine.rev()))
-                }
-            }
-            cutforge_core::merge::MergeOutcome::Conflicts(c) => Err(c),
+            atomic::atomic_write(&self.root.join(".cutforge/rev"), format!("{}\n", self.engine.rev()).as_bytes())?;
+        // 标注落盘(有变化才写)
+        if self.notes_dirty {
+            let mut buf = serde_json::to_vec_pretty(&self.notes.to_value())?;
+            buf.push(b'\n');
+            atomic::atomic_write(&self.root.join(NOTES_REL), &buf)?;
+            self.notes_dirty = false;
         }
+        Ok(())
     }
 }
 
-fn reject_to_io(r: cutforge_core::engine::Reject) -> io::Error {
-    use cutforge_core::engine::Reject::*;
+/// 持久化冲突快照的磁盘形态(`.cutforge/conflicts/<id>.json`)。
+#[derive(serde::Deserialize)]
+struct PersistedConflict {
+    code: String,
+    pointer: String,
+    #[serde(default)]
+    base: Option<serde_json::Value>,
+    #[serde(default)]
+    disk: Option<serde_json::Value>,
+    #[serde(default)]
+    local: Option<serde_json::Value>,
+}
+
+impl PersistedConflict {
+    fn into_conflict(self) -> Conflict {
+        let code = match self.code.as_str() {
+            "CF-002" => ConflictCode::DeleteModify,
+            "CF-003" => ConflictCode::DupId,
+            _ => ConflictCode::FieldConflict,
+        };
+        Conflict { code, pointer: self.pointer, base: self.base, disk: self.disk, local: self.local }
+    }
+}
+
+fn reject_to_io(r: cutforge_core::engine::Reject) -> io::Error {    use cutforge_core::engine::Reject::*;
     let (kind, msg) = match r {
         PreconditionFailed { expected, actual } => (
             io::ErrorKind::InvalidInput,

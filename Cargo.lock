@@ -17,6 +17,7 @@ version = "0.1.0"
 dependencies = [
  "cutforge-core",
  "cutforge-io",
+ "serde",
  "serde_json",
 ]
 

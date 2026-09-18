@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! cutlist 的 keep/removedMs 重算(apply 路径)——rs_cut.finalize_cutlist 的
 //! Rust 逐语义镜像(门禁:tests/fixtures/keep_recompute_golden.json 由
 //! CutFlow 真实实现生成,Rust 侧逐例对拍)。M9-3:经 MCP cut_apply 的编辑

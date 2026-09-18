@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! UTC RFC3339 时间格式化(纯 stdlib,不引 chrono;OpLog ts 字段用)。
 //! 排序一律按 rev,ts 仅审计用(计划书 3.7)。
 

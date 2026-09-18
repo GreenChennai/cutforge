@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! draft-07 子集校验引擎(与 tools/schema_gen.py 生成的 Python 引擎逐语义对齐)。
 //!
 //! 支持:type(string|array)/const/enum/required/properties/additionalProperties(false)/

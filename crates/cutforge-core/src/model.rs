@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 领域模型(计划书 1.2/1.3):Project/Timeline/Track/Clip 与 schema v2 逐字段对齐。
 //! 时间统一毫秒(`*Ms`);剪映微秒只存在于适配层,不得进入本层。
 

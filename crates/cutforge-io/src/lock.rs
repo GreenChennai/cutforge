@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 工程锁(计划书 4.2 步骤 1 / 4.3):`.cutforge/lock`,含 pid + 时间戳;
 //! 超过 stale_after 秒视为死锁残留可接管;Drop 自动释放。
 

@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 命令定义(计划书 2.6):命令是唯一的写入口,任何状态变更都表达为一条 Command,
 //! 由 Engine::apply 翻译为 Op。不存在"直接赋值"的旁路。
 

@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 媒体探测(计划书 6.2 步 1):ffprobe 取媒体信息,统一取 `format.duration`。
 //! 本模块是 IO 层唯一的外部进程调用点;内核不认识 ffmpeg。
 

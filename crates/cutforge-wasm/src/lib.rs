@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! CutForge wasm 绑定(计划书 7.6;依赖纪律:wasm-bindgen 由计划书 2.4 选型预论证)。
 //!
 //! Web 壳只做展示:所有投影(时间线行/标注汇总/OpLog 摘要)由内核在此算好,

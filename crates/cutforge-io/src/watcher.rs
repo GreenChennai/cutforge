@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 文件监听(计划书 4.5,M2 基础版:轮询 + 去抖)。
 //!
 //! 忽略规则:`.cutforge/oplog/*`(自己写的)、`*.tmp`、`_state/backup/*`、

@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! CutForge MCP 层(计划书 5.1–5.4)。
 //!
 //! **单注册表双通道**:stdio(主)与内嵌 HTTP(辅,仅 127.0.0.1 + token)共用同一

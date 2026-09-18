@@ -79,6 +79,8 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
     };
     let actor = Actor::agent("cutforge-mcp");
 
+    // 常驻同步守护(M9-2):外部改动 ≤1s 可见;幂等(每 root 一个线程)
+    let _ = cutforge_io::watcher::ensure_sync_daemon(&ws_root);
     // 写通道全程锁:open→apply→persist 同一把锁(P0-5,杜绝锁外读+整文件覆盖)
     let mut ws = match Workspace::open_exclusive(&ws_root) {
         Ok(w) => w,
@@ -113,12 +115,27 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             }))
         }
         "stage_status" => {
+            // M9-3 同口径:优先解析 rs_run --status(done/stale/missing + staleReason),
+            // CutFlow 不可用时回退 _state 存在性并如实标注 degraded。
+            let resp = orchestrate(&ws_root, "rs_run.py", &[json!("--status")]);
+            if resp.get("ok") == Some(&json!(true)) {
+                if let Some(stages) = resp.get("data").and_then(|d| d.get("stages")).cloned() {
+                    return envelope(true, "OK", "阶段状态(rs_run 同口径)", json!({"stages": stages, "source": "rs_run"}));
+                }
+                if let Some(text) = resp.get("stdout").and_then(|v| v.as_str()) {
+                    let json_start = text.find('{').unwrap_or(text.len());
+                    if let Ok(v) = text[json_start..].parse::<Value>()
+                        && let Some(stages) = v.get("data").and_then(|d| d.get("stages")).cloned() {
+                            return envelope(true, "OK", "阶段状态(rs_run 同口径)", json!({"stages": stages, "source": "rs_run"}));
+                        }
+                }
+            }
             let dir = ws_root.join("_state");
             let mut map = serde_json::Map::new();
             for s in cutforge_io::stage::STAGES {
                 map.insert(s.to_string(), json!(dir.join(format!("{s}.json")).is_file()));
             }
-            envelope(true, "OK", "阶段状态(_state 存在性)", Value::Object(map))
+            envelope(true, "OK", "阶段状态(_state 存在性;rs_run 不可用,降级)", json!({"stages": map, "source": "existence"}))
         }
         "oplog_tail" => match ws.engine().query(Query::OpLogTail {
             since_rev: args["sinceRev"].as_u64(),
@@ -346,6 +363,8 @@ fn finish(r: Result<cutforge_core::engine::OpReceipt, std::io::Error>) -> Value 
 fn reject_to_envelope(msg: String) -> Value {
     let code = if msg.starts_with("PRECONDITION_FAILED") {
         "PRECONDITION_FAILED"
+    } else if msg.starts_with("CONFLICT") {
+        "CONFLICT"
     } else if msg.starts_with("SCHEMA_INVALID") {
         "SCHEMA_INVALID"
     } else if msg.starts_with("GUARD_FAILED") {
@@ -399,7 +418,12 @@ fn apply_cut_merge_patch(ws: &mut Workspace, patch: &Value) -> Value {
     let Ok(before) = serde_json::from_str::<Value>(&text) else {
         return envelope(false, "SCHEMA_INVALID", "cutlist.json 非法 JSON", json!({}));
     };
-    let after = merge_patch(before.clone(), patch);
+    let mut after = merge_patch(before.clone(), patch);
+    // M9-3:按 cuts[].action 服务端重算 keep/removedMs(rs_cut.finalize_cutlist 镜像,
+    // 金样对拍锁定)——经 MCP 的编辑不再是"keep 幻觉"
+    if let Err(e) = cutforge_schema::finalize::finalize_cutlist_value(&mut after) {
+        return envelope(false, "GUARD_FAILED", &format!("keep 重算失败: {e}"), json!({}));
+    }
     let errors = cutforge_schema::validate("cutlist", &after);
     if !errors.is_empty() {
         return envelope(false, "SCHEMA_INVALID", &errors.join("; "), json!({"errors": errors}));
@@ -628,7 +652,8 @@ pub fn serve_stdio() -> i32 {
     0
 }
 
-/// 内嵌 HTTP 辅通道:仅监听 127.0.0.1,Bearer token 校验,POST /rpc。
+/// 内嵌 HTTP 辅通道:仅监听 127.0.0.1,Bearer token 校验;
+/// 每连接一线程(读超时 5s,单连接不再挂死整个服务);GET /events 长轮询推外部改动事件。
 pub fn serve_http(port: u16, token: &str) -> i32 {
     let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
@@ -637,56 +662,102 @@ pub fn serve_http(port: u16, token: &str) -> i32 {
             return 4;
         }
     };
-    eprintln!("cutforge-mcp http on http://127.0.0.1:{port}/rpc");
+    eprintln!("cutforge-mcp http on http://127.0.0.1:{port}/rpc (events: /events?root=..&since=N)");
     for stream in listener.incoming() {
-        let Ok(mut stream) = stream else { continue };
-        let mut buf = Vec::new();
-        let mut tmp = [0u8; 4096];
-        // 读取到请求头结束,再按 Content-Length 读 body
-        let header_end = b"\r\n\r\n";
-        while let Ok(n) = std::io::Read::read(&mut stream, &mut tmp) {
-            if n == 0 {
-                break;
-            }
-            buf.extend_from_slice(&tmp[..n]);
-            if buf.windows(4).any(|w| w == header_end) {
-                let pos = buf.windows(4).position(|w| w == header_end).unwrap_or(0) + 4;
-                let len: usize = String::from_utf8_lossy(&buf[..pos])
-                    .to_ascii_lowercase()
-                    .lines()
-                    .find(|l| l.starts_with("content-length:"))
-                    .and_then(|l| l.split(':').nth(1).and_then(|n| n.trim().parse().ok()))
-                    .unwrap_or(0);
-                if buf.len() >= pos + len {
-                    break;
-                }
-            }
-        }
-        let head = String::from_utf8_lossy(&buf);
-        let authorized = head.contains(&format!("Authorization: Bearer {token}"));
-        let is_rpc = head.starts_with("POST /rpc");
-        if !authorized {
-            let _ = write!(stream, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
-            continue;
-        }
-        let pos = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(buf.len());
-        let body = String::from_utf8_lossy(&buf[pos..]).to_string();
-        let resp_body = if !is_rpc {
-            json!({"service": "cutforge-mcp", "tools": tool_names().len()}).to_string()
-        } else {
-            match serde_json::from_str::<Value>(&body) {
-                Ok(req) => handle_rpc(&req).map(|r| r.to_string()).unwrap_or_default(),
-                Err(e) => json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}}).to_string(),
-            }
-        };
-        let _ = write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-            resp_body.len(),
-            resp_body
-        );
+        let Ok(stream) = stream else { continue };
+        let token = token.to_string();
+        std::thread::spawn(move || {
+            let _ = handle_http_conn(stream, &token);
+        });
     }
     0
+}
+
+fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Result<()> {
+    use std::io::Read as _;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 4096];
+    let header_end = b"
+
+";
+    loop {
+        match stream.read(&mut tmp) {
+            Ok(0) => break,
+            Ok(n) => buf.extend_from_slice(&tmp[..n]),
+            Err(_) => break,
+        }
+        if buf.windows(4).any(|w| w == header_end) {
+            let pos = buf.windows(4).position(|w| w == header_end).unwrap_or(0) + 4;
+            let len: usize = String::from_utf8_lossy(&buf[..pos])
+                .to_ascii_lowercase()
+                .lines()
+                .find(|l| l.starts_with("content-length:"))
+                .and_then(|l| l.split(':').nth(1).and_then(|n| n.trim().parse().ok()))
+                .unwrap_or(0);
+            if buf.len() >= pos + len {
+                break;
+            }
+        }
+    }
+    let head = String::from_utf8_lossy(&buf);
+    let authorized = head.contains(&format!("Authorization: Bearer {token}"));
+    let is_rpc = head.starts_with("POST /rpc");
+    let is_events = head.starts_with("GET /events");
+    if !authorized {
+        let _ = write!(stream, "HTTP/1.1 401 Unauthorized
+Content-Length: 0
+
+");
+        return Ok(());
+    }
+    let body_start = buf.windows(4).position(|w| w == b"
+
+").map(|p| p + 4).unwrap_or(buf.len());
+    let body = String::from_utf8_lossy(&buf[body_start..]).to_string();
+    let resp_body = if is_rpc {
+        match serde_json::from_str::<Value>(&body) {
+            Ok(req) => handle_rpc(&req).map(|r| r.to_string()).unwrap_or_default(),
+            Err(e) => json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}}).to_string(),
+        }
+    } else if is_events {
+        // 长轮询:/events?root=<工程目录>&since=<seq>;≤1s 内有新事件立即返回
+        let query = head.lines().next().unwrap_or("").split('?').nth(1).unwrap_or("");
+        let mut root_p = String::new();
+        let mut since: u64 = 0;
+        for kv in query.split('&') {
+            let mut it = kv.split('=');
+            match (it.next(), it.next()) {
+                (Some("root"), Some(v)) => root_p = v.to_string(),
+                (Some("since"), Some(v)) => since = v.parse().unwrap_or(0),
+                _ => {}
+            }
+        }
+        if root_p.is_empty() {
+            json!({"ok": false, "code": "PRECONDITION_FAILED", "message": "缺 root"}).to_string()
+        } else {
+            let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(&root_p));
+            let wait = std::time::Duration::from_millis(900);
+            match hub.wait_since(since, wait) {
+                Some(seq) => json!({"ok": true, "code": "OK", "event": "workspace.changed", "seq": seq}).to_string(),
+                None => json!({"ok": true, "code": "OK", "event": "none", "seq": hub.current()}).to_string(),
+            }
+        }
+    } else {
+        json!({"service": "cutforge-mcp", "tools": tool_names().len()}).to_string()
+    };
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{}",
+        resp_body.len(),
+        resp_body
+    );
+    Ok(())
 }
 
 #[cfg(test)]

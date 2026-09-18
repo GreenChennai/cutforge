@@ -1,0 +1,479 @@
+{
+ "generator": "rs_cut.finalize_cutlist (CutFlow 真实实现,v0.15.1)",
+ "cases": [
+  {
+   "name": "basic",
+   "input": {
+    "version": 1,
+    "source": "fixture",
+    "detector": {
+     "version": "fixture",
+     "params": {}
+    },
+    "cuts": [
+     {
+      "id": "c001",
+      "inMs": 1000,
+      "outMs": 2000,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c002",
+      "inMs": 5000,
+      "outMs": 6500,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c003",
+      "inMs": 8000,
+      "outMs": 8500,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "keep",
+      "note": "",
+      "guard": {},
+      "text": ""
+     }
+    ],
+    "keep": [],
+    "removedMs": 0,
+    "srcTotalMs": 10000,
+    "script": []
+   },
+   "expectedKeep": [
+    [
+     0,
+     1000
+    ],
+    [
+     2000,
+     5000
+    ],
+    [
+     6500,
+     10000
+    ]
+   ],
+   "expectedRemovedMs": 2500
+  },
+  {
+   "name": "boundary",
+   "input": {
+    "version": 1,
+    "source": "fixture",
+    "detector": {
+     "version": "fixture",
+     "params": {}
+    },
+    "cuts": [
+     {
+      "id": "c001",
+      "inMs": 0,
+      "outMs": 500,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c002",
+      "inMs": 2000,
+      "outMs": 2500,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c003",
+      "inMs": 4000,
+      "outMs": 4500,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     }
+    ],
+    "keep": [],
+    "removedMs": 0,
+    "srcTotalMs": 5000,
+    "script": []
+   },
+   "expectedKeep": [
+    [
+     500,
+     2000
+    ],
+    [
+     2500,
+     4000
+    ],
+    [
+     4500,
+     5000
+    ]
+   ],
+   "expectedRemovedMs": 1500
+  },
+  {
+   "name": "clamp_negative_in",
+   "input": {
+    "version": 1,
+    "source": "fixture",
+    "detector": {
+     "version": "fixture",
+     "params": {}
+    },
+    "cuts": [
+     {
+      "id": "c001",
+      "inMs": -100,
+      "outMs": 1000,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c002",
+      "inMs": 3000,
+      "outMs": 3500,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c003",
+      "inMs": 6000,
+      "outMs": 7000,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     }
+    ],
+    "keep": [],
+    "removedMs": 0,
+    "srcTotalMs": 8000,
+    "script": []
+   },
+   "expectedKeep": [
+    [
+     1000,
+     3000
+    ],
+    [
+     3500,
+     6000
+    ],
+    [
+     7000,
+     8000
+    ]
+   ],
+   "expectedRemovedMs": 2600
+  },
+  {
+   "name": "no_remove",
+   "input": {
+    "version": 1,
+    "source": "fixture",
+    "detector": {
+     "version": "fixture",
+     "params": {}
+    },
+    "cuts": [
+     {
+      "id": "c001",
+      "inMs": 500,
+      "outMs": 1000,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "keep",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c002",
+      "inMs": 2000,
+      "outMs": 2500,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "review",
+      "note": "",
+      "guard": {},
+      "text": ""
+     }
+    ],
+    "keep": [],
+    "removedMs": 0,
+    "srcTotalMs": 4000,
+    "script": []
+   },
+   "expectedKeep": [
+    [
+     0,
+     4000
+    ]
+   ],
+   "expectedRemovedMs": 0
+  },
+  {
+   "name": "adjacent_removes",
+   "input": {
+    "version": 1,
+    "source": "fixture",
+    "detector": {
+     "version": "fixture",
+     "params": {}
+    },
+    "cuts": [
+     {
+      "id": "c001",
+      "inMs": 1000,
+      "outMs": 2000,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c002",
+      "inMs": 2000,
+      "outMs": 3000,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c003",
+      "inMs": 3500,
+      "outMs": 4000,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "review",
+      "note": "",
+      "guard": {},
+      "text": ""
+     }
+    ],
+    "keep": [],
+    "removedMs": 0,
+    "srcTotalMs": 6000,
+    "script": []
+   },
+   "expectedKeep": [
+    [
+     0,
+     1000
+    ],
+    [
+     3000,
+     6000
+    ]
+   ],
+   "expectedRemovedMs": 2000
+  },
+  {
+   "name": "random12",
+   "input": {
+    "version": 1,
+    "source": "fixture",
+    "detector": {
+     "version": "fixture",
+     "params": {}
+    },
+    "cuts": [
+     {
+      "id": "c001",
+      "inMs": 0,
+      "outMs": 1509,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c002",
+      "inMs": 1634,
+      "outMs": 3352,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "review",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c003",
+      "inMs": 3702,
+      "outMs": 4359,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "keep",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c004",
+      "inMs": 4563,
+      "outMs": 6148,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c005",
+      "inMs": 6852,
+      "outMs": 7916,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c006",
+      "inMs": 8046,
+      "outMs": 8437,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "keep",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c007",
+      "inMs": 8775,
+      "outMs": 10009,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c008",
+      "inMs": 10683,
+      "outMs": 11290,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "remove",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c009",
+      "inMs": 11615,
+      "outMs": 12734,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "review",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c010",
+      "inMs": 12840,
+      "outMs": 14594,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "keep",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c011",
+      "inMs": 15126,
+      "outMs": 16022,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "review",
+      "note": "",
+      "guard": {},
+      "text": ""
+     },
+     {
+      "id": "c012",
+      "inMs": 16281,
+      "outMs": 16921,
+      "reason": "silence",
+      "conf": 0.9,
+      "action": "review",
+      "note": "",
+      "guard": {},
+      "text": ""
+     }
+    ],
+    "keep": [],
+    "removedMs": 0,
+    "srcTotalMs": 17625,
+    "script": []
+   },
+   "expectedKeep": [
+    [
+     1509,
+     4563
+    ],
+    [
+     6148,
+     6852
+    ],
+    [
+     7916,
+     8775
+    ],
+    [
+     10009,
+     10683
+    ],
+    [
+     11290,
+     17625
+    ]
+   ],
+   "expectedRemovedMs": 5999
+  }
+ ]
+}

@@ -245,10 +245,19 @@ fn parity_matrix_full() {
         let out_on = cutforge_render::render(&p_on, &dir, None, &mut |_| {}).unwrap();
         let p_off = mk(false, "m11-duck-off");
         let out_off = cutforge_render::render(&p_off, &dir, None, &mut |_| {}).unwrap();
-        let rms_on = rms_of_window(&out_on.output, 0.8, 1.6);
-        let rms_off = rms_of_window(&out_off.output, 0.8, 1.6);
-        assert!(rms_on < rms_off - 1.0,
-            "ducking 开启时人声区间总能量应更低(BGM 被压): on={rms_on} off={rms_off}");
+        // 全频段被人声主导;用带通隔离 BGM 频段(220Hz)测压制量(实测 ≈7dB)
+        let bgm_band_rms = |p: &Path| {
+            let (_o, err) = ff_out(&[
+                "-i", p.to_str().unwrap(),
+                "-af", "bandpass=f=220:w=60,atrim=0.8:1.6,astats=metadata=1", "-f", "null", "-",
+            ], Path::new("."));
+            let pos = err.rfind("RMS level dB:").expect(err.as_str());
+            err[pos + 13..].trim().split_whitespace().next().unwrap().parse().unwrap()
+        };
+        let rms_on = bgm_band_rms(&out_on.output);
+        let rms_off = bgm_band_rms(&out_off.output);
+        assert!(rms_on < rms_off - 3.0,
+            "ducking 开启时 BGM 频段应被压制 ≥3dB: on={rms_on} off={rms_off}");
         achieved.push("9 BGM ducking:sidechain 侧链(on/off 能量差可测)");
     }
 

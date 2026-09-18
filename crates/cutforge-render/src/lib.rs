@@ -10,7 +10,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// 渲染器语义版本:任何渲染行为变更都必须 +1(缓存失效的正确来源)。
-pub const RENDERER_VERSION: &str = "cutforge-render-1.0";
+pub const RENDERER_VERSION: &str = "cutforge-render-2.0";
+
+/// 混音段:一个需要进入总线的音频事件(人声段或音效),带源域裁剪与成片域落点。
+struct AudioSeg {
+    src: PathBuf,
+    /// 成片域落点(ms)——adelay 的唯一来源(P0-4 修复前人声全部 0 秒起播)。
+    start_ms: u64,
+    duration_ms: u64,
+    /// 源域入点(ms)——per-clip 裁剪,-ss 输入侧。
+    source_in_ms: u64,
+    volume: f64,
+}
 
 pub struct RenderOutcome {
     pub output: PathBuf,
@@ -107,25 +118,29 @@ pub fn render(
     let mut cache_hits = 0usize;
     let mut total_clips = 0usize;
     let mut segment_files: Vec<PathBuf> = Vec::new();
-    let mut voice_files: Vec<PathBuf> = Vec::new();
-    let mut sfx_specs: Vec<(PathBuf, u64)> = Vec::new();
+    let mut audio_segs: Vec<AudioSeg> = Vec::new();
     for t in &project.tracks {
         for c in &t.clips {
             let Some(src) = c.src.clone() else { continue };
             let src_path = project_dir.join(&src);
             match t.kind {
-                // 视频轨:抽视频段(可含音轨的素材是人声来源)
+                // 视频轨:抽视频段(可含音轨的素材按 clip 裁剪后作为人声来源)
                 cutforge_core::model::TrackKind::Video => {
                     total_clips += 1;
                     let clip_json = serde_json::to_string(c).unwrap_or_default();
-                    let key = format!("{:x}-{}", hash_text(&clip_json), RENDERER_VERSION);
+                    // P0-3:缓存键必须并入 canvas 与 fps——否则 9x16 与 16x9 变体互撞
+                    let key = format!(
+                        "{:x}-{}-{}x{}f{}",
+                        hash_text(&clip_json), RENDERER_VERSION, canvas_w, canvas_h, project.fps
+                    );
                     let seg = cache_dir.join(format!("seg-{key}.mp4"));
                     if seg.is_file() {
                         cache_hits += 1;
                     } else {
                         let ss = c.source_in_ms.unwrap_or(0);
                         let filters = format!(
-                            "scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2,fps=30"
+                            "scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2,fps={}",
+                            project.fps
                         );
                         let mut args: Vec<String> = vec![
                             "-y".into(), "-v".into(), "error".into(),
@@ -145,15 +160,25 @@ pub fn render(
                     }
                     segment_files.push(seg);
                     if c.volume.unwrap_or(0.0) > 0.0 {
-                        voice_files.push(src_path);
+                        audio_segs.push(AudioSeg {
+                            src: src_path.clone(),
+                            start_ms: c.start_ms,
+                            duration_ms: c.duration_ms,
+                            source_in_ms: c.source_in_ms.unwrap_or(0),
+                            volume: c.volume.unwrap_or(1.0),
+                        });
                     }
                 }
-                // 音频轨:sfx 落点走 adelay 混入;其余作为独立人声/配音源
+                // 音频轨:sfx 逐个带落点混入;其余作为人声/配音段(逐段裁剪)
                 cutforge_core::model::TrackKind::Audio => {
-                    if c.role == Some(cutforge_core::model::Role::Sfx) {
-                        sfx_specs.push((src_path, c.start_ms));
-                    } else if c.volume.unwrap_or(0.0) > 0.0 {
-                        voice_files.push(src_path);
+                    if c.volume.unwrap_or(0.0) > 0.0 {
+                        audio_segs.push(AudioSeg {
+                            src: src_path.clone(),
+                            start_ms: c.start_ms,
+                            duration_ms: c.duration_ms,
+                            source_in_ms: c.source_in_ms.unwrap_or(0),
+                            volume: c.volume.unwrap_or(if c.role == Some(cutforge_core::model::Role::Sfx) { 0.8 } else { 1.0 }),
+                        });
                     }
                 }
                 cutforge_core::model::TrackKind::Text => {}
@@ -183,7 +208,7 @@ pub fn render(
     steps.push(("compose", true));
     progress(json!({"step": "compose", "ok": true, "note": "无叠加/转场时直通"}));
 
-    // ---- 步 5 mix(人声 + sfx 落点 amix;bus 双 pass loudnorm:先测后编 linear=true) ----
+    // ---- 步 5 mix(逐段:per-clip 裁剪+落点 adelay+音量 → amix;bus 双 pass loudnorm) ----
     let total_ms: u64 = project
         .tracks
         .iter()
@@ -192,27 +217,35 @@ pub fn render(
         .max()
         .unwrap_or(0);
     let mixed = cache_dir.join("mixed.m4a");
-    let voice_ref = voice_files.first().cloned();
-    let has_sfx = !sfx_specs.is_empty();
 
-    // pass A:混音(不压响度)
+    // pass A:混音(不压响度)。每个 AudioSeg 独立输入:-ss/-t 源域裁剪,
+    // adelay 成片域落点,volume per-clip;amix normalize=0 保留各段音量语义。
     let mixed_raw = cache_dir.join("mixed-raw.m4a");
     let mut args: Vec<String> = vec!["-y".into(), "-v".into(), "error".into()];
-    if let Some(v) = &voice_ref {
-        args.extend(["-i".into(), v.to_string_lossy().into()]);
-    }
-    for (p, ms) in &sfx_specs {
-        args.extend(["-i".into(), p.to_string_lossy().into()]);
-    }
-    if voice_ref.is_some() && has_sfx {
-        let s_labels: Vec<String> = (0..sfx_specs.len()).map(|i| format!("[s{i}]")).collect();
-        let inputs = format!("[v0]{}", s_labels.join(""));
-        let filter = format!(
-            "[0:a]volume=1.0[v0];{};{inputs}amix=inputs={}:duration=first[out]",
-            sfx_specs.iter().enumerate().map(|(i, _)| format!("[{}:a]volume=0.6[s{i}]", i + 1)).collect::<Vec<_>>().join(";"),
-            sfx_specs.len() + 1
-        );
-        args.extend(["-filter_complex".into(), filter, "-map".into(), "[out]".into()]);
+    let mut filters: Vec<String> = Vec::new();
+    let mut labels: Vec<String> = Vec::new();
+    if audio_segs.is_empty() {
+        // 全静音工程:anullsrc 占位(修复前此分支直接报"输出无流")
+        args.extend(["-f".into(), "lavfi".into(), "-i".into(), "anullsrc=r=48000:cl=stereo".into()]);
+    } else {
+        for (i, seg) in audio_segs.iter().enumerate() {
+            args.extend([
+                "-ss".into(), format!("{}", seg.source_in_ms as f64 / 1000.0),
+                "-t".into(), format!("{}", seg.duration_ms as f64 / 1000.0),
+                "-i".into(), seg.src.to_string_lossy().into(),
+            ]);
+            filters.push(format!(
+                "[{i}:a]aformat=sample_rates=48000:channel_layouts=stereo,volume={:.4},adelay={}:all=1[a{i}]",
+                seg.volume, seg.start_ms
+            ));
+            labels.push(format!("[a{i}]"));
+        }
+        filters.push(format!(
+            "{}amix=inputs={}:duration=longest:normalize=0[mix]",
+            labels.join(""),
+            audio_segs.len()
+        ));
+        args.extend(["-filter_complex".into(), filters.join(";"), "-map".into(), "[mix]".into()]);
     }
     args.extend([
         "-t".into(), format!("{}", total_ms as f64 / 1000.0),
@@ -287,7 +320,8 @@ pub fn render(
     Ok(RenderOutcome { output, steps, cache_hits, segments: total_clips })
 }
 
-/// headless 批量:变体矩阵(比例 × 组合),共享上游缓存只分叉 encode(6.5)。
+/// headless 批量:变体矩阵(比例 × 组合)。每变体整链重跑,但段缓存键含 canvas
+/// (P0-3),同画幅重复渲染命中缓存;"共享 mix/sub 只 fork encode"的真分叉在 M11。
 pub fn render_variants(project: &Project, project_dir: &Path, ratios: &[&str]) -> Vec<(String, Result<PathBuf, String>)> {
     ratios
         .iter()

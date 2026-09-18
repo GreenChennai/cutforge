@@ -466,10 +466,14 @@ pub fn render(
                 bgm.gain_db
             ));
             if bgm.ducking && !audio_segs.is_empty() {
-                filters.push(format!(
-                    "[bgmg][bus]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]"
-                ));
-                filters.push(format!("[bus][bgmc]amix=inputs=2:duration=first:normalize=0[mixout]"));
+                // [bus] 需被 sidechain(key)与 amix 各消费一次 → asplit 分流
+                // (本地 ffmpeg 容忍重复 label,CI 严格报 Invalid stream specifier)
+                filters.push("[bus]asplit=2[busA][busB]".into());
+                filters.push(
+                    "[bgmg][busA]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]"
+                        .into(),
+                );
+                filters.push("[busB][bgmc]amix=inputs=2:duration=first:normalize=0[mixout]".into());
             } else {
                 filters.push(format!("[bus][bgmg]amix=inputs=2:duration=first:normalize=0[mixout]"));
             }

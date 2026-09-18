@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! CutForge CLI(计划书 2.1 接入层):人肉操作、CI、门禁脚本入口。
 //! 全部输出 {ok, code, message, data} 结果协议;退出码 0/2/3/4。
 //! 手写参数解析(不引第三方 CLI 框架,依赖纪律见 ADR-0034)。

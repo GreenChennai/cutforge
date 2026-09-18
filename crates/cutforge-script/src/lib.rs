@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! CutForge 脚本宿主与沙箱(计划书 5.6,ADR-0034 依赖纪律:纯标准库 + serde)。
 //!
 //! 脚本 = `cutforge-script-v1` JSON 批式步骤序列,**只能**通过 [`ToolDispatch`]

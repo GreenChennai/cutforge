@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 小工具:测试用临时工程目录(创建/清理)。
 //! 本模块的目录创建同样走 `atomic` 的允许面之外——`create_dir_all` 是
 //! 目录操作不是文件写,不属于 check-write-paths 的拦截对象,但仍集中在此。

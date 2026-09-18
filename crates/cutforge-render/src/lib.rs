@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! CutForge 渲染后端(计划书 6.2;V2 M11 矩阵口径):
 //! 统一帧率 → 逐段提取(变速/冻结/punch-in/转场尾帧扩展)→ xfade 链合成 →
 //! overlay 合成 → 混音(逐段落点/BGM ducking/afade/loudnorm 双 pass)→

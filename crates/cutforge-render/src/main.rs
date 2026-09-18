@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! cutforge-render CLI:headless 渲染入口(计划书 6.5)。
 //! 输出结构化进度事件(JSON 行);失败带具体步骤与原因。
 

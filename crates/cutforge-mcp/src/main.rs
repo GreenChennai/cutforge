@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! cutforge-mcp 二进制入口:inspect(契约导出)/ serve-stdio(主通道)/
 //! serve-http(辅通道,仅 127.0.0.1 + token)/ run-script(脚本宿主接线)。
 

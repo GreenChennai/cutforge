@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! project v1→v2 迁移器(计划书 3.3;幂等:对同一输入迁移两次,结果语义相等)。
 
 use serde_json::{json, Map, Value};

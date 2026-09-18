@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 阶段脏传播(计划书 4.10):CutForge 改文件后只标记"下游变脏",**不自动重跑**;
 //! 与 CutFlow 既有阶段缓存语义对齐(S8 只重烧不碰 IR 等)。
 

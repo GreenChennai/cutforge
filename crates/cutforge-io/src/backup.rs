@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 备份(计划书 4.3/全局约定 B.8):覆写工程文件前先备份到 `_state/backup/<ts>/`。
 //! 内容写盘统一走 `atomic::atomic_write`(唯一落盘点纪律);时间戳走 core::timeutil。
 

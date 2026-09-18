@@ -1,3 +1,4 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! CutForge IO 层:Workspace 把"文件真相源"(计划书 4.2)与内核命令通道接在一起。
 //!
 //! 唯一写入路径(4.2 八步,本文件为编排者;所有落盘经 `atomic::atomic_write`):

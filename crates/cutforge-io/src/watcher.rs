@@ -103,6 +103,85 @@ impl Watcher {
     }
 }
 
+// ---------------- M9-2:常驻同步守护(事件源) ----------------
+
+/// 同步事件 Hub:守护线程每次外部可见变更时 bump;HTTP /events 长轮询等消费。
+pub struct SyncHub {
+    seq: std::sync::Mutex<u64>,
+    cv: std::sync::Condvar,
+}
+
+impl SyncHub {
+    fn new() -> Self {
+        Self { seq: std::sync::Mutex::new(0), cv: std::sync::Condvar::new() }
+    }
+
+    pub fn current(&self) -> u64 {
+        *self.seq.lock().unwrap()
+    }
+
+    fn bump(&self) -> u64 {
+        let mut s = self.seq.lock().unwrap();
+        *s += 1;
+        self.cv.notify_all();
+        *s
+    }
+
+    /// 长轮询:等待 seq > since,最多 timeout;返回最新 seq(无新事件返回 None)。
+    pub fn wait_since(&self, since: u64, timeout: std::time::Duration) -> Option<u64> {
+        let deadline = std::time::Instant::now() + timeout;
+        let mut s = self.seq.lock().unwrap();
+        loop {
+            if *s > since {
+                return Some(*s);
+            }
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return None;
+            }
+            let (guard, _) = self.cv.wait_timeout(s, deadline - now).unwrap();
+            s = guard;
+        }
+    }
+}
+
+/// 每个工程根一个守护线程(进程级注册表,重复调用返回既有 Hub)。
+/// 线程职责:轮询 → project.json 外部可见变更 → 锁内 merge_from_disk → bump。
+/// 约束(M8-R5):只做短临界区读合并,绝不在此线程做长时间写。
+pub fn ensure_sync_daemon(root: &Path) -> std::sync::Arc<SyncHub> {
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static REGISTRY: OnceLock<Mutex<BTreeMap<PathBuf, Arc<SyncHub>>>> = OnceLock::new();
+    let reg = REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()));
+    let mut map = reg.lock().unwrap();
+    if let Some(hub) = map.get(root) {
+        return hub.clone();
+    }
+    let hub = Arc::new(SyncHub::new());
+    map.insert(root.to_path_buf(), hub.clone());
+    let thread_root = root.to_path_buf();
+    let thread_hub = hub.clone();
+    std::thread::spawn(move || {
+        let mut watcher = Watcher::new(&thread_root, 250);
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let events = watcher.poll();
+            let project_touched = events
+                .iter()
+                .any(|e| e.path.file_name().is_some_and(|n| n == "project.json"));
+            if !project_touched {
+                continue;
+            }
+            // 外部改动可见性:锁内合并(短临界区),冲突落盘不打断守护
+            if let Ok(mut ws) = crate::Workspace::open_exclusive(&thread_root) {
+                let _ = ws.merge_from_disk();
+            }
+            thread_hub.bump();
+        }
+    });
+    hub
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

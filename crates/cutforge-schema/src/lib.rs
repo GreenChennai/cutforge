@@ -7,6 +7,7 @@
 //! schema 文件在编译期经 include_str! 嵌入 `SCHEMA_SOURCES`;build.rs 校验其存在性。
 
 pub mod engine;
+pub mod finalize;
 pub mod migrate;
 
 /// 五份契约 schema(唯一手写契约的 Rust 侧嵌入;与 schemas/ 目录一一对应)。

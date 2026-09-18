@@ -31,7 +31,38 @@
 | M8-R6 | `stage_status` 仍只查 `_state` 文件存在性(计划书结合面⑧) | M9-3 正题 |
 | M8-R7 | `tests/__pycache__`、`tools/**/__pycache__` 曾被跟踪 | 已解除跟踪 + .gitignore |
 
-## M9 · 主链路贯通(任务单,含 M8 折入项)
+## M9 · 主链路贯通(2026-09-19 完成)
+
+**交付**(M9-1~M9-4 全绿):
+
+| 门禁 | 判定 | 结果 |
+|---|---|---|
+| M9-1 冲突真触发 | `conflict_real_repro_and_stop_writes`:写入窗口内外部同字段异改 → CF-001 + 本地待写弃用 + 停写;`window_drift_different_fields_auto_merge` 异字段自动合并;baseRev 快照链 `.cutforge/bases/`(LRU 32,40 次写后 ≤32 份) | ✅ |
+| M9-2 外部改动可见 | `external_edit_visible_within_1s`:守护线程 + SyncHub 长轮询;HTTP `/events?root=&since=` 推 `workspace.changed`;MCP dispatch 幂等注册守护 | ✅ |
+| M9-3 同口径 + keep 重算 | cutforge:stage_status 优先 rs_run --status(降级如实标注)、cut_apply 服务端重算 keep/removedMs(金样 = rs_cut.finalize_cutlist 真实生成,6 例对拍);CutFlow:rs_run outputs_hash 带外改写检测、B8 护栏识别 CutForge 编辑痕迹(schemaVersion)、REBUILD/SKILL cutlist 脏提示改道 rs_cut --apply | ✅ |
+| M9-4 桥升版 + 双侧冒烟 | rs_editor id 回退(V1#2+idSource)、rs_gate probe 真检 gate.py、rs_oplog 半行截断对齐、SKILL.md 登记四桥;cutforge 新增 4 桥冒烟 pytest,CutFlow 新建 CI(.github/workflows/gate.yml)浅克隆 cutforge 跑桥探针+烟测 | ✅ |
+
+**回归**:cutforge cargo 97/97(+6)、pytest 7/7、gates M0/M1 绿;CutFlow 300/300。
+
+### 架构决策(M9,已实施)
+
+- **冲突触发的真实窗口**:同步点快照(`synced_disk`)+ persist 前漂移检测。
+  "每写必先预合并 + 立即持久化"使两个 cutforge 进程之间结构性地不会产生 CF-001
+  (后写者总以真祖先看到先写者);真正可触发的是**锁外外部写者**(CutFlow 管线/文本
+  编辑器)落在 pre-merge 与 persist 之间——此时三路合并,同字段异改 → 冲突落盘、
+  本地弃用、停写。快照 LRU 上限 32(计划书 V2-R4;未用 diff 存储,偏离已记录于 M8 折入项)。
+- **v1 工程独占打开即升级规范形**:使外部检测与守护合并都有稳定的 v2 基准。
+
+### 复盘:M9 新发现(折入后续阶段)
+
+| # | 发现 | 处置 |
+|---|---|---|
+| M9-R1 | CutFlow `derive_keep` 对**尾部 remove** 产出的 keep 不覆盖片尾,`finalize_cutlist` 与 schema 断言会双双拒绝——结尾静音删除场景在现行语义下不可表达(CutFlow 自身矛盾,与本次改动无关的存量问题) | 折入 CutFlow 待办:需 ADR 澄清"keep 覆盖片尾"语义(允许尾删 vs 禁尾删);金样夹具已避开该形态 |
+| M9-R2 | MCP stage_status 走 rs_run --status 时是子进程调用(~秒级);编辑器高频轮询应改走 `/events`+oplog rev,不要反复拉 stage_status | M10 Web 壳遵守 |
+| M9-R3 | 守护线程与 MCP dispatch 各自 open_exclusive:冲突落盘可能由守护先写入,dispatch 停写提示需引导用户看 conflict_list(已实现,UI 侧待展示) | M10 冲突面板 |
+| M9-R4 | `/events` 只推 project.json 变更;notes.json/cutlist.json 的外部改动(如 rs_cut --apply)不产生事件 | M10 扩展事件面 |
+
+## M10 · 编辑能力(任务单)
 
 1. **M9-1 baseRev 快照链**:`.cutforge/bases/<rev>.json`,persist 成功后保存"与磁盘
    同步点"的本地值;`merge_from_disk` 用真祖先做三路合并。

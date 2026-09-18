@@ -35,6 +35,12 @@ pub const CUTLIST_REL: &str = "04_cut/cutlist.json";
 pub const CUTLIST_APPLIED_REL: &str = "04_cut/cutlist.applied.json";
 pub const NOTES_REL: &str = "notes.json";
 
+/// baseRev 快照目录(M9-1):`.cutforge/bases/<rev>.json` = rev N 时刻的工程视图。
+/// 三路合并的共同祖先由此取得;"本地充当 base"的死代码口径退役。
+pub const BASES_REL: &str = ".cutforge/bases";
+/// 快照保留上限(LRU 按 rev 淘汰,防膨胀;计划书 V2-R4)。
+const BASES_KEEP: usize = 32;
+
 /// 非工程真相源文件与其在工程目录内的相对路径(file_states 初始化与落盘的依据)。
 const FILE_TRUTHS: [(&str, &str); 3] = [
     ("wordline.json", WORDLINE_REL),
@@ -70,15 +76,17 @@ pub struct Workspace {
     files: BTreeMap<String, serde_json::Value>,
     /// open_exclusive 持有的全程锁(含 Drop 自动释放)。
     lock: Option<lock::LockGuard>,
+    /// 最近一次与磁盘同步时的 project 视图(去 `_meta`;写入窗口漂移检测的基准)。
+    synced_disk: Option<serde_json::Value>,
 }
 
 impl Workspace {
     /// 打开工程目录(只读语义安全;写操作走 `open_exclusive` 或依赖方法内临时锁)。
     pub fn open(root: &Path) -> io::Result<Self> {
-        let (engine, persisted, notes, meta_bypass, files) = Self::load(root)?;
+        let (engine, persisted, notes, meta_bypass, files, synced_disk) = Self::load(root)?;
         Ok(Self {
             root: root.to_path_buf(), engine, persisted, notes,
-            notes_dirty: false, meta_bypass, files, lock: None,
+            notes_dirty: false, meta_bypass, files, lock: None, synced_disk,
         })
     }
 
@@ -86,16 +94,25 @@ impl Workspace {
     /// MCP 写通道与 CLI 变更子命令一律走本入口。
     pub fn open_exclusive(root: &Path) -> io::Result<Self> {
         let guard = lock::acquire(root, 30_000, 20)?;
-        let (engine, persisted, notes, meta_bypass, files) = Self::load(root)?;
-        Ok(Self {
+        let (engine, persisted, notes, meta_bypass, files, synced_disk) = Self::load(root)?;
+        let mut ws = Self {
             root: root.to_path_buf(), engine, persisted, notes,
-            notes_dirty: false, meta_bypass, files, lock: Some(guard),
-        })
+            notes_dirty: false, meta_bypass, files, lock: Some(guard), synced_disk,
+        };
+        // 迁移升级:盘面为旧形态(v1/缺 id)时,独占打开即落规范形,
+        // 使后续外部改动检测与守护合并都以 v2 规范形为基准。
+        let view = ws.engine.query(cutforge_core::engine::Query::ProjectView);
+        let cutforge_core::engine::Answer::Project(ref v) = view else { unreachable!() };
+        if Some(v) != ws.synced_disk.as_ref() {
+            ws.persist()?;
+        }
+        Ok(ws)
     }
 
+    #[allow(clippy::type_complexity)]
     fn load(
         root: &Path,
-    ) -> io::Result<(Engine, usize, NotesStore, Option<serde_json::Value>, BTreeMap<String, serde_json::Value>)> {
+    ) -> io::Result<(Engine, usize, NotesStore, Option<serde_json::Value>, BTreeMap<String, serde_json::Value>, Option<serde_json::Value>)> {
         let project_path = root.join(PROJECT_REL);
         let text = std::fs::read_to_string(&project_path).map_err(|e| {
             io::Error::new(e.kind(), format!("打开工程失败({project_path:?}): {e}"))
@@ -179,7 +196,7 @@ impl Workspace {
                     files.insert(name.to_string(), v);
                 }
         }
-        Ok((engine, persisted, notes, meta_bypass, files))
+        Ok((engine, persisted, notes, meta_bypass, files, value.clone().into()))
     }
 
     pub fn root(&self) -> &Path {
@@ -211,6 +228,7 @@ impl Workspace {
     /// 命令接口(唯一写入口的 IO 编排,4.2 八步);成功后联动标注重定位(4.9)。
     pub fn apply(&mut self, cmd: Command, actor: Actor, opts: ApplyOpts) -> io::Result<OpReceipt> {
         let _guard = self.temp_lock()?;
+        self.pre_write_sync()?;
         let receipt = self.engine.apply(cmd, actor.clone(), opts).map_err(reject_to_io)?;
         self.reconcile_files()?;
         self.sync_notes_after_change(actor)?;
@@ -220,6 +238,7 @@ impl Workspace {
 
     pub fn undo(&mut self, actor: Actor) -> io::Result<OpReceipt> {
         let _guard = self.temp_lock()?;
+        self.pre_write_sync()?;
         let receipt = self.engine.undo(actor.clone()).map_err(reject_to_io)?;
         self.reconcile_files()?;
         self.sync_notes_after_change(actor)?;
@@ -229,11 +248,120 @@ impl Workspace {
 
     pub fn redo(&mut self, actor: Actor) -> io::Result<OpReceipt> {
         let _guard = self.temp_lock()?;
+        self.pre_write_sync()?;
         let receipt = self.engine.redo(actor.clone()).map_err(reject_to_io)?;
         self.reconcile_files()?;
         self.sync_notes_after_change(actor)?;
         self.persist()?;
         Ok(receipt)
+    }
+
+    /// 写前同步(M9-1):磁盘与本地已分叉时,先按真祖先三路合并;
+    /// 不可自动合并 → 冲突落盘并停写(4.7:任何写入发生之前停止)。
+    fn pre_write_sync(&mut self) -> io::Result<()> {
+        if !self.conflict_list()?.is_empty() {
+            return Err(io::Error::other("CONFLICT: 存在未裁决冲突(.cutforge/conflicts/),停写直至裁决"));
+        }
+        match self.sync_with_disk() {
+            Ok(_) => Ok(()),
+            Err(conflicts) => Err(io::Error::other(format!(
+                "CONFLICT: 外部改动与本地不可自动合并({} 项),已落 .cutforge/conflicts/",
+                conflicts.len()))),
+        }
+    }
+
+    /// 与磁盘做一次三路合并(base = baseRev 快照链的真祖先;不再"本地充当 base")。
+    /// 返回 Ok(true) = 采纳了外部改动;Err = 不可自动合并(冲突已落盘)。
+    pub fn sync_with_disk(&mut self) -> Result<bool, Vec<(String, Conflict)>> {
+        let disk_text = match std::fs::read_to_string(self.root.join(PROJECT_REL)) {
+            Ok(t) => t,
+            Err(_) => return Ok(false),
+        };
+        let mut disk: serde_json::Value = match serde_json::from_str(&disk_text) {
+            Ok(v) => v,
+            Err(e) => {
+                let c = Conflict {
+                    code: ConflictCode::FieldConflict,
+                    pointer: "$".into(),
+                    base: None,
+                    disk: Some(serde_json::Value::String(format!("CF-005 SCHEMA_DRIFT: {e}"))),
+                    local: None,
+                };
+                let id = self.persist_conflict(&c);
+                return Err(vec![(id, c)]);
+            }
+        };
+        let disk_meta = disk.as_object_mut().and_then(|o| o.remove("_meta"));
+        if let Some(m) = disk_meta {
+            self.meta_bypass = Some(m);
+        }
+        if Some(&disk) == self.synced_disk.as_ref() {
+            return Ok(false); // 快路径:磁盘与装载时一致,无外部改动
+        }
+        let local = match self.engine.query(cutforge_core::engine::Query::ProjectView) {
+            cutforge_core::engine::Answer::Project(v) => v,
+            _ => unreachable!(),
+        };
+        let base = self.load_base()
+            .or_else(|| self.synced_disk.clone())
+            .unwrap_or_else(|| local.clone());
+        match cutforge_core::merge::three_way_merge(&base, &disk, &local) {
+            MergeOutcome::Merged(v) => {
+                if v == local {
+                    return Ok(false);
+                }
+                self.adopt_merged(v).map_err(|e| {
+                    vec![(format!("cf-adopt-{}", self.engine.rev()), Conflict {
+                        code: ConflictCode::FieldConflict,
+                        pointer: "$".into(),
+                        base: None,
+                        disk: None,
+                        local: Some(serde_json::Value::String(e.to_string())),
+                    })]
+                })?;
+                Ok(true)
+            }
+            MergeOutcome::Conflicts(conflicts) => {
+                let persisted: Vec<(String, Conflict)> = conflicts
+                    .iter()
+                    .map(|c| (self.persist_conflict(c), c.clone()))
+                    .collect();
+                Err(persisted)
+            }
+        }
+    }
+
+    /// 采纳合并结果:保留 OpLog/rev/撤销栈/文件态的历史连续性(不得重置 rev)。
+    fn adopt_merged(&mut self, v: serde_json::Value) -> io::Result<()> {
+        let project = Project::from_value(&v).map_err(|errs| {
+            io::Error::other(format!("CF-005 SCHEMA_DRIFT(合并结果): {}", errs.join("; ")))
+        })?;
+        let log = self.engine.oplog().clone();
+        let undo_stack = cutforge_core::engine::rebuild_undo_stack(log.ops());
+        let file_states = self.engine.file_states().clone();
+        let new_engine = Engine::restore(project, log, self.engine.rev(), undo_stack, file_states)
+            .map_err(|errs| io::Error::other(errs.join("; ")))?;
+        self.engine = new_engine;
+        self.persisted = self.engine.oplog().len();
+        self.persist()?;
+        Ok(())
+    }
+
+    /// 从快照链取三路合并的祖先:精确 rev → ≤当前 rev 的最大者;链缺失返回 None
+    /// (退化口径:以本地为 base——与 V1 兼容,但此时冲突检测天然不可触发)。
+    fn load_base(&self) -> Option<serde_json::Value> {
+        let dir = self.root.join(BASES_REL);
+        let mut best: Option<(u64, PathBuf)> = None;
+        for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(n) = name.strip_suffix(".json").and_then(|s| s.parse::<u64>().ok()) else { continue };
+            if n <= self.engine.rev() && best.as_ref().map(|(b, _)| n > *b).unwrap_or(true) {
+                best = Some((n, entry.path()));
+            }
+        }
+        let (_, path) = best?;
+        let text = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&text).ok()
     }
 
     /// 引擎脏文件 → 盘面(先文件后记账;P1-9:写失败时 oplog 尚未记账)。
@@ -297,6 +425,7 @@ impl Workspace {
                 .to_string();
             return Ok(id);
         }
+        self.pre_write_sync()?;
         let before = self.notes.to_value();
         let note_id = self.notes.next_id();
         self.notes.add(anchor, body, author, tags);
@@ -440,90 +569,12 @@ impl Workspace {
         Ok(out)
     }
 
-    /// 三路合并(M2 骨架的直接消费入口):磁盘文件与内存模型按 baseRev 合并。
+    /// 三路合并(兼容入口):磁盘文件与内存模型按 baseRev 快照合并。
     /// 冲突时写入 `.cutforge/conflicts/<id>.json` 三方快照并停写(4.7)。
     /// `_meta` 旁路:磁盘若带新版 `_meta`(CutFlow 重生成),采纳之(ADR-0002)。
     pub fn merge_from_disk(&mut self) -> Result<Option<u64>, Vec<(String, Conflict)>> {
-        let disk_text = match std::fs::read_to_string(self.root.join(PROJECT_REL)) {
-            Ok(t) => t,
-            Err(_) => return Ok(None),
-        };
-        let mut disk: serde_json::Value = match serde_json::from_str(&disk_text) {
-            Ok(v) => v,
-            Err(e) => {
-                let c = Conflict {
-                    code: ConflictCode::FieldConflict,
-                    pointer: "$".into(),
-                    base: None,
-                    disk: Some(serde_json::Value::String(format!("CF-005 SCHEMA_DRIFT: {e}"))),
-                    local: None,
-                };
-                let id = self.persist_conflict(&c);
-                return Err(vec![(id, c)]);
-            }
-        };
-        let disk_meta = disk.as_object_mut().and_then(|o| o.remove("_meta"));
-        if let Some(m) = disk_meta {
-            self.meta_bypass = Some(m);
-        }
-        let local = match self.engine.query(cutforge_core::engine::Query::ProjectView) {
-            cutforge_core::engine::Answer::Project(v) => v,
-            _ => unreachable!(),
-        };
-        // M2 骨架以"本地"同时充当 base;完整 baseRev 快照链在 M4 引入。
-        let base = local.clone();
-        match cutforge_core::merge::three_way_merge(&base, &disk, &local) {
-            MergeOutcome::Merged(v) => {
-                if v == local {
-                    Ok(None)
-                } else {
-                    let project = match Project::from_value(&v) {
-                        Ok(p) => p,
-                        Err(errs) => {
-                            let c = Conflict {
-                                code: ConflictCode::FieldConflict,
-                                pointer: "$".into(),
-                                disk: Some(v),
-                                local: None,
-                                base: Some(serde_json::Value::String(format!("CF-005 SCHEMA_DRIFT: {}", errs.join("; ")))),
-                            };
-                            let id = self.persist_conflict(&c);
-                            return Err(vec![(id, c)]);
-                        }
-                    };
-                    // 采纳外部改动:保留 OpLog/rev/撤销栈/文件态的历史连续性(不得重置 rev)
-                    let log = self.engine.oplog().clone();
-                    let undo_stack =
-                        cutforge_core::engine::rebuild_undo_stack(log.ops());
-                    let file_states = self.engine.file_states().clone();
-                    let new_engine = match Engine::restore(project, log, self.engine.rev(), undo_stack, file_states) {
-                        Ok(e) => e,
-                        Err(errs) => {
-                            let c = Conflict {
-                                code: ConflictCode::FieldConflict,
-                                pointer: "$".into(),
-                                base: None,
-                                disk: None,
-                                local: Some(serde_json::Value::String(format!("CF-005 SCHEMA_DRIFT: {}", errs.join("; ")))),
-                            };
-                            let id = self.persist_conflict(&c);
-                            return Err(vec![(id, c)]);
-                        }
-                    };
-                    self.engine = new_engine;
-                    self.persisted = self.engine.oplog().len();
-                    let _ = self.persist();
-                    Ok(Some(self.engine.rev()))
-                }
-            }
-            MergeOutcome::Conflicts(conflicts) => {
-                let persisted: Vec<(String, Conflict)> = conflicts
-                    .iter()
-                    .map(|c| (self.persist_conflict(c), c.clone()))
-                    .collect();
-                Err(persisted)
-            }
-        }
+        self.sync_with_disk()?;
+        Ok(Some(self.engine.rev()))
     }
 
     /// 冲突三方快照落盘(4.7:冲突产生时在任何写入发生之前停止)。
@@ -554,6 +605,10 @@ impl Workspace {
     /// 步骤 5-7:备份 → 原子写 project.json(`_meta` 旁路回写)→ 追加 oplog →
     /// rev 落盘 → 标注落盘。真相源文件本体已在 reconcile_files 先行落盘。
     fn persist(&mut self) -> io::Result<()> {
+        // 写入窗口漂移检测(M9-1):pre-merge 之后、落盘之前,磁盘若被外部改写
+        // (外部写者不持锁),以同步点为 base 做三路;同字段异改 → CF-001,
+        // 本地待写**弃用**并从磁盘重载——宁拒写,不静默覆盖(北极星指标)。
+        self.check_window_drift()?;
         let ops = self.engine.oplog().ops();
         // 备份旧 project.json(全局约定 B.8:可回滚)
         if (self.persisted == 0 || self.persisted < ops.len())
@@ -569,6 +624,18 @@ impl Workspace {
         let mut buf = serde_json::to_vec_pretty(&v)?;
         buf.push(b'\n');
         atomic::atomic_write(&self.root.join(PROJECT_REL), &buf)?;
+        self.synced_disk = Some(v);
+
+        // baseRev 快照(M9-1):同步点的工程视图(不含 _meta,与契约面一致)
+        let rev = self.engine.rev();
+        let bases_dir = self.root.join(BASES_REL);
+        let _ = std::fs::create_dir_all(&bases_dir);
+        let base_value = self.engine.query(cutforge_core::engine::Query::ProjectView);
+        let cutforge_core::engine::Answer::Project(ref bv) = base_value else { unreachable!() };
+        let mut bb = serde_json::to_vec_pretty(bv)?;
+        bb.push(b'\n');
+        let _ = atomic::atomic_write(&bases_dir.join(format!("{rev}.json")), &bb);
+        prune_bases(&bases_dir, BASES_KEEP);
 
         // 新 Op 追加 .jsonl(按天切分;append-only)
         let day = today_compact();
@@ -587,6 +654,56 @@ impl Workspace {
             atomic::atomic_write(&self.root.join(NOTES_REL), &buf)?;
             self.notes_dirty = false;
         }
+        Ok(())
+    }
+
+    /// persist 前置:磁盘 != 上次同步视图 → 外部在窗口内写入。
+    /// 可自动合并 → 采纳(继续写);冲突 → 冲突落盘、本地重载、报 CONFLICT。
+    fn check_window_drift(&mut self) -> io::Result<()> {
+        let Some(synced) = self.synced_disk.clone() else { return Ok(()) };
+        let Ok(text) = std::fs::read_to_string(self.root.join(PROJECT_REL)) else { return Ok(()) };
+        let Ok(mut cur) = serde_json::from_str::<serde_json::Value>(&text) else { return Ok(()) };
+        let cur_meta = cur.as_object_mut().and_then(|o| o.remove("_meta"));
+        if let Some(m) = cur_meta {
+            self.meta_bypass = Some(m);
+        }
+        if cur == synced {
+            return Ok(());
+        }
+        let local = match self.engine.query(cutforge_core::engine::Query::ProjectView) {
+            cutforge_core::engine::Answer::Project(v) => v,
+            _ => unreachable!(),
+        };
+        match cutforge_core::merge::three_way_merge(&synced, &cur, &local) {
+            MergeOutcome::Merged(v) => {
+                self.synced_disk = Some(cur);
+                if v != local {
+                    self.adopt_merged(v)?;
+                }
+                Ok(())
+            }
+            MergeOutcome::Conflicts(conflicts) => {
+                for c in &conflicts {
+                    self.persist_conflict(c);
+                }
+                self.reload_from_disk()?;
+                Err(io::Error::other(format!(
+                    "CONFLICT: 写入窗口内外部已改动同一工程({} 项冲突),本地待写已弃用,请裁决后重试",
+                    conflicts.len())))
+            }
+        }
+    }
+
+    /// 弃用本地待写:从磁盘真相重载全部状态(外部改动获胜,4.7)。
+    fn reload_from_disk(&mut self) -> io::Result<()> {
+        let (engine, persisted, notes, meta_bypass, files, synced_disk) = Self::load(&self.root)?;
+        self.engine = engine;
+        self.persisted = persisted;
+        self.notes = notes;
+        self.notes_dirty = false;
+        self.meta_bypass = meta_bypass;
+        self.files = files;
+        self.synced_disk = synced_disk;
         Ok(())
     }
 }
@@ -628,6 +745,23 @@ fn reject_to_io(r: cutforge_core::engine::Reject) -> io::Error {    use cutforge
         other => (io::ErrorKind::InvalidInput, format!("{other:?}")),
     };
     io::Error::new(kind, msg)
+}
+
+/// baseRev 快照 LRU 淘汰:保留 rev 最大的 keep 份(计划书 V2-R4 防膨胀)。
+fn prune_bases(dir: &Path, keep: usize) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut revs: Vec<(u64, PathBuf)> = rd
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            name.strip_suffix(".json").and_then(|x| x.parse::<u64>().ok()).map(|n| (n, e.path()))
+        })
+        .collect();
+    revs.sort_by_key(|(n, _)| *n);
+    while revs.len() > keep {
+        let (_, path) = revs.remove(0);
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// UTC 紧凑日期 YYYYMMDD(oplog 按天切分;算法唯一来源 core::timeutil)。
@@ -811,6 +945,146 @@ mod tests {
         let disk: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(root.join(PROJECT_REL)).unwrap()).unwrap();
         assert_eq!(disk["_meta"], original_meta, "cutforge 写回不得丢/改 _meta");
+        fsutil::cleanup(&root);
+    }
+}
+
+#[cfg(test)]
+mod m9_tests {
+    use super::*;
+    use crate::fsutil;
+
+    fn read_project(root: &Path) -> serde_json::Value {
+        serde_json::from_str(&std::fs::read_to_string(root.join(PROJECT_REL)).unwrap()).unwrap()
+    }
+
+    fn write_project(root: &Path, v: &serde_json::Value) {
+        std::fs::write(root.join(PROJECT_REL), serde_json::to_string_pretty(v).unwrap()).unwrap();
+    }
+
+    /// M9-1 门禁:外部改 A 字段 + 本地改 A 字段 → 必须 CF-001 + 停写
+    /// (计划书:当前实现下该测试必红,V2 转绿)。
+    #[test]
+    fn conflict_real_repro_and_stop_writes() {
+        let root = tests_fixture("ws-conflict").unwrap();
+        // 上一会话:rev1(改 V1-002 时长),留下 bases/1
+        {
+            let mut w = Workspace::open_exclusive(&root).unwrap();
+            w.apply(
+                Command::ClipUpdate {
+                    clip_id: "V1-002".into(),
+                    patch: cutforge_core::command::ClipPatch { duration_ms: Some(6000), ..Default::default() },
+                },
+                Actor::user("u"),
+                ApplyOpts::default(),
+            ).unwrap();
+        }
+        assert!(root.join(BASES_REL).join("1.json").exists(), "persist 必须留 baseRev 快照");
+
+        // 本会话:长活工作区,本地待写 V1-002 startMs→9000(尚未落盘)
+        let mut ws = Workspace::open_exclusive(&root).unwrap();
+        ws.pre_write_sync().unwrap();
+        let receipt = ws.engine.apply(
+            Command::ClipUpdate {
+                clip_id: "V1-002".into(),
+                patch: cutforge_core::command::ClipPatch { start_ms: Some(9000), ..Default::default() },
+            },
+            Actor::agent("m9"),
+            ApplyOpts::default(),
+        ).unwrap();
+        assert_eq!(receipt.rev, 2);
+
+        // 写入窗口内:外部写者改同一字段 → startMs=9500
+        let mut v = read_project(&root);
+        v["tracks"][0]["clips"][1]["startMs"] = serde_json::json!(9500);
+        write_project(&root, &v);
+
+        // persist 必须检出漂移 → CF-001 → 本地待写弃用
+        let err = ws.persist().unwrap_err();
+        assert!(err.to_string().starts_with("CONFLICT"), "必须报 CONFLICT: {err}");
+        assert_eq!(read_project(&root)["tracks"][0]["clips"][1]["startMs"], serde_json::json!(9500),
+            "外部改动获胜,本地不得静默覆盖");
+        assert_eq!(ws.rev(), 1, "弃用待写后 rev 回到磁盘真相");
+        let conflicts = ws.conflict_list().unwrap();
+        assert!(!conflicts.is_empty() && conflicts.iter().all(|(_, c)| c.code.code() == "CF-001"),
+            "必须落 CF-001: {conflicts:?}");
+
+        // 停写:冲突未裁决前一切写拒绝
+        let blocked = ws.apply(
+            Command::ClipUpdate {
+                clip_id: "V1-001".into(),
+                patch: cutforge_core::command::ClipPatch { duration_ms: Some(7000), ..Default::default() },
+            },
+            Actor::agent("m9"),
+            ApplyOpts::default(),
+        );
+        assert!(blocked.is_err() && blocked.err().unwrap().to_string().contains("CONFLICT"));
+        fsutil::cleanup(&root);
+    }
+
+    /// M9-1 正例:窗口内外部改**不同**字段 → 自动合并,双方改动都存活。
+    #[test]
+    fn window_drift_different_fields_auto_merge() {
+        let root = tests_fixture("ws-automerge").unwrap();
+        let mut ws = Workspace::open_exclusive(&root).unwrap();
+        ws.pre_write_sync().unwrap();
+        let _ = ws.engine.apply(
+            Command::ClipUpdate {
+                clip_id: "V1-002".into(),
+                patch: cutforge_core::command::ClipPatch { start_ms: Some(9000), ..Default::default() },
+            },
+            Actor::agent("m9"),
+            ApplyOpts::default(),
+        ).unwrap();
+        let mut v = read_project(&root);
+        v["slug"] = serde_json::json!("renamed-外部");
+        write_project(&root, &v);
+        ws.persist().unwrap();
+        let disk = read_project(&root);
+        assert_eq!(disk["slug"], serde_json::json!("renamed-外部"), "外部改动必须存活");
+        assert_eq!(disk["tracks"][0]["clips"][1]["startMs"], serde_json::json!(9000), "本地改动必须存活");
+        fsutil::cleanup(&root);
+    }
+
+    /// M9-1:快照链 LRU——40 次写后 bases 目录 ≤ 32 份,最新快照在。
+    #[test]
+    fn bases_snapshot_lru() {
+        let root = tests_fixture("ws-lru").unwrap();
+        let mut ws = Workspace::open_exclusive(&root).unwrap();
+        for i in 0..40u64 {
+            ws.apply(
+                Command::ClipUpdate {
+                    clip_id: "V1-001".into(),
+                    patch: cutforge_core::command::ClipPatch {
+                        duration_ms: Some(7000 - i.min(500)),
+                        ..Default::default()
+                    },
+                },
+                Actor::agent("m9"),
+                ApplyOpts::default(),
+            ).unwrap();
+        }
+        let count = std::fs::read_dir(root.join(BASES_REL)).unwrap().count();
+        assert!(count <= 32, "LRU 上限 32,实际 {count}");
+        assert!(root.join(BASES_REL).join("40.json").exists(), "最新快照必须在");
+        fsutil::cleanup(&root);
+    }
+
+    /// M9-2 门禁:外部手改 project.json 后,守护 ≤1s 产出事件(北极星:外部改动可见)。
+    #[test]
+    fn external_edit_visible_within_1s() {
+        let root = tests_fixture("ws-daemon").unwrap();
+        let hub = crate::watcher::ensure_sync_daemon(&root);
+        std::thread::sleep(std::time::Duration::from_millis(500)); // 让守护完成初扫
+        let since = hub.current();
+        let mut v = read_project(&root);
+        v["slug"] = serde_json::json!("daemon-visible");
+        write_project(&root, &v);
+        let t0 = std::time::Instant::now();
+        let seq = hub.wait_since(since, std::time::Duration::from_millis(1500))
+            .expect("外部改动必须 ≤1s 可见(1.5s 容差含 CI 抖动)");
+        assert!(seq > since);
+        println!("外部改动可见耗时: {:?}", t0.elapsed());
         fsutil::cleanup(&root);
     }
 }

@@ -275,7 +275,8 @@ pub fn render(
                 None => base_filters,
             };
             if speed != 1.0 {
-                vf.push_str(&format!(",setpts=PTS/{}", fmt_f64(speed)));
+                // setpts 后重锁帧率:不同 ffmpeg 版本 -t 帧取整差异会导致时长漂移
+                vf.push_str(&format!(",setpts=PTS/{},fps={}", fmt_f64(speed), project.fps));
             }
             if tail_ms > 0.0 {
                 // 冻结尾帧扩展(转场零时间漂移的关键,ADR-0023)

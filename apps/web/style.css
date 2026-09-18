@@ -1,28 +1,58 @@
-/* CutForge Web 壳(最小可用;计划书 7.6)。
-   纯度纪律:本文件不做时间线运算,一切 id/startMs/endMs 来自内核投影。 */
-:root { --bg:#111418; --fg:#e8eaed; --panel:#1b1f24; --acc:#4f8cff; --warn:#ffb454; }
+/* CutForge Web 编辑器(壳只做展示与手势;一切变更走 MCP 工具 → Op) */
+:root { --bg: #14161a; --panel: #1d2026; --line: #2c313a; --fg: #dfe3ea; --dim: #8b93a1;
+        --accent: #4da3ff; --video: #2f6f4f; --audio: #6f5a2f; --text-k: #4f5a6f; --danger: #c25b5b; }
 * { box-sizing: border-box; }
-body { margin:0; font:14px/1.5 "Segoe UI",system-ui,sans-serif; background:var(--bg); color:var(--fg); }
-header { padding:10px 16px; border-bottom:1px solid #2a2f36; display:flex; gap:12px; align-items:baseline; }
-header .sub { color:#9aa4ae; font-size:12px; }
-#tabs { display:flex; gap:4px; padding:8px 16px 0; }
-#tabs button { background:var(--panel); color:var(--fg); border:1px solid #2a2f36; padding:6px 14px; border-radius:6px 6px 0 0; cursor:pointer; }
-#tabs button.active { background:var(--acc); border-color:var(--acc); }
-#loader { display:flex; gap:16px; padding:10px 16px; background:var(--panel); border-bottom:1px solid #2a2f36; flex-wrap:wrap; }
-#status { color:var(--warn); }
-main { padding:16px; }
-.tab { display:none; }
-.tab.active { display:block; }
-.track { margin:14px 0; }
-.track h3 { margin:0 0 6px; font-size:13px; color:#9aa4ae; }
-.lane { position:relative; height:44px; background:#0d1013; border-radius:6px; overflow:hidden; }
-.clip { position:absolute; top:4px; bottom:4px; background:linear-gradient(180deg,#4f8cff,#3a6fd8);
-        border-radius:4px; font-size:11px; padding:2px 6px; overflow:hidden; white-space:nowrap; cursor:default; }
-.clip.sfx { background:linear-gradient(180deg,#ffb454,#e09133); }
-.op { border:1px solid #2a2f36; border-radius:6px; padding:8px 10px; margin:8px 0; }
-.op .meta { color:#9aa4ae; font-size:12px; }
-.note { border-left:3px solid var(--acc); padding:6px 10px; margin:8px 0; background:var(--panel); }
-.note.orphan { border-left-color:var(--warn); }
-.note .id { color:#9aa4ae; font-size:12px; }
-textarea { width:100%; min-height:180px; background:#0d1013; color:var(--fg); border:1px solid #2a2f36; border-radius:6px; font-family:Consolas,monospace; }
-pre { background:#0d1013; padding:10px; border-radius:6px; overflow:auto; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 16px; margin: 0; }
+header .sub { color: var(--dim); }
+header .spacer { flex: 1; }
+button { background: #2a2f38; color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+input, select { background: #12141a; color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+.toggle { color: var(--dim); user-select: none; }
+#tabs { display: flex; gap: 4px; padding: 6px 14px 0; background: var(--panel); }
+#tabs button { border-bottom: none; border-radius: 4px 4px 0 0; }
+#tabs button.active { background: var(--bg); color: var(--accent); }
+main { padding: 12px 14px; }
+.tab { display: none; }
+.tab.active { display: block; }
+footer { padding: 6px 14px; border-top: 1px solid var(--line); color: var(--dim); min-height: 26px; }
+
+/* ---- 时间线 ---- */
+#toolbar { display: flex; gap: 18px; margin-bottom: 6px; color: var(--dim); }
+#toolbar b { color: var(--fg); }
+#timeline-wrap { position: relative; overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+#ruler { position: relative; height: 22px; border-bottom: 1px solid var(--line); cursor: crosshair; }
+#ruler .tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--line); color: var(--dim); font-size: 10px; padding-left: 3px; }
+.track { position: relative; height: 44px; border-bottom: 1px solid var(--line); }
+.track .lane-label { position: sticky; left: 0; display: inline-block; width: 44px; color: var(--dim); font-size: 11px; padding: 2px 4px; }
+.clip { position: absolute; top: 6px; height: 32px; border-radius: 4px; background: var(--video);
+        border: 1px solid rgba(255,255,255,.25); cursor: grab; overflow: hidden; white-space: nowrap; font-size: 11px; padding: 2px 6px; user-select: none; }
+.clip.audio { background: var(--audio); }
+.clip.text { background: var(--text-k); }
+.clip.selected { outline: 2px solid var(--accent); }
+.clip .edge { position: absolute; top: 0; height: 100%; width: 7px; cursor: ew-resize; background: rgba(255,255,255,.15); }
+.clip .edge-l { left: 0; border-radius: 4px 0 0 4px; }
+.clip .edge-r { right: 0; border-radius: 0 4px 4px 0; }
+#playhead { position: absolute; top: 22px; width: 2px; height: calc(100% - 22px); background: var(--accent); pointer-events: none; }
+
+/* ---- 检查器 / 面板 ---- */
+#inspector { margin-top: 10px; padding: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+#inspector h3 { margin: 0 8px 0 0; font-size: 13px; }
+#inspector label { display: flex; gap: 6px; align-items: center; color: var(--dim); }
+#insp-fields { color: var(--dim); min-width: 220px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+.panel h3 { margin: 0 0 8px; font-size: 13px; }
+.panel input[type=text] { width: 420px; }
+.row { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-bottom: 1px dashed var(--line); }
+.row:last-child { border-bottom: none; }
+.row .oid { color: var(--dim); font-family: Consolas, monospace; }
+.row .bd { flex: 1; }
+.row .delta { color: var(--dim); font-family: Consolas, monospace; font-size: 12px; }
+.badge { display: inline-block; padding: 0 6px; border-radius: 8px; background: #2a2f38; color: var(--dim); font-size: 11px; }
+.badge.agent { color: var(--accent); }
+.badge.open { color: #e6c35c; }
+.badge.resolved { color: #7ec97e; }
+.badge.orphan { color: var(--danger); }
+#notes-open .row input, #notes-open .row button { margin-right: 6px; }

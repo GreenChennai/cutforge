@@ -748,6 +748,115 @@
    }
   },
   {
+   "name": "clip_move",
+   "kind": "write",
+   "idempotent": true,
+   "description": "移动片段(改 startMs;可跨同 kind 轨道;同轨重叠 GUARD_FAILED)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "requestId": {
+      "type": "string",
+      "description": "非幂等写操作去重键"
+     },
+     "clipId": {
+      "type": "string"
+     },
+     "startMs": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "toTrack": {
+      "type": "string",
+      "description": "可选目标轨道 id(须同 kind)"
+     }
+    },
+    "required": [
+     "root",
+     "clipId",
+     "startMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_duplicate",
+   "kind": "write",
+   "idempotent": false,
+   "description": "复制片段(新 id,放到同轨指定起点;粘贴 = 复制+落点)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "requestId": {
+      "type": "string",
+      "description": "非幂等写操作去重键"
+     },
+     "clipId": {
+      "type": "string"
+     },
+     "startMs": {
+      "type": "integer",
+      "minimum": 0
+     },
+     "toTrack": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "root",
+     "clipId",
+     "startMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "track_add",
+   "kind": "write",
+   "idempotent": false,
+   "description": "新增空轨道(kind: video|audio|text,id 确定性生成)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "requestId": {
+      "type": "string",
+      "description": "非幂等写操作去重键"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "video",
+       "audio",
+       "text"
+      ]
+     }
+    },
+    "required": [
+     "root",
+     "kind"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
    "name": "undo",
    "kind": "write",
    "idempotent": false,
@@ -979,6 +1088,27 @@
     "required": [
      "root",
      "name"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "timeline_get",
+   "kind": "query",
+   "idempotent": true,
+   "description": "时间线投影(clip_id/track/startMs/endMs;endMs 由内核计算,壳禁时间线语义)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     }
+    },
+    "required": [
+     "root"
     ]
    },
    "outputSchema": {

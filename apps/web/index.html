@@ -2,48 +2,98 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>CutForge Web 壳</title>
+<title>CutForge 编辑器</title>
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
 <header>
   <h1>CutForge</h1>
-  <span class="sub">壳只做展示;真相在工程文件,投影来自 wasm 内核</span>
+  <span class="sub" id="session-info">连接中…</span>
+  <span class="spacer"></span>
+  <label class="toggle"><input type="checkbox" id="magnet" checked> 磁吸(帧网格)</label>
+  <label class="toggle"><input type="checkbox" id="ripple"> 波纹删除(Shift+Del)</label>
+  <button id="btn-undo" title="Ctrl+Z">↩ 撤销</button>
+  <button id="btn-redo" title="Ctrl+Y">↪ 重做</button>
 </header>
 <nav id="tabs">
   <button data-tab="timeline" class="active">时间线</button>
-  <button data-tab="diff">差异面板</button>
   <button data-tab="notes">标注</button>
+  <button data-tab="diff">差异面板</button>
   <button data-tab="conflicts">冲突</button>
-  <button data-tab="script">脚本页</button>
 </nav>
 
-<section id="loader">
-  <label>project.json <input type="file" id="f-project" accept=".json"></label>
-  <label>notes.json <input type="file" id="f-notes" accept=".json"></label>
-  <label>oplog.jsonl <input type="file" id="f-oplog" accept=".jsonl"></label>
-  <label>conflicts.json <input type="file" id="f-conflicts" accept=".json"></label>
-  <span id="status">加载 pkg/cutforge_wasm.js …</span>
-</section>
-
 <main>
-  <div id="tab-timeline" class="tab active"><div id="timeline"></div></div>
-  <div id="tab-diff" class="tab"><div id="diff"></div></div>
-  <div id="tab-notes" class="tab"><div id="notes"></div></div>
-  <div id="tab-conflicts" class="tab"><div id="conflicts">无冲突快照加载</div></div>
-  <div id="tab-script" class="tab">
-    <p>cutforge-script-v1 批式查询(沙箱:仅查询工具/无副作用):</p>
-    <textarea id="script-in">{
-  "format": "cutforge-script-v1",
-  "steps": [
-    {"tool": "project_get", "args": {}}
-  ]
-}</textarea>
-    <button id="script-run">运行</button>
-    <pre id="script-out"></pre>
+  <!-- ============ 时间线 ============ -->
+  <div id="tab-timeline" class="tab active">
+    <div id="toolbar">
+      <span>播放头 <b id="playhead-ms">0</b>ms</span>
+      <span id="sel-info">未选中片段(S 分割 / Del 删除 / Ctrl+C 复制)</span>
+      <span>rev <b id="rev">-</b></span>
+    </div>
+    <div id="timeline-wrap">
+      <div id="ruler"></div>
+      <div id="playhead"></div>
+      <div id="tracks"></div>
+    </div>
+    <div id="inspector">
+      <h3>检查器</h3>
+      <div id="insp-fields">选择一个片段</div>
+      <label>startMs <input type="number" id="insp-start" min="0"></label>
+      <label>durationMs <input type="number" id="insp-dur" min="1"></label>
+      <label>volume <input type="number" id="insp-vol" step="0.1" min="0" max="2"></label>
+      <button id="insp-apply">应用(clip_update)</button>
+      <button id="insp-dup">复制到播放头(clip_duplicate)</button>
+      <button id="track-add-video">+视频轨</button>
+      <button id="track-add-audio">+音频轨</button>
+    </div>
+  </div>
+
+  <!-- ============ 标注 ============ -->
+  <div id="tab-notes" class="tab">
+    <div class="panel">
+      <h3>新建标注(锚定当前选中片段 / 播放头)</h3>
+      <input type="text" id="note-body" placeholder="这里要怎么改?">
+      <button id="note-create">创建(notes_add)</button>
+    </div>
+    <div class="panel">
+      <h3>open 态标注</h3>
+      <div id="notes-open"></div>
+    </div>
+    <div class="panel">
+      <h3>孤儿标注(显式保留,不静默丢弃)</h3>
+      <div id="notes-orphans"></div>
+    </div>
+  </div>
+
+  <!-- ============ 差异面板 ============ -->
+  <div id="tab-diff" class="tab">
+    <div class="panel">
+      <h3>OpLog(AI 改了什么,逐字段可审计)</h3>
+      <label>actor
+        <select id="diff-actor">
+          <option value="">全部</option>
+          <option value="agent">agent(AI)</option>
+          <option value="user">user(人)</option>
+          <option value="script">script(脚本)</option>
+        </select>
+      </label>
+      <label>limit <input type="number" id="diff-limit" value="50" min="1" max="500"></label>
+      <button id="diff-refresh">刷新</button>
+      <button id="diff-undo-batch">一键撤销该批(undo ×N)</button>
+      <div id="diff-rows"></div>
+    </div>
+  </div>
+
+  <!-- ============ 冲突 ============ -->
+  <div id="tab-conflicts" class="tab">
+    <div class="panel">
+      <h3>冲突(存在冲突时停写;裁决后删除 .cutforge/conflicts/*.json)</h3>
+      <div id="conflict-rows"></div>
+    </div>
   </div>
 </main>
 
-<script type="module" src="./app.js"></script>
+<footer><span id="status"></span></footer>
+<script src="./app.js"></script>
 </body>
 </html>

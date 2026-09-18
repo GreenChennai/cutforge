@@ -174,10 +174,17 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             }
             envelope(true, "OK", "产物清单", json!({"dir": "06_output", "files": files}))
         }
-        "capability_matrix" => envelope(true, "OK", "能力对等矩阵(ADR-0038)", json!({
+        "capability_matrix" => envelope(true, "OK", "能力对等矩阵(实码口径,单一真相源)", json!({
             "matrix": capability_matrix(),
-            "rule": "必达项全达成且整体达成率 ≥90% 才通过(M6-5)",
         })),
+        "timeline_get" => match ws.engine().query(Query::Timeline) {
+            Answer::Timeline(tl) => envelope(true, "OK", "时间线投影", json!({
+                "clips": tl.into_iter().map(|(id, start, end, track)| json!({
+                    "id": id, "startMs": start, "endMs": end, "track": track
+                })).collect::<Vec<_>>()
+            })),
+            _ => unreachable!(),
+        },
 
         // ---------- 写操作(全部经 Workspace 命令通道) ----------
         "clip_update" => {
@@ -206,6 +213,50 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             Some(clip_id) => finish(ws.apply(Command::ClipDelete { clip_id: clip_id.into() }, actor, opts)),
             None => envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({})),
         },
+        "clip_move" => {
+            let (Some(clip_id), Some(start_ms)) = (args["clipId"].as_str(), args["startMs"].as_u64()) else {
+                return envelope(false, "PRECONDITION_FAILED", "缺 clipId/startMs", json!({}));
+            };
+            finish(ws.apply(
+                Command::ClipMove { clip_id: clip_id.into(), new_start_ms: start_ms, to_track: args["toTrack"].as_str().map(String::from) },
+                actor, opts,
+            ))
+        }
+        "clip_duplicate" => {
+            let (Some(clip_id), Some(start_ms)) = (args["clipId"].as_str(), args["startMs"].as_u64()) else {
+                return envelope(false, "PRECONDITION_FAILED", "缺 clipId/startMs", json!({}));
+            };
+            let src_track = ws.project().find_clip(clip_id).map(|(ti, _)| ti);
+            let Some(src_ti) = src_track else {
+                return envelope(false, "PRECONDITION_FAILED", &format!("clip 不存在: {clip_id}"), json!({}));
+            };
+            let to_track = args["toTrack"].as_str().map(String::from)
+                .unwrap_or_else(|| ws.project().tracks[src_ti].id.clone());
+            let Some(ti) = ws.project().find_track(&to_track) else {
+                return envelope(false, "PRECONDITION_FAILED", &format!("track 不存在: {to_track}"), json!({}));
+            };
+            let mut clip = ws.project().tracks[src_ti].clips[ws.project().find_clip(clip_id).unwrap().1].clone();
+            if ws.project().tracks[ti].kind != ws.project().tracks[src_ti].kind {
+                return envelope(false, "GUARD_FAILED", "跨 kind 复制拒绝", json!({}));
+            }
+            clip.id = cutforge_core::model::Project::next_clip_id(&ws.project().tracks[ti]);
+            clip.start_ms = start_ms;
+            let request_id = args["requestId"].as_str().map(String::from);
+            finish(ws.apply(Command::ClipInsert { to_track, clip, request_id }, actor, opts))
+        }
+        "track_add" => {
+            let Some(kind) = args["kind"].as_str() else {
+                return envelope(false, "PRECONDITION_FAILED", "缺 kind", json!({}));
+            };
+            let kind = match kind {
+                "video" => cutforge_core::model::TrackKind::Video,
+                "audio" => cutforge_core::model::TrackKind::Audio,
+                "text" => cutforge_core::model::TrackKind::Text,
+                other => return envelope(false, "PRECONDITION_FAILED", &format!("未知 kind: {other}"), json!({})),
+            };
+            let request_id = args["requestId"].as_str().map(String::from);
+            finish(ws.apply(Command::TrackAdd { kind, request_id }, actor, opts))
+        }
         "subtitle_set" | "subtitle_retime" => {
             let Some(clip_id) = args["clipId"].as_str() else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
@@ -269,7 +320,7 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             let (Some(anchor_v), Some(body)) = (args["anchor"].as_object(), args["body"].as_str()) else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 anchor/body", json!({}));
             };
-            let kind = match anchor_v["kind"].as_str().unwrap_or("clip") {
+            let kind = match anchor_v.get("kind").and_then(|v| v.as_str()).unwrap_or("clip") {
                 "track" => AnchorKind::Track,
                 "time" => AnchorKind::Time,
                 "word" => AnchorKind::Word,
@@ -278,8 +329,9 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             };
             let anchor = Anchor {
                 kind,
-                ref_: anchor_v["ref"].as_str().map(String::from),
-                t_ms: anchor_v["tMs"].as_u64().unwrap_or(0),
+                // 注意:serde Map 的 Index 在键缺失时 panic,必须用 .get()(M10 e2e 实测)
+                ref_: anchor_v.get("ref").and_then(|v| v.as_str()).map(String::from),
+                t_ms: anchor_v.get("tMs").and_then(|v| v.as_u64()).unwrap_or(0),
                 span: None,
             };
             let author = if args["author"].as_str() == Some("agent") {
@@ -652,6 +704,158 @@ pub fn serve_stdio() -> i32 {
     0
 }
 
+/// 工作区常驻服务(M10 本地服务化):静态托管 Web 编辑器 + /rpc + /events +
+/// /session 会话信息。随机 token 落盘 `.cutforge/session`(仅 127.0.0.1)。
+pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path) -> i32 {
+    use std::sync::Arc;
+    let _ = cutforge_io::watcher::ensure_sync_daemon(root);
+    let session = json!({
+        "root": root.to_string_lossy(),
+        "port": port,
+        "token": token,
+        "pid": std::process::id(),
+        "startedAt": cutforge_core::timeutil::now_rfc3339(),
+    });
+    let dir = root.join(".cutforge");
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join("session"), serde_json::to_vec_pretty(&session).unwrap());
+    let session_str = session.to_string();
+    let root_s = root.to_string_lossy().to_string();
+    let web = Arc::new(web_dir.to_path_buf());
+    let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("bind 失败: {e}");
+            return 4;
+        }
+    };
+    eprintln!("cutforge 编辑器: http://127.0.0.1:{port}/?token={token}");
+    for stream in listener.incoming() {
+        let Ok(stream) = stream else { continue };
+        let token = token.to_string();
+        let root_s = root_s.clone();
+        let web = web.clone();
+        let session_str = session_str.clone();
+        std::thread::spawn(move || {
+            let _ = handle_workspace_conn(stream, &token, &root_s, &web, &session_str);
+        });
+    }
+    0
+}
+
+fn static_content(web: &Path, path: &str) -> Option<(&'static str, Vec<u8>)> {
+    let rel = match path {
+        "/" | "/index.html" => ("text/html; charset=utf-8", "index.html"),
+        "/app.js" => ("text/javascript; charset=utf-8", "app.js"),
+        "/style.css" => ("text/css; charset=utf-8", "style.css"),
+        _ => return None,
+    };
+    std::fs::read(web.join(rel.1)).ok().map(|data| (rel.0, data))
+}
+
+fn handle_workspace_conn(
+    mut stream: std::net::TcpStream,
+    token: &str,
+    root: &str,
+    web: &Path,
+    session_str: &str,
+) -> std::io::Result<()> {
+    use std::io::Read as _;
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 4096];
+    let header_end = b"\r\n\r\n";
+    loop {
+        match stream.read(&mut tmp) {
+            Ok(0) => break,
+            Ok(n) => buf.extend_from_slice(&tmp[..n]),
+            Err(_) => break,
+        }
+        if buf.windows(4).any(|w| w == header_end) {
+            // headers 完整后还须读满 Content-Length:body 滞留接收缓冲时关闭
+            // 连接会被 Windows 记为 RST,客户端读响应即间歇性 ConnectionReset
+            let pos = buf.windows(4).position(|w| w == header_end).unwrap_or(0) + 4;
+            let len: usize = String::from_utf8_lossy(&buf[..pos])
+                .to_ascii_lowercase()
+                .lines()
+                .find(|l| l.starts_with("content-length:"))
+                .and_then(|l| l.split(':').nth(1).and_then(|n| n.trim().parse().ok()))
+                .unwrap_or(0);
+            if buf.len() >= pos + len {
+                break;
+            }
+        }
+    }
+    let head = String::from_utf8_lossy(&buf);
+    let first_line = head.lines().next().unwrap_or("");
+    let authorized = head.contains(&format!("Authorization: Bearer {token}"))
+        || first_line.contains(&format!("token={token}"));
+    let raw_path = first_line.split(' ').nth(1).unwrap_or("");
+    let path_only = raw_path.split('?').next().unwrap_or("");
+    let is_get_session = path_only == "/session";
+    let is_get_static = matches!(path_only, "/" | "/index.html" | "/app.js" | "/style.css");
+    let is_rpc = path_only == "/rpc" && first_line.starts_with("POST");
+    let is_events = path_only == "/events";
+    let body_start = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(buf.len());
+    let body = String::from_utf8_lossy(&buf[body_start..]).to_string();
+
+    // 静态资源公开(纯客户端代码,无秘密);数据面(/session /rpc /events)必须持 token
+    if !authorized && !is_get_static {
+        let _ = write!(stream, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return Ok(());
+    }
+    let resp: (String, String) = if is_get_static {
+        match static_content(web, path_only) {
+            Some((ctype, data)) => (ctype.to_string(), String::from_utf8_lossy(&data).to_string()),
+            None => ("text/plain".into(), "not found".into()),
+        }
+    } else if is_get_session {
+        ("application/json".into(), session_str.to_string())
+    } else if is_rpc {
+        let v = match serde_json::from_str::<Value>(&body) {
+            Ok(req) => handle_rpc(&req).map(|r| r.to_string()).unwrap_or_default(),
+            Err(e) => json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}}).to_string(),
+        };
+        ("application/json".into(), v)
+    } else if is_events {
+        let query = first_line.split('?').nth(1).unwrap_or("");
+        let mut since: u64 = 0;
+        for kv in query.split('&') {
+            let mut it = kv.split('=');
+            if let (Some("since"), Some(v)) = (it.next(), it.next()) {
+                since = v.parse().unwrap_or(0);
+            }
+        }
+        let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(root));
+        let v = match hub.wait_since(since, std::time::Duration::from_millis(900)) {
+            Some(seq) => json!({"ok": true, "code": "OK", "event": "workspace.changed", "seq": seq}),
+            None => json!({"ok": true, "code": "OK", "event": "none", "seq": hub.current()}),
+        };
+        ("application/json".into(), v.to_string())
+    } else {
+        ("application/json".into(), json!({"service": "cutforge-workspace"}).to_string())
+    };
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        resp.0,
+        resp.1.len(),
+        resp.1
+    );
+    // 优雅关闭:先 shutdown(Write) 再把对端残余/确认读净,避免 Windows
+    // 在未读数据存在时直接 RST(客户端表现为间歇性 ConnectionReset)
+    let _ = stream.flush();
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+    let mut drain = [0u8; 512];
+    while let Ok(n) = stream.read(&mut drain) {
+        if n == 0 {
+            break;
+        }
+    }
+    Ok(())
+}
+
 /// 内嵌 HTTP 辅通道:仅监听 127.0.0.1,Bearer token 校验;
 /// 每连接一线程(读超时 5s,单连接不再挂死整个服务);GET /events 长轮询推外部改动事件。
 pub fn serve_http(port: u16, token: &str) -> i32 {
@@ -678,9 +882,7 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
     stream.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
     let mut buf = Vec::new();
     let mut tmp = [0u8; 4096];
-    let header_end = b"
-
-";
+    let header_end = b"\r\n\r\n";
     loop {
         match stream.read(&mut tmp) {
             Ok(0) => break,
@@ -705,15 +907,10 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
     let is_rpc = head.starts_with("POST /rpc");
     let is_events = head.starts_with("GET /events");
     if !authorized {
-        let _ = write!(stream, "HTTP/1.1 401 Unauthorized
-Content-Length: 0
-
-");
+        let _ = write!(stream, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
         return Ok(());
     }
-    let body_start = buf.windows(4).position(|w| w == b"
-
-").map(|p| p + 4).unwrap_or(buf.len());
+    let body_start = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(buf.len());
     let body = String::from_utf8_lossy(&buf[body_start..]).to_string();
     let resp_body = if is_rpc {
         match serde_json::from_str::<Value>(&body) {
@@ -748,12 +945,7 @@ Content-Length: 0
     };
     let _ = write!(
         stream,
-        "HTTP/1.1 200 OK
-Content-Type: application/json
-Content-Length: {}
-Connection: close
-
-{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         resp_body.len(),
         resp_body
     );

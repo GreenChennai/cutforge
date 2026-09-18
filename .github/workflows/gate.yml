@@ -43,6 +43,23 @@ jobs:
           cargo build --workspace --locked
           cargo test --workspace --locked
 
+  web-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build (M10-1/M10-2 e2e 需要服务端二进制)
+        run: cargo build -p cutforge-mcp --locked
+      - name: Install playwright (chromium)
+        run: |
+          pip install playwright -q
+          python -m playwright install --with-deps chromium
+      - name: M10-1/M10-2 e2e
+        run: python tools/e2e_edit_ops.py --bin target/debug/cutforge-mcp
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     strategy:

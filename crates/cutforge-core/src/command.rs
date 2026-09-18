@@ -54,6 +54,8 @@ pub enum Command {
     ClipInsert { to_track: String, clip: Clip, request_id: Option<String> },
     /// 合并相邻两片段(left 在前且边界相接;无损逆操作)。
     ClipMerge { left_id: String, right_id: String },
+    /// 新增空轨道(M10 多轨管理;id 由 Engine 按 kind 确定性生成)。
+    TrackAdd { kind: crate::model::TrackKind, request_id: Option<String> },
 }
 
 /// 从 patch 派生的字段级变更(指针片段 → before/after),用于生成叶级 Op。

@@ -62,29 +62,48 @@
 | M9-R3 | 守护线程与 MCP dispatch 各自 open_exclusive:冲突落盘可能由守护先写入,dispatch 停写提示需引导用户看 conflict_list(已实现,UI 侧待展示) | M10 冲突面板 |
 | M9-R4 | `/events` 只推 project.json 变更;notes.json/cutlist.json 的外部改动(如 rs_cut --apply)不产生事件 | M10 扩展事件面 |
 
-## M10 · 编辑能力(任务单)
+## M10 · 编辑能力(2026-09-19 完成)
 
-1. **M9-1 baseRev 快照链**:`.cutforge/bases/<rev>.json`,persist 成功后保存"与磁盘
-   同步点"的本地值;`merge_from_disk` 用真祖先做三路合并。
-   门禁 M9-1:外部改 A 字段 + 本地改 A 字段 → 必触发 CF-001(当前实现该测试必红)。
-   - 折入 M8-R4:merge 收编进锁内语义。
-   - 存储口径:全量快照 + LRU 上限(32 个)——计划书 R4 建议只存 diff,但 JSON diff
-     无既有基建、工程大小为几十 KB 量级,LRU 全量更简单且同样防膨胀(偏离已记录)。
-2. **M9-2 watcher 接线**:常驻进程内轮询线程(mtime+hash 去抖)→ 锁内
-   merge_from_disk → 冲突落盘 → HTTP `/events` 长轮询推 `workspace.changed`。
-   门禁 M9-2:外部手改 project.json 后 ≤1s 事件可见且视图一致。
-   - 折入 M8-R5:watcher 只做短临界区读合并,不做写。
-3. **M9-3 阶段状态同口径 + cut_apply 语义**(双仓):
-   - stage_status 解析 `_state/S*.json` 内容(done/stale/failed);
-   - cut_apply 按 cuts[].action 重算 keep/removedMs(与 rs_cut --apply 契约对拍);
-   - cutlist 脏提示指向 `rs_cut --apply`(CutFlow rs_run 阶段映射改动);
-   - rs_run S3 记录输出 hash 识别带外改写(CutFlow 侧);
-   - B8 护栏识别 `schemaVersion`/轨道 id 为 CutForge 写入(CutFlow rs_ir `_manual_edits`)。
-   门禁 M9-3:MCP 改 action → rs_cut --apply 消费 → S3 重建 → IR 反映,无静默丢弃。
-4. **M9-4 桥升版 + 双侧冒烟**:
-   - rs_editor timeline 对 v1 IR 的 id 回退 `V1#2` + idSource 标注(CutFlow);
-   - rs_gate --probe 真检 gate.py 存在(CutFlow);
-   - rs_oplog 半行语义对齐(截断,CutFlow 侧);
-   - SKILL.md 登记四桥(CutFlow);docs/FLOW.md/README 同步 M8 架构变化(M8-R2 折入);
-   - cutforge CI 桥冒烟(pytest 调四桥脚本);CutFlow CI 浅克隆 cutforge 冒烟。
-   门禁 M9-4:双侧 CI 桥冒烟绿。
+**交付**:
+
+| 门禁 | 判定 | 结果 |
+|---|---|---|
+| M10-1 edit_ops_e2e | `tools/e2e_edit_ops.py`(Playwright,3 连跑稳定):真实 IR 导入→分割→检查器移动→波纹删→undo 全还原(逐字段相等 + OpLog 数==rev + 盘面 rev 一致)→redo 等量回放(oplog 计数相等 + 片段逐字段一致) | ✅ |
+| M10-2 note_loop_ui | 同脚本:3 条标注创建→AI 执行(clip_update,causedBy 绑定)→浏览器内逐条回执结案(resolvedBy.opIds 校验),全链 0.54s ≤ 5s | ✅ |
+
+- **本地服务化**:`cutforge-mcp serve --root <工程>` 常驻服务——静态托管 apps/web +
+  `/session`(token 落盘 `.cutforge/session`)+ `/rpc`(全部 UI 操作走 MCP 工具→Op,
+  无旁路)+ `/events` 长轮询(外部改动可见);随机 token(pid+时钟 hash,零依赖)。
+- **操作集**:选择/拖拽移动(帧网格磁吸开关)/边缘 trim/S 分割/Del 删除/Shift+Del
+  波纹删/Ctrl+C·V 复制粘贴(新工具 `clip_duplicate`)/`clip_move`/`track_add`
+  多轨管理/Ctrl+Z·Y 与按钮撤销重做(跨 dispatch 可用)。
+- **标注 UI 闭环**:时间轴锚定新建→open 列表→回执结案表单(opIds)→孤儿面板计数。
+- **差异面板升级**:actor 过滤/limit/逐 Op before→after/勾选批量撤销(undo ×N)。
+- **注册表 28→32**:新增 `clip_move`/`clip_duplicate`/`track_add`/`timeline_get`
+  (时间线投影由内核计算 endMs,壳零时间线语义,check-shell-purity 绿)。
+- **IR v3 预研**:ADR-0004——keyframes 只进 position/scale/opacity/volume 四属性,
+  ease 封闭枚举,不做曲线编辑器,实现随 M12 按需。
+
+### 复盘:M10 新发现(折入 M11/M13)
+
+| # | 发现 | 处置 |
+|---|---|---|
+| M10-R1 | **Engine::restore 把 redo_stack 置空**——MCP 每次 dispatch 重开工程,redo 跨 dispatch 永远失效(NOTHING_TO_REDO)。已修:`rebuild_stacks` 对称重建双栈(M10 e2e 抓出) | 已修 |
+| M10-R2 | serve 线程读循环读到 header 即 break 时,POST body 滞留内核缓冲,关闭触发 Windows RST→客户端间歇 ConnectionReset。已修:读满 Content-Length + shutdown(Write)+drain 优雅关闭 | 已修 |
+| M10-R3 | serde Map 的 `value["key"]` Index 在键缺失时 panic(notes_add 的 anchor.ref 缺键打挂整个连接线程)。已改 `.get()`;**全仓应排查同类 Index 用法** | M11 前清零 |
+| M10-R4 | 浏览器子资源(css/js)不带 Authorization——鉴权必须只锁数据面,静态资源公开。已修 | 已修 |
+| M10-R5 | e2e 对 Playwright 点击竞态敏感:已改为服务端真相(oplog 计数)驱动重试;后续 e2e 一律遵循"以服务端状态为断言依据,UI 只作驱动"的写法 | 写入约定 |
+
+## M11 · 渲染追平(任务单,含 M10 折入项)
+
+按计划书 §6 M11 顺序(依赖驱动),每项配专属对拍夹具,矩阵证据回填
+`docs/capability-matrix.json`(门禁 M11-1:15 项双跑对拍,旧缓存 100% 失效纪律):
+
+1. 转场(§5#5):xfade 链 + 尾帧扩展(复用 CutFlow ADR-0023 口径);三级语法消费。
+2. 变速(§5#2):setpts/atempo;clip.speed 进缓存键。
+3. 位置/缩放/旋转(§5#4)+ punch-in(§5#12):overlay/rotate/zoompan。
+4. BGM ducking(§5#9):bgm 消费 + 侧链 amix→asplit。
+5. 音量淡入淡出(§5#3):fade 字段 afade 消费(音量已生效,补 fade)。
+6. 真·多画幅分叉(§5#14):共享 mix/sub 只 fork segment+encode,修 render_variants 注释口径(M8-R3)。
+7. 遗留清障:serde Map Index 用法全仓清零(M10-R3);render_variants 注释与实现对齐。
+8. 证据回填:M11-1 全量对拍跑通后,capability-matrix.json 的 evidence 列改为夹具自动生成。

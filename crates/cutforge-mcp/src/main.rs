@@ -1,10 +1,31 @@
 //! cutforge-mcp 二进制入口:inspect(契约导出)/ serve-stdio(主通道)/
 //! serve-http(辅通道,仅 127.0.0.1 + token)/ run-script(脚本宿主接线)。
 
-use cutforge_mcp::{serve_http, serve_stdio};
+use cutforge_mcp::{serve_http, serve_stdio, serve_workspace};
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+fn serve_http_root(root: &Path, port: u16, token: &str, web: &Path) -> i32 {
+    serve_workspace(root, port, token, web)
+}
+
+/// 随机 token(pid+纳秒时钟 hash;无第三方依赖纪律)。
+fn new_token() -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    std::process::id().hash(&mut h);
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos().hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// Web 资源目录:env CUTFORGE_WEB → cargo 布局(crate 同级 apps/web)。
+fn default_web_dir() -> PathBuf {
+    if let Some(v) = std::env::var_os("CUTFORGE_WEB") {
+        return PathBuf::from(v);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web")
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -27,6 +48,23 @@ fn main() {
             0
         }
         "serve-stdio" => serve_stdio(),
+        "serve" => {
+            // M10 本地服务化:cutforge-mcp serve --root <工程> [--port 8787] [--token T] [--web D]
+            let Some(root) = args.iter().position(|a| a == "--root").and_then(|i| args.get(i + 1)) else {
+                eprintln!("用法: serve --root <工程目录> [--port N] [--token T] [--web 目录]");
+                std::process::exit(2);
+            };
+            let port: u16 = args.iter().position(|a| a == "--port")
+                .and_then(|i| args.get(i + 1).and_then(|v| v.parse().ok()))
+                .unwrap_or(8787);
+            let token = args.iter().position(|a| a == "--token")
+                .and_then(|i| args.get(i + 1).cloned())
+                .unwrap_or_else(new_token);
+            let web = args.iter().position(|a| a == "--web")
+                .and_then(|i| args.get(i + 1).map(PathBuf::from))
+                .unwrap_or_else(default_web_dir);
+            serve_http_root(Path::new(root), port, &token, &web)
+        }
         "serve-http" => {
             let port: u16 = args
                 .iter()
@@ -79,7 +117,7 @@ fn main() {
             }
         }
         _ => {
-            eprintln!("用法: cutforge-mcp <inspect|serve-stdio|serve-http --port N --token T|run-script --root R --file F>");
+            eprintln!("用法: cutforge-mcp <inspect|serve --root R [--port N --token T --web D]|serve-stdio|serve-http --port N --token T|run-script --root R --file F>");
             2
         }
     };

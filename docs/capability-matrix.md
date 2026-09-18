@@ -1,4 +1,4 @@
-# CutForge 渲染后端能力对等矩阵(V2 诚实口径,计划书 §5 / ADR-0003)
+# CutForge 渲染后端能力对等矩阵(V2 · M11 追平后口径,计划书 §5 / ADR-0003)
 
 > **本表由 `docs/capability-matrix.json`(唯一真相源)生成;MCP `capability_matrix` 工具与之同源。**
 > status 只认**实码 + 对拍夹具证据**,四值封闭:`achieved`(有专属夹具)/`partial`(字段被契约接受、渲染端不完整消费)/`missing`(契约字段存在、渲染零消费)/`optional`。
@@ -22,11 +22,13 @@
 | 14 | 多画幅变体 | 支持 | 支持 | ✅ achieved(M8 修复:缓存键并入 canvas+fps) | 必达 | **修复前缓存跨画幅污染(P0-3)**;render_matrix_fixture 分辨率断言;真·分叉 encode 在 M11 |
 | 15 | 工程可继续精修 | 原生 | 不支持 | ✅ achieved(OpLog/undo 语义为真) | 必达 | M8 P0-1/P0-5 修复:file_level_undo + concurrent_writes_no_loss 夹具 |
 
-## 结论(M8-5 诚实口径)
+## 结论(M11-1 追平后口径)
 
-- 必达 13 项:**实码达成 7 项**(1/7/8/11/13/14/15),半实现 2 项(3/4),未实现 4 项(2/5/9/12)
-- 可选 2 项:0 项实现
-- **整体 = 7/15 ≈ 47%**(V1 虚报 93.3%)。M11 门禁 M11-1:每项一个专属合成用例,cutforge 与 rs_render 双跑对拍,证据自动回填 JSON
+- 必达 13 项:**实码达成 13/13**(M8 止血后 7 项 → M11 补齐 变速/转场/ducking/punch-in/afade/overlay)
+- 可选 2 项:0 项实现(关键词 6、蒙版 10)
+- **整体 = 13/15 ≈ 87%**(M8 止血时 47%;V1 虚报 93.3% 的差值 = 可选两项)
+- 旋转:契约无字段(CutFlow IR 同口径),在 #4 的 evidence 中如实标注,不计入未实现
+- 证据:crates/cutforge-render/tests/parity_matrix.rs 九项 ffmpeg 实测(转场零漂移/变速时长语义/punch-in 帧差/overlay 时间窗/ducking 能量差/afade RMS/文件名消毒/文本轨口径/mix 真分叉)
 
 ## 与 V1 版本的差异说明
 

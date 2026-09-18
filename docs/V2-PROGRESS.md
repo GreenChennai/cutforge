@@ -94,16 +94,35 @@
 | M10-R4 | 浏览器子资源(css/js)不带 Authorization——鉴权必须只锁数据面,静态资源公开。已修 | 已修 |
 | M10-R5 | e2e 对 Playwright 点击竞态敏感:已改为服务端真相(oplog 计数)驱动重试;后续 e2e 一律遵循"以服务端状态为断言依据,UI 只作驱动"的写法 | 写入约定 |
 
-## M11 · 渲染追平(任务单,含 M10 折入项)
+## M11 · 渲染追平(2026-09-19 完成)
 
-按计划书 §6 M11 顺序(依赖驱动),每项配专属对拍夹具,矩阵证据回填
-`docs/capability-matrix.json`(门禁 M11-1:15 项双跑对拍,旧缓存 100% 失效纪律):
+**交付**(RENDERER_VERSION 2.0→3.0,旧缓存全失效):
 
-1. 转场(§5#5):xfade 链 + 尾帧扩展(复用 CutFlow ADR-0023 口径);三级语法消费。
-2. 变速(§5#2):setpts/atempo;clip.speed 进缓存键。
-3. 位置/缩放/旋转(§5#4)+ punch-in(§5#12):overlay/rotate/zoompan。
-4. BGM ducking(§5#9):bgm 消费 + 侧链 amix→asplit。
-5. 音量淡入淡出(§5#3):fade 字段 afade 消费(音量已生效,补 fade)。
-6. 真·多画幅分叉(§5#14):共享 mix/sub 只 fork segment+encode,修 render_variants 注释口径(M8-R3)。
-7. 遗留清障:serde Map Index 用法全仓清零(M10-R3);render_variants 注释与实现对齐。
-8. 证据回填:M11-1 全量对拍跑通后,capability-matrix.json 的 evidence 列改为夹具自动生成。
+- **转场(5)**:xfade 链 + 尾帧扩展(ADR-0023 口径)——总时长保持 sum(dur) 零吞切;
+  三级语法(jumpcut 亚帧/topic 300ms)按 clip.transition durMs/type 消费。
+- **变速(2)**:video setpts=PTS/speed + audio atempo 链(0.5–2 分解,覆盖 0.25–4);
+  音画同步:源读取 dur×speed,成片落点不变。
+- **punch-in(12)**:中心裁剪 factor 紧构图(静态,zoompan 语义)。
+- **位置/缩放(4)**:overlay 字段 clip = 叠加层(rs_brand 变体轨口径),绝对像素 +
+  opacity + between(t) 时间窗合成;旋转:契约无字段(CutFlow 同),evidence 如实标注。
+- **BGM ducking(9)**:bgm 循环铺满 + gainDb + sidechaincompress 侧链(on/off 能量差可测);
+  bgm-only 工程 anullsrc 占位总线。
+- **淡入淡出(3)**:clip.fade → per-seg afade( loudnorm 前生效)。
+- **真·多画幅分叉(14)**:mix 缓存键画幅无关 → 变体共享 mix 只重做 video/encode
+  (mix-*.m4a 两变体仅一份,parity 夹具断言)。
+- **文件名消毒**:slug 敌对字符 → `_`;文本轨:结构性锚点不渲染(与 CutFlow 同口径)。
+
+| 门禁 | 判定 | 结果 |
+|---|---|---|
+| M11-1 parity_matrix_full | `crates/cutforge-render/tests/parity_matrix.rs` 九项 ffmpeg 实测(转场零漂移 4.000s/变速时长语义/punch-in 帧差/overlay 时间窗/ducking on-off 能量差/afade RMS ≥6dB/文件名消毒/文本轨口径/mix 真分叉) | ✅ |
+| 矩阵回填 | capability-matrix.json:achieved 7→**13**(必达 13/13),evidence 全部指向实测夹具;MCP 同源断言同步 13 | ✅ |
+
+**回归**:cargo 98/98(+parity)、pytest 7/7、gates M0/M1 绿、e2e 2/2。
+
+### 复盘:M11 新发现(折入 M12/M13)
+
+| # | 发现 | 处置 |
+|---|---|---|
+| M11-R1 | 转场只做视频 xfade,音频无 acrossfade(8ms 硬接);CutFlow rs_render 同口径,对拍容差内 | 观察项,不立项 |
+| M11-R2 | ducking 参数(threshold/ratio/attack/release)为经验值,未与 rs_render 数值对拍 | M12 若立项"专业分轨"再对拍 |
+| M11-R3 | parity 夹具跑一次 ~12s(九项实渲);CI web-e2e + rust-gates 总时长可接受 | 已入 CI |

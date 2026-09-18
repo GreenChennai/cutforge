@@ -30,7 +30,8 @@ pub enum Reject {
 }
 
 /// apply 选项:op_id/request_id 支持幂等;caused_by 把改动与标注绑定(4.9);
-/// expect_rev 是 baseRev 前置检查(调用方声明"我基于哪一版改")。
+/// expect_rev 是 baseRev 前置检查(调用方声明"我基于哪一版改");
+/// non_undoable 标记自动簿记类登记(锚点重定位):进审计链但不入撤销栈(ADR-0001)。
 #[derive(Debug, Clone, Default)]
 pub struct ApplyOpts {
     pub op_id: Option<String>,
@@ -38,6 +39,7 @@ pub struct ApplyOpts {
     pub caused_by: Vec<String>,
     pub summary: Option<String>,
     pub expect_rev: Option<u64>,
+    pub non_undoable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,23 +82,34 @@ pub struct Engine {
     rev: u64,
     undo_stack: Vec<String>,
     redo_stack: Vec<String>,
+    /// 非工程真相源(notes.json/cutlist.json 等)的内存态:文件级 Op 的
+    /// 撤销/重做路由目标(ADR-0001:按 target.file 逆写,而非伪造指针回写)。
+    file_states: std::collections::BTreeMap<String, Value>,
+    /// 自上次 drain 以来被写脏的真相源文件(IO 层据此落盘,先文件后记账)。
+    dirty_files: std::collections::BTreeSet<String>,
 }
 
 impl Engine {
     pub fn new(project: Project) -> Result<Self, Vec<String>> {
         project.to_validated_value()?;
-        Ok(Self { project, log: OpLog::new(), rev: 0, undo_stack: Vec::new(), redo_stack: Vec::new() })
+        Ok(Self {
+            project, log: OpLog::new(), rev: 0,
+            undo_stack: Vec::new(), redo_stack: Vec::new(),
+            file_states: std::collections::BTreeMap::new(),
+            dirty_files: std::collections::BTreeSet::new(),
+        })
     }
 
-    /// IO 层加载既有工程时用:恢复(项目, OpLog, rev, 撤销栈)四元组。
+    /// IO 层加载既有工程时用:恢复(项目, OpLog, rev, 撤销栈, 文件态)五元组。
     pub fn restore(
         project: Project,
         log: OpLog,
         rev: u64,
         undo_stack: Vec<String>,
+        file_states: std::collections::BTreeMap<String, Value>,
     ) -> Result<Self, Vec<String>> {
         project.to_validated_value()?;
-        Ok(Self { project, log, rev, undo_stack, redo_stack: Vec::new() })
+        Ok(Self { project, log, rev, undo_stack, redo_stack: Vec::new(), file_states, dirty_files: std::collections::BTreeSet::new() })
     }
 
     pub fn rev(&self) -> u64 {
@@ -109,6 +122,23 @@ impl Engine {
 
     pub fn oplog(&self) -> &OpLog {
         &self.log
+    }
+
+    /// 某真相源文件的当前内存态(撤销/重做路由与 IO 落盘的依据)。
+    pub fn file_state(&self, file: &str) -> Option<&Value> {
+        self.file_states.get(file)
+    }
+
+    /// 全部文件态快照(打开/合并时传递给新 Engine)。
+    pub fn file_states(&self) -> &std::collections::BTreeMap<String, Value> {
+        &self.file_states
+    }
+
+    /// 取走并清空脏文件清单(先文件后记账:IO 层先落盘这些文件再追加 oplog)。
+    pub fn take_dirty_files(&mut self) -> Vec<String> {
+        let files: Vec<String> = self.dirty_files.iter().cloned().collect();
+        self.dirty_files.clear();
+        files
     }
 
     /// 查询接口:纯投影。
@@ -192,12 +222,15 @@ impl Engine {
             caused_by: if opts.caused_by.is_empty() { None } else { Some(opts.caused_by) },
             summary: opts.summary.unwrap_or(summary),
             request_id: opts.request_id,
+            auto: None,
         };
         let op_id = op.op_id.clone();
         match self.log.push(op) {
             Some(_) => {
-                self.undo_stack.push(op_id.clone());
-                self.redo_stack.clear();
+                if !opts.non_undoable {
+                    self.undo_stack.push(op_id.clone());
+                    self.redo_stack.clear();
+                }
                 Ok(OpReceipt { op_ids: vec![op_id], rev: self.rev, idempotent: false })
             }
             // op_id 撞车(并发分配同一 id):本次不生效,按幂等回执
@@ -209,14 +242,27 @@ impl Engine {
         }
     }
 
-    /// 撤销:对栈顶 Op 应用其逆(before↔after),产生 opKind=undo 的新 Op。
+    /// 撤销:按 target.file 路由逆写(ADR-0001)——project.json 走指针回写,
+    /// 文件级真相源回滚其在 file_states 的内存态(由 IO 层落盘),产生 opKind=undo 的新 Op。
     pub fn undo(&mut self, actor: Actor) -> Result<OpReceipt, Reject> {
         let target_id = self.undo_stack.last().cloned().ok_or(Reject::NothingToUndo)?;
         let original = self.log.ops().iter().find(|o| o.op_id == target_id).cloned().ok_or(Reject::UnknownOp(target_id))?;
-        let op_id = self.log.next_op_id();
         self.rev += 1;
+        let is_project = original.target.file == "project.json";
+        if !is_project {
+            // 文件级:仅当当前态恰为该 Op 的 after 才允许逆写(LIFO 语义被外部扰动时如实拒绝)
+            match self.file_states.get(&original.target.file) {
+                Some(cur) if *cur == original.after => {}
+                _ => {
+                    self.rev -= 1;
+                    return Err(Reject::InvariantViolation(format!(
+                        "撤销基准不一致:{} 的当前态已偏离待撤销 Op 的 after(外部改动或重放),拒绝盲写",
+                        original.target.file)));
+                }
+            }
+        }
         let undo_op = Op {
-            op_id: op_id.clone(),
+            op_id: self.log.next_op_id(),
             ts: crate::timeutil::now_rfc3339(),
             actor,
             target: original.target.clone(),
@@ -228,69 +274,97 @@ impl Engine {
             caused_by: None,
             summary: format!("撤销 {}", original.summary),
             request_id: None,
+            auto: None,
         };
-        let mut project = self.project.clone();
-        apply_value_at(&mut project, &original.target.path, original.before.clone())
-            .map_err(|e| { self.rev -= 1; Reject::InvariantViolation(e) })?;
-        if let Err(errs) = project.to_validated_value() {
-            self.rev -= 1;
-            return Err(Reject::SchemaInvalid(errs));
+        if is_project {
+            let mut project = self.project.clone();
+            apply_value_at(&mut project, &original.target.path, original.before.clone())
+                .map_err(|e| { self.rev -= 1; Reject::InvariantViolation(e) })?;
+            if let Err(errs) = project.to_validated_value() {
+                self.rev -= 1;
+                return Err(Reject::SchemaInvalid(errs));
+            }
+            self.project = project;
+        } else {
+            self.file_states.insert(original.target.file.clone(), original.before.clone());
+            self.dirty_files.insert(original.target.file.clone());
         }
-        self.project = project;
         self.log.push(undo_op);
         self.undo_stack.pop();
         self.redo_stack.push(original.op_id.clone());
-        Ok(OpReceipt { op_ids: vec![op_id], rev: self.rev, idempotent: false })
+        Ok(OpReceipt { op_ids: self.log.ops().last().map(|o| vec![o.op_id.clone()]).unwrap_or_default(), rev: self.rev, idempotent: false })
     }
 
-    /// 重做:恢复被撤销 Op 的 after,产生 opKind=redo 的新 Op。
+    /// 重做:按 target.file 路由恢复被撤销 Op 的 after,产生 opKind=redo 的新 Op。
     pub fn redo(&mut self, actor: Actor) -> Result<OpReceipt, Reject> {
         let target_id = self.redo_stack.last().cloned().ok_or(Reject::NothingToRedo)?;
         let original = self.log.ops().iter().find(|o| o.op_id == target_id).cloned().ok_or(Reject::UnknownOp(target_id))?;
-        let op_id = self.log.next_op_id();
         self.rev += 1;
+        let is_project = original.target.file == "project.json";
+        if !is_project {
+            match self.file_states.get(&original.target.file) {
+                Some(cur) if *cur == original.before => {}
+                _ => {
+                    self.rev -= 1;
+                    return Err(Reject::InvariantViolation(format!(
+                        "重做基准不一致:{} 的当前态已偏离待重做 Op 的 before,拒绝盲写",
+                        original.target.file)));
+                }
+            }
+        }
         let redo_op = Op {
-            op_id: op_id.clone(),
+            op_id: self.log.next_op_id(),
             ts: crate::timeutil::now_rfc3339(),
             actor,
             target: original.target.clone(),
             op_kind: OpKind::Redo,
-            before: original.after.clone(),
+            before: original.before.clone(),
             after: original.after.clone(),
             base_rev: crate::format_rev(self.rev - 1),
             rev: Some(self.rev),
             caused_by: None,
             summary: format!("重做 {}", original.summary),
             request_id: None,
+            auto: None,
         };
-        let mut project = self.project.clone();
-        apply_value_at(&mut project, &original.target.path, original.after.clone())
-            .map_err(|e| { self.rev -= 1; Reject::InvariantViolation(e) })?;
-        if let Err(errs) = project.to_validated_value() {
-            self.rev -= 1;
-            return Err(Reject::SchemaInvalid(errs));
+        if is_project {
+            let mut project = self.project.clone();
+            apply_value_at(&mut project, &original.target.path, original.after.clone())
+                .map_err(|e| { self.rev -= 1; Reject::InvariantViolation(e) })?;
+            if let Err(errs) = project.to_validated_value() {
+                self.rev -= 1;
+                return Err(Reject::SchemaInvalid(errs));
+            }
+            self.project = project;
+        } else {
+            self.file_states.insert(original.target.file.clone(), original.after.clone());
+            self.dirty_files.insert(original.target.file.clone());
         }
-        self.project = project;
         self.log.push(redo_op);
         self.redo_stack.pop();
         self.undo_stack.push(original.op_id.clone());
-        Ok(OpReceipt { op_ids: vec![op_id], rev: self.rev, idempotent: false })
+        Ok(OpReceipt { op_ids: self.log.ops().last().map(|o| vec![o.op_id.clone()]).unwrap_or_default(), rev: self.rev, idempotent: false })
     }
 
     /// 从工程 + 完整 OpLog 回放,得到与逐步 apply 语义一致的状态(计划书 4.4 可回放)。
     /// undo/redo Op 的 after 本身就是当时的状态转移,故全部照序应用;
-    /// 撤销栈按日志语义模拟重建(Undo 弹栈、Redo 压回)。
+    /// 文件级 Op 路由到 file_states(ADR-0001),不与工程文档混淆;
+    /// 撤销栈按日志语义模拟重建(Undo 弹栈、Redo 压回,auto 类跳过)。
     pub fn replay(base: Project, ops: &[Op]) -> Result<Self, Reject> {
         let mut eng = Engine::new(base).map_err(Reject::SchemaInvalid)?;
         eng.rev = 0;
         for op in ops {
-            let mut project = eng.project.clone();
-            apply_value_at(&mut project, &op.target.path, op.after.clone())
-                .map_err(Reject::InvariantViolation)?;
-            if let Err(errs) = project.to_validated_value() {
-                return Err(Reject::SchemaInvalid(errs));
+            if op.target.file == "project.json" {
+                let mut project = eng.project.clone();
+                apply_value_at(&mut project, &op.target.path, op.after.clone())
+                    .map_err(Reject::InvariantViolation)?;
+                if let Err(errs) = project.to_validated_value() {
+                    return Err(Reject::SchemaInvalid(errs));
+                }
+                eng.project = project;
+            } else {
+                eng.file_states.insert(op.target.file.clone(), op.after.clone());
             }
-            eng.project = project;
             eng.rev = op.rev.unwrap_or(eng.rev + 1);
             eng.log.push_loaded(op.clone());
         }
@@ -338,18 +412,25 @@ impl Engine {
             target: OpTarget { file: file.to_string(), path: path.to_string() },
             op_kind: kind,
             before,
-            after,
+            after: after.clone(),
             base_rev: crate::format_rev(self.rev - 1),
             rev: Some(self.rev),
             caused_by: if opts.caused_by.is_empty() { None } else { Some(opts.caused_by) },
             summary: opts.summary.unwrap_or_else(|| format!("{file} 变更")),
             request_id: opts.request_id,
+            auto: if opts.non_undoable { Some(true) } else { None },
         };
+        if file != "project.json" {
+            self.file_states.insert(file.to_string(), after);
+            self.dirty_files.insert(file.to_string());
+        }
         let op_id = op.op_id.clone();
         match self.log.push(op) {
             Some(_) => {
-                self.undo_stack.push(op_id.clone());
-                self.redo_stack.clear();
+                if !opts.non_undoable {
+                    self.undo_stack.push(op_id.clone());
+                    self.redo_stack.clear();
+                }
                 Ok(OpReceipt { op_ids: vec![op_id], rev: self.rev, idempotent: false })
             }
             None => {
@@ -555,6 +636,7 @@ fn enforce_no_overlap(p: &Project, ti: usize) -> Result<(), Reject> {
 }
 
 /// 按日志语义重建撤销栈(Undo 弹栈、Redo 压回;io 打开工程与 replay 共用)。
+/// auto 类 Op(锚点重定位等自动簿记)不入栈——撤销深度 = 真实用户手势数(ADR-0001)。
 pub fn rebuild_undo_stack(ops: &[Op]) -> Vec<String> {
     let mut undo_stack: Vec<String> = Vec::new();
     let mut redo_stack: Vec<String> = Vec::new();
@@ -570,6 +652,7 @@ pub fn rebuild_undo_stack(ops: &[Op]) -> Vec<String> {
                     undo_stack.push(x);
                 }
             }
+            _ if op.auto == Some(true) => {}
             _ => undo_stack.push(op.op_id.clone()),
         }
     }

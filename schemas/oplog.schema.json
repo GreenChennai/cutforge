@@ -63,7 +63,7 @@
      ],
      "description": "真相源文件;oplog 只允许记录对这五个文件的变更(封闭枚举)"
     },
-     "path": {
+    "path": {
      "type": "string",
      "pattern": "^(/[^/]+)+$|^/$",
      "description": "JSON Pointer 叶路径,如 /tracks/0/clips/3/durationMs;三路 diff 的字段级粒度"
@@ -99,6 +99,12 @@
    "type": "integer",
    "minimum": 1,
    "description": "本 Op 应用后的工程修订号(单调递增);写入器在步骤 7 分配"
+  },
+  "auto": {
+   "enum": [
+    true
+   ],
+   "description": "自动簿记类变更(锚点重定位等):进审计链但不在撤销栈内;撤销深度=真实用户手势数(ADR-0001)。缺省视为普通用户手势"
   },
   "causedBy": {
    "type": "array",

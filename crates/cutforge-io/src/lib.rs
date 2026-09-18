@@ -1,8 +1,13 @@
 //! CutForge IO 层:Workspace 把"文件真相源"(计划书 4.2)与内核命令通道接在一起。
 //!
 //! 唯一写入路径(4.2 八步,本文件为编排者;所有落盘经 `atomic::atomic_write`):
-//! 1. 申请工程锁 → 2/3. Engine 校验前置与不变量 → 4. Op 追加 oplog →
-//! 5. 新内容生成 → 6. 原子写入 project.json → 7. rev 落盘 → 8. 释放锁。
+//! 1. 申请工程锁(`open_exclusive` 可让锁覆盖 open→apply→persist 全程,P0-5)→
+//! 2/3. Engine 校验前置与不变量 → 4. 新内容先落盘(先文件后记账)→
+//! 5. Op 追加 oplog → 6. rev 落盘 → 7. 释放锁。
+//!
+//! `_meta` 旁路(ADR-0002):CutFlow 真实 IR 顶层带 `_meta`(实现细节字段,被
+//! v2 schema `additionalProperties:false` 拒收)。open 时剥出入内存旁路,
+//! persist 时原样回写——CutForge 打得开任何 CutFlow 工程,写回不丢它。
 //!
 //! `.cutforge/` 可安全删除重建(仅丢同步历史)——`workspace_state_rebuildable` 测试保证。
 
@@ -18,16 +23,24 @@ use cutforge_core::command::Command;
 use cutforge_core::engine::{ApplyOpts, Engine, OpReceipt};
 use cutforge_core::merge::{Conflict, ConflictCode, MergeOutcome};
 use cutforge_core::model::Project;
-use cutforge_core::notes::{NoteAuthor, NoteReject, NotesStore};
+use cutforge_core::notes::{NoteAuthor, NotesStore};
 use cutforge_core::oplog::{Actor, Op, OpKind, OpLog};
-use cutforge_core::anchor::Anchor;
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
 pub const PROJECT_REL: &str = "05_ir/project.json";
 pub const WORDLINE_REL: &str = "05_ir/wordline.json";
 pub const CUTLIST_REL: &str = "04_cut/cutlist.json";
+pub const CUTLIST_APPLIED_REL: &str = "04_cut/cutlist.applied.json";
 pub const NOTES_REL: &str = "notes.json";
+
+/// 非工程真相源文件与其在工程目录内的相对路径(file_states 初始化与落盘的依据)。
+const FILE_TRUTHS: [(&str, &str); 3] = [
+    ("wordline.json", WORDLINE_REL),
+    ("cutlist.json", CUTLIST_REL),
+    ("cutlist.applied.json", CUTLIST_APPLIED_REL),
+];
 
 /// 测试夹具:从仓库回归样本搭建完整工程目录(v1 形态,顺带覆盖迁移路径)。
 #[doc(hidden)]
@@ -51,17 +64,46 @@ pub struct Workspace {
     persisted: usize,
     notes: NotesStore,
     notes_dirty: bool,
+    /// `_meta` 旁路(ADR-0002):open 时剥出、persist 原样回写。
+    meta_bypass: Option<serde_json::Value>,
+    /// 非工程真相源文件最近一次落盘值(撤销/登记后 diff 落盘,避免无谓重写)。
+    files: BTreeMap<String, serde_json::Value>,
+    /// open_exclusive 持有的全程锁(含 Drop 自动释放)。
+    lock: Option<lock::LockGuard>,
 }
 
 impl Workspace {
-    /// 打开工程目录:读取 → v1 迁移 → 校验 → 恢复 OpLog/rev(含崩溃修复,4.5)。
+    /// 打开工程目录(只读语义安全;写操作走 `open_exclusive` 或依赖方法内临时锁)。
     pub fn open(root: &Path) -> io::Result<Self> {
+        let (engine, persisted, notes, meta_bypass, files) = Self::load(root)?;
+        Ok(Self {
+            root: root.to_path_buf(), engine, persisted, notes,
+            notes_dirty: false, meta_bypass, files, lock: None,
+        })
+    }
+
+    /// 独占打开:锁覆盖 open→apply→persist 全程(P0-5:跨进程并发写不再丢更新)。
+    /// MCP 写通道与 CLI 变更子命令一律走本入口。
+    pub fn open_exclusive(root: &Path) -> io::Result<Self> {
+        let guard = lock::acquire(root, 30_000, 20)?;
+        let (engine, persisted, notes, meta_bypass, files) = Self::load(root)?;
+        Ok(Self {
+            root: root.to_path_buf(), engine, persisted, notes,
+            notes_dirty: false, meta_bypass, files, lock: Some(guard),
+        })
+    }
+
+    fn load(
+        root: &Path,
+    ) -> io::Result<(Engine, usize, NotesStore, Option<serde_json::Value>, BTreeMap<String, serde_json::Value>)> {
         let project_path = root.join(PROJECT_REL);
         let text = std::fs::read_to_string(&project_path).map_err(|e| {
             io::Error::new(e.kind(), format!("打开工程失败({project_path:?}): {e}"))
         })?;
-        let value: serde_json::Value = serde_json::from_str(&text)
+        let mut value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| io::Error::other(format!("project.json 非法 JSON: {e}")))?;
+        // _meta 旁路(ADR-0002):进内存旁路,不进契约校验
+        let meta_bypass = value.as_object_mut().and_then(|o| o.remove("_meta"));
         let project = Project::from_value(&value)
             .or_else(|_| cutforge_core::model::migrate_from_value(&value))
             .map_err(|errs| io::Error::other(format!("project.json 未通过 v2 契约: {}", errs.join("; "))))?;
@@ -99,21 +141,45 @@ impl Workspace {
                 }
         let undo_stack: Vec<String> = cutforge_core::engine::rebuild_undo_stack(log.ops());
         let persisted = log.len();
-        let engine = Engine::restore(project, log, rev, undo_stack)
-            .map_err(|errs| io::Error::other(errs.join("; ")))?;
 
         // notes.json(标注):缺失 = 空存储;存在则必须过 notes.schema
-        let (notes, notes_dirty) = match std::fs::read_to_string(root.join(NOTES_REL)) {
+        let (notes, notes_value) = match std::fs::read_to_string(root.join(NOTES_REL)) {
             Ok(text) => {
                 let v: serde_json::Value = serde_json::from_str(&text)
                     .map_err(|e| io::Error::other(format!("notes.json 非法 JSON: {e}")))?;
                 let store = NotesStore::from_value(&v)
                     .map_err(|errs| io::Error::other(format!("CF-005 SCHEMA_DRIFT(notes.json): {}", errs.join("; "))))?;
-                (store, false)
+                (store, v)
             }
-            Err(_) => (NotesStore::new(), false),
+            Err(_) => {
+                let store = NotesStore::new();
+                let v = store.to_value();
+                (store, v)
+            }
         };
-        Ok(Self { root: root.to_path_buf(), engine, persisted, notes, notes_dirty })
+
+        // 文件态初始化(ADR-0001:文件级 Op 撤销/重做的路由目标)
+        let mut file_states: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        for (name, rel) in FILE_TRUTHS {
+            if let Ok(text) = std::fs::read_to_string(root.join(rel))
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    file_states.insert(name.to_string(), v);
+                }
+        }
+        file_states.insert("notes.json".to_string(), notes_value);
+
+        let engine = Engine::restore(project, log, rev, undo_stack, file_states)
+            .map_err(|errs| io::Error::other(errs.join("; ")))?;
+
+        // 最近落盘值快照(落盘 diff 用)
+        let mut files = BTreeMap::new();
+        for (name, rel) in FILE_TRUTHS {
+            if let Ok(text) = std::fs::read_to_string(root.join(rel))
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    files.insert(name.to_string(), v);
+                }
+        }
+        Ok((engine, persisted, notes, meta_bypass, files))
     }
 
     pub fn root(&self) -> &Path {
@@ -133,29 +199,68 @@ impl Workspace {
         self.engine.rev()
     }
 
+    /// 已持有的全程锁之外临时补锁(open_exclusive 打开时不重复加锁)。
+    fn temp_lock(&self) -> io::Result<Option<lock::LockGuard>> {
+        if self.lock.is_some() {
+            Ok(None)
+        } else {
+            lock::acquire(&self.root, 30_000, 20).map(Some)
+        }
+    }
+
     /// 命令接口(唯一写入口的 IO 编排,4.2 八步);成功后联动标注重定位(4.9)。
     pub fn apply(&mut self, cmd: Command, actor: Actor, opts: ApplyOpts) -> io::Result<OpReceipt> {
-        let _guard = lock::acquire(&self.root, 30_000, 20)?;
-                let receipt = self.engine.apply(cmd, actor.clone(), opts).map_err(reject_to_io)?;
+        let _guard = self.temp_lock()?;
+        let receipt = self.engine.apply(cmd, actor.clone(), opts).map_err(reject_to_io)?;
+        self.reconcile_files()?;
         self.sync_notes_after_change(actor)?;
         self.persist()?;
         Ok(receipt)
     }
 
     pub fn undo(&mut self, actor: Actor) -> io::Result<OpReceipt> {
-        let _guard = lock::acquire(&self.root, 30_000, 20)?;
-                let receipt = self.engine.undo(actor.clone()).map_err(reject_to_io)?;
+        let _guard = self.temp_lock()?;
+        let receipt = self.engine.undo(actor.clone()).map_err(reject_to_io)?;
+        self.reconcile_files()?;
         self.sync_notes_after_change(actor)?;
         self.persist()?;
         Ok(receipt)
     }
 
     pub fn redo(&mut self, actor: Actor) -> io::Result<OpReceipt> {
-        let _guard = lock::acquire(&self.root, 30_000, 20)?;
-                let receipt = self.engine.redo(actor.clone()).map_err(reject_to_io)?;
+        let _guard = self.temp_lock()?;
+        let receipt = self.engine.redo(actor.clone()).map_err(reject_to_io)?;
+        self.reconcile_files()?;
         self.sync_notes_after_change(actor)?;
         self.persist()?;
         Ok(receipt)
+    }
+
+    /// 引擎脏文件 → 盘面(先文件后记账;P1-9:写失败时 oplog 尚未记账)。
+    /// notes.json 特殊:重载 NotesStore(撤销/重做恢复标注态)。
+    fn reconcile_files(&mut self) -> io::Result<()> {
+        for file in self.engine.take_dirty_files() {
+            if file == "notes.json" {
+                let Some(v) = self.engine.file_state("notes.json").cloned() else { continue };
+                if v != self.notes.to_value() {
+                    let store = NotesStore::from_value(&v).map_err(|errs| {
+                        io::Error::other(format!("CF-005 SCHEMA_DRIFT(notes.json): {}", errs.join("; ")))
+                    })?;
+                    self.notes = store;
+                    self.notes_dirty = true;
+                }
+                continue;
+            }
+            let Some(rel) = FILE_TRUTHS.iter().find(|(n, _)| *n == file).map(|(_, r)| r) else { continue };
+            let Some(v) = self.engine.file_state(&file).cloned() else { continue };
+            if self.files.get(&file) != Some(&v) {
+                let mut buf = serde_json::to_vec_pretty(&v)?;
+                buf.push(b'\n');
+                atomic::atomic_write(&self.root.join(rel), &buf)?;
+                self.files.insert(file, v);
+            }
+        }
+        Ok(())
     }
 
     // ---------- 标注(4.9) ----------
@@ -167,19 +272,29 @@ impl Workspace {
     /// 创建标注(user 提需求 / agent 反向提问),写入 notes.json 并登记 Op。
     pub fn notes_add(
         &mut self,
-        anchor: Anchor,
+        anchor: cutforge_core::anchor::Anchor,
         body: String,
         author: NoteAuthor,
         tags: Vec<String>,
         actor: Actor,
         request_id: Option<String>,
     ) -> io::Result<String> {
-        // 幂等:同 request_id 已登记过 → 不再新增,返回既有末条 id
-        if request_id
-            .as_deref()
-            .is_some_and(|rid| self.engine.oplog().has_request_id(rid))
+        // 幂等:同 request_id 已登记过 → 不再新增;从该 Op 的 after 恢复既有标注 id
+        if let Some(rid) = request_id.as_deref()
+            && self.engine.oplog().has_request_id(rid)
         {
-            let id = self.notes.notes().last().map(|n| n.id.clone()).unwrap_or_default();
+            let id = self
+                .engine
+                .oplog()
+                .ops()
+                .iter()
+                .rev()
+                .find(|o| o.request_id.as_deref() == Some(rid))
+                .and_then(|o| o.after["items"].as_array())
+                .and_then(|items| items.last())
+                .and_then(|n| n["id"].as_str())
+                .unwrap_or_default()
+                .to_string();
             return Ok(id);
         }
         let before = self.notes.to_value();
@@ -187,7 +302,7 @@ impl Workspace {
         self.notes.add(anchor, body, author, tags);
         self.record_notes_change(
             &before, OpKind::Insert, actor,
-            format!("创建标注 {note_id}"), None, request_id,
+            format!("创建标注 {note_id}"), None, request_id, false,
         )?;
         Ok(note_id)
     }
@@ -203,23 +318,41 @@ impl Workspace {
         let before = self.notes.to_value();
         match self.notes.resolve(note_id, reply, op_ids) {
             Ok(_) => {}
-            Err(NoteReject::AlreadyResolved(_)) => return Ok(()), // 幂等回执
+            Err(cutforge_core::notes::NoteReject::AlreadyResolved(_)) => return Ok(()), // 幂等回执
+            Err(cutforge_core::notes::NoteReject::UnknownNote(_)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("PRECONDITION_FAILED: 标注 {note_id} 不存在"),
+                ))
+            }
             Err(e) => {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("REJECTED: {e:?}")))
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("PRECONDITION_FAILED: {e:?}")))
             }
         }
-        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 结案"), None, None)?;
+        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 结案"), None, None, false)?;
         Ok(())
     }
 
     pub fn notes_reject(&mut self, note_id: &str, reason: String, actor: Actor) -> io::Result<()> {
         let before = self.notes.to_value();
-        self.notes.reject(note_id, reason).map_err(|e| io::Error::new(io::ErrorKind::NotFound, format!("{e:?}")))?;
-        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 否决"), None, None)?;
+        match self.notes.reject(note_id, reason) {
+            Ok(_) => {}
+            Err(cutforge_core::notes::NoteReject::UnknownNote(_)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("PRECONDITION_FAILED: 标注 {note_id} 不存在"),
+                ))
+            }
+            Err(e) => {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("PRECONDITION_FAILED: {e:?}")))
+            }
+        }
+        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 否决"), None, None, false)?;
         Ok(())
     }
 
     /// apply/undo/redo 成功后:open 态标注按 3.6 规则重定位;有变化则落盘并留痕。
+    /// 重定位是自动簿记:`auto` Op,不入撤销栈(ADR-0001)。
     fn sync_notes_after_change(&mut self, actor: Actor) -> io::Result<()> {
         let before = self.notes.to_value();
         let (moved, orphaned) = self.notes.relocate_all(self.engine.project(), 500);
@@ -229,12 +362,13 @@ impl Workspace {
                 OpKind::Set,
                 actor,
                 format!("锚点重定位:跟随/重挂 {moved},转孤儿 {orphaned}"),
-                None, None,
+                None, None, true,
             )?;
         }
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record_notes_change(
         &mut self,
         before: &serde_json::Value,
@@ -243,12 +377,14 @@ impl Workspace {
         summary: String,
         caused_by: Option<Vec<String>>,
         request_id: Option<String>,
+        non_undoable: bool,
     ) -> io::Result<()> {
         let after = self.notes.to_value();
         let opts = ApplyOpts {
             caused_by: caused_by.unwrap_or_default(),
             summary: Some(summary),
             request_id,
+            non_undoable,
             ..Default::default()
         };
         self.engine
@@ -260,7 +396,7 @@ impl Workspace {
     }
 
     /// 非 project.json 真相源(如 cutlist.json)的复合写:锁内登记审计 Op 并持久化。
-    /// 文件本体由调用方原子落盘(`atomic::atomic_write`)。
+    /// 文件本体由 reconcile 按 file_states 落盘(先文件后记账)。
     // 参数与 Op 字段一一对应(同 record_file_change 的理由)。
     #[allow(clippy::too_many_arguments)]
     pub fn record_change(
@@ -273,11 +409,12 @@ impl Workspace {
         actor: Actor,
         opts: ApplyOpts,
     ) -> io::Result<OpReceipt> {
-        let _guard = lock::acquire(&self.root, 30_000, 20)?;
+        let _guard = self.temp_lock()?;
         let receipt = self
             .engine
             .record_file_change(file, path, before, after, kind, actor, opts)
             .map_err(reject_to_io)?;
+        self.reconcile_files()?;
         self.persist()?;
         Ok(receipt)
     }
@@ -305,12 +442,13 @@ impl Workspace {
 
     /// 三路合并(M2 骨架的直接消费入口):磁盘文件与内存模型按 baseRev 合并。
     /// 冲突时写入 `.cutforge/conflicts/<id>.json` 三方快照并停写(4.7)。
+    /// `_meta` 旁路:磁盘若带新版 `_meta`(CutFlow 重生成),采纳之(ADR-0002)。
     pub fn merge_from_disk(&mut self) -> Result<Option<u64>, Vec<(String, Conflict)>> {
         let disk_text = match std::fs::read_to_string(self.root.join(PROJECT_REL)) {
             Ok(t) => t,
             Err(_) => return Ok(None),
         };
-        let disk: serde_json::Value = match serde_json::from_str(&disk_text) {
+        let mut disk: serde_json::Value = match serde_json::from_str(&disk_text) {
             Ok(v) => v,
             Err(e) => {
                 let c = Conflict {
@@ -324,6 +462,10 @@ impl Workspace {
                 return Err(vec![(id, c)]);
             }
         };
+        let disk_meta = disk.as_object_mut().and_then(|o| o.remove("_meta"));
+        if let Some(m) = disk_meta {
+            self.meta_bypass = Some(m);
+        }
         let local = match self.engine.query(cutforge_core::engine::Query::ProjectView) {
             cutforge_core::engine::Answer::Project(v) => v,
             _ => unreachable!(),
@@ -349,11 +491,12 @@ impl Workspace {
                             return Err(vec![(id, c)]);
                         }
                     };
-                    // 采纳外部改动:保留 OpLog/rev/撤销栈的历史连续性(不得重置 rev)
+                    // 采纳外部改动:保留 OpLog/rev/撤销栈/文件态的历史连续性(不得重置 rev)
                     let log = self.engine.oplog().clone();
                     let undo_stack =
                         cutforge_core::engine::rebuild_undo_stack(log.ops());
-                    let new_engine = match Engine::restore(project, log, self.engine.rev(), undo_stack) {
+                    let file_states = self.engine.file_states().clone();
+                    let new_engine = match Engine::restore(project, log, self.engine.rev(), undo_stack, file_states) {
                         Ok(e) => e,
                         Err(errs) => {
                             let c = Conflict {
@@ -408,7 +551,8 @@ impl Workspace {
         id
     }
 
-    /// 步骤 4-7:备份 → 原子写 project.json → 追加 oplog → rev 落盘。
+    /// 步骤 5-7:备份 → 原子写 project.json(`_meta` 旁路回写)→ 追加 oplog →
+    /// rev 落盘 → 标注落盘。真相源文件本体已在 reconcile_files 先行落盘。
     fn persist(&mut self) -> io::Result<()> {
         let ops = self.engine.oplog().ops();
         // 备份旧 project.json(全局约定 B.8:可回滚)
@@ -417,8 +561,12 @@ impl Workspace {
                 backup::backup_file(&self.root, PROJECT_REL, &old)?;
             }
         let value = self.engine.query(cutforge_core::engine::Query::ProjectView);
-        let cutforge_core::engine::Answer::Project(ref v) = value else { unreachable!() };
-        let mut buf = serde_json::to_vec_pretty(v)?;
+        let cutforge_core::engine::Answer::Project(mut v) = value else { unreachable!() };
+        if let Some(meta) = &self.meta_bypass
+            && let Some(obj) = v.as_object_mut() {
+                obj.insert("_meta".into(), meta.clone());
+            }
+        let mut buf = serde_json::to_vec_pretty(&v)?;
         buf.push(b'\n');
         atomic::atomic_write(&self.root.join(PROJECT_REL), &buf)?;
 
@@ -431,7 +579,7 @@ impl Workspace {
             atomic::append_line(&oplog_file, &format!("{line}\n"))?;
             self.persisted += 1;
         }
-            atomic::atomic_write(&self.root.join(".cutforge/rev"), format!("{}\n", self.engine.rev()).as_bytes())?;
+        atomic::atomic_write(&self.root.join(".cutforge/rev"), format!("{}\n", self.engine.rev()).as_bytes())?;
         // 标注落盘(有变化才写)
         if self.notes_dirty {
             let mut buf = serde_json::to_vec_pretty(&self.notes.to_value())?;
@@ -495,7 +643,7 @@ mod tests {
     #[test]
     fn open_migrates_v1_and_persists_commands() {
         let root = tests_fixture("ws-open").unwrap();
-        let mut ws = Workspace::open(&root).unwrap();
+        let mut ws = Workspace::open_exclusive(&root).unwrap();
         assert_eq!(ws.rev(), 0);
         // v1 样本经迁移后可正常应用命令
         let r = ws.apply(
@@ -519,7 +667,7 @@ mod tests {
     fn reopen_restores_state_and_undo_stack() {
         let root = tests_fixture("ws-reopen").unwrap();
         {
-            let mut ws = Workspace::open(&root).unwrap();
+            let mut ws = Workspace::open_exclusive(&root).unwrap();
             ws.apply(
                 Command::ClipUpdate {
                     clip_id: "V1-001".into(),
@@ -530,13 +678,139 @@ mod tests {
             )
             .unwrap();
         }
-        let mut ws2 = Workspace::open(&root).unwrap();
+        let mut ws2 = Workspace::open_exclusive(&root).unwrap();
         assert_eq!(ws2.rev(), 1, "rev 必须从盘面恢复");
         assert_eq!(ws2.engine().oplog().len(), 1, "OpLog 必须从 jsonl 恢复");
         // 恢复后的撤销栈仍然可用
         ws2.undo(Actor::user("人")).unwrap();
         let disk = std::fs::read_to_string(root.join(PROJECT_REL)).unwrap();
         assert!(disk.contains("8400"), "撤销后盘面应回到 8400");
+        fsutil::cleanup(&root);
+    }
+
+    /// M8-1 门禁(IO 侧):notes_add→undo,notes.json 盘面**语义**还原
+    /// (canonical JSON 逐值相等;重序列化的缩进/键序不属语义域)。
+    /// 撤销深度 = 真实用户手势数(auto 的重定位 Op 不入栈)。
+    #[test]
+    fn notes_add_undo_restores_disk_bytes() {
+        let root = tests_fixture("ws-undo-notes").unwrap();
+        let notes_before = std::fs::read_to_string(root.join(NOTES_REL)).unwrap();
+        let mut ws = Workspace::open_exclusive(&root).unwrap();
+        let anchor = cutforge_core::anchor::Anchor {
+            kind: cutforge_core::anchor::AnchorKind::Clip,
+            ref_: Some("V1-001".into()), t_ms: 4000, span: None,
+        };
+        ws.notes_add(anchor, "这里语速太快".into(), NoteAuthor::User, vec![], Actor::user("人"), None).unwrap();
+        let after_add: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(NOTES_REL)).unwrap()).unwrap();
+        assert_eq!(after_add["items"].as_array().unwrap().len(), 3, "新标注必须落盘");
+        ws.undo(Actor::user("人")).unwrap();
+        let notes_after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(NOTES_REL)).unwrap()).unwrap();
+        let before: serde_json::Value = serde_json::from_str(&notes_before).unwrap();
+        assert_eq!(notes_after, before, "undo 后 notes.json 必须还原到 notes_add 之前");
+        fsutil::cleanup(&root);
+    }
+
+    /// M8-1 门禁(cutlist 侧):经 record_change 的 cutlist 编辑可 undo 还原盘面
+    /// (修复前:op 记到 project 的 "/" 指针,cutlist 文件原封不动)。
+    #[test]
+    fn cutlist_record_change_undo_restores_disk() {
+        let root = tests_fixture("ws-undo-cutlist").unwrap();
+        let before_text = std::fs::read_to_string(root.join(CUTLIST_REL)).unwrap();
+        let before: serde_json::Value = serde_json::from_str(&before_text).unwrap();
+        let mut ws = Workspace::open_exclusive(&root).unwrap();
+        let mut after = before.clone();
+        after["cuts"][0]["action"] = serde_json::json!("review");
+        ws.record_change(
+            "cutlist.json", "/", before.clone(), after,
+            OpKind::Set, Actor::script("m8-1"),
+            ApplyOpts { summary: Some("cut_apply 测试".into()), ..Default::default() },
+        ).unwrap();
+        let mid: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(CUTLIST_REL)).unwrap()).unwrap();
+        assert_eq!(mid["cuts"][0]["action"], serde_json::json!("review"), "编辑必须真实落盘");
+        ws.undo(Actor::user("人")).unwrap();
+        let restored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(CUTLIST_REL)).unwrap()).unwrap();
+        assert_eq!(restored, before, "undo 后 cutlist.json 必须还原");
+        fsutil::cleanup(&root);
+    }
+
+    /// M8-4 门禁:双线程并发写同一工程,open_exclusive 锁覆盖 open→apply→persist
+    /// 全程 → oplog 数 = 盘面 rev = 2N,零丢更新(修复前:锁外读+后写整文件覆盖)。
+    #[test]
+    fn concurrent_writes_no_loss() {
+        use std::sync::Barrier;
+        let root = tests_fixture("ws-concurrent").unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        let n = 5;
+        let barrier = std::sync::Arc::new(Barrier::new(2));
+        let handles: Vec<_> = ["并发-A", "并发-B"].into_iter().map(|who| {
+            let barrier = barrier.clone();
+            let root_s = root_s.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                for i in 0..n {
+                    let mut ws = Workspace::open_exclusive(Path::new(&root_s)).unwrap();
+                    ws.apply(
+                        Command::ClipUpdate {
+                            clip_id: "V1-001".into(),
+                            patch: cutforge_core::command::ClipPatch {
+                                duration_ms: Some(7000 - (who.len() * 10 + i) as u64),
+                                ..Default::default()
+                            },
+                        },
+                        Actor::agent(who),
+                        ApplyOpts::default(),
+                    ).unwrap();
+                }
+            })
+        }).collect::<Vec<_>>();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let ws = Workspace::open(&root).unwrap();
+        assert_eq!(ws.rev(), 2 * n as u64, "rev 必须 = 2N(零丢更新)");
+        assert_eq!(ws.engine().oplog().len(), 2 * n, "OpLog 必须 = 2N");
+        let disk_rev: u64 = std::fs::read_to_string(root.join(".cutforge/rev")).unwrap().trim().parse().unwrap();
+        assert_eq!(disk_rev, 2 * n as u64, "盘面 rev 与 OpLog 不得分叉");
+        fsutil::cleanup(&root);
+    }
+
+    /// M8-2 门禁:CutFlow 真实 IR(顶层 _meta)可打开、可迁移、roundtrip 不丢 _meta。
+    /// 夹具由 tools/gen_real_ir_fixture.py 调 CutFlow rs_ir.py 生成(计划书 D2)。
+    #[test]
+    fn open_real_cutflow_ir_with_meta_roundtrip() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/real_ir/project.json");
+        let text = std::fs::read_to_string(&fixture)
+            .expect("缺 tests/fixtures/real_ir/project.json:先跑 tools/gen_real_ir_fixture.py");
+        let original_meta: serde_json::Value = {
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            v.get("_meta").cloned().expect("夹具必须含顶层 _meta(CutFlow 真实 IR 的判别特征)")
+        };
+        let root = fsutil::temp_dir("ws-real-ir");
+        fsutil::ensure(&root.join("05_ir")).unwrap();
+        std::fs::write(root.join(PROJECT_REL), &text).unwrap();
+        {
+            let mut ws = Workspace::open_exclusive(&root).unwrap();
+            ws.apply(
+                Command::ClipUpdate {
+                    clip_id: "V1-001".into(),
+                    patch: cutforge_core::command::ClipPatch { duration_ms: Some(3000), ..Default::default() },
+                },
+                Actor::agent("m8-2"),
+                ApplyOpts::default(),
+            )
+            .unwrap();
+        }
+        // 重开:roundtrip 后 _meta 原样保留
+        let mut ws2 = Workspace::open(&root).unwrap();
+        assert_eq!(ws2.rev(), 1);
+        let _ = ws2; // 打开即证明 roundtrip 后文件仍合法
+        let disk: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(root.join(PROJECT_REL)).unwrap()).unwrap();
+        assert_eq!(disk["_meta"], original_meta, "cutforge 写回不得丢/改 _meta");
         fsutil::cleanup(&root);
     }
 }

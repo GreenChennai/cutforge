@@ -541,7 +541,8 @@ fn py_launcher() -> Option<Vec<String>> {
                     .map(|o| o.status.success())
                     .unwrap_or(false);
                 if ok {
-                    return Some(cand.iter().map(|s| s.to_string()).collect());
+                    // 过滤占位空串:空串若作为参数传回会给调用方埋雷(CI 实测 python3 "" -V 必败)
+                    return Some(cand.iter().filter(|s| !s.is_empty()).map(|s| s.to_string()).collect());
                 }
             }
             None

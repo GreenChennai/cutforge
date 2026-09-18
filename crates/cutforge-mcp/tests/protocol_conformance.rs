@@ -24,7 +24,7 @@ fn protocol_conformance() {
     let root = cutforge_io::tests_fixture("mcp-protocol").unwrap();
     let root_s = root.to_string_lossy().to_string();
 
-    // 全部 9 个查询工具:合法入参 → OK 且协议完整
+    // 全部 10 个查询工具:合法入参 → OK 且协议完整
     let queries: Vec<(&str, Value)> = vec![
         ("project_get", json!({"root": root_s})),
         ("wordline_get", json!({"root": root_s})),
@@ -35,6 +35,7 @@ fn protocol_conformance() {
         ("conflict_list", json!({"root": root_s})),
         ("render_probe", json!({"root": root_s})),
         ("capability_matrix", json!({})),
+        ("timeline_get", json!({"root": root_s})),
     ];
     for (name, args) in queries {
         let resp = cutforge_mcp::dispatch(name, &args);
@@ -65,9 +66,9 @@ fn protocol_conformance() {
     assert_envelope(&resp, "missing-project");
     assert_eq!(resp["code"], json!("NO_CONFIG"));
 
-    // 注册表与 mcp-tools.json 契约:28 行工具全部有名/有描述/有双 schema
+    // 注册表与 mcp-tools.json 契约:31 行工具全部有名/有描述/有双 schema
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 28);
+    assert_eq!(names.len(), 32);
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);

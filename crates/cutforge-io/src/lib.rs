@@ -156,7 +156,7 @@ impl Workspace {
                 && disk_rev > rev {
                     rev = disk_rev;
                 }
-        let undo_stack: Vec<String> = cutforge_core::engine::rebuild_undo_stack(log.ops());
+        let (undo_stack, redo_stack) = cutforge_core::engine::rebuild_stacks(log.ops());
         let persisted = log.len();
 
         // notes.json(标注):缺失 = 空存储;存在则必须过 notes.schema
@@ -185,7 +185,7 @@ impl Workspace {
         }
         file_states.insert("notes.json".to_string(), notes_value);
 
-        let engine = Engine::restore(project, log, rev, undo_stack, file_states)
+        let engine = Engine::restore_with_stacks(project, log, rev, undo_stack, redo_stack, file_states)
             .map_err(|errs| io::Error::other(errs.join("; ")))?;
 
         // 最近落盘值快照(落盘 diff 用)
@@ -337,10 +337,11 @@ impl Workspace {
             io::Error::other(format!("CF-005 SCHEMA_DRIFT(合并结果): {}", errs.join("; ")))
         })?;
         let log = self.engine.oplog().clone();
-        let undo_stack = cutforge_core::engine::rebuild_undo_stack(log.ops());
+        let (undo_stack, redo_stack) = cutforge_core::engine::rebuild_stacks(log.ops());
         let file_states = self.engine.file_states().clone();
-        let new_engine = Engine::restore(project, log, self.engine.rev(), undo_stack, file_states)
-            .map_err(|errs| io::Error::other(errs.join("; ")))?;
+        let new_engine =
+            Engine::restore_with_stacks(project, log, self.engine.rev(), undo_stack, redo_stack, file_states)
+                .map_err(|errs| io::Error::other(errs.join("; ")))?;
         self.engine = new_engine;
         self.persisted = self.engine.oplog().len();
         self.persist()?;

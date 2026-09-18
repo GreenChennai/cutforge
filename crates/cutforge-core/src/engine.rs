@@ -109,7 +109,25 @@ impl Engine {
         file_states: std::collections::BTreeMap<String, Value>,
     ) -> Result<Self, Vec<String>> {
         project.to_validated_value()?;
-        Ok(Self { project, log, rev, undo_stack, redo_stack: Vec::new(), file_states, dirty_files: std::collections::BTreeSet::new() })
+        Ok(Self {
+            project, log, rev, undo_stack,
+            redo_stack: Vec::new(),
+            file_states, dirty_files: std::collections::BTreeSet::new(),
+        })
+    }
+
+    /// restore 的双栈版本(io 打开工程时用,重做栈跨 dispatch 可用)。
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore_with_stacks(
+        project: Project,
+        log: OpLog,
+        rev: u64,
+        undo_stack: Vec<String>,
+        redo_stack: Vec<String>,
+        file_states: std::collections::BTreeMap<String, Value>,
+    ) -> Result<Self, Vec<String>> {
+        project.to_validated_value()?;
+        Ok(Self { project, log, rev, undo_stack, redo_stack, file_states, dirty_files: std::collections::BTreeSet::new() })
     }
 
     pub fn rev(&self) -> u64 {
@@ -368,8 +386,9 @@ impl Engine {
             eng.rev = op.rev.unwrap_or(eng.rev + 1);
             eng.log.push_loaded(op.clone());
         }
-        eng.undo_stack = rebuild_undo_stack(ops);
-        eng.redo_stack = Vec::new();
+        let (undo_stack, redo_stack) = rebuild_stacks(ops);
+        eng.undo_stack = undo_stack;
+        eng.redo_stack = redo_stack;
         Ok(eng)
     }
 
@@ -553,6 +572,14 @@ impl Engine {
                 enforce_no_overlap(p, ti)?;
                 Ok((path, before, after, format!("clip_insert {}→{to_track}", clip.id), OpKind::Insert))
             }
+            Command::TrackAdd { kind, request_id: _ } => {
+                let id = p.next_track_id(kind);
+                let path = "/tracks".to_string();
+                let before = serde_json::to_value(&p.tracks).unwrap();
+                p.tracks.push(crate::model::Track { id: id.clone(), kind, name: None, clips: Vec::new() });
+                let after = serde_json::to_value(&p.tracks).unwrap();
+                Ok((path, before, after, format!("track_add {id}"), OpKind::Insert))
+            }
             Command::ClipMerge { left_id, right_id } => {
                 let (lt, li) = p.find_clip(&left_id).ok_or(Reject::UnknownClip(left_id.clone()))?;
                 let (rt, ri) = p.find_clip(&right_id).ok_or(Reject::UnknownClip(right_id.clone()))?;
@@ -635,9 +662,11 @@ fn enforce_no_overlap(p: &Project, ti: usize) -> Result<(), Reject> {
     }
 }
 
-/// 按日志语义重建撤销栈(Undo 弹栈、Redo 压回;io 打开工程与 replay 共用)。
+/// 按日志语义重建撤销/重做双栈(Undo 弹栈、Redo 压回;io 打开工程与 replay 共用)。
 /// auto 类 Op(锚点重定位等自动簿记)不入栈——撤销深度 = 真实用户手势数(ADR-0001)。
-pub fn rebuild_undo_stack(ops: &[Op]) -> Vec<String> {
+/// 重做栈同样可从日志确定性重建:M9 修复前 restore 把 redo 置空,而 MCP 每次
+/// dispatch 都重开工程 → redo 跨 dispatch 永远失效(NOTHING_TO_REDO)。
+pub fn rebuild_stacks(ops: &[Op]) -> (Vec<String>, Vec<String>) {
     let mut undo_stack: Vec<String> = Vec::new();
     let mut redo_stack: Vec<String> = Vec::new();
     for op in ops {
@@ -656,7 +685,12 @@ pub fn rebuild_undo_stack(ops: &[Op]) -> Vec<String> {
             _ => undo_stack.push(op.op_id.clone()),
         }
     }
-    undo_stack
+    (undo_stack, redo_stack)
+}
+
+/// 兼容入口:仅撤销栈。
+pub fn rebuild_undo_stack(ops: &[Op]) -> Vec<String> {
+    rebuild_stacks(ops).0
 }
 
 /// 规范化 JSON 文本(键序无关,数值保持 Value 语义)。

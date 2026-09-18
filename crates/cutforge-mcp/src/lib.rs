@@ -981,7 +981,7 @@ mod tests {
                 assert!(it["target"].is_string(), "未达成项必须写明 M11 目标: {}", it["item"]);
             }
         }
-        assert_eq!(achieved, 7, "M8 后实码达成 7 项(降级重写后的诚实口径)");
+        assert_eq!(achieved, 13, "M11 后实码达成 13 项(必达 13/13 + 0 可选;证据=parity_matrix)");
     }
 
     /// M8-5:python 启动器探测——本机/CI 至少一个可用,且返回的命令可执行。

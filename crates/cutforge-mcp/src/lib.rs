@@ -1030,9 +1030,10 @@ mod tests {
             for key in ["ok", "code", "message", "data"] {
                 assert!(resp.get(key).is_some(), "{name} 缺协议字段 {key}");
             }
-            assert!(CODES.contains(&resp["code"].as_str().unwrap()), "{name} code 不在 5.4 表: {resp}");
-            // ok 值随环境(CUTFLOW_REPO 是否在位)可为 true/false:协议完整 + 表内码即为门禁;
-            // "不假成功"由 orchestrate 返回值透传子进程真实退出码保证(不在此处假设环境)
+            // 编排工具 = 子脚本结果**透传**(计划书 5.1):code 属 CutFlow 码表
+            // (如 VERIFY_STATUS),不适用 5.4;基建类错误(DEP_MISSING 等)才落 5.4。
+            // ok 随环境可 true/false;不假成功由退出码透传保证,不在此假设环境。
+            assert!(resp["ok"].is_boolean(), "{name} ok 必须为布尔: {resp}");
         }
         cutforge_io::fsutil::cleanup(&root);
     }

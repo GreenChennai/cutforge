@@ -254,8 +254,8 @@ fn parity_matrix_full() {
             let pos = err.rfind("RMS level dB:").expect(err.as_str());
             err[pos + 13..].trim().split_whitespace().next().unwrap().parse().unwrap()
         };
-        let rms_on = bgm_band_rms(&out_on.output);
-        let rms_off = bgm_band_rms(&out_off.output);
+        let rms_on: f64 = bgm_band_rms(&out_on.output);
+        let rms_off: f64 = bgm_band_rms(&out_off.output);
         assert!(rms_on < rms_off - 3.0,
             "ducking 开启时 BGM 频段应被压制 ≥3dB: on={rms_on} off={rms_off}");
         achieved.push("9 BGM ducking:sidechain 侧链(on/off 能量差可测)");

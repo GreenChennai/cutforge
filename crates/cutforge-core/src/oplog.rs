@@ -72,6 +72,10 @@ pub struct Op {
     /// 本 Op 应用后的工程修订号(单调递增)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<u64>,
+    /// 自动登记类变更(锚点重定位等系统簿记):进审计链但**不入撤销栈**,
+    /// 撤销深度因此等于真实用户手势数(ADR-0001)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caused_by: Option<Vec<String>>,
     pub summary: String,
@@ -181,6 +185,7 @@ mod tests {
             caused_by: None,
             summary: "测试".into(),
             request_id: None,
+            auto: None,
         }
     }
 

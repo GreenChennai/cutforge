@@ -12,3 +12,6 @@ dist/
 
 # 本机配置
 config.json
+
+# Python 缓存(生成物的 pyc 不是交付物)
+__pycache__/

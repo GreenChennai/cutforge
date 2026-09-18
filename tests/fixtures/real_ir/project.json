@@ -1,0 +1,67 @@
+{
+ "version": 1,
+ "slug": "real-ir-fixture",
+ "fps": 30,
+ "canvas": {
+  "width": 1080,
+  "height": 1920
+ },
+ "tracks": [
+  {
+   "kind": "video",
+   "clips": [
+    {
+     "src": "01_materials/take1.mp4",
+     "startMs": 0,
+     "durationMs": 4000,
+     "sourceInMs": 0
+    },
+    {
+     "src": "01_materials/take1.mp4",
+     "startMs": 4000,
+     "durationMs": 4400,
+     "sourceInMs": 5200,
+     "transition": {
+      "type": "fade",
+      "durMs": 300,
+      "reason": "topic"
+     }
+    }
+   ]
+  },
+  {
+   "kind": "audio",
+   "clips": [
+    {
+     "src": "01_materials/take1.mp4",
+     "startMs": 0,
+     "durationMs": 4000,
+     "sourceInMs": 0,
+     "role": "voice"
+    },
+    {
+     "src": "01_materials/take1.mp4",
+     "startMs": 4000,
+     "durationMs": 4400,
+     "sourceInMs": 5200,
+     "role": "voice"
+    }
+   ]
+  }
+ ],
+ "subtitle": {
+  "ass": "06_output/subtitles.ass",
+  "source": "05_ir/wordline.json"
+ },
+ "outputs": [
+  "9x16"
+ ],
+ "_meta": {
+  "generatedFrom": "cutlist",
+  "keepSegments": 2,
+  "finalDurationMs": 8400,
+  "mappedVia": "rs_align.map_src_to_final",
+  "srcTotalMs": 9600,
+  "removedMs": 1200
+ }
+}

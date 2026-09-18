@@ -30,9 +30,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install ffmpeg (M8-3 渲染对拍夹具为硬门禁,不得跳过)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Build & test (auto-enables when crates land)
         if: hashFiles('crates/*/Cargo.toml') != ''
+        env:
+          # M8-2 夹具再生成校验(真实 IR 来自 CutFlow rs_ir.py)
+          CUTFLOW_REPO: ${{ github.workspace }}/../CutFlow
         run: |
+          git clone --depth 1 https://github.com/GreenChennai/CutFlow.git ../CutFlow
+          python3 tools/gen_real_ir_fixture.py --check
           cargo build --workspace --locked
           cargo test --workspace --locked
 

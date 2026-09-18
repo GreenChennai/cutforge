@@ -16,6 +16,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub const MCP_TOOLS_JSON: &str = include_str!("../../../schemas/mcp-tools.json");
+/// 能力矩阵单一真相源(ADR-0003/M8-5):MCP 工具与 docs/capability-matrix.md 同源。
+pub const CAPABILITY_MATRIX_JSON: &str = include_str!("../../../docs/capability-matrix.json");
 
 /// 工具注册表(契约来自 schemas/mcp-tools.json;派发处理器同在本 crate)。
 pub fn registry() -> &'static Vec<Value> {
@@ -57,9 +59,8 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
     }
     // capability_matrix 是静态查询,不需要工程根
     if name == "capability_matrix" {
-        return envelope(true, "OK", "能力对等矩阵(ADR-0038)", json!({
+        return envelope(true, "OK", "能力对等矩阵(实码口径,单一真相源)", json!({
             "matrix": capability_matrix(),
-            "rule": "必达项全达成且整体达成率 ≥90% 才通过(M6-5)",
         }));
     }
     let Some(root_str) = args["root"].as_str() else {
@@ -78,7 +79,8 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
     };
     let actor = Actor::agent("cutforge-mcp");
 
-    let mut ws = match Workspace::open(&ws_root) {
+    // 写通道全程锁:open→apply→persist 同一把锁(P0-5,杜绝锁外读+整文件覆盖)
+    let mut ws = match Workspace::open_exclusive(&ws_root) {
         Ok(w) => w,
         Err(e) => {
             let code = if e.kind() == std::io::ErrorKind::NotFound { "NO_CONFIG" } else { "INTERNAL" };
@@ -281,7 +283,7 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             let op_ids = args["opIds"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
             match ws.notes_resolve(note_id, reply.into(), op_ids, actor) {
                 Ok(()) => envelope(true, "OK", "标注已结案", json!({"noteId": note_id})),
-                Err(e) => envelope(false, "REJECTED-if-missing-else-INTERNAL", &e.to_string(), json!({})),
+                Err(e) => notes_op_error(e),
             }
         }
         "notes_reject" => {
@@ -290,7 +292,7 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             };
             match ws.notes_reject(note_id, reason.into(), actor) {
                 Ok(()) => envelope(true, "OK", "标注已否决", json!({"noteId": note_id})),
-                Err(e) => envelope(false, "INTERNAL", &e.to_string(), json!({})),
+                Err(e) => notes_op_error(e),
             }
         }
         "cut_apply" => {
@@ -298,7 +300,7 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             let Some(patch) = patch else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 patch(merge-patch 对象)", json!({}));
             };
-            apply_cut_merge_patch(&ws_root, &Value::Object(patch))
+            apply_cut_merge_patch(&mut ws, &Value::Object(patch))
         }
         "undo" | "redo" => {
             let batch = args["batch"].as_u64().unwrap_or(1);
@@ -387,9 +389,10 @@ fn count_sfx_near(project: &cutforge_core::model::Project, t_ms: u64, window: u6
         .count()
 }
 
-/// RFC7386 merge-patch 应用到 cutlist.json,schema 校验后走 record_file_change 审计。
-fn apply_cut_merge_patch(ws_root: &Path, patch: &Value) -> Value {
-    let rel = ws_root.join("04_cut/cutlist.json");
+/// RFC7386 merge-patch 应用到 cutlist.json,schema 校验后走 record_change 审计。
+/// 文件本体由 Workspace 的 reconcile(先文件后记账)落盘——不再旁路自写。
+fn apply_cut_merge_patch(ws: &mut Workspace, patch: &Value) -> Value {
+    let rel = ws.root().join("04_cut/cutlist.json");
     let Ok(text) = std::fs::read_to_string(&rel) else {
         return envelope(false, "NO_CONFIG", &format!("文件不存在: {}", rel.display()), json!({}));
     };
@@ -401,30 +404,30 @@ fn apply_cut_merge_patch(ws_root: &Path, patch: &Value) -> Value {
     if !errors.is_empty() {
         return envelope(false, "SCHEMA_INVALID", &errors.join("; "), json!({"errors": errors}));
     }
-    let mut ws = match Workspace::open(ws_root) {
-        Ok(w) => w,
-        Err(e) => return envelope(false, "INTERNAL", &e.to_string(), json!({})),
-    };
-    // 锁内登记审计 Op 并持久化(oplog+rev),随后原子写 cutlist 本体
     let rec = ws.record_change(
         "cutlist.json",
         "/",
         before,
-        after.clone(),
+        after,
         cutforge_core::oplog::OpKind::Set,
         Actor::script("cutforge-mcp:cut_apply"),
         ApplyOpts { summary: Some("cut_apply merge-patch".into()), ..Default::default() },
     );
-    let rec = match rec {
-        Ok(r) => r,
-        Err(e) => return envelope(false, "INTERNAL", &e.to_string(), json!({})),
-    };
-    let mut buf = serde_json::to_vec_pretty(&after).unwrap_or_default();
-    buf.push(b'\n');
-    if let Err(e) = cutforge_io::atomic::atomic_write(&rel, &buf) {
-        return envelope(false, "INTERNAL", &e.to_string(), json!({}));
+    match rec {
+        Ok(r) => envelope(true, "OK", "cutlist 已更新", json!({"rev": r.rev, "opIds": r.op_ids})),
+        Err(e) => envelope(false, "INTERNAL", &e.to_string(), json!({})),
     }
-    envelope(true, "OK", "cutlist 已更新", json!({"rev": rec.rev, "opIds": rec.op_ids}))
+}
+
+/// 标注操作的协议错误映射(5.4 表内码,禁止占位符):不存在/参数不合法 →
+/// PRECONDITION_FAILED;其余 → INTERNAL。
+fn notes_op_error(e: std::io::Error) -> Value {
+    let code = if e.kind() == std::io::ErrorKind::NotFound || e.kind() == std::io::ErrorKind::InvalidInput {
+        "PRECONDITION_FAILED"
+    } else {
+        "INTERNAL"
+    };
+    envelope(false, code, &e.to_string(), json!({}))
 }
 
 fn merge_patch(mut target: Value, patch: &Value) -> Value {
@@ -446,59 +449,119 @@ fn merge_patch(mut target: Value, patch: &Value) -> Value {
     }
 }
 
+/// Python 启动器探测(py -3 → python3 → python;Windows 仅装 py-launcher 的机器不再全灭)。
+fn py_launcher() -> Option<Vec<String>> {
+    static CACHE: OnceLock<Option<Vec<String>>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+                for cand in [["py", "-3"], ["python3", ""], ["python", ""]] {
+                    let args: Vec<&str> = cand[1..].iter().filter(|s| !s.is_empty()).copied().collect();
+                    let ok = std::process::Command::new(cand[0])
+                        .args(args)
+                    .arg("-c")
+                    .arg("print(1)")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
+                if ok {
+                    return Some(cand.iter().map(|s| s.to_string()).collect());
+                }
+            }
+            None
+        })
+        .clone()
+}
+
+/// CutFlow 仓库定位(去硬编码):CUTFLOW_REPO → 可执行文件祖先目录 → 工程目录祖先。
+fn resolve_cutflow_dir(ws_root: &Path) -> Option<PathBuf> {
+    if let Some(v) = std::env::var_os("CUTFLOW_REPO") {
+        let p = PathBuf::from(v);
+        if p.join("skills/cutflow/scripts").is_dir() {
+            return Some(p);
+        }
+    }
+    let probe = |base: &Path| -> Option<PathBuf> {
+        base.ancestors().skip(1).take(4).map(|a| a.join("CutFlow"))
+            .find(|c| c.join("skills/cutflow/scripts").is_dir())
+    };
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(p) = probe(&exe) {
+            return Some(p);
+        }
+    probe(ws_root)
+}
+
+/// scriptArgs 序列化:字符串原样,数字/布尔转字符串;复杂对象如实拒绝(不再静默丢弃)。
+fn script_arg_to_string(v: &Value) -> Result<String, String> {
+    match v {
+        Value::String(s) => Ok(s.clone()),
+        Value::Number(n) => Ok(n.to_string()),
+        Value::Bool(b) => Ok(b.to_string()),
+        other => Err(format!("不支持scriptArgs 元素类型: {other}")),
+    }
+}
+
 fn orchestrate(ws_root: &Path, script: &str, script_args: &[Value]) -> Value {
-    let cutflow = std::env::var_os("CUTFLOW_REPO")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"E:\平日资料\GitHub\CutFlow"));
-    let script_path = cutflow.join("skills/cutflow/scripts").join(script);
+    let Some(cutflow) = resolve_cutflow_dir(ws_root) else {
+        return envelope(false, "DEP_MISSING",
+            "未找到 CutFlow 仓库:设 CUTFLOW_REPO 指向仓库根(skills/cutflow/scripts 需存在)", json!({}));
+    };
+    let mut script_path = cutflow.join("skills/cutflow/scripts").join(script);
     // stage_rebuild 的脚本在工程目录内(rebuild.py 由 rs_run --init 生成)
-    let script_path = if script_path.is_file() { script_path } else { ws_root.join(script) };
+    if !script_path.is_file() {
+        script_path = ws_root.join(script);
+    }
     if !script_path.is_file() {
         return envelope(false, "DEP_MISSING", &format!("脚本不存在: {}", script_path.display()), json!({}));
     }
-    let out = std::process::Command::new("python")
-        .arg(&script_path)
-        .args(script_args.iter().filter_map(|v| v.as_str()))
-        .arg("--json")
-        .current_dir(ws_root)
-        .output();
+    let Some(py) = py_launcher() else {
+        return envelope(false, "DEP_MISSING", "未找到可用的 Python(py -3/python3/python 均不可用)", json!({}));
+    };
+    // --json 白名单:仅契约声明支持该旗标的脚本(rs_verify);其余追加 --json 会被
+    // argparse 以退出码 2 拒绝——这正是 M4 三个编排工具必崩的根因(P1-5)。
+    let supports_json = matches!(script, "rs_verify.py");
+    let mut str_args: Vec<String> = Vec::new();
+    for v in script_args {
+        match script_arg_to_string(v) {
+            Ok(s) => str_args.push(s),
+            Err(m) => return envelope(false, "PRECONDITION_FAILED", &m, json!({})),
+        }
+    }
+    let mut cmd = std::process::Command::new(&py[0]);
+    cmd.args(&py[1..]).arg(&script_path);
+    for a in &str_args {
+        cmd.arg(a);
+    }
+    if supports_json {
+        cmd.arg("--json");
+    }
+    cmd.current_dir(ws_root);
+    let out = cmd.output();
     match out {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
-            let json_start = text.find('{').unwrap_or(text.len());
-            match text[json_start..].parse::<Value>() {
-                Ok(v) => v,
-                Err(_) => envelope(true, "OK", "编排完成(无 JSON 输出)", json!({"stdout": text.trim()})),
+            if supports_json {
+                let json_start = text.find('{').unwrap_or(text.len());
+                match text[json_start..].parse::<Value>() {
+                    Ok(v) => v,
+                    Err(_) => envelope(true, "OK", "编排完成", json!({"stdout": text.trim()})),
+                }
+            } else {
+                envelope(true, "OK", "编排完成", json!({"stdout": text.trim()}))
             }
         }
         Ok(o) => {
             let code = if o.status.code() == Some(3) { "DEP_MISSING" } else { "INTERNAL" };
             envelope(false, code, &String::from_utf8_lossy(&o.stderr).trim().chars().take(300).collect::<String>(), json!({}))
         }
-        Err(e) => envelope(false, "DEP_MISSING", &format!("python 不可用: {e}"), json!({})),
+        Err(e) => envelope(false, "DEP_MISSING", &format!("{} 不可用: {e}", py.join(" ")), json!({})),
     }
 }
 
-/// ADR-0038 能力对等矩阵(15 项;cutforge 列由 M6 填写,当前为规划值)。
-fn capability_matrix() -> &'static Vec<Value> {
-    static CACHE: OnceLock<Vec<Value>> = OnceLock::new();
-    CACHE.get_or_init(|| vec![
-    json!({"item": "视频片段裁剪/排序", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "变速 0.25–4x", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "音量/淡入淡出", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "位置/缩放/旋转", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "转场(三级语法)", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "关键词", "jianying": "支持", "ffmpeg": "不支持", "cutforge": "可选"}),
-    json!({"item": "花字/描边/底衬", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "音效落点", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "BGM ducking", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "蒙版", "jianying": "支持", "ffmpeg": "支持", "cutforge": "可选"}),
-    json!({"item": "冻结帧补长", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "punch-in 变焦", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "字幕(ASS 烧录)", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "多画幅变体", "jianying": "支持", "ffmpeg": "支持", "cutforge": "必达"}),
-    json!({"item": "工程可继续精修", "jianying": "原生", "ffmpeg": "不支持", "cutforge": "必达(工程导出)"}),
-        ])
+/// ADR-0003/M8-5:能力矩阵是**生成物**——唯一真相源 docs/capability-matrix.json,
+/// 本工具与文档同源;status 只认实码+夹具证据,与 capability-matrix.md 联动更新。
+fn capability_matrix() -> Value {
+    serde_json::from_str(CAPABILITY_MATRIX_JSON).expect("capability-matrix.json 必须合法")
 }
 
 
@@ -624,4 +687,87 @@ pub fn serve_http(port: u16, token: &str) -> i32 {
         );
     }
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// M8-5:能力矩阵单一真相源——MCP 工具与 docs/capability-matrix.json 同源,
+    /// status 只认封闭枚举;达成项必须有证据列(禁止无证据宣称)。
+    #[test]
+    fn capability_matrix_single_source() {
+        let m = capability_matrix();
+        assert_eq!(m["version"], json!(2));
+        let items = m["items"].as_array().unwrap();
+        assert_eq!(items.len(), 15, "15 项口径不变");
+        let mut achieved = 0;
+        for it in items {
+            let status = it["status"].as_str().unwrap();
+            assert!(
+                matches!(status, "achieved" | "partial" | "missing" | "optional"),
+                "status 必须在封闭枚举内: {status}"
+            );
+            if status == "achieved" {
+                achieved += 1;
+                assert!(it["evidence"].is_string() && !it["evidence"].as_str().unwrap().is_empty(),
+                    "达成项必须有实码/夹具证据: {}", it["item"]);
+            }
+            if status == "missing" || status == "partial" {
+                assert!(it["target"].is_string(), "未达成项必须写明 M11 目标: {}", it["item"]);
+            }
+        }
+        assert_eq!(achieved, 7, "M8 后实码达成 7 项(降级重写后的诚实口径)");
+    }
+
+    /// M8-5:python 启动器探测——本机/CI 至少一个可用,且返回的命令可执行。
+    #[test]
+    fn py_launcher_probe() {
+        let py = py_launcher().expect("py -3/python3/python 至少一个必须可用");
+        let out = std::process::Command::new(&py[0]).args(&py[1..]).arg("-V").output().unwrap();
+        assert!(out.status.success());
+    }
+
+    /// M8-5:scriptArgs 序列化——数字不再被静默丢弃,复杂对象如实拒绝。
+    #[test]
+    fn script_args_serialization() {
+        assert_eq!(script_arg_to_string(&json!("--force")).unwrap(), "--force");
+        assert_eq!(script_arg_to_string(&json!(42)).unwrap(), "42");
+        assert_eq!(script_arg_to_string(&json!(1.5)).unwrap(), "1.5");
+        assert_eq!(script_arg_to_string(&json!(true)).unwrap(), "true");
+        assert!(script_arg_to_string(&json!({"a": 1})).is_err());
+    }
+
+    /// M8-5:协议一致性——占位符清零,标注失败路径的 code 全部在 5.4 表内。
+    #[test]
+    fn notes_error_codes_in_table() {
+        let root = cutforge_io::tests_fixture("mcp-notes-codes").unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        for (name, args) in [
+            ("notes_resolve", json!({"root": root_s, "noteId": "n-9999", "reply": "x", "opIds": ["op-1"]})),
+            ("notes_reject", json!({"root": root_s, "noteId": "n-9999", "reason": "x"})),
+        ] {
+            let resp = dispatch(name, &args);
+            assert_eq!(resp["code"], json!("PRECONDITION_FAILED"), "{name} 缺标注必须 PRECONDITION_FAILED: {resp}");
+            assert!(CODES.contains(&resp["code"].as_str().unwrap()));
+        }
+        cutforge_io::fsutil::cleanup(&root);
+    }
+
+    /// M8-5:编排工具协议完整——CUTFLOW_REPO 缺失/脚本缺失不得崩,错误如实上报。
+    #[test]
+    fn orchestrate_tools_envelope_complete() {
+        let root = cutforge_io::tests_fixture("mcp-orchestrate").unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        for name in ["stage_run", "stage_rebuild", "verify_run", "sync_check", "render", "export_jianying"] {
+            let resp = dispatch(name, &json!({"root": root_s, "scriptArgs": ["--status"]}));
+            for key in ["ok", "code", "message", "data"] {
+                assert!(resp.get(key).is_some(), "{name} 缺协议字段 {key}");
+            }
+            assert!(CODES.contains(&resp["code"].as_str().unwrap()), "{name} code 不在 5.4 表: {resp}");
+            assert_eq!(resp["ok"], json!(false), "夹具工程无真实脚本,必须失败而非假成功");
+        }
+        cutforge_io::fsutil::cleanup(&root);
+    }
 }

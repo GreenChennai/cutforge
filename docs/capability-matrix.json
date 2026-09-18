@@ -1,0 +1,22 @@
+{
+  "version": 2,
+  "updated": "2026-09-19",
+  "rule": "诚实口径:status 只认实码 + 对拍夹具(M8-5)。achieved=有专属夹具证据;partial=字段被契约接受但渲染端不完整消费;missing=契约字段存在、渲染零消费;optional=规划可选未启动。本文件是唯一真相源:docs/capability-matrix.md 与 MCP capability_matrix 工具均由它生成(M11 起证据列由 parity 夹具自动回填,ADR-0003)。",
+  "items": [
+    { "item": "视频片段裁剪/排序", "jianying": "支持", "ffmpeg": "支持", "status": "achieved", "evidence": "cutforge-render segment/concat 管线 + dual_validation 契约对拍", "target": null },
+    { "item": "变速 0.25–4x", "jianying": "支持", "ffmpeg": "支持", "status": "missing", "evidence": "clip.speed 字段渲染零消费(审查 §5#2)", "target": "M11:setpts/atempo+曲线" },
+    { "item": "音量/淡入淡出", "jianying": "支持", "ffmpeg": "支持", "status": "partial", "evidence": "M8 P0-4 后 per-clip volume 生效(render_matrix_fixture);fade 字段仍不消费", "target": "M11:afade" },
+    { "item": "位置/缩放/旋转", "jianying": "支持", "ffmpeg": "支持", "status": "partial", "evidence": "仅画面适配(pad/scale);position/scale/rotate 字段不消费", "target": "M11:overlay/rotate" },
+    { "item": "转场(三级语法)", "jianying": "支持", "ffmpeg": "支持", "status": "missing", "evidence": "compose 直通,transition 零消费(审查 §5#5)", "target": "M11:xfade 链+尾帧扩展" },
+    { "item": "关键词", "jianying": "支持", "ffmpeg": "不支持", "status": "optional", "evidence": null, "target": null },
+    { "item": "花字/描边/底衬", "jianying": "支持", "ffmpeg": "支持", "status": "achieved", "evidence": "ASS 烧录链(M6 字幕对拍)", "target": null },
+    { "item": "音效落点", "jianying": "支持", "ffmpeg": "支持", "status": "achieved", "evidence": "M8 P0-4 修复:adelay 落点 + render_matrix_fixture 起播断言(修复前全部 0 秒炸响)", "target": null },
+    { "item": "BGM ducking", "jianying": "支持", "ffmpeg": "支持", "status": "missing", "evidence": "bgm 字段渲染零引用(审查 §5#9)", "target": "M11:侧链 amix→asplit" },
+    { "item": "蒙版", "jianying": "支持", "ffmpeg": "支持", "status": "optional", "evidence": null, "target": null },
+    { "item": "冻结帧补长", "jianying": "支持", "ffmpeg": "支持", "status": "achieved", "evidence": "tpad stop_mode=clone(render/lib.rs segment 步)", "target": null },
+    { "item": "punch-in 变焦", "jianying": "支持", "ffmpeg": "支持", "status": "missing", "evidence": "punchIn 字段渲染零消费(审查 §5#12)", "target": "M11:zoompan" },
+    { "item": "字幕(ASS 烧录)", "jianying": "支持", "ffmpeg": "支持", "status": "achieved", "evidence": "M6 响度对拍 0.02LU + 字幕烧录链", "target": null },
+    { "item": "多画幅变体", "jianying": "支持", "ffmpeg": "支持", "status": "achieved", "evidence": "M8 P0-3 修复:缓存键并入 canvas+fps,双画幅互不污染(render_matrix_fixture 分辨率断言)", "target": "M11:真·共享缓存分叉 encode" },
+    { "item": "工程可继续精修", "jianying": "原生", "ffmpeg": "不支持", "status": "achieved", "evidence": "OpLog/undo 语义为真(M8 P0-1/P0-5 后),file_level_undo + concurrent_writes_no_loss 夹具", "target": null }
+  ]
+}

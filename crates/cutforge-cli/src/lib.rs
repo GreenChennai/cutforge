@@ -20,8 +20,9 @@ fn emit(json: bool, ok: bool, code: &str, message: &str, data: serde_json::Value
         println!("[{}] {code}: {message}", if ok { "PASS" } else { "FAIL" });
     }
     match code {
-        "NO_ENV" => EXIT_ENV,
         "OK" => EXIT_OK,
+        // 环境类(5.4:NO_CONFIG/DEP_MISSING)→ 退出码 3;其余失败 → 2
+        "NO_CONFIG" | "DEP_MISSING" => EXIT_ENV,
         _ => EXIT_FAIL,
     }
 }
@@ -77,6 +78,17 @@ fn open_ws(root: &Path) -> Result<Workspace, String> {
     })
 }
 
+/// 变更子命令专用:锁覆盖 open→apply→persist 全程(P0-5)。
+fn open_ws_exclusive(root: &Path) -> Result<Workspace, String> {
+    Workspace::open_exclusive(root).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!("工程不存在: {}({e})", root.display())
+        } else {
+            format!("打开失败: {e}")
+        }
+    })
+}
+
 fn repo_root() -> PathBuf {
     if let Some(r) = std::env::var_os("CUTFORGE_REPO") {
         return PathBuf::from(r);
@@ -86,14 +98,14 @@ fn repo_root() -> PathBuf {
 
 pub fn run(argv: Vec<String>) -> i32 {
     let Some(cmd) = argv.first().cloned() else {
-        return emit(false, false, "USAGE", "用法: cutforge-cli <子命令> […]", serde_json::json!({
+        return emit(false, false, "PRECONDITION_FAILED", "用法: cutforge-cli <子命令> […]", serde_json::json!({
             "subcommands": ["project", "timeline", "clip", "clip-update", "split", "undo", "redo", "oplog", "check-write-paths", "check-deps"]
         }));
     };
     let args = parse_args(&argv[1..]);
     match cmd.as_str() {
         "project" => {
-            let Some(root) = args.positional.first() else { return emit(false, args.json, "USAGE", "用法: project <工程目录>", serde_json::json!({})) };
+            let Some(root) = args.positional.first() else { return emit(false, args.json, "PRECONDITION_FAILED", "用法: project <工程目录>", serde_json::json!({})) };
             match open_ws(Path::new(root)) {
                 Ok(ws) => match ws.engine().query(Query::ProjectView) {
                     cutforge_core::engine::Answer::Project(v) => emit(
@@ -102,11 +114,11 @@ pub fn run(argv: Vec<String>) -> i32 {
                     ),
                     _ => unreachable!(),
                 },
-                Err(e) => emit(args.json, false, "NO_ENV", &e, serde_json::json!({})),
+                Err(e) => emit(args.json, false, "NO_CONFIG", &e, serde_json::json!({})),
             }
         }
         "timeline" => {
-            let Some(root) = args.positional.first() else { return emit(false, args.json, "USAGE", "用法: timeline <工程目录>", serde_json::json!({})) };
+            let Some(root) = args.positional.first() else { return emit(false, args.json, "PRECONDITION_FAILED", "用法: timeline <工程目录>", serde_json::json!({})) };
             match open_ws(Path::new(root)) {
                 Ok(ws) => match ws.engine().query(Query::Timeline) {
                     cutforge_core::engine::Answer::Timeline(tl) => {
@@ -115,26 +127,26 @@ pub fn run(argv: Vec<String>) -> i32 {
                     }
                     _ => unreachable!(),
                 },
-                Err(e) => emit(args.json, false, "NO_ENV", &e, serde_json::json!({})),
+                Err(e) => emit(args.json, false, "NO_CONFIG", &e, serde_json::json!({})),
             }
         }
         "clip" => {
             if args.positional.len() < 2 {
-                return emit(false, args.json, "USAGE", "用法: clip <工程目录> <clipId>", serde_json::json!({}));
+                return emit(false, args.json, "PRECONDITION_FAILED", "用法: clip <工程目录> <clipId>", serde_json::json!({}));
             }
             match open_ws(Path::new(&args.positional[0])) {
                 Ok(ws) => match ws.engine().query(Query::Clip { id: args.positional[1].clone() }) {
-                    cutforge_core::engine::Answer::Clip(v) => emit(args.json, v.is_some(), if v.is_some() { "OK" } else { "NOT_FOUND" }, "片段", serde_json::json!({"clip": v})),
+                    cutforge_core::engine::Answer::Clip(v) => emit(args.json, v.is_some(), if v.is_some() { "OK" } else { "NO_CONFIG" }, "片段", serde_json::json!({"clip": v})),
                     _ => unreachable!(),
                 },
-                Err(e) => emit(args.json, false, "NO_ENV", &e, serde_json::json!({})),
+                Err(e) => emit(args.json, false, "NO_CONFIG", &e, serde_json::json!({})),
             }
         }
         "clip-update" | "split" | "undo" | "redo" => {
             let root = args.positional.first().cloned().unwrap_or_default();
             let actor = actor_from(args.flags.get("actor"));
             let apply_result = (|| -> Result<cutforge_core::engine::OpReceipt, String> {
-                let mut ws = open_ws(Path::new(&root))?;
+                let mut ws = open_ws_exclusive(Path::new(&root))?;
                 let opts = ApplyOpts {
                     request_id: args.flags.get("request-id").cloned(),
                     summary: args.flags.get("summary").cloned(),
@@ -174,13 +186,13 @@ pub fn run(argv: Vec<String>) -> i32 {
             match apply_result {
                 Ok(r) => emit(args.json, true, "OK", "已应用", serde_json::json!({"opIds": r.op_ids, "rev": r.rev, "idempotent": r.idempotent})),
                 Err(e) => {
-                    let code = if e.contains("工程不存在") { "NO_ENV" } else { "REJECTED" };
+                    let code = if e.contains("工程不存在") { "NO_CONFIG" } else { "PRECONDITION_FAILED" };
                     emit(args.json, false, code, &e, serde_json::json!({}))
                 }
             }
         }
         "oplog" => {
-            let Some(root) = args.positional.first() else { return emit(false, args.json, "USAGE", "用法: oplog <工程目录> [--since N] [--actor agent]", serde_json::json!({})) };
+            let Some(root) = args.positional.first() else { return emit(false, args.json, "PRECONDITION_FAILED", "用法: oplog <工程目录> [--since N] [--actor agent]", serde_json::json!({})) };
             match open_ws(Path::new(root)) {
                 Ok(ws) => {
                     let since = args.flags.get("since").and_then(|s| s.parse().ok());
@@ -198,7 +210,7 @@ pub fn run(argv: Vec<String>) -> i32 {
                         _ => unreachable!(),
                     }
                 }
-                Err(e) => emit(args.json, false, "NO_ENV", &e, serde_json::json!({})),
+                Err(e) => emit(args.json, false, "NO_CONFIG", &e, serde_json::json!({})),
             }
         }
         "notes" => notes_list(&args),
@@ -209,14 +221,14 @@ pub fn run(argv: Vec<String>) -> i32 {
         "check-shell-purity" => check_shell_purity(args.json),
         "check-write-paths" => check_write_paths(args.json),
         "check-deps" => check_deps(args.json),
-        other => emit(false, args.json, "USAGE", &format!("未知子命令: {other}"), serde_json::json!({})),
+        other => emit(false, args.json, "PRECONDITION_FAILED", &format!("未知子命令: {other}"), serde_json::json!({})),
     }
 }
 
 // ---------- 标注与冲突(计划书 4.9 / 4.7) ----------
 
 fn notes_list(a: &Args) -> i32 {
-    let Some(root) = a.positional.first() else { return emit(a.json, false, "USAGE", "用法: notes <工程目录> [--state open] [--author user]", serde_json::json!({})) };
+    let Some(root) = a.positional.first() else { return emit(a.json, false, "PRECONDITION_FAILED", "用法: notes <工程目录> [--state open] [--author user]", serde_json::json!({})) };
     match Workspace::open(Path::new(root)) {
         Ok(ws) => {
             let state = a.flags.get("state").and_then(|s| serde_json::from_value::<cutforge_core::notes::NoteState>(serde_json::Value::String(s.clone())).ok());
@@ -225,19 +237,19 @@ fn notes_list(a: &Args) -> i32 {
             let data = serde_json::json!({"count": items.len(), "notes": items, "orphans": ws.notes().orphans().len()});
             emit(a.json, true, "OK", "标注清单", data)
         }
-        Err(e) => emit(a.json, false, "NO_ENV", &e.to_string(), serde_json::json!({})),
+        Err(e) => emit(a.json, false, "NO_CONFIG", &e.to_string(), serde_json::json!({})),
     }
 }
 
 fn notes_add(a: &Args) -> i32 {
     let usage = "用法: notes-add <工程目录> --kind clip --ref V1-001 --t-ms 4000 --body \"...\" [--author user] [--tag 节奏]";
-    let Some(root) = a.positional.first() else { return emit(a.json, false, "USAGE", usage, serde_json::json!({})) };
+    let Some(root) = a.positional.first() else { return emit(a.json, false, "PRECONDITION_FAILED", usage, serde_json::json!({})) };
     let kind = a.flags.get("kind").cloned().unwrap_or_else(|| "clip".into());
     let ref_id = a.flags.get("ref").filter(|s| !s.is_empty()).cloned();
     let t_ms: u64 = a.flags.get("t-ms").and_then(|s| s.parse().ok()).unwrap_or(0);
     let body = a.flags.get("body").cloned().unwrap_or_default();
     if body.is_empty() {
-        return emit(a.json, false, "USAGE", "body 必填", serde_json::json!({}));
+        return emit(a.json, false, "PRECONDITION_FAILED", "body 必填", serde_json::json!({}));
     }
     let anchor_kind: cutforge_core::anchor::AnchorKind = match serde_json::from_value::<String>(serde_json::json!(kind)) {
         Ok(s) => match s.as_str() {
@@ -246,9 +258,9 @@ fn notes_add(a: &Args) -> i32 {
             "time" => cutforge_core::anchor::AnchorKind::Time,
             "word" => cutforge_core::anchor::AnchorKind::Word,
             "subtitleCard" | "subtitlecard" => cutforge_core::anchor::AnchorKind::SubtitleCard,
-            _ => return emit(a.json, false, "USAGE", &format!("未知锚点类型: {kind}"), serde_json::json!({})),
+            _ => return emit(a.json, false, "PRECONDITION_FAILED", &format!("未知锚点类型: {kind}"), serde_json::json!({})),
         },
-        Err(_) => return emit(a.json, false, "USAGE", "kind 解析失败", serde_json::json!({})),
+        Err(_) => return emit(a.json, false, "PRECONDITION_FAILED", "kind 解析失败", serde_json::json!({})),
     };
     let anchor = cutforge_core::anchor::Anchor { kind: anchor_kind, ref_: ref_id, t_ms, span: None };
     let author = match a.flags.get("author").map(|s| s.as_str()) {
@@ -256,46 +268,46 @@ fn notes_add(a: &Args) -> i32 {
         _ => cutforge_core::notes::NoteAuthor::User,
     };
     let tags = a.flags.get("tag").map(|s| vec![s.clone()]).unwrap_or_default();
-    match Workspace::open(Path::new(root)) {
+    match Workspace::open_exclusive(Path::new(root)) {
         Ok(mut ws) => match ws.notes_add(anchor, body, author, tags, actor_from(a.flags.get("actor")), None) {
             Ok(id) => emit(a.json, true, "OK", "标注已创建", serde_json::json!({"noteId": id, "rev": ws.rev()})),
-            Err(e) => emit(a.json, false, "REJECTED", &e.to_string(), serde_json::json!({})),
+            Err(e) => emit(a.json, false, "PRECONDITION_FAILED", &e.to_string(), serde_json::json!({})),
         },
-        Err(e) => emit(a.json, false, "NO_ENV", &e.to_string(), serde_json::json!({})),
+        Err(e) => emit(a.json, false, "NO_CONFIG", &e.to_string(), serde_json::json!({})),
     }
 }
 
 fn notes_resolve(a: &Args) -> i32 {
     if a.positional.len() < 2 {
-        return emit(a.json, false, "USAGE", "用法: notes-resolve <工程目录> <noteId> --reply \"...\" --op-ids op-1,op-2", serde_json::json!({}));
+        return emit(a.json, false, "PRECONDITION_FAILED", "用法: notes-resolve <工程目录> <noteId> --reply \"...\" --op-ids op-1,op-2", serde_json::json!({}));
     }
     let reply = a.flags.get("reply").cloned().unwrap_or_default();
     let op_ids: Vec<String> = a.flags.get("op-ids").map(|s| s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
-    match Workspace::open(Path::new(&a.positional[0])) {
+    match Workspace::open_exclusive(Path::new(&a.positional[0])) {
         Ok(mut ws) => match ws.notes_resolve(&a.positional[1], reply, op_ids, actor_from(a.flags.get("actor"))) {
             Ok(()) => emit(a.json, true, "OK", "标注已结案", serde_json::json!({"noteId": a.positional[1]})),
-            Err(e) => emit(a.json, false, "REJECTED", &e.to_string(), serde_json::json!({})),
+            Err(e) => emit(a.json, false, "PRECONDITION_FAILED", &e.to_string(), serde_json::json!({})),
         },
-        Err(e) => emit(a.json, false, "NO_ENV", &e.to_string(), serde_json::json!({})),
+        Err(e) => emit(a.json, false, "NO_CONFIG", &e.to_string(), serde_json::json!({})),
     }
 }
 
 fn notes_reject(a: &Args) -> i32 {
     if a.positional.len() < 2 {
-        return emit(a.json, false, "USAGE", "用法: notes-reject <工程目录> <noteId> --reason \"...\"", serde_json::json!({}));
+        return emit(a.json, false, "PRECONDITION_FAILED", "用法: notes-reject <工程目录> <noteId> --reason \"...\"", serde_json::json!({}));
     }
     let reason = a.flags.get("reason").cloned().unwrap_or_default();
-    match Workspace::open(Path::new(&a.positional[0])) {
+    match Workspace::open_exclusive(Path::new(&a.positional[0])) {
         Ok(mut ws) => match ws.notes_reject(&a.positional[1], reason, actor_from(a.flags.get("actor"))) {
             Ok(()) => emit(a.json, true, "OK", "标注已否决", serde_json::json!({})),
-            Err(e) => emit(a.json, false, "REJECTED", &e.to_string(), serde_json::json!({})),
+            Err(e) => emit(a.json, false, "PRECONDITION_FAILED", &e.to_string(), serde_json::json!({})),
         },
-        Err(e) => emit(a.json, false, "NO_ENV", &e.to_string(), serde_json::json!({})),
+        Err(e) => emit(a.json, false, "NO_CONFIG", &e.to_string(), serde_json::json!({})),
     }
 }
 
 fn conflicts_list(a: &Args) -> i32 {
-    let Some(root) = a.positional.first() else { return emit(a.json, false, "USAGE", "用法: conflicts <工程目录>", serde_json::json!({})) };
+    let Some(root) = a.positional.first() else { return emit(a.json, false, "PRECONDITION_FAILED", "用法: conflicts <工程目录>", serde_json::json!({})) };
     match Workspace::open(Path::new(root)) {
         Ok(ws) => match ws.conflict_list() {
             Ok(items) => {
@@ -304,7 +316,7 @@ fn conflicts_list(a: &Args) -> i32 {
             }
             Err(e) => emit(a.json, false, "INTERNAL", &e.to_string(), serde_json::json!({})),
         },
-        Err(e) => emit(a.json, false, "NO_ENV", &e.to_string(), serde_json::json!({})),
+        Err(e) => emit(a.json, false, "NO_CONFIG", &e.to_string(), serde_json::json!({})),
     }
 }
 
@@ -445,7 +457,7 @@ fn check_deps(json: bool) -> i32 {
     let mut edges: Vec<(String, String)> = Vec::new();
     let crates_dir = root.join("crates");
     let Ok(rd) = std::fs::read_dir(&crates_dir) else {
-        return emit(json, false, "NO_ENV", "crates/ 目录不存在", serde_json::json!({}));
+        return emit(json, false, "NO_CONFIG", "crates/ 目录不存在", serde_json::json!({}));
     };
     for entry in rd.flatten() {
         let manifest = entry.path().join("Cargo.toml");

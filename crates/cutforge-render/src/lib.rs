@@ -169,7 +169,7 @@ pub fn render(
     for f in &segment_files {
         list.push_str(&format!("file '{}'\n", f.to_string_lossy().replace('\\', "/")));
     }
-    std::fs::write(&concat_list, &list).map_err(|e| e.to_string())?;
+    cutforge_io::atomic::atomic_write(&concat_list, list.as_bytes()).map_err(|e| e.to_string())?;
     let silent_video = cache_dir.join("concat.mp4");
     run_ff("ffmpeg", &[
         "-y", "-v", "error", "-f", "concat", "-safe", "0",
@@ -251,7 +251,7 @@ pub fn render(
         // CutFlow 口径:ass 拷入缓存目录,ffmpeg 以缓存目录为 cwd,滤镜用裸文件名
         let ass_local = cache_dir.join("burn.ass");
         let payload = std::fs::read(ass).map_err(|e| e.to_string())?;
-        std::fs::write(&ass_local, payload).map_err(|e| e.to_string())?;
+        cutforge_io::atomic::atomic_write(&ass_local, &payload).map_err(|e| e.to_string())?;
         run_ff_in(&cache_dir, "ffmpeg", &[
             "-y", "-v", "error", "-i", video_input.to_string_lossy().as_ref(),
             "-i", mixed.to_string_lossy().as_ref(),
@@ -279,7 +279,8 @@ pub fn render(
         project.slug,
         format!("{}x{}", canvas_w, canvas_h)
     ));
-    std::fs::copy(&video_input, &output).map_err(|e| e.to_string())?;
+    let payload = std::fs::read(&video_input).map_err(|e| e.to_string())?;
+    cutforge_io::atomic::atomic_write(&output, &payload).map_err(|e| e.to_string())?;
     steps.push(("encode", true));
     progress(json!({"step": "encode", "ok": true, "output": output.to_string_lossy()}));
 

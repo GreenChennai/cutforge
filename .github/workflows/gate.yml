@@ -86,23 +86,36 @@ jobs:
           done
           cp apps/web/index.html apps/web/app.js apps/web/style.css dist/web/
           cd dist
-          # 目录不能作为 Release 资产上传,必须打成单文件 zip
+          # 目录不能作为 Release 资产上传,必须打成单文件 zip;
+          # 校验文件按平台命名,避免三平台资产同名互相覆盖
           pkgos=$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
           if command -v zip >/dev/null 2>&1; then
             zip -r "cutforge-${pkgos}.zip" cutforge-render* cutforge-cli* cutforge-mcp* web
           else
             powershell -NoProfile -Command "Compress-Archive -Path cutforge-*,web -DestinationPath 'cutforge-${pkgos}.zip' -Force"
           fi
-          sha256sum "cutforge-${pkgos}.zip" > SHA256SUMS.txt
+          sha256sum "cutforge-${pkgos}.zip" > "SHA256SUMS-${pkgos}.txt"
           ls -la
       - uses: actions/upload-artifact@v4
         with:
           name: cutforge-${{ matrix.os }}
           path: dist/
+
+  # 统一附加:三平台矩阵并发跑 "view 不存在则 create" 会撞车(v0.3.0 首跑实测,
+  # 输掉竞态的一腿 exit 1 并被 fail-fast 连坐),附加动作只允许这一个 job 执行。
+  release-upload:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-all
+          pattern: cutforge-*
       - name: Attach to release
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
         run: |
-          gh release view ${{ github.ref_name }} -R ${{ github.repository }} > /dev/null 2>&1 ||             gh release create ${{ github.ref_name }} -R ${{ github.repository }} --title "${{ github.ref_name }}" --generate-notes
-          gh release upload ${{ github.ref_name }} dist/cutforge-*.zip dist/SHA256SUMS.txt --clobber -R ${{ github.repository }}
+          find dist-all -type f | sort
+          gh release view ${{ github.ref_name }} -R ${{ github.repository }} > /dev/null 2>&1 || gh release create ${{ github.ref_name }} -R ${{ github.repository }} --title "${{ github.ref_name }}" --generate-notes
+          gh release upload ${{ github.ref_name }} dist-all/*/cutforge-*.zip dist-all/*/SHA256SUMS-*.txt --clobber -R ${{ github.repository }}

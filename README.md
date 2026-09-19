@@ -26,7 +26,7 @@ M0–M4 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 
 ## 快速开始(编辑器,3 步)
 
-**无需 Rust 工具链**:GitHub Release 下载对应平台压缩包(`cutforge-windows.zip` / `cutforge-linux.zip` / `cutforge-macos.zip`,内含 `cutforge-cli` / `cutforge-mcp` / `cutforge-render` 三个二进制与 `web/` 静态资源,E1-2),解压即用;校验见 `SHA256SUMS.txt`。
+**无需 Rust 工具链**:GitHub Release 下载对应平台压缩包(`cutforge-windows.zip` / `cutforge-linux.zip` / `cutforge-macos.zip`,内含 `cutforge-cli` / `cutforge-mcp` / `cutforge-render` 三个二进制与 `web/` 静态资源,E1-2),解压即用;校验见随包 `SHA256SUMS-<os>.txt`。
 
 1. **启动**:`cutforge-cli serve --open`(推荐;无参数时交互选择工程,回车 = 最近工程),或 `cutforge-mcp serve --root <工程目录> --open`。Windows 也可双击仓库根的 [start-editor.cmd](start-editor.cmd)。
 2. **浏览器**:带 `--open` 自动打开;否则手动访问控制台打印的 `http://127.0.0.1:<端口>/?token=<T>`。

@@ -118,9 +118,14 @@ def main() -> int:
     if not bin_path.is_file():
         print("FAIL: 先 cargo build(cutforge-mcp)", file=sys.stderr)
         return 2
-    cli_path = Path(args.cli) if args.cli else REPO / "target" / "debug" / "cutforge-cli.exe"
-    if not cli_path.is_file():
-        cli_path = REPO / "target" / "release" / "cutforge-cli"
+    if args.cli:
+        cli_path = Path(args.cli)
+    else:
+        # 候选含无 .exe 后缀(Linux/CI 只 cargo build debug)与 release 形态
+        cli_path = next((REPO / c for c in (
+            "target/debug/cutforge-cli.exe", "target/debug/cutforge-cli",
+            "target/release/cutforge-cli.exe", "target/release/cutforge-cli")
+            if (REPO / c).is_file()), None)
 
     from playwright.sync_api import sync_playwright
 

@@ -3,7 +3,7 @@ name = "cutforge-mcp"
 version.workspace = true
 edition.workspace = true
 license-file.workspace = true
-description = "CutForge MCP 层(计划书 5.1/5.2):27 行工具注册表(stdio 与内嵌 HTTP 共用同一分发表);编排类工具只封装 CutFlow 既有脚本,不重实现阶段逻辑"
+description = "CutForge MCP 层(计划书 5.1/5.2):工具注册表与派发(契约见 schemas/mcp-tools.json,stdio 与内嵌 HTTP 共用同一分发表)+ 工作区编辑器服务(serve);编排类工具只封装 CutFlow 既有脚本,不重实现阶段逻辑"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

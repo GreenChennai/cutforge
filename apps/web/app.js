@@ -6,6 +6,10 @@ const $ = (id) => document.getElementById(id);
 const state = {
   root: "", token: "", rev: 0, project: null, timeline: null,
   selected: null, playheadMs: 0, pxPerMs: 0.06, clipboard: null, eventSeq: 0,
+  // E2 预览:playing=播放中;baseMs/t0=播放起点(挂钟推算播放头)
+  playing: false, baseMs: 0, t0: 0,
+  pvRows: [],          // [{row, el}] —— 每个带 src 的时间线行对应一个隐藏媒体元素
+  pvDrift: 0,          // 上次漂移校正时刻(节流)
 };
 
 function status(msg, ok = true) { $("status").textContent = msg; $("status").style.color = ok ? "" : "#c25b5b"; }
@@ -74,7 +78,7 @@ function renderTimeline() {
   }
   const ph = $("playhead");
   ph.style.left = (state.playheadMs * state.pxPerMs) + "px";
-  $("playhead-ms").textContent = state.playheadMs;
+  $("playhead-ms").textContent = Math.round(state.playheadMs);
   $("rev").textContent = state.rev;
 }
 
@@ -100,6 +104,177 @@ function select(id) {
   $("insp-dur").value = hit.clip.durationMs;
   $("insp-vol").value = hit.clip.volume ?? 0;
   renderTimeline();
+}
+
+/* ---------------- E2 预览(画质代理;一切时间字段来自 timeline_get 投影) ---------------- */
+
+function mediaUrl(src) {
+  return `/media?path=${encodeURIComponent(src)}&token=${encodeURIComponent(state.token)}`;
+}
+
+/* 壳纯度约定:可见区间/源时间都只读投影字段(startMs/endMs/sourceInMs/speed),
+ * 不推导时间线几何;播放头→媒体 currentTime 是播放映射,不是时间线运算。 */
+function rowSourceMs(row, t) {
+  const spd = row.speed || 1;
+  return (row.sourceInMs || 0) + (t - row.startMs) * spd;
+}
+
+function rowVisible(row, t) {
+  return row.src && t >= row.startMs && t < row.endMs;
+}
+
+function rebuildPreviewMedia() {
+  const host = $("pv-media");
+  host.innerHTML = "";
+  state.pvRows = [];
+  if (!state.timeline) return;
+  const kindOfTrack = (tid) => ({ V: "video", A: "audio", T: "text" })[tid[0]] || "video";
+  for (const row of state.timeline) {
+    if (!row.src || kindOfTrack(row.track) === "text") continue;
+    const isAudioTrack = kindOfTrack(row.track) === "audio";
+    const el = document.createElement(isAudioTrack ? "audio" : "video");
+    el.preload = "auto";
+    // 视频轨元素静音:同源画面/声音常被切成 V+A 双轨, audible 交给音频轨元素,避免双声
+    el.muted = !isAudioTrack;
+    el.src = mediaUrl(row.src);
+    host.appendChild(el);
+    state.pvRows.push({ row, el });
+  }
+}
+
+function syncPreview(forceSeek = false) {
+  const t = state.playheadMs;
+  for (const { row, el } of state.pvRows) {
+    if (!rowVisible(row, t)) {
+      if (!el.paused) el.pause();
+      continue;
+    }
+    const want = rowSourceMs(row, t) / 1000;
+    const drift = Math.abs(el.currentTime - want);
+    if (forceSeek || drift > (state.playing ? 0.12 : 1 / 1000)) {
+      try { el.currentTime = want; } catch { /* 元素未就绪,下一帧再试 */ }
+    }
+    if (state.playing && el.paused) el.play().catch(() => { /* 自动播放被策略拦截:画面仍走 seek 代理 */ });
+    if (!state.playing && !el.paused) el.pause();
+  }
+}
+
+function drawPreview() {
+  const cv = $("pv-canvas"), ctx = cv.getContext("2d");
+  const p = state.project;
+  if (p && (cv.width !== p.canvas.width || cv.height !== p.canvas.height)) {
+    cv.width = p.canvas.width; cv.height = p.canvas.height;
+  }
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  if (!state.project || !state.timeline) return;
+  const t = state.playheadMs;
+  const trackOrder = (tid) => state.project.tracks.findIndex((x) => x.id === tid);
+  const vis = state.pvRows
+    .filter(({ row }) => rowVisible(row, t))
+    .filter(({ row }) => (row.track[0] !== "A"))
+    .sort((a, b) => trackOrder(a.row.track) - trackOrder(b.row.track));
+  for (const { row, el } of vis) {
+    ctx.save();
+    const ov = row.overlay;
+    const pos = row.position;
+    const scale = row.scale || 1;
+    if (ov) {                      // overlay 矩形(服务端投影字段)
+      ctx.globalAlpha = ov.opacity ?? 1;
+      ctx.drawImage(el, ov.x, ov.y, ov.w, ov.h);
+    } else if (pos || scale !== 1) {
+      const w = cv.width * scale, h = cv.height * scale;
+      const dx = pos ? (pos.x / 100) * (cv.width - w) : (cv.width - w) / 2;
+      const dy = pos ? (pos.y / 100) * (cv.height - h) : (cv.height - h) / 2;
+      ctx.drawImage(el, dx, dy, w, h);
+    } else {
+      ctx.drawImage(el, 0, 0, cv.width, cv.height);
+    }
+    ctx.restore();
+  }
+}
+
+function timelineEndMs() {
+  if (!state.timeline || !state.timeline.length) return 10000;
+  return Math.max(10000, ...state.timeline.map((c) => c.endMs));
+}
+
+function pvTick() {
+  if (state.playing) {
+    state.playheadMs = state.baseMs + (performance.now() - state.t0);
+    if (state.playheadMs >= timelineEndMs()) {
+      state.playheadMs = timelineEndMs();
+      setPlaying(false);
+    }
+    renderTimeline();
+  }
+  drawPreview();
+  const now = performance.now();
+  if (state.playing && now - state.pvDrift > 250) { state.pvDrift = now; syncPreview(false); }
+  const sec = state.playheadMs / 1000;
+  $("pv-time").textContent = `${sec.toFixed(3)}s${state.playing ? " ▶" : ""}`;
+  requestAnimationFrame(pvTick);
+}
+
+function setPlaying(on) {
+  if (on && !state.playing) { state.baseMs = state.playheadMs; state.t0 = performance.now(); }
+  if (!on && state.playing) state.playheadMs = state.baseMs + (performance.now() - state.t0);
+  state.playing = on;
+  $("pv-play").textContent = on ? "⏸ 暂停" : "▶ 播放";
+  syncPreview(true);
+  if (!on) renderTimeline();
+}
+
+function seekTo(ms) {
+  const clamped = Math.max(0, Math.min(ms, timelineEndMs()));
+  if (state.playing) { state.baseMs = clamped; state.t0 = performance.now(); }
+  state.playheadMs = clamped;
+  syncPreview(true);
+  renderTimeline();
+}
+
+async function refreshExportFiles() {
+  const env = await api("render_probe");
+  if (!env.ok) return;
+  const files = env.data.files || [];
+  $("exp-files").innerHTML = files.length
+    ? files.map((f) => `<div class="row"><span class="oid">${escapeHtml(String(f.file))}</span><span class="bd">${f.bytes} B</span></div>`).join("")
+    : "(暂无产物)";
+}
+
+/* ---------------- E5 导出(cutforge 后端走 render_run/render_progress 异步轮询) ---------------- */
+
+let expPoll = null;
+
+async function runExport() {
+  const backend = $("exp-backend").value;
+  const prog = $("exp-progress");
+  prog.textContent = "提交中…";
+  if (backend === "cutforge") {
+    const ass = state.project && state.project.subtitle && state.project.subtitle.ass;
+    const r = await api("render_run", { backend: "cutforge", ...(ass ? { ass } : {}) });
+    if (!r.ok) { prog.textContent = `提交失败:${r.code}`; return; }
+    const runId = r.data.runId;
+    prog.textContent = "渲染中…";
+    if (expPoll) clearInterval(expPoll);
+    expPoll = setInterval(async () => {
+      const s = await api("render_progress", { runId });
+      if (!s.ok) return;
+      const tail = (s.data.lines || []).slice(-3).join("\n");
+      prog.textContent = `[${s.data.state}] ${tail}`;
+      if (s.data.state !== "running") {
+        clearInterval(expPoll); expPoll = null;
+        if (s.data.state === "ok") { prog.textContent = `完成:${s.data.output}`; await refreshExportFiles(); }
+        else prog.textContent = `失败:${s.data.error || "见服务端日志"}`;
+      }
+    }, 800);
+  } else {
+    const ratio = $("exp-ratio").value;
+    const r = await api("render", { backend: "ffmpeg", ratio,
+      scriptArgs: ["05_ir/project.json", "--ratio", ratio, "--profile", "final"] });
+    prog.textContent = r.ok ? "完成(CutFlow rs_render)" : `失败:${r.code} ${r.message}`;
+    if (r.ok) await refreshExportFiles();
+  }
 }
 
 /* ---------------- 手势(全部落为 MCP 工具调用) ---------------- */
@@ -194,6 +369,8 @@ async function refresh() {
   const tl = await api("timeline_get");
   if (tl.ok) state.timeline = tl.data.clips;
   renderTimeline();
+  rebuildPreviewMedia();
+  syncPreview(true);
   if ($("tab-notes").classList.contains("active")) await refreshNotes();
   if ($("tab-diff").classList.contains("active")) await refreshDiff();
   if ($("tab-conflicts").classList.contains("active")) await refreshConflicts();
@@ -275,8 +452,16 @@ function bindUI() {
   }
   $("ruler").addEventListener("mousedown", (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    state.playheadMs = Math.max(0, snap((e.clientX - rect.left) / state.pxPerMs));
-    renderTimeline();
+    const seekFromEvent = (ev) => {
+      const ms = Math.max(0, snap((ev.clientX - rect.left) / state.pxPerMs));
+      state.playheadMs = ms;          // 时间线显示走原路径
+      seekTo(ms);                     // E2-5:标尺点击/拖拽 → 预览与播放头双向联动
+    };
+    seekFromEvent(e);
+    const onMove = (ev) => { if (e.buttons & 1) seekFromEvent(ev); };
+    const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
   });
   $("btn-undo").addEventListener("click", async () => { await api("undo", {}); await refresh(); });
   $("btn-redo").addEventListener("click", async () => { await api("redo", {}); await refresh(); });
@@ -308,15 +493,19 @@ function bindUI() {
     await refreshNotes();
   });
   $("diff-refresh").addEventListener("click", refreshDiff);
-  $("diff-undo-batch").addEventListener("click", async () => {
-    const n = document.querySelectorAll("#diff-rows .pick:checked").length;
-    if (!n) return status("先勾选要撤销的 Op 行", false);
-    await api("undo", { batch: n });
-    await refresh();
-  });
+  // ---- E2 预览传输控制 / E5 导出面板 ----
+  $("pv-play").addEventListener("click", () => setPlaying(!state.playing));
+  $("pv-frame-prev").addEventListener("click", () => seekTo(state.playheadMs - frameMs()));
+  $("pv-frame-next").addEventListener("click", () => seekTo(state.playheadMs + frameMs()));
+  $("exp-run").addEventListener("click", runExport);
   document.addEventListener("keydown", async (e) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
-    if (e.key === "s" || e.key === "S") { await doSplit(); }
+    if (e.key === " ") {
+      e.preventDefault();
+      setPlaying(!state.playing);
+    } else if (e.key === "ArrowLeft") { e.preventDefault(); seekTo(state.playheadMs - frameMs()); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); seekTo(state.playheadMs + frameMs()); }
+    else if (e.key === "s" || e.key === "S") { await doSplit(); }
     else if (e.key === "Delete") {
       if (!state.selected) return;
       if (e.shiftKey || $("ripple").checked) await rippleDelete(state.selected);
@@ -329,6 +518,12 @@ function bindUI() {
       if (state.clipboard) { await api("clip_duplicate", { clipId: state.clipboard, startMs: snap(state.playheadMs) }); await refresh(); }
     }
   });
+  $("diff-undo-batch").addEventListener("click", async () => {
+    const n = document.querySelectorAll("#diff-rows .pick:checked").length;
+    if (!n) return status("先勾选要撤销的 Op 行", false);
+    await api("undo", { batch: n });
+    await refresh();
+  });
 }
 
 async function boot() {
@@ -339,6 +534,8 @@ async function boot() {
   $("session-info").textContent = `root=${sess.root}`;
   bindUI();
   await refresh();
+  await refreshExportFiles();
+  requestAnimationFrame(pvTick);
   pollEvents();
 }
 

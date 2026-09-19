@@ -100,11 +100,15 @@ fn repo_root() -> PathBuf {
 pub fn run(argv: Vec<String>) -> i32 {
     let Some(cmd) = argv.first().cloned() else {
         return emit(false, false, "PRECONDITION_FAILED", "用法: cutforge-cli <子命令> […]", serde_json::json!({
-            "subcommands": ["project", "timeline", "clip", "clip-update", "split", "undo", "redo", "oplog", "check-write-paths", "check-deps"]
+            // E7-3/B8:自述与实际实现保持同步(新增子命令时必须更新此清单)
+            "subcommands": ["project", "timeline", "clip", "clip-update", "split", "undo", "redo",
+                "oplog", "notes", "notes-add", "notes-resolve", "notes-reject", "conflicts",
+                "serve", "check-shell-purity", "check-write-paths", "check-deps"]
         }));
     };
     let args = parse_args(&argv[1..]);
     match cmd.as_str() {
+        "serve" => serve_cmd(&args),
         "project" => {
             let Some(root) = args.positional.first() else { return emit(false, args.json, "PRECONDITION_FAILED", "用法: project <工程目录>", serde_json::json!({})) };
             match open_ws(Path::new(root)) {
@@ -224,6 +228,88 @@ pub fn run(argv: Vec<String>) -> i32 {
         "check-deps" => check_deps(args.json),
         other => emit(false, args.json, "PRECONDITION_FAILED", &format!("未知子命令: {other}"), serde_json::json!({})),
     }
+}
+
+// ---------- serve(E1-3/E1-4:编辑器启动入口;薄转发到 cutforge_mcp::serve_workspace) ----------
+
+fn serve_cmd(a: &Args) -> i32 {
+    use std::io::IsTerminal as _;
+    let root = a.positional.first().cloned().or_else(|| a.flags.get("root").cloned());
+    let root = match root {
+        Some(r) => PathBuf::from(r),
+        None => {
+            // E6-1(提前落):无 --root 时交互列候选工程;非交互环境必须显式给目录
+            if !std::io::stdin().is_terminal() {
+                return emit(a.json, false, "PRECONDITION_FAILED",
+                    "用法: serve <工程目录> [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录",
+                    serde_json::json!({}));
+            }
+            match pick_project_interactive() {
+                Some(p) => p,
+                None => return emit(a.json, false, "NO_CONFIG",
+                    "未找到候选工程(查找:CUTFORGE_PROJECTS 或当前目录下两层内的 05_ir/project.json)",
+                    serde_json::json!({})),
+            }
+        }
+    };
+    let explicit_port = a.flags.get("port").and_then(|s| s.parse::<u16>().ok());
+    let mut port = explicit_port.unwrap_or(8787);
+    if explicit_port.is_none() {
+        // E1-4:未指定端口时自动挑空闲(+1..+20;探测即放手的竞态由 serve 自检兜底)
+        for cand in port..port.saturating_add(20) {
+            if std::net::TcpListener::bind(("127.0.0.1", cand)).is_ok() {
+                port = cand;
+                break;
+            }
+        }
+    }
+    let token = a.flags.get("token").cloned().unwrap_or_else(cutforge_mcp::new_token);
+    let web = a.flags.get("web").map(PathBuf::from).unwrap_or_else(cutforge_mcp::default_web_dir);
+    let open = a.flags.contains_key("open");
+    cutforge_mcp::serve_workspace(&root, port, &token, &web, open)
+}
+
+/// E1-4:交互式工程选择(05_ir/project.json 存在者;按修改时间倒序,回车 = 最近工程)。
+fn pick_project_interactive() -> Option<PathBuf> {
+    use std::io::Write as _;
+    let base = std::env::var_os("CUTFORGE_PROJECTS")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    let mut cands: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![base.clone()];
+    while let Some(d) = stack.pop() {
+        let depth = d.strip_prefix(&base).map(|r| r.components().count()).unwrap_or(0);
+        if depth > 2 {
+            continue;
+        }
+        if d.join("05_ir").join("project.json").is_file() {
+            cands.push(d.clone());
+        }
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if e.path().is_dir() && !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    stack.push(e.path());
+                }
+            }
+        }
+    }
+    cands.sort_by_key(|p| std::cmp::Reverse(
+        p.join("05_ir").join("project.json").metadata().and_then(|m| m.modified()).ok()));
+    if cands.is_empty() {
+        return None;
+    }
+    println!("CutForge 编辑器 —— 选择工程(回车 = 最近工程):");
+    for (i, p) in cands.iter().take(12).enumerate() {
+        println!("  [{}] {}", i + 1, p.display());
+    }
+    print!("编号: ");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    let idx: usize = line.trim().parse().unwrap_or(1);
+    cands.get(idx.saturating_sub(1)).cloned()
 }
 
 // ---------- 标注与冲突(计划书 4.9 / 4.7) ----------
@@ -445,7 +531,8 @@ fn check_deps(json: bool) -> i32 {
         ("cutforge-schema", vec![]),
         ("cutforge-core", vec!["cutforge-schema"]),
         ("cutforge-io", vec!["cutforge-core", "cutforge-schema"]),
-        ("cutforge-cli", vec!["cutforge-core", "cutforge-io"]),
+        // E1-3:cli 的 serve 子命令薄转发 cutforge_mcp::serve_workspace(同一实现)
+        ("cutforge-cli", vec!["cutforge-core", "cutforge-io", "cutforge-mcp"]),
         ("cutforge-mcp", vec!["cutforge-core", "cutforge-io", "cutforge-script", "cutforge-schema"]),
         ("cutforge-script", vec!["cutforge-core"]),
         ("cutforge-wasm", vec!["cutforge-core", "cutforge-script"]),

@@ -151,3 +151,26 @@ OTIO 违背最小依赖需独立论证。触发重启条件与启动资产(parit
 | 结合度 | 8/20 | 契约/流程/工具/发布四层全通(双侧 CI 桥冒烟) |
 | 测试 | 77 | cargo 98 + pytest 7 + e2e 2 门禁 + CutFlow 300 |
 | P0/P1 | 5 P0 未知 | 5 P0 全清;P1-8/P1-9 等顺带闭合 |
+
+## E1/E5/E2 迭代批次(2026-09-20,来源:《20260920-CutFlow×CutForge 迭代更新笔记》P0 清单)
+
+- **E1 启动入口**:`cutforge-cli serve` 子命令(薄转发 `cutforge_mcp::serve_workspace`,同一实现;
+  check-deps 白名单增 cli→mcp 边);无 `--root` 时交互列工程(回车=最近);`--open` 自动开浏览器;
+  `serve_preflight` 启动自检(工程/Web/ffmpeg/ffprobe/cutforge-render 逐项 ✓/△ + 补救命令,缺工程退出 3);
+  release 打包纳入 `cutforge-mcp` + `apps/web/`(E1-1/E1-2);仓库根 `start-editor.cmd/.sh`;README Quick Start。
+- **E5 导出接线**:`render` 工具按 `backend` 分派(B6);`render_run`/`render_progress` 异步渲染+轮询
+  (子进程跑 cutforge-render,全程不持 workspace 锁);`CUTFORGE_FFMPEG`/`CUTFORGE_FFPROBE`/
+  `CUTFORGE_RENDER` 环境变量定位(B13,与 CutFlow `WPI_FFMPEG` 口径对齐);壳加导出面板+进度。
+  **顺带修掉两个"真实工程导不出片"的阻断**:①render 二进制未走 `_meta` 旁路(ADR-0002),
+  真实 CutFlow IR 一律 SCHEMA_INVALID;②volume 缺省被当静音 → 真实 IR(clip 不带 volume)整片无声,
+  全静音混音又令 loudnorm 测得 -inf、linear=true 应用崩溃。语义改为:None=自然音量(人声 1.0/sfx 0.8),
+  显式 0 才静音;混音加数字静音守卫。
+- **E2 预览**:`/media` 端点(数据面鉴权/canonicalize 防穿越/Range 206);`timeline_get` 扩全字段投影
+  (endMs 服务端算好,壳零时间线语义);壳 canvas 预览+空格播放+←/→ 逐帧+标尺拖拽联动
+  (诚实标注"画质代理");新增 `tools/e2e_preview.py` 门禁:鉴权/穿越/Range、readyState、
+  seek 对齐 ≤1 帧、canvas 非全黑、播放推进、编辑器内导出→产物时长断言、壳纯度仍绿。
+- **顺带清账**:工具数 34(11 查询+16 写+7 编排)三方对拍(`_doc`/protocol_conformance/CLI 自述补全 17 子命令,
+  B7/B8 部分);mcp session 落盘改走 `atomic.rs`(write-paths 判定器命中 7→4,余 4 处为 render 测试夹具×2
+  与 io lib×2 的**基线既有**命中,待专项清账);Cargo/文档描述去陈旧数量。
+- **验证**:cargo 全测试 0 failed;M10-1/M10-2 e2e PASS;e2e_preview 全 PASS;shell-purity/check-deps/M0/M1 绿。
+- **版本**:workspace 0.2.0 → **0.3.0**(E1/E5/E2 批次);tag v0.3.0,release 产物改为每平台单 zip(三二进制 + web/,SHA256SUMS 对应)。

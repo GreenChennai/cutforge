@@ -29,13 +29,19 @@ fn main() {
             std::process::exit(3);
         }
     };
-    let v: serde_json::Value = match serde_json::from_str(&text) {
+    let mut v: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("SCHEMA_INVALID: {e}");
             std::process::exit(2);
         }
     };
+    // ADR-0002:CutFlow 真实 IR 顶层带 `_meta`(实现细节字段,被契约 additionalProperties=false 拒绝)。
+    // 与 Workspace::open 同口径——进内核前剥出;渲染只读工程、不回写,直接丢弃。
+    // 此前缺失这一步:真实工程经 cutforge-render 导出必 SCHEMA_INVALID(E5 最后一跳不通的根因之一)。
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("_meta");
+    }
     let project = match cutforge_core::model::migrate_from_value(&v) {
         Ok(p) => p,
         Err(errors) => {

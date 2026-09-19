@@ -66,9 +66,9 @@ fn protocol_conformance() {
     assert_envelope(&resp, "missing-project");
     assert_eq!(resp["code"], json!("NO_CONFIG"));
 
-    // 注册表与 mcp-tools.json 契约:31 行工具全部有名/有描述/有双 schema
+    // 注册表与 mcp-tools.json 契约:工具全部有名/有描述/有双 schema(数量与 json 对拍;E5 新增 render_run/render_progress)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 32);
+    assert_eq!(names.len(), 34);
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);

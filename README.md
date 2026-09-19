@@ -22,7 +22,17 @@ M0–M4 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
 - **M2**:`cutforge-core`(领域模型/命令通道/撤销栈/OpLog/三路合并骨架/锚点,行覆盖 ≥80%,wasm32 可构建)+ `cutforge-io`(工程读写/原子写唯一落盘点/锁/备份/媒体探测/轮询 watcher)+ `cutforge-cli`(打开/查询/应用/撤销重做/OpLog + 门禁判定器)。
 - **M3**:双向同步全链——三路合并九行判定表零静默覆盖(12,000 组属性测试)、OpLog 回放等价(含 undo/redo 混入)、冲突三方快照落盘(`.cutforge/conflicts/`)、标注(notes.json)读写/结案回执绑定 opIds/锚点重定位(100 组场景零丢失)、阶段脏传播(改 IR 只标 S3+;改字幕只重烧 S8)、往返延迟基准(AI 可见 P95 ≤100ms,实测个位数毫秒)。
-- **M4**:MCP 层——单注册表 28 工具(9 查询+13 写+6 编排封装 CutFlow 脚本),stdio 与内嵌 HTTP(127.0.0.1+token)双通道共用同一 dispatch;脚本宿主 `cutforge-script`(批式步骤+策略沙箱,六类逃逸零到达派发器);CutFlow 侧四个桥脚本(rs_editor/rs_notes/rs_oplog/rs_gate)入 doctor 体检与命令速查表。
+- **M4**:MCP 层——单注册表 28 工具(9 查询+13 写+6 编排封装 CutFlow 脚本;M4 时点数字,当前以 `schemas/mcp-tools.json` 为准),stdio 与内嵌 HTTP(127.0.0.1+token)双通道共用同一 dispatch;脚本宿主 `cutforge-script`(批式步骤+策略沙箱,六类逃逸零到达派发器);CutFlow 侧四个桥脚本(rs_editor/rs_notes/rs_oplog/rs_gate)入 doctor 体检与命令速查表。
+
+## 快速开始(编辑器,3 步)
+
+**无需 Rust 工具链**:GitHub Release 下载对应平台压缩包(`cutforge-windows.zip` / `cutforge-linux.zip` / `cutforge-macos.zip`,内含 `cutforge-cli` / `cutforge-mcp` / `cutforge-render` 三个二进制与 `web/` 静态资源,E1-2),解压即用;校验见 `SHA256SUMS.txt`。
+
+1. **启动**:`cutforge-cli serve --open`(推荐;无参数时交互选择工程,回车 = 最近工程),或 `cutforge-mcp serve --root <工程目录> --open`。Windows 也可双击仓库根的 [start-editor.cmd](start-editor.cmd)。
+2. **浏览器**:带 `--open` 自动打开;否则手动访问控制台打印的 `http://127.0.0.1:<端口>/?token=<T>`。
+3. **编辑与导出**:时间线拖拽 / trim / 分割 / 波纹删,预览(画质代理,空格播放、←/→ 逐帧),检查器,标注,差异面板;导出选 `cutforge` 后端即由本机内核出片,不依赖 CutFlow。
+
+要点:服务仅监听 127.0.0.1;数据面(/rpc /media /session)经 Bearer token 鉴权,重启服务会换新 token;退出 = 在服务窗口按 Ctrl+C。启动自检会逐项报告工程 / Web 资源 / ffmpeg / cutforge-render 的就绪状态与补救命令(E1-6)。预览不含转场 / 特效 / 字幕烧录的最终效果,成片请用导出。
 
 ## 许可
 

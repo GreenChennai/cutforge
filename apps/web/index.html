@@ -30,6 +30,35 @@
       <span id="sel-info">未选中片段(S 分割 / Del 删除 / Ctrl+C 复制)</span>
       <span>rev <b id="rev">-</b></span>
     </div>
+    <div id="pv-row">
+      <div id="preview">
+        <div id="pv-stage"><canvas id="pv-canvas" width="1080" height="1920"></canvas></div>
+        <div class="pv-hint">预览为画质代理:不含转场 / 特效 / 字幕烧录的最终效果;成片请用右侧导出(E2-6 诚实标注)</div>
+        <div id="pv-transport">
+          <button id="pv-play" title="空格">▶ 播放</button>
+          <button id="pv-frame-prev" title="←">← 一帧</button>
+          <button id="pv-frame-next" title="→">一帧 →</button>
+          <span id="pv-time">0.000s</span>
+        </div>
+        <div id="pv-media" hidden></div>
+      </div>
+      <div id="export" class="panel">
+        <h3>导出(编辑器内出片,E5)</h3>
+        <label>后端
+          <select id="exp-backend">
+            <option value="cutforge">cutforge 内核(不依赖 CutFlow)</option>
+            <option value="ffmpeg">ffmpeg(CutFlow rs_render)</option>
+          </select>
+        </label>
+        <label>画幅(仅 ffmpeg 后端)
+          <select id="exp-ratio"><option>9x16</option><option>3x4</option><option>16x9</option></select>
+        </label>
+        <button id="exp-run">导出成片</button>
+        <div id="exp-progress" class="exp-progress"></div>
+        <h3>产物(06_output)</h3>
+        <div id="exp-files"></div>
+      </div>
+    </div>
     <div id="timeline-wrap">
       <div id="ruler"></div>
       <div id="playhead"></div>

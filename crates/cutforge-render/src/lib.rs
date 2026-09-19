@@ -45,8 +45,19 @@ pub struct RenderOutcome {
     pub mix_cache_hit: bool,
 }
 
+/// E5-2/B13:ffmpeg/ffprobe 定位可配置——env CUTFORGE_FFMPEG / CUTFORGE_FFPROBE 优先,
+/// 缺省按 PATH 名调用(与 CutFlow 侧 WPI_FFMPEG 口径对齐;Windows 不再把 ffmpeg 塞 PATH 不可导出)。
+pub fn ff_bin(tool: &str) -> String {
+    let key = if tool == "ffmpeg" { "CUTFORGE_FFMPEG" } else { "CUTFORGE_FFPROBE" };
+    if let Some(v) = std::env::var_os(key)
+        && !v.is_empty() {
+            return v.to_string_lossy().into_owned();
+        }
+    tool.to_string()
+}
+
 fn run_ff(tool: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(tool).args(args).output().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
+    let out = Command::new(ff_bin(tool)).args(args).output().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "{tool} 失败: {}",
@@ -58,7 +69,7 @@ fn run_ff(tool: &str, args: &[&str]) -> Result<String, String> {
 
 /// 双通道捕获版本(loudnorm 测量输出在 stderr)。
 fn run_ff_capture(tool: &str, args: &[&str]) -> Result<(String, String), String> {
-    let out = Command::new(tool).args(args).output().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
+    let out = Command::new(ff_bin(tool)).args(args).output().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "{tool} 失败: {}",
@@ -72,7 +83,7 @@ fn run_ff_capture(tool: &str, args: &[&str]) -> Result<(String, String), String>
 }
 
 fn run_ff_in(dir: &Path, tool: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(tool).args(args).current_dir(dir).output().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
+    let out = Command::new(ff_bin(tool)).args(args).current_dir(dir).output().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "{tool} 失败: {}",
@@ -181,6 +192,13 @@ pub fn render(
     let mut video_clips: Vec<Clip> = Vec::new();
     let mut audio_segs: Vec<AudioSeg> = Vec::new();
     let mut overlay_segs: Vec<OverlaySeg> = Vec::new();
+    // 音量语义(BUGFIX E5 实测):volume=None = 未设置 = 自然音量(人声 1.0 / sfx 0.8),
+    // **显式 0 才是静音**。此前 None 按 0.0 处理 → 真实 CutFlow IR(clip 不带 volume)
+    // 整片无声,全静音混音又令 loudnorm 测得 -inf、linear=true 应用时 ffmpeg 崩
+    // ("Result too large")。parity 夹具此前总是显式写 volume,故矩阵未暴露。
+    let clip_gain = |c: &Clip| -> f64 {
+        c.volume.unwrap_or(if c.role == Some(cutforge_core::model::Role::Sfx) { 0.8 } else { 1.0 })
+    };
     for t in &project.tracks {
         for c in &t.clips {
             let Some(src) = c.src.clone() else { continue };
@@ -202,13 +220,13 @@ pub fn render(
                         continue;
                     }
                     video_clips.push(c.clone());
-                    if c.volume.unwrap_or(0.0) > 0.0 {
+                    if clip_gain(c) > 0.0 {
                         audio_segs.push(AudioSeg {
                             src: src_path.clone(),
                             start_ms: c.start_ms,
                             duration_ms: c.duration_ms,
                             source_in_ms: c.source_in_ms.unwrap_or(0),
-                            volume: c.volume.unwrap_or(1.0),
+                            volume: clip_gain(c),
                             speed: c.speed.unwrap_or(1.0),
                             fade_in_ms: c.fade.as_ref().map(|f| f.in_ms).unwrap_or(0.0),
                             fade_out_ms: c.fade.as_ref().map(|f| f.out_ms).unwrap_or(0.0),
@@ -216,13 +234,13 @@ pub fn render(
                     }
                 }
                 TrackKind::Audio => {
-                    if c.volume.unwrap_or(0.0) > 0.0 {
+                    if clip_gain(c) > 0.0 {
                         audio_segs.push(AudioSeg {
                             src: src_path,
                             start_ms: c.start_ms,
                             duration_ms: c.duration_ms,
                             source_in_ms: c.source_in_ms.unwrap_or(0),
-                            volume: c.volume.unwrap_or(if c.role == Some(cutforge_core::model::Role::Sfx) { 0.8 } else { 1.0 }),
+                            volume: clip_gain(c),
                             speed: c.speed.unwrap_or(1.0),
                             fade_in_ms: c.fade.as_ref().map(|f| f.in_ms).unwrap_or(0.0),
                             fade_out_ms: c.fade.as_ref().map(|f| f.out_ms).unwrap_or(0.0),
@@ -490,27 +508,45 @@ pub fn render(
         ]);
         run_ff("ffmpeg", &args.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
 
-        // pass B:响度(先测后编 linear=true)
-        let (_m_out, m_err) = run_ff_capture("ffmpeg", &[
-            "-hide_banner", "-nostats", "-i", mixed_raw.to_string_lossy().as_ref(),
-            "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json",
-            "-f", "null", "-",
-        ])?;
-        let m_start = m_err.rfind('{').ok_or("loudnorm 测量输出无 JSON".to_string())?;
-        let m_end = m_err.rfind('}').ok_or("loudnorm 测量输出无 JSON".to_string())? + 1;
-        let measured: Value = serde_json::from_str(&m_err[m_start..m_end]).map_err(|e| e.to_string())?;
-        let ln = format!(
-            "loudnorm=I=-14:TP=-1.0:measured_I={}:measured_TP={}:measured_LRA={}:measured_thresh={}:linear=true",
-            measured["input_i"].as_str().unwrap_or("-14"),
-            measured["input_tp"].as_str().unwrap_or("-1"),
-            measured["input_lra"].as_str().unwrap_or("0"),
-            measured["input_thresh"].as_str().unwrap_or("-30"),
-        );
-        run_ff("ffmpeg", &[
-            "-y", "-v", "error", "-i", mixed_raw.to_string_lossy().as_ref(),
-            "-af", &ln,
-            "-c:a", "aac", mixed.to_string_lossy().as_ref(),
-        ])?;
+        // pass B:响度(先测后编 linear=true)。数字静音(-inf,无音频工程)跳过:
+        // linear=true 遇 -inf 的 measured 值,ffmpeg 报 "Result too large" 直接失败。
+        let silent_mix = {
+            let (_m_out, m_err) = run_ff_capture(ff_bin("ffmpeg").as_str(), &[
+                "-hide_banner", "-nostats", "-i", mixed_raw.to_string_lossy().as_ref(),
+                "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json",
+                "-f", "null", "-",
+            ])?;
+            let m_start = m_err.rfind('{').ok_or("loudnorm 测量输出无 JSON".to_string())?;
+            let m_end = m_err.rfind('}').ok_or("loudnorm 测量输出无 JSON".to_string())? + 1;
+            let measured: Value = serde_json::from_str(&m_err[m_start..m_end]).map_err(|e| e.to_string())?;
+            let input_i = measured["input_i"].as_str().and_then(|s| s.parse::<f64>().ok());
+            match input_i {
+                Some(v) if v.is_finite() && v > -70.0 => {
+                    let ln = format!(
+                        "loudnorm=I=-14:TP=-1.0:measured_I={}:measured_TP={}:measured_LRA={}:measured_thresh={}:linear=true",
+                        measured["input_i"].as_str().unwrap_or("-14"),
+                        measured["input_tp"].as_str().unwrap_or("-1"),
+                        measured["input_lra"].as_str().unwrap_or("0"),
+                        measured["input_thresh"].as_str().unwrap_or("-30"),
+                    );
+                    run_ff(ff_bin("ffmpeg").as_str(), &[
+                        "-y", "-v", "error", "-i", mixed_raw.to_string_lossy().as_ref(),
+                        "-af", &ln,
+                        "-c:a", "aac", mixed.to_string_lossy().as_ref(),
+                    ])?;
+                    false
+                }
+                _ => {
+                    // 静音总线原样转封装(无需归一)
+                    run_ff(ff_bin("ffmpeg").as_str(), &[
+                        "-y", "-v", "error", "-i", mixed_raw.to_string_lossy().as_ref(),
+                        "-c:a", "copy", mixed.to_string_lossy().as_ref(),
+                    ])?;
+                    true
+                }
+            }
+        };
+        let _ = silent_mix;
         steps.push(("mix", true));
         progress(json!({"step": "mix", "ok": true, "cacheHit": false}));
     }

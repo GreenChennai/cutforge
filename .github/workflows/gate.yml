@@ -51,14 +51,18 @@ jobs:
         with:
           python-version: '3.13'
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build (M10-1/M10-2 e2e 需要服务端二进制)
-        run: cargo build -p cutforge-mcp --locked
+      - name: Install ffmpeg(E2 预览 e2e 需现场生成媒体夹具)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Build (M10-1/M10-2/E2 e2e 需要服务端二进制;E5 导出 e2e 需渲染器与 cli)
+        run: cargo build -p cutforge-mcp -p cutforge-render -p cutforge-cli --locked
       - name: Install playwright (chromium)
         run: |
           pip install playwright -q
           python -m playwright install --with-deps chromium
       - name: M10-1/M10-2 e2e
         run: python tools/e2e_edit_ops.py --bin target/debug/cutforge-mcp
+      - name: E2 预览 e2e(画面/声音/seek 对齐/像素非黑/壳纯度)
+        run: python tools/e2e_preview.py --bin target/debug/cutforge-mcp
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -69,19 +73,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --locked -p cutforge-render -p cutforge-cli
-      - name: Package
+      # E1-1:cutforge-mcp(serve 所在二进制)纳入发布;没有它,预编译包起不了编辑器
+      - run: cargo build --release --locked -p cutforge-render -p cutforge-cli -p cutforge-mcp
+      - name: Package(每平台一个 zip = 三二进制 + web/,解压即用;E1-2)
         shell: bash
         run: |
-          dir=$(pwd)
-          mkdir -p dist
-          for bin in cutforge-render cutforge-cli; do
+          mkdir -p dist/web
+          for bin in cutforge-render cutforge-cli cutforge-mcp; do
             src=target/release/$bin.exe
             [ -f "$src" ] || src=target/release/$bin
             cp "$src" dist/
           done
+          cp apps/web/index.html apps/web/app.js apps/web/style.css dist/web/
           cd dist
-          sha256sum * > SHA256SUMS.txt
+          # 目录不能作为 Release 资产上传,必须打成单文件 zip
+          pkgos=$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
+          if command -v zip >/dev/null 2>&1; then
+            zip -r "cutforge-${pkgos}.zip" cutforge-render* cutforge-cli* cutforge-mcp* web
+          else
+            powershell -NoProfile -Command "Compress-Archive -Path cutforge-*,web -DestinationPath 'cutforge-${pkgos}.zip' -Force"
+          fi
+          sha256sum "cutforge-${pkgos}.zip" > SHA256SUMS.txt
+          ls -la
       - uses: actions/upload-artifact@v4
         with:
           name: cutforge-${{ matrix.os }}
@@ -92,4 +105,4 @@ jobs:
         shell: bash
         run: |
           gh release view ${{ github.ref_name }} -R ${{ github.repository }} > /dev/null 2>&1 ||             gh release create ${{ github.ref_name }} -R ${{ github.repository }} --title "${{ github.ref_name }}" --generate-notes
-          gh release upload ${{ github.ref_name }} dist/* --clobber -R ${{ github.repository }}
+          gh release upload ${{ github.ref_name }} dist/cutforge-*.zip dist/SHA256SUMS.txt --clobber -R ${{ github.repository }}

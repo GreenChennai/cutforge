@@ -14,12 +14,21 @@ pub struct MediaInfo {
 }
 
 /// ffprobe 是否可用(CI/无依赖环境下测试据此跳过)。
+/// E5-2/B13 同口径:env CUTFORGE_FFPROBE 优先,缺省按 PATH 名。
+fn ffprobe_bin() -> String {
+    if let Some(v) = std::env::var_os("CUTFORGE_FFPROBE")
+        && !v.is_empty() {
+            return v.to_string_lossy().into_owned();
+        }
+    "ffprobe".to_string()
+}
+
 pub fn ffprobe_available() -> bool {
-    Command::new("ffprobe").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(ffprobe_bin()).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
 pub fn probe(path: &Path) -> io::Result<MediaInfo> {
-    let out = Command::new("ffprobe")
+    let out = Command::new(ffprobe_bin())
         .args(["-v", "error", "-print_format", "json", "-show_format"])
         .arg(path)
         .output()?;

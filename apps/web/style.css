@@ -56,3 +56,18 @@ footer { padding: 6px 14px; border-top: 1px solid var(--line); color: var(--dim)
 .badge.resolved { color: #7ec97e; }
 .badge.orphan { color: var(--danger); }
 #notes-open .row input, #notes-open .row button { margin-right: 6px; }
+
+/* ---- E2 预览 / E5 导出 ---- */
+#pv-row { display: flex; gap: 12px; margin-bottom: 8px; align-items: stretch; }
+#preview { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+#pv-stage { background: #000; border-radius: 4px; display: flex; justify-content: center; }
+#pv-canvas { max-width: 100%; max-height: 40vh; display: block; }
+.pv-hint { color: var(--dim); font-size: 11px; margin: 6px 2px; }
+#pv-transport { display: flex; gap: 8px; align-items: center; }
+#pv-time { color: var(--dim); font-family: Consolas, monospace; }
+#export { min-width: 280px; flex: 0 0 320px; }
+#export label { display: flex; gap: 6px; align-items: center; color: var(--dim); margin: 6px 0; }
+#export h3 { font-size: 13px; }
+.exp-progress { color: var(--dim); font-family: Consolas, monospace; font-size: 12px;
+                white-space: pre-wrap; min-height: 18px; margin: 6px 0; }
+#exp-files { max-height: 160px; overflow-y: auto; color: var(--dim); font-size: 12px; }

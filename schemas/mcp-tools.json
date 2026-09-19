@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。27 工具 = 9 查询 + 12 写 + 6 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。34 工具 = 11 查询 + 16 写 + 7 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
  "channels": [
   "stdio",
   "embedded-http"
@@ -1036,7 +1036,7 @@
    "name": "render",
    "kind": "orchestrate",
    "idempotent": false,
-   "description": "调 rs_render.py 或 cutforge-render",
+   "description": "调 rs_render.py(backend=ffmpeg,默认)或 cutforge-render(backend=cutforge,B6 已接线)",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -1059,6 +1059,10 @@
      },
      "allVariants": {
       "type": "boolean"
+     },
+     "ass": {
+      "type": "string",
+      "description": "字幕 ass 相对路径(仅 cutforge 后端;烧录字幕用)"
      }
     },
     "required": [
@@ -1098,7 +1102,7 @@
    "name": "timeline_get",
    "kind": "query",
    "idempotent": true,
-   "description": "时间线投影(clip_id/track/startMs/endMs;endMs 由内核计算,壳禁时间线语义)",
+   "description": "时间线投影(逐 clip 全字段:id/track/trackKind/src/startMs/endMs/durationMs/sourceInMs/speed/volume/opacity/scale/position/overlay/motion/text/freezeMs;endMs 由内核计算,壳禁时间线语义)",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -1109,6 +1113,57 @@
     },
     "required": [
      "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "render_run",
+   "kind": "orchestrate",
+   "idempotent": false,
+   "description": "异步启动 cutforge-render(E5-3):立即返回 runId;进度用 render_progress 轮询;不持 workspace 锁",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "ass": {
+      "type": "string",
+      "description": "字幕 ass 相对路径(烧录字幕用)"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "render_progress",
+   "kind": "query",
+   "idempotent": true,
+   "description": "查询 render_run 的进度:state(running/ok/fail)+ 最近 JSON 行进度 + 产物路径",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "runId": {
+      "type": "string",
+      "description": "render_run 返回的任务 id"
+     }
+    },
+    "required": [
+     "root",
+     "runId"
     ]
    },
    "outputSchema": {

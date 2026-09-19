@@ -18,3 +18,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cutforge-core = { path = "../cutforge-core" }
 cutforge-io = { path = "../cutforge-io" }
+# E1-3:serve 子命令薄转发到 cutforge_mcp::serve_workspace(同一实现;发布面只带 cli 也能起编辑器)
+cutforge-mcp = { path = "../cutforge-mcp" }

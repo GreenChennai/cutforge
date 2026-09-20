@@ -459,8 +459,15 @@ def check_doc_consistency() -> CheckResult:
     else:
         problems.append("CutFlow project.schema.json 不存在")
     readme = CUTFLOW_REPO / "README.md"
-    if readme.exists() and "0001–0038" not in readme.read_text("utf-8", errors="replace"):
-        problems.append("CutFlow README.md 未更新 ADR 编号范围(0001–0038)")
+    # ADR 范围不硬编码:以 CutFlow docs/adr 实际最大编号为准,README 必须跟到最新
+    adr_max = ""
+    adr_dir = CUTFLOW_REPO / "docs" / "adr"
+    if adr_dir.is_dir():
+        nums = [p.name[:4] for p in adr_dir.glob("*.md") if p.name[:4].isdigit()]
+        if nums:
+            adr_max = max(nums)
+    if readme.exists() and adr_max and adr_max not in readme.read_text("utf-8", errors="replace"):
+        problems.append(f"CutFlow README.md 未更新 ADR 编号范围(应含最新编号 {adr_max})")
     probes = CUTFLOW_REPO / "tests" / "probes"
     if not (probes.is_dir() and len(list(probes.glob("*.py"))) == 12):
         problems.append("tests/probes/ 未归置 12 个脚本")

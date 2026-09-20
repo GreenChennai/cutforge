@@ -226,13 +226,21 @@ def main() -> int:
                 rev_file = (ws / ".cutforge" / "rev").read_text().strip()
                 assert int(rev_file) == rev_undo, "盘面 rev 与视图不一致"
 
-                # redo 等量回放(以 oplog 计数为服务端真相,点击不足则补点)
+                # redo 等量回放(以 oplog 计数为服务端真相;慢机器/CI 上连点会被
+                # 「暂无可重做」吞掉,必须等上一笔 redo 真正入账再点下一笔)
                 target_ops = oplog_count(port, token, str(ws)) + redos_expected
-                deadline = time.time() + 30
-                while oplog_count(port, token, str(ws)) < target_ops and time.time() < deadline:
+                done = oplog_count(port, token, str(ws))
+                deadline = time.time() + 90
+                while done < target_ops and time.time() < deadline:
                     page.click("#btn-redo")
-                    time.sleep(0.3)
-                assert oplog_count(port, token, str(ws)) == target_ops, "redo 次数不足"
+                    tick = time.time() + 10
+                    while time.time() < tick:
+                        cur = oplog_count(port, token, str(ws))
+                        if cur > done:
+                            done = cur
+                            break
+                        time.sleep(0.2)
+                assert done == target_ops, f"redo 次数不足({done}/{target_ops})"
                 v_redo = d.get()
                 if clips_of(v_redo, "V1") != c3:
                     raise AssertionError(f"redo 后不一致: {clips_of(v_redo, 'V1')} vs {c3}")

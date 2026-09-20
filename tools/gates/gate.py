@@ -717,8 +717,29 @@ def check_bridge_doctor() -> CheckResult:
                        {"bridges": bridges, "registered": registered})
 
 
+def check_doc_tool_counts() -> CheckResult:
+    """T3-1(副文档 05):文档工具数 ↔ schemas/mcp-tools.json 机械对拍(B7 治本)。
+    README/FLOW/ACCEPTANCE/capability-matrix 的「N 工具 = A 查询 + B 写 + C 编排」
+    与独立「N 工具」数字,逐个与 schema 实数比对(历史时点叙述豁免)。"""
+    rc, data = _run_tool("tools/check_doc_counts.py", "--json")
+    if rc != 0 and "problems" not in data:
+        return CheckResult("doc-tool-counts", True, False, INTERNAL,
+                           f"check_doc_counts.py 运行失败(exit={rc}): {str(data)[-200:]}", {})
+    if rc != 0:
+        claims = "; ".join(f"{p.get('file')}:{p.get('line')} 「{p.get('claim')}」→ {p.get('expect')}"
+                           for p in data.get("problems", [])[:6])
+        return CheckResult("doc-tool-counts", True, False, GATE_FAILED,
+                           f"文档工具数漂移(B7): {claims}", data)
+    s = data.get("schema", {})
+    return CheckResult("doc-tool-counts", True, True, OK,
+                       "文档工具数与 schemas/mcp-tools.json 一致:"
+                       f"{s.get('total')} = {s.get('by', {}).get('query')}+"
+                       f"{s.get('by', {}).get('write')}+{s.get('by', {}).get('orchestrate')}", data)
+
+
 CHECKS_M4: dict[str, tuple[Callable[[], CheckResult], bool]] = {
     "mcp-tools": (check_mcp_tools, True),
+    "doc-tool-counts": (check_doc_tool_counts, True),
     "mcp-e2e-visible": (check_mcp_e2e_visible, True),
     "mcp-note-loop": (check_mcp_note_loop, True),
     "sandbox-escape": (check_sandbox_escape, True),

@@ -29,10 +29,26 @@ fn main() {
         }
         "serve-stdio" => serve_stdio(),
         "serve" => {
-            // M10/E1 本地服务化:cutforge-mcp serve --root <工程> [--port 8787] [--token T] [--web D] [--open]
-            let Some(root) = args.iter().position(|a| a == "--root").and_then(|i| args.get(i + 1)) else {
-                eprintln!("用法: serve --root <工程目录> [--port N] [--token T] [--web 目录] [--open]");
-                std::process::exit(2);
+            // M10/E1/E6-1:cutforge-mcp serve [--root <工程>] [--port 8787] [--token T] [--web D] [--open]
+            // 无 --root 时与 cli serve 同一交互列工程行为(单一实现:pick_project_interactive);
+            // 非交互环境必须显式给目录。
+            use std::io::IsTerminal as _;
+            let root = args.iter().position(|a| a == "--root").and_then(|i| args.get(i + 1));
+            let root = match root {
+                Some(r) => std::path::PathBuf::from(r),
+                None => {
+                    if !std::io::stdin().is_terminal() {
+                        eprintln!("用法: serve [--root <工程目录>] [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录");
+                        std::process::exit(2);
+                    }
+                    match cutforge_mcp::pick_project_interactive() {
+                        Some(p) => p,
+                        None => {
+                            eprintln!("未找到候选工程(查找:CUTFORGE_PROJECTS 或当前目录下两层内的 05_ir/project.json);或先新建:cutforge-cli new <目录>");
+                            std::process::exit(3);
+                        }
+                    }
+                }
             };
             let port: u16 = args.iter().position(|a| a == "--port")
                 .and_then(|i| args.get(i + 1).and_then(|v| v.parse().ok()))
@@ -44,7 +60,7 @@ fn main() {
                 .and_then(|i| args.get(i + 1).map(std::path::PathBuf::from))
                 .unwrap_or_else(default_web_dir);
             let open = args.iter().any(|a| a == "--open");
-            serve_workspace(Path::new(root), port, &token, &web, open)
+            serve_workspace(&root, port, &token, &web, open)
         }
         "serve-http" => {
             let port: u16 = args
@@ -98,7 +114,7 @@ fn main() {
             }
         }
         _ => {
-            eprintln!("用法: cutforge-mcp <inspect|serve --root R [--port N --token T --web D]|serve-stdio|serve-http --port N --token T|run-script --root R --file F>");
+            eprintln!("用法: cutforge-mcp <inspect|serve [--root R --port N --token T --web D]|serve-stdio|serve-http --port N --token T|run-script --root R --file F>");
             2
         }
     };

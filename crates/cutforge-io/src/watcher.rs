@@ -2,7 +2,9 @@
 //! 文件监听(计划书 4.5,M2 基础版:轮询 + 去抖)。
 //!
 //! 忽略规则:`.cutforge/oplog/*`(自己写的)、`*.tmp`、`_state/backup/*`、
-//! `06_output/*`(大产物)。真相判定不依赖事件——rev 才是真相(M3 起接三路合并)。
+//! `06_output/*`(大产物)、CutFlow 记账文件(`05_ir/pipeline.json`、`_state/*.json`,
+//! O7/RT-5:跑阶段写的簿记不应给编辑器推假变更)。
+//! 真相判定不依赖事件——rev 才是真相(M3 起接三路合并)。
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -32,6 +34,14 @@ fn ignored(rel: &Path) -> bool {
         return true;
     }
     if s.starts_with("_state/backup/") || s.starts_with("06_output/") {
+        return true;
+    }
+    // O7/RT-5:CutFlow 记账文件——rs_run 每个阶段都会写 `_state/S*.json`,
+    // `05_ir/pipeline.json` 是管线清单;这些不是工程真相源的编辑,不得惊动编辑器。
+    if s == "05_ir/pipeline.json" {
+        return true;
+    }
+    if s.starts_with("_state/") && s.ends_with(".json") {
         return true;
     }
     s.ends_with(".tmp")
@@ -201,8 +211,12 @@ mod tests {
         crate::atomic::atomic_write(&root.join("05_ir/project.json"), b"{\"a\":1}").unwrap();
         crate::atomic::atomic_write(&root.join(".cutforge/oplog/20260918.jsonl"), b"{}\n").unwrap();
         crate::atomic::atomic_write(&root.join("05_ir/tmp.tmp"), b"x").unwrap();
+        // O7/RT-5:CutFlow 记账文件必须被忽略(rs_run 每阶段都会写,不是编辑变更)
+        crate::atomic::atomic_write(&root.join("05_ir/pipeline.json"), b"{}").unwrap();
+        fsutil::ensure(&root.join("_state")).unwrap();
+        crate::atomic::atomic_write(&root.join("_state/S3.json"), b"{}").unwrap();
         let ev = w.poll();
-        assert_eq!(ev.len(), 1, "oplog 与 *.tmp 必须被忽略: {ev:?}");
+        assert_eq!(ev.len(), 1, "oplog/*.tmp/CutFlow 记账文件必须被忽略: {ev:?}");
         assert_eq!(ev[0].kind, EventKind::Modified);
         assert!(ev[0].path.ends_with("project.json"));
 

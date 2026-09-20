@@ -1,0 +1,34 @@
+{
+ "version": 1,
+ "_doc": "E4-2 单一真相源:壳(Web 编辑器检查器)允许编辑的字段集。机械校验 = `cutforge-cli check-ui-fields`(该集合 ⊆ crates/cutforge-core/src/command.rs 的 ClipPatch 字段集,防'内核支持 N、壳只给 3'的漂移复发)。壳不读本文件——服务端经 GET /ui-fields 下发(壳纯度),分组由此渲染。readonly 列 = 渲染已支持但 ClipPatch 未承接的投影字段:检查器只读展示(E4-3),数值编辑待内核 ClipPatch 扩展后再移入 editable。",
+ "editable": {
+  "基础": [
+   "startMs",
+   "durationMs",
+   "sourceInMs"
+  ],
+  "画面": [
+   "scale",
+   "opacity"
+  ],
+  "音频": [
+   "volume"
+  ],
+  "变速": [
+   "speed"
+  ],
+  "文本": [
+   "text",
+   "freezeMs"
+  ]
+ },
+ "readonly": [
+  "position",
+  "overlay",
+  "motion",
+  "transition",
+  "fade",
+  "punchIn",
+  "role"
+ ]
+}

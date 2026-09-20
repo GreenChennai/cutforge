@@ -59,10 +59,12 @@ jobs:
         run: |
           pip install playwright -q
           python -m playwright install --with-deps chromium
-      - name: M10-1/M10-2 e2e
+      - name: M10-1/M10-2/M10-3 e2e
         run: python tools/e2e_edit_ops.py --bin target/debug/cutforge-mcp
       - name: E2 预览 e2e(画面/声音/seek 对齐/像素非黑/壳纯度)
         run: python tools/e2e_preview.py --bin target/debug/cutforge-mcp
+      - name: 从零剪 e2e(新建工程→导入→改字段→导出;渲染期间并发不阻塞;RT-1 摘要)
+        run: python tools/e2e_from_zero.py --bin target/debug/cutforge-mcp --cli target/debug/cutforge-cli
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

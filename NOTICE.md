@@ -3,6 +3,11 @@
 本文件列出 CutForge 所依赖、借鉴或派生的全部第三方作品及其许可。
 本文件必须随所有分发副本一并提供，不得删除或改写其中内容。
 
+> **定位**（ADR-CG-06，2026-09-20）：CutForge 是**可独立起步的编辑器**
+> （新建空工程 → 导入素材 → 多轨编辑 → 导出，全程不依赖任何管线），
+> 也能直接打开 CutFlow 工程，与它共用同一份工程文件。
+> 定位决策见 `docs/adr/0006-CutForge定位升级为可独立起步的编辑器.md`。
+
 ## 一、派生来源（MIT 许可）
 
 ### OpenCut（重写版）
@@ -54,6 +59,13 @@ CutFlow 在其历史版本（含 `v0.1.0` 至 `v0.12` 等已发布 tag）中
   （CutFlow 侧 vendored 于 `scripts/vendor/pyJianYingDraft/`）
 - 剪映（JianyingPro）为第三方商业软件，本项目仅生成其明文草稿文件（5.9），
   不包含、不修改、不分发其任何程序或资源。
+- jianying-headless —— 许可为 **Personal Learning and Non-Commercial Use**。
+  本项目**仅学习方法与能力**（计划编译分层、protect 保护区、帧数严格门禁、
+  诚实验收文档等），**不复制、不移植、不重发布其任何源码、字段或结构**
+  （ADR-X-05，2026-09-20 用户拍板；两仓 ADR 互相引用：本仓
+  `docs/adr/0008-jianying-headless只学方法与能力不复制代码.md` 与 CutFlow 仓
+  `docs/adr/0044-jianying-headless只学方法与能力不复制代码.md`）。
+  Windows 侧剪映出口继续走 pyJianYingDraft（5.9）。
 
 ## 五、规范与数据来源
 - EBU R128（响度）/ EBU R37（音画同步）—— 欧洲广播联盟技术规范

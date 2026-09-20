@@ -13,6 +13,28 @@ pub struct MediaInfo {
     pub raw: Value,
 }
 
+impl MediaInfo {
+    /// 视频流分辨率(无视频流 → None;纯音频素材常见)。
+    pub fn video_size(&self) -> Option<(u64, u64)> {
+        let streams = self.raw["streams"].as_array()?;
+        let v = streams.iter().find(|s| s["codec_type"] == "video")?;
+        Some((v["width"].as_u64()?, v["height"].as_u64()?))
+    }
+
+    /// 是否含音轨(渲染混音与"导入后有没有声"的判据)。
+    pub fn has_audio(&self) -> bool {
+        self.raw["streams"]
+            .as_array()
+            .map(|ss| ss.iter().any(|s| s["codec_type"] == "audio"))
+            .unwrap_or(false)
+    }
+
+    /// 时长毫秒(四舍五入;probe 时长口径的唯一换算点)。
+    pub fn duration_ms(&self) -> u64 {
+        (self.duration_sec * 1000.0).round() as u64
+    }
+}
+
 /// ffprobe 是否可用(CI/无依赖环境下测试据此跳过)。
 /// E5-2/B13 同口径:env CUTFORGE_FFPROBE 优先,缺省按 PATH 名。
 fn ffprobe_bin() -> String {
@@ -28,8 +50,10 @@ pub fn ffprobe_available() -> bool {
 }
 
 pub fn probe(path: &Path) -> io::Result<MediaInfo> {
+    // -show_streams 与 -show_format 同批输出:B12 接线后 media_probe 需要分辨率
+    // 与音轨存在性(来自 streams),时长仍统一取 format.duration(单一口径)。
     let out = Command::new(ffprobe_bin())
-        .args(["-v", "error", "-print_format", "json", "-show_format"])
+        .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
         .arg(path)
         .output()?;
     if !out.status.success() {

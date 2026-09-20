@@ -34,8 +34,12 @@ fn make_media(dir: &Path) {
 }
 
 fn write_project(dir: &Path, v: &Value) {
-    std::fs::create_dir_all(dir.join("05_ir")).unwrap();
-    std::fs::write(dir.join("05_ir/project.json"), serde_json::to_string_pretty(v).unwrap()).unwrap();
+    // 唯一落盘点纪律(M2-4):测试夹具同样走 atomic.rs(临时文件+rename 原子替换,父目录自建)
+    cutforge_io::atomic::atomic_write(
+        &dir.join("05_ir/project.json"),
+        serde_json::to_string_pretty(v).unwrap().as_bytes(),
+    )
+    .unwrap();
 }
 
 fn probe_resolution(p: &Path) -> (u32, u32) {

@@ -7,12 +7,29 @@
 > （MIT，**已于 2026-05-17 归档**）。其 MIT 许可全文见 `LICENSE-OPENCUT.MIT`，
 > 完整归属见 `NOTICE.md`。本项目原创部分适用 `LICENSE`（ARL-1.0）。
 
-CutForge 是一个以 Rust 内核为单一实现、服务 Web/桌面/脚本/MCP 多端接入的开源视频编辑器。
+<h1 align="center">CutForge · Rust 视频编辑器内核</h1>
 
-- **一个内核，多个壳**：时间线模型、命令与撤销、操作日志（OpLog）、渲染调度只实现一次，Web 壳与桌面壳都是薄壳，杜绝双实现语义漂移。
+<p align="center">
+  <strong>可独立起步,也为 AI 而生</strong><br>
+  新建空工程 → 导入素材 → 多轨编辑 → 导出,全程不依赖任何管线;<br>
+  同时也能直接打开 <a href="https://github.com/GreenChennai/CutFlow">CutFlow</a> 工程,与它共用同一份工程文件——<br>
+  人的每一次拖拽都是一个可审计、可撤销的 Op,AI 改了什么,<b>时间线上看得见,日志里查得到</b>。
+</p>
+
+- **一个内核,多个壳**：时间线模型、命令与撤销、操作日志（OpLog）、渲染调度只实现一次，Web 壳与桌面壳都是薄壳，杜绝双实现语义漂移。
 - **文件是真相源**：工程（`project.json` / `wordline.json` / `cutlist.json` / `notes.json`）即同步面，任何写入者（人、AI、脚本）经同一命令通道产生可审计、可撤销的 Op。
 - **为 AI 而生**：内置 MCP server 与脚本宿主；AI 的每次改动可 diff、可回滚，用户在时间轴上打的标注 AI 能读到、能执行、能回执。
 - **与 CutFlow 分工而非合并**：[CutFlow](https://github.com/GreenChennai/CutFlow)（Python）负责 S0–S11 视频管线的批量机械工作（转写对齐、粗剪、合成、字幕、烧录、自检）；CutForge 负责"人的手"——交互、预览、标注与精确编辑。两者读写同一份工程文件。
+
+## 🆕 阶段二 · 从"能打开"到"像剪映一样用"
+
+> 最小可用集凑齐:**新建 → 导入 → 预览 → 全字段编辑 → 保存 → 导出 → 改动被 CutFlow 识别**。
+
+- **从零剪**:空工程模板(`cutforge-cli new` 或编辑器「＋ 新建工程」向导)→ 素材面板双击/拖拽导入(落点=播放头,帧磁吸;时长自动 ffprobe 探测)→ 多轨编辑 → 导出,**全程不依赖 CutFlow**(e2e 固化);
+- **检查器不再缺斤短两**:可编辑字段集由 [schemas/ui-fields.json](schemas/ui-fields.json) **单一真相源**声明(基础/画面/音频/变速/文本五组),机械校验保证"壳允许编辑的 ⊆ 内核 `ClipPatch` 支持的"——内核有而壳没有的漂移从此被门禁拦住;转场/淡变等先做只读展示;
+- **并发不卡顿**:查询类工具改只读打开,不再持排他锁——**长渲染期间查询/编辑照常响应**(并发 e2e 断言,实测 ≤0.02s);渲染编排保持子进程,不占 workspace 锁;
+- **改动识别闭环**:编辑器每次落盘即 Op+rev,`.cutforge` 留**会话变更摘要**;回 CutFlow 一侧 `rs_run --status` 精确标脏、`rs_editor.py diff` 输出人话差异("V1 第 1 段延长 1.5s""V2 新增 1 卡 5.0–6.8s"),再决定重建范围——人改完,AI 接得住;
+- **写盘纪律**:全部落盘收口到 `atomic.rs`(旁路写入审计 0 命中),CutFlow 的记账文件进 watcher 忽略表,跑管线不再惊动编辑器。
 
 ## 状态
 
@@ -22,19 +39,81 @@ M0–M4 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
 - **M2**:`cutforge-core`(领域模型/命令通道/撤销栈/OpLog/三路合并骨架/锚点,行覆盖 ≥80%,wasm32 可构建)+ `cutforge-io`(工程读写/原子写唯一落盘点/锁/备份/媒体探测/轮询 watcher)+ `cutforge-cli`(打开/查询/应用/撤销重做/OpLog + 门禁判定器)。
 - **M3**:双向同步全链——三路合并九行判定表零静默覆盖(12,000 组属性测试)、OpLog 回放等价(含 undo/redo 混入)、冲突三方快照落盘(`.cutforge/conflicts/`)、标注(notes.json)读写/结案回执绑定 opIds/锚点重定位(100 组场景零丢失)、阶段脏传播(改 IR 只标 S3+;改字幕只重烧 S8)、往返延迟基准(AI 可见 P95 ≤100ms,实测个位数毫秒)。
-- **M4**:MCP 层——单注册表 28 工具(9 查询+13 写+6 编排封装 CutFlow 脚本;M4 时点数字,当前以 `schemas/mcp-tools.json` 为准),stdio 与内嵌 HTTP(127.0.0.1+token)双通道共用同一 dispatch;脚本宿主 `cutforge-script`(批式步骤+策略沙箱,六类逃逸零到达派发器);CutFlow 侧四个桥脚本(rs_editor/rs_notes/rs_oplog/rs_gate)入 doctor 体检与命令速查表。
+- **M4**:MCP 层——单注册表(28 工具为 M4 时点;阶段二新增 clip_add/media_probe/media_browse/project_new 后为 **38 工具 = 13 查询+18 写+7 编排**,当前一律以 `schemas/mcp-tools.json` 为准),stdio 与内嵌 HTTP(127.0.0.1+token)双通道共用同一 dispatch;脚本宿主 `cutforge-script`(批式步骤+策略沙箱,六类逃逸零到达派发器);CutFlow 侧四个桥脚本(rs_editor/rs_notes/rs_oplog/rs_gate)入 doctor 体检与命令速查表。
 
-## 快速开始(编辑器,3 步)
+## 🚀 快速开始(编辑器,4 步)
 
-**无需 Rust 工具链**:GitHub Release 下载对应平台压缩包(`cutforge-windows.zip` / `cutforge-linux.zip` / `cutforge-macos.zip`,内含 `cutforge-cli` / `cutforge-mcp` / `cutforge-render` 三个二进制与 `web/` 静态资源,E1-2),解压即用;校验见随包 `SHA256SUMS-<os>.txt`。
+**无需 Rust 工具链**:GitHub Release 下载对应平台压缩包(`cutforge-windows.zip` / `cutforge-linux.zip` / `cutforge-macos.zip`,内含 `cutforge-cli` / `cutforge-mcp` / `cutforge-render` 三个二进制与 `web/` 静态资源),解压即用;校验见随包 `SHA256SUMS-<os>.txt`。
 
-1. **启动**:`cutforge-cli serve --open`(推荐;无参数时交互选择工程,回车 = 最近工程),或 `cutforge-mcp serve --root <工程目录> --open`。Windows 也可双击仓库根的 [start-editor.cmd](start-editor.cmd)。
+1. **启动**:`cutforge-cli serve --open`(推荐;无参数时交互选择工程,回车 = 最近工程),或 `cutforge-mcp serve --root <工程目录> --open`(无 --root 同样交互选择)。Windows 也可双击仓库根的 [start-editor.cmd](start-editor.cmd)。
 2. **浏览器**:带 `--open` 自动打开;否则手动访问控制台打印的 `http://127.0.0.1:<端口>/?token=<T>`。
-3. **编辑与导出**:时间线拖拽 / trim / 分割 / 波纹删,预览(画质代理,空格播放、←/→ 逐帧),检查器,标注,差异面板;导出选 `cutforge` 后端即由本机内核出片,不依赖 CutFlow。
+3. **编辑与导出**:素材面板双击/拖拽导入(时长自动探测)、时间线拖拽 / trim / 分割 / 波纹删,预览(画质代理,空格播放、←/→ 逐帧),分组检查器(字段集由 `schemas/ui-fields.json` 单一真相源约束),标注,差异面板;导出选 `cutforge` 后端即由本机内核出片,不依赖 CutFlow。
+4. **从零新建**:编辑器顶部「＋ 新建工程」向导,或命令行 `cutforge-cli new <目录> --slug 名字 --fps 30 --track video,audio` 生成空工程后 `serve` 打开——对没有任何 CutFlow 工程的目录同样成立。
 
-要点:服务仅监听 127.0.0.1;数据面(/rpc /media /session)经 Bearer token 鉴权,重启服务会换新 token;退出 = 在服务窗口按 Ctrl+C。启动自检会逐项报告工程 / Web 资源 / ffmpeg / cutforge-render 的就绪状态与补救命令(E1-6)。预览不含转场 / 特效 / 字幕烧录的最终效果,成片请用导出。
+要点:服务仅监听 127.0.0.1;数据面(/rpc /media /session)经 Bearer token 鉴权,重启服务会换新 token;退出 = 在服务窗口按 Ctrl+C。启动自检会逐项报告工程 / Web 资源 / ffmpeg / cutforge-render 的就绪状态与补救命令。预览不含转场 / 特效 / 字幕烧录的最终效果,成片请用导出。
 
-## 许可
+### 给 AI 用户的打开方式
+
+```text
+「用 cutforge 打开这个工程,我想手动调几刀」
+「把 V1 第 2 段删了,结尾留 1 秒黑场前把 BGM 淡出」
+「我刚才在编辑器里改了什么?帮我只重跑受影响的阶段」
+「新建一个 1080x1920 的空工程,我把素材拖进去」
+```
+
+## 🧬 门禁与自检(人眼判断不作为通过依据)
+
+| 门禁 | 拦的是什么 |
+|---|---|
+| `check-shell-purity` | 壳里不准算时间线语义(endMs 等),一切投影来自内核 |
+| `check-write-paths` | 文件写入只允许走 `atomic.rs`,旁路写入=0(连注释里的字样都算命中) |
+| `check-ui-fields` | 检查器可编辑字段 ⊆ 内核 `ClipPatch`(从实码解析,单一真相源) |
+| `check_doc_counts` | 文档里的工具数口径必须与 `schemas/mcp-tools.json` 一致,漂移点名到文件:行 |
+| `protocol_conformance` | MCP 注册表与 dispatch 逐一相等,stdio 与内嵌 HTTP 差异恒为 0 |
+| `cargo test` | 领域模型/合并/OpLog/渲染对拍(ffmpeg 实测矩阵)/脚手架/只读并发 |
+| e2e × 3 | 编辑操作全链(Playwright)、预览(画面/声音/seek/像素非黑)、**从零剪**(新建→导入→改字段→导出+并发+会话摘要) |
+
+```bash
+python tools/gates/gate.py M0 --json     # 统一门禁入口(结果协议见下)
+cargo test --workspace --locked
+python tools/e2e_edit_ops.py             # 需先 cargo build -p cutforge-mcp
+python tools/e2e_preview.py
+python tools/e2e_from_zero.py
+```
+
+结果协议:`{"ok":bool,"code":str,"message":str,"data":object}`;退出码 `0`=通过、`2`=门禁失败、`3`=前置/环境缺失、`4`=内部错误。
+
+## 📁 目录结构
+
+```
+cutforge/
+├── crates/
+│   ├── cutforge-core/      # 领域模型/命令通道/撤销栈/OpLog/三路合并/锚点
+│   ├── cutforge-schema/    # 契约代码生成(与 Python 生成端对拍)
+│   ├── cutforge-io/        # 工程读写/atomic.rs 唯一落盘点/锁/备份/探测/watcher/脚手架
+│   ├── cutforge-render/    # 渲染后端(ffmpeg 直出,backend 枚举真实消费)
+│   ├── cutforge-mcp/       # MCP server:注册表/dispatch/HTTP+/media/会话摘要
+│   ├── cutforge-cli/       # CLI:serve/new/查询/应用/撤销重做/门禁判定器
+│   └── cutforge-script/    # 脚本宿主(批式步骤+策略沙箱)
+├── apps/web/               # 薄壳:素材面板/时间线/分组检查器/差异面板/新建向导
+├── schemas/                # mcp-tools.json(工具契约唯一真相源)/ui-fields.json/project.schema.json
+├── tools/                  # gates/gate.py 门禁入口 + e2e × 3 + 夹具生成器 + 文档对拍
+├── tests/                  # 跨仓桥测试(四桥冒烟/剪映出口对拍)
+└── docs/                   # FLOW.md 工作区地图 / V2-PROGRESS.md 台账 / adr/ 决策记录
+```
+
+## 🔗 与 CutFlow 的双向闭环
+
+| 方向 | 通路 |
+|---|---|
+| CutFlow 工程 → CutForge 编辑 | 同一份 `project.json`(schemaVersion + 稳定 id);B8 护栏识别编辑器痕迹,`rs_run --status` 标脏 |
+| CutForge 改动 → CutFlow 重建 | `.cutforge` 会话变更摘要 + `rs_editor.py diff` 人话差异 → `rebuild.py` 定向重建 |
+| 四桥 | `rs_editor`(视图/变更识别)/ `rs_notes`(标注)/ `rs_oplog`(OpLog 审计)/ `rs_gate`(门禁透传),错误码与 5.4 码表对拍 |
+| 剪映出口 | `export_jianying` 与 CutFlow `rs_jy_draft.py` 编排**同一个脚本**,映射真相只有一份 |
+
+架构决策见 [docs/adr/](docs/adr/);整体流程与工作区地图见 [docs/FLOW.md](docs/FLOW.md)。
+
+## 📄 许可
 
 混合授权，三点必须读清（全文见各文件）：
 
@@ -42,19 +121,17 @@ M0–M4 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 2. 派生/参考自 OpenCut 的部分必须遵守其 **MIT 许可**，全文见 [LICENSE-OPENCUT.MIT](LICENSE-OPENCUT.MIT)（逐字保留，未修改）。
 3. CutFlow 的**已发布 MIT 版本（`v0.1.0`–`v0.12` 等 tag）授权不可撤回**；任何许可变更仅对其后发布的新版本生效。
 
-## 开发
+## 🛠️ 开发
 
 工具链与上游 OpenCut 保持一致（`proto` + `moon` + `bun` + `rust 1.97.0`，edition 2024），保留未来接口层回流上游的可能。**整体流程与工作区地图见 [docs/FLOW.md](docs/FLOW.md)。**
 
 ```bash
-# 门禁(统一完成判定入口,人眼判断不作为通过依据)
+# 门禁(统一完成判定入口)
 python tools/gates/gate.py M0 --json
 python tools/gates/gate.py M1 --json
 python tools/gates/gate.py M2 --json
 python tools/gates/gate.py M3 --json
 python tools/gates/gate.py M4 --json
 ```
-
-结果协议:`{"ok":bool,"code":str,"message":str,"data":object}`;退出码 `0`=通过、`2`=门禁失败、`3`=前置/环境缺失、`4`=内部错误。
 
 参与贡献前请读 [CONTRIBUTING.md](CONTRIBUTING.md)。

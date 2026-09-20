@@ -17,7 +17,7 @@
 | M1 | 契约固化(五份 schema/双端生成/常量单源/迁移器) | ✅ | `gate.py M1` |
 | M2 | Rust 内核(模型/命令通道/撤销栈/OpLog/IO/CLI) | ✅ | `gate.py M2` |
 | M3 | 双向同步与标注(合并/冲突/notes/阶段脏传播/延迟) | ✅ | `gate.py M3` |
-| M4 | MCP 与脚本(28 工具双通道,M4 时点;现以 schemas/mcp-tools.json 为准/批式脚本沙箱/桥脚本) | ✅ | `gate.py M4` |
+| M4 | MCP 与脚本(28 工具双通道为 M4 时点;数量现以 schemas/mcp-tools.json 为准/批式脚本沙箱/桥脚本) | ✅ | `gate.py M4` |
 | M5 | 多端壳(wasm/Web/GPUI 桌面) | ⬜ | — |
 | M6 | 渲染后端(七步管线/能力对等矩阵) | ⬜ | — |
 | M7 | 开源发布(非 Fork/CI 全绿/律师复核) | ✅ 已发布 v0.1.0 | `gate.py M7` |
@@ -34,7 +34,8 @@ cutforge/
 │   ├── notes.schema.json       时间轴标注(锚点+人机对话)
 │   ├── oplog.schema.json       操作日志(append-only,baseRev 必填)
 │   ├── constants.ratios.json   生成物:比例/平台/帧率单源(勿手改)
-│   └── mcp-tools.json          MCP 工具契约(唯一手写面;数量以 tools 数组为准,B7)
+│   ├── mcp-tools.json          MCP 工具契约(唯一手写面;数量以 tools 数组为准,B7)
+│   └── ui-fields.json          壳可编辑字段集单一真相源(E4-2;check-ui-fields 机械校验 ⊆ ClipPatch)
 ├── crates/
 │   ├── cutforge-schema/        契约层(叶子):include_str! 嵌入五 schema + draft-07 子集校验引擎 + v1→v2 迁移器
 │   ├── cutforge-core/          内核(ARL-CORE):不碰文件系统、不调 ffmpeg
@@ -46,7 +47,7 @@ cutforge/
 │   │   ├── anchor.rs           锚点五类 + 重定位三规则(跟随→重挂→orphan)
 │   │   ├── notes.rs            NotesStore(创建/结案回执绑 opIds/重定位联动)
 │   │   └── timeutil.rs         RFC3339/紧凑日期(全仓唯一日期算法)
-│   ├── cutforge-io/            IO 层:原子写唯一落盘点 + 锁/备份/探测/轮询 watcher + Workspace 编排 + stage.rs 脏传播
+│   ├── cutforge-io/            IO 层:原子写唯一落盘点 + 锁/备份/探测/轮询 watcher + Workspace 编排 + stage.rs 脏传播 + scaffold.rs 空工程模板(B11)
 │   ├── cutforge-cli/           CLI(lib+bin):查询/命令/撤销/OpLog/标注/冲突 + check-write-paths/check-deps 判定器
 │   ├── cutforge-mcp/           MCP 层:单注册表(数量以 schemas/mcp-tools.json 为准),stdio 主通道 + 内嵌 HTTP 辅通道(127.0.0.1+token)共用同一 dispatch
 │   └── cutforge-script/        脚本宿主:cutforge-script-v1 批式步骤 + 策略沙箱(白名单/路径/步数/超时,逃逸面结构性为零)
@@ -146,10 +147,26 @@ schemas/*.json(唯一手写)
 | sync-latency | M3 | AI 可见 P95 ≤100ms(实测 ~9ms) | ✅ |
 | merge-property | M3 | 12,000 组零静默覆盖 | ✅ |
 | oplog-replay / merge-table / notes-anchor / workspace-rebuildable / stage-dirty / e2e-note-cli | M3 | 各自测试全绿 | ✅ |
-| mcp-tools / mcp-e2e-visible / mcp-note-loop / sandbox-escape / protocol / bridge-doctor | M4 | 28 工具双 schema 齐备(M4 时点);双通道一致;≤1s/≤3s 闭环;逃逸=0;协议 ∈5.4 表;桥 4/4 登记 | ✅ |
+| mcp-tools / mcp-e2e-visible / mcp-note-loop / sandbox-escape / protocol / bridge-doctor | M4 | 28 工具双 schema 齐备(M4 时点;阶段二起 38,以 schemas/mcp-tools.json 为准);双通道一致;≤1s/≤3s 闭环;逃逸=0;协议 ∈5.4 表;桥 4/4 登记 | ✅ |
 
 结果协议:`{"ok","code","message","data"}`;退出码 0 通过 / 2 门禁失败 / 3 环境缺失 / 4 内部错误。
 CI 只跑 M0+M1(跨仓检查拉 CutFlow;M2-M6 依赖本机 ffmpeg/wasm-pack/llvm-cov/CutFlow 工程,为本地阻断项——CI 上缺依赖会以退出码 3 如实暴露,不会误报通过)。
+
+### 7.1 V2 门禁现状(B10 口径,明文说明)
+
+`tools/gates/gate.py` 只注册了 **M0–M7**;**V2 的 M8–M13 不在 gate.py 里**,它们以
+cargo 测试与 e2e 脚本形式存在,由 `cargo test --workspace` 与 CI 的 web-e2e job 承载:
+
+| 里程碑 | 门禁载体(测试/脚本名) |
+|---|---|
+| M8 渲染管线 | `cutforge-render` 单元/集成测试(`cargo test -p cutforge-render`) |
+| M9 主链路(合并/快照/守护) | `cutforge-io` m9_tests(`conflict_real_repro_and_stop_writes` 等)、`external_edit_visible_within_1s` |
+| M10 编辑器 e2e | `tools/e2e_edit_ops.py`(M10-1/M10-2/M10-3)、`tools/e2e_preview.py`、`tools/e2e_from_zero.py` |
+| M11 渲染矩阵 | `crates/cutforge-render/tests/parity_matrix.rs`(九项实渲对拍)、`capability-matrix.json` 同源断言 |
+| M12/M13 | ADR-0005 暂缓决议 + 发布验收(ACCEPTANCE.md);无自动化门禁 |
+
+即:**V2 里程碑的完成判定 = `cargo test --workspace` 全绿 + 三份 e2e 全绿 + gate.py M0/M1**;
+不新增 gate.py 里程碑注册(避免双份判定器漂移,与"工具数量以 schemas/mcp-tools.json 为准"同一纪律)。
 
 ## 八、观察项与已知占位(诚实清单)
 

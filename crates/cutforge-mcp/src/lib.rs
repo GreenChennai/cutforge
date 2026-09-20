@@ -20,6 +20,9 @@ use std::sync::OnceLock;
 pub const MCP_TOOLS_JSON: &str = include_str!("../../../schemas/mcp-tools.json");
 /// 能力矩阵单一真相源(ADR-0003/M8-5):MCP 工具与 docs/capability-matrix.md 同源。
 pub const CAPABILITY_MATRIX_JSON: &str = include_str!("../../../docs/capability-matrix.json");
+/// E4-2 单一真相源:壳允许编辑的字段集(机械校验 = cutforge-cli check-ui-fields;
+/// 壳经由 GET /ui-fields 取本文件渲染检查器分组,壳不读文件系统)。
+pub const UI_FIELDS_JSON: &str = include_str!("../../../schemas/ui-fields.json");
 
 /// 工具注册表(契约来自 schemas/mcp-tools.json;派发处理器同在本 crate)。
 pub fn registry() -> &'static Vec<Value> {
@@ -55,7 +58,16 @@ pub const CODES: &[&str] = &[
 
 /// 命令通道统一派发:所有通道(stdio/HTTP/脚本宿主)都走这里。
 /// root(工程目录)由 args["root"] 提供——工具契约的第一参数。
+/// stdio/内嵌 HTTP/脚本宿主的改动归因 agent;编辑器数据面归因 user(见 dispatch_with_actor)。
 pub fn dispatch(name: &str, args: &Value) -> Value {
+    dispatch_with_actor(name, args, Actor::agent("cutforge-mcp"))
+}
+
+/// 带显式 actor 的派发。工作区数据面(编辑器壳)传 `Actor::user("editor")`,
+/// 让"人在编辑器里的手势"在 OpLog 上如实归因——RT-1 会话变更摘要
+/// (.cutforge/session-summary.json)按 actor=human 过滤的依据。
+/// 其余通道(stdio/内嵌 HTTP/脚本宿主)维持 agent 归因不变。
+pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     if tool_def(name).is_none() {
         return envelope(false, "INTERNAL", &format!("未知工具: {name}"), json!({}));
     }
@@ -87,6 +99,16 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
         return render_progress(run_id);
     }
 
+    // ---- 免开工作区的工具(E6-3/B14:只读/创建类不持排他锁) ----
+    match name {
+        "project_new" => return project_new_tool(&ws_root, args),
+        "media_probe" => return media_probe_tool(&ws_root, args),
+        "media_browse" => return media_browse_tool(&ws_root, args),
+        "render_probe" => return render_probe_tool(&ws_root),
+        "stage_status" => return stage_status_tool(&ws_root),
+        _ => {}
+    }
+
     let opts = ApplyOpts {
         request_id: args["requestId"].as_str().map(String::from),
         summary: args["summary"].as_str().map(String::from),
@@ -97,12 +119,17 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
         expect_rev: args["expectRev"].as_u64(),
         ..Default::default()
     };
-    let actor = Actor::agent("cutforge-mcp");
 
     // 常驻同步守护(M9-2):外部改动 ≤1s 可见;幂等(每 root 一个线程)
     let _ = cutforge_io::watcher::ensure_sync_daemon(&ws_root);
-    // 写通道全程锁:open→apply→persist 同一把锁(P0-5,杜绝锁外读+整文件覆盖)
-    let mut ws = match Workspace::open_exclusive(&ws_root) {
+    // E6-3/B14:查询类只读打开(Workspace::open,不申请排他锁)——长渲染/长编辑期间
+    // 查询不被阻塞;写通道仍全程锁:open→apply→persist 同一把锁(P0-5,杜绝锁外读+整文件覆盖)。
+    let ws_result = if is_readonly_tool(name) {
+        Workspace::open(&ws_root)
+    } else {
+        Workspace::open_exclusive(&ws_root)
+    };
+    let mut ws = match ws_result {
         Ok(w) => w,
         Err(e) => {
             let code = if e.kind() == std::io::ErrorKind::NotFound { "NO_CONFIG" } else { "INTERNAL" };
@@ -111,7 +138,7 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
     };
 
     match name {
-        // ---------- 只读查询 ----------
+        // ---------- 只读查询(E6-3:只读打开,不持排他锁) ----------
         "project_get" => match ws.engine().query(Query::ProjectView) {
             Answer::Project(v) => envelope(true, "OK", "工程视图", json!({"project": v, "rev": ws.rev()})),
             _ => unreachable!(),
@@ -133,29 +160,6 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
                 "notes": items, "total": ws.notes().notes().len(),
                 "orphans": ws.notes().orphans().len(),
             }))
-        }
-        "stage_status" => {
-            // M9-3 同口径:优先解析 rs_run --status(done/stale/missing + staleReason),
-            // CutFlow 不可用时回退 _state 存在性并如实标注 degraded。
-            let resp = orchestrate(&ws_root, "rs_run.py", &[json!("--status")]);
-            if resp.get("ok") == Some(&json!(true)) {
-                if let Some(stages) = resp.get("data").and_then(|d| d.get("stages")).cloned() {
-                    return envelope(true, "OK", "阶段状态(rs_run 同口径)", json!({"stages": stages, "source": "rs_run"}));
-                }
-                if let Some(text) = resp.get("stdout").and_then(|v| v.as_str()) {
-                    let json_start = text.find('{').unwrap_or(text.len());
-                    if let Ok(v) = text[json_start..].parse::<Value>()
-                        && let Some(stages) = v.get("data").and_then(|d| d.get("stages")).cloned() {
-                            return envelope(true, "OK", "阶段状态(rs_run 同口径)", json!({"stages": stages, "source": "rs_run"}));
-                        }
-                }
-            }
-            let dir = ws_root.join("_state");
-            let mut map = serde_json::Map::new();
-            for s in cutforge_io::stage::STAGES {
-                map.insert(s.to_string(), json!(dir.join(format!("{s}.json")).is_file()));
-            }
-            envelope(true, "OK", "阶段状态(_state 存在性;rs_run 不可用,降级)", json!({"stages": map, "source": "existence"}))
         }
         "oplog_tail" => match ws.engine().query(Query::OpLogTail {
             since_rev: args["sinceRev"].as_u64(),
@@ -182,21 +186,6 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
             }
             Err(e) => envelope(false, "INTERNAL", &e.to_string(), json!({})),
         },
-        "render_probe" => {
-            let dir = ws_root.join("06_output");
-            let mut files = Vec::new();
-            if let Ok(rd) = std::fs::read_dir(&dir) {
-                for e in rd.flatten() {
-                    if let Ok(meta) = e.metadata() {
-                        files.push(json!({"file": e.file_name().to_string_lossy(), "bytes": meta.len()}));
-                    }
-                }
-            }
-            envelope(true, "OK", "产物清单", json!({"dir": "06_output", "files": files}))
-        }
-        "capability_matrix" => envelope(true, "OK", "能力对等矩阵(实码口径,单一真相源)", json!({
-            "matrix": capability_matrix(),
-        })),
         "timeline_get" => {
             // E2-2:扩投影——预览/检查器所需的逐 clip 字段全部由内核算好下放
             // (endMs = start+duration 在服务端完成;壳只消费,不做时间线运算)。
@@ -207,6 +196,50 @@ pub fn dispatch(name: &str, args: &Value) -> Value {
         }
 
         // ---------- 写操作(全部经 Workspace 命令通道) ----------
+        "clip_add" => {
+            // E3-1:素材导入/新建片段——内部走已存在的 Command::ClipInsert,不新增引擎逻辑;
+            // E3-2:durationMs 缺省时由 cutforge_io::probe 探测时长自动填(B12 接线)。
+            let (Some(track_id), Some(src), Some(start_ms)) = (
+                args["trackId"].as_str(), args["src"].as_str(), args["startMs"].as_u64(),
+            ) else {
+                return envelope(false, "PRECONDITION_FAILED", "缺 trackId/src/startMs", json!({}));
+            };
+            if ws.project().find_track(track_id).is_none() {
+                return envelope(false, "PRECONDITION_FAILED", &format!("track 不存在: {track_id}"), json!({}));
+            }
+            // 素材路径复用 /media 的 canonicalize 校验(不建并行实现;E3 风险面对策)
+            if let Err(msg) = resolve_within_root(&ws_root, src) {
+                return envelope(false, "PRECONDITION_FAILED", &format!("素材路径不合法({src}): {msg}"), json!({}));
+            }
+            let source_in = args["sourceInMs"].as_u64().unwrap_or(0);
+            let duration_ms = match args["durationMs"].as_u64() {
+                Some(d) => d,
+                None => {
+                    if !cutforge_io::probe::ffprobe_available() {
+                        return envelope(false, "DEP_MISSING",
+                            "durationMs 缺省且 ffprobe 不可用:显式给 durationMs,或安装 ffprobe / 设 CUTFORGE_FFPROBE", json!({}));
+                    }
+                    match cutforge_io::probe::probe(&ws_root.join(src)) {
+                        Ok(info) => (info.duration_ms().saturating_sub(source_in)).max(1),
+                        Err(e) => return envelope(false, "DEP_MISSING", &format!("媒体时长探测失败: {e}"), json!({})),
+                    }
+                }
+            };
+            let clip_id = next_clip_id_for(ws.project(), track_id);
+            let mut clip_json = json!({
+                "id": clip_id, "src": src, "startMs": start_ms,
+                "durationMs": duration_ms, "sourceInMs": source_in,
+            });
+            if let Some(v) = args["volume"].as_f64() {
+                clip_json["volume"] = json!(v);
+            }
+            let clip: cutforge_core::model::Clip = match serde_json::from_value(clip_json) {
+                Ok(c) => c,
+                Err(e) => return envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
+            };
+            let request_id = args["requestId"].as_str().map(String::from);
+            finish(ws.apply(Command::ClipInsert { to_track: track_id.into(), clip, request_id }, actor, opts))
+        }
         "clip_update" => {
             let Some(clip_id) = args["clipId"].as_str() else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
@@ -460,6 +493,235 @@ fn read_truth(root: &Path, rel: &str, label: &str) -> Value {
     }
 }
 
+/// E6-3/B14:查询类工具集合——只读打开(Workspace::open),不申请排他锁。
+/// 不在此列也不在免开工作区名单的工具 = 写操作,仍走 open_exclusive 全程锁。
+fn is_readonly_tool(name: &str) -> bool {
+    matches!(name,
+        "project_get" | "wordline_get" | "cutlist_get" | "notes_list"
+        | "oplog_tail" | "conflict_list" | "timeline_get")
+}
+
+/// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。
+/// 排除:只读查询、免开工作区的静态/编排类、工程创建(不产 rev)。
+fn produces_rev_mutation(name: &str) -> bool {
+    !(is_readonly_tool(name)
+        || matches!(name,
+            "capability_matrix" | "project_new" | "render" | "render_run" | "render_progress"
+            | "media_probe" | "media_browse" | "render_probe" | "stage_status"))
+}
+
+/// E2-1 的 canonicalize 校验函数化:/media、/media/browse、clip_add、media_probe、
+/// media_browse 共用同一份校验(相对路径、拒 `..`、canonicalize 后仍在工程根内),
+/// 新端点禁止另造并行实现(阶段一不可回归面 + E3 风险面对策)。
+fn resolve_within_root(root: &Path, rel: &str) -> Result<PathBuf, &'static str> {
+    if rel.is_empty() {
+        return Err("路径为空");
+    }
+    if Path::new(rel).is_absolute() || rel.split(['/', '\\']).any(|seg| seg == "..") {
+        return Err("非法路径");
+    }
+    let Ok(canon_t) = root.join(rel).canonicalize() else {
+        return Err("路径不存在或不可达");
+    };
+    let Ok(canon_r) = root.canonicalize() else {
+        return Err("工程根不可达");
+    };
+    if !canon_t.starts_with(&canon_r) {
+        return Err("路径越出工程根");
+    }
+    Ok(canon_t)
+}
+
+/// 可导入媒体扩展名(media_browse 的口径;与 mime_of 同域)。
+const MEDIA_EXTS: &[&str] = &[
+    "mp4", "m4v", "mov", "webm", "mkv",
+    "mp3", "wav", "m4a", "aac", "ogg", "opus", "flac",
+    "png", "jpg", "jpeg", "gif",
+];
+
+fn media_kind(ext: &str) -> &'static str {
+    match ext {
+        "mp4" | "m4v" | "mov" | "webm" | "mkv" => "video",
+        "mp3" | "wav" | "m4a" | "aac" | "ogg" | "opus" | "flac" => "audio",
+        _ => "image",
+    }
+}
+
+/// 目录扫描上限(防超大素材目录拖垮服务;如实截断并在响应里标注)。
+const BROWSE_CAP: usize = 500;
+/// durationMs 元信息探测条数上限(ffprobe 逐文件成本;超出者该字段如实为 null)。
+const BROWSE_PROBE_CAP: usize = 64;
+
+/// E3-2/B12:media_probe——probe.rs 的 MCP 接线(此前"有实现无调用"的死代码)。
+/// 返回时长/分辨率/是否含音轨;错误如实 DEP_MISSING(ffprobe 语义)。
+fn media_probe_tool(root: &Path, args: &Value) -> Value {
+    let Some(src) = args["src"].as_str() else {
+        return envelope(false, "PRECONDITION_FAILED", "缺 src(工程内相对路径)", json!({}));
+    };
+    let abs = match resolve_within_root(root, src) {
+        Ok(p) => p,
+        Err(msg) => return envelope(false, "PRECONDITION_FAILED", &format!("路径不合法({src}): {msg}"), json!({})),
+    };
+    if !cutforge_io::probe::ffprobe_available() {
+        return envelope(false, "DEP_MISSING", "ffprobe 不可用(安装 ffmpeg 套件或设 CUTFORGE_FFPROBE)", json!({}));
+    }
+    match cutforge_io::probe::probe(&abs) {
+        Ok(info) => {
+            let (width, height) = match info.video_size() {
+                Some((w, h)) => (json!(w), json!(h)),
+                None => (json!(null), json!(null)),
+            };
+            envelope(true, "OK", "媒体元信息(ffprobe 单一实现)", json!({
+                "src": src, "durationMs": info.duration_ms(),
+                "width": width, "height": height, "hasAudio": info.has_audio(),
+            }))
+        }
+        Err(e) => envelope(false, "DEP_MISSING", &format!("探测失败: {e}"), json!({})),
+    }
+}
+
+/// E3-3:media_browse——列工程内可导入媒体 + 元信息(供壳素材面板与 Agent 复用)。
+/// 路径校验复用 resolve_within_root;目录递归至上限;durationMs 仅前 BROWSE_PROBE_CAP
+/// 个文件逐个 ffprobe(超出如实 null,不阻塞列表)。
+fn media_browse_tool(root: &Path, args: &Value) -> Value {
+    let dir = args["dir"].as_str().unwrap_or("");
+    match media_browse_payload(root, dir) {
+        Ok(doc) => envelope(true, "OK", "素材清单", doc),
+        Err(m) => envelope(false, "PRECONDITION_FAILED", &m, json!({})),
+    }
+}
+
+fn media_browse_payload(root: &Path, dir: &str) -> Result<Value, String> {
+    // 空 dir = 工程根自身(素材面板默认视图);"." 可通过 resolve_within_root 的校验
+    let eff = if dir.is_empty() { "." } else { dir };
+    let base = resolve_within_root(root, eff).map_err(|m| format!("目录不合法({dir}): {m}"))?;
+    if !base.is_dir() {
+        return Err(format!("目录不存在: {dir}"));
+    }
+    // 相对路径基于工程根的规范形计算(canonicalize 在 Windows 会加 \\?\ 前缀,
+    // 必须与规范形根对比,否则 strip_prefix 落空)
+    let canon_root = root.canonicalize().map_err(|e| format!("工程根不可达: {e}"))?;
+    let mut files: Vec<Value> = Vec::new();
+    let mut truncated = false;
+    let mut stack = vec![base];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase();
+            if !MEDIA_EXTS.contains(&ext.as_str()) {
+                continue;
+            }
+            if files.len() >= BROWSE_CAP {
+                truncated = true;
+                break;
+            }
+            let bytes = e.metadata().map(|m| m.len()).unwrap_or(0);
+            let rel = p.strip_prefix(&canon_root)
+                .or_else(|_| p.strip_prefix(root))
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            files.push(json!({
+                "name": p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
+                "path": rel,
+                "bytes": bytes,
+                "kind": media_kind(&ext),
+                "durationMs": json!(null),
+            }));
+        }
+        if truncated {
+            break;
+        }
+    }
+    files.sort_by(|a, b| a["path"].as_str().unwrap_or("").cmp(b["path"].as_str().unwrap_or("")));
+    if cutforge_io::probe::ffprobe_available() {
+        for (i, f) in files.iter_mut().enumerate() {
+            if i >= BROWSE_PROBE_CAP {
+                break;
+            }
+            if let Ok(info) = cutforge_io::probe::probe(&root.join(f["path"].as_str().unwrap_or_default())) {
+                f["durationMs"] = json!(info.duration_ms());
+            }
+        }
+    }
+    Ok(json!({"dir": dir, "total": files.len(), "truncated": truncated, "files": files}))
+}
+
+/// render_probe(E6-3 起):仅读 06_output 目录存在性,不再为此申请排他锁。
+fn render_probe_tool(root: &Path) -> Value {
+    let dir = root.join("06_output");
+    let mut files = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            if let Ok(meta) = e.metadata() {
+                files.push(json!({"file": e.file_name().to_string_lossy(), "bytes": meta.len()}));
+            }
+        }
+    }
+    envelope(true, "OK", "产物清单", json!({"dir": "06_output", "files": files}))
+}
+
+/// stage_status(E6-3 起):编排 + _state 存在性,均不需要打开工作区(不持排他锁)。
+fn stage_status_tool(ws_root: &Path) -> Value {
+    // M9-3 同口径:优先解析 rs_run --status(done/stale/missing + staleReason),
+    // CutFlow 不可用时回退 _state 存在性并如实标注 degraded。
+    let resp = orchestrate(ws_root, "rs_run.py", &[json!("--status")]);
+    if resp.get("ok") == Some(&json!(true)) {
+        if let Some(stages) = resp.get("data").and_then(|d| d.get("stages")).cloned() {
+            return envelope(true, "OK", "阶段状态(rs_run 同口径)", json!({"stages": stages, "source": "rs_run"}));
+        }
+        if let Some(text) = resp.get("stdout").and_then(|v| v.as_str()) {
+            let json_start = text.find('{').unwrap_or(text.len());
+            if let Ok(v) = text[json_start..].parse::<Value>()
+                && let Some(stages) = v.get("data").and_then(|d| d.get("stages")).cloned() {
+                    return envelope(true, "OK", "阶段状态(rs_run 同口径)", json!({"stages": stages, "source": "rs_run"}));
+                }
+        }
+    }
+    let dir = ws_root.join("_state");
+    let mut map = serde_json::Map::new();
+    for s in cutforge_io::stage::STAGES {
+        map.insert(s.to_string(), json!(dir.join(format!("{s}.json")).is_file()));
+    }
+    envelope(true, "OK", "阶段状态(_state 存在性;rs_run 不可用,降级)", json!({"stages": map, "source": "existence"}))
+}
+
+/// B11-1:project_new——空工程模板 + 建盘(与 CLI `new` 子命令同走 cutforge_io::scaffold,
+/// 单一实现;已存在拒绝覆盖)。
+fn project_new_tool(root: &Path, args: &Value) -> Value {
+    let slug = args["slug"].as_str().map(String::from)
+        .or_else(|| root.file_name().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "cutforge-project".into());
+    let fps = args["fps"].as_u64().unwrap_or(30) as u32;
+    let width = args["canvasW"].as_u64().unwrap_or(1080) as u32;
+    let height = args["canvasH"].as_u64().unwrap_or(1920) as u32;
+    let kinds_v = args["tracks"].as_array().cloned()
+        .unwrap_or_else(|| vec![json!("video"), json!("audio")]);
+    let mut kinds = Vec::new();
+    for v in &kinds_v {
+        match v.as_str() {
+            Some("video") => kinds.push(cutforge_core::model::TrackKind::Video),
+            Some("audio") => kinds.push(cutforge_core::model::TrackKind::Audio),
+            Some("text") => kinds.push(cutforge_core::model::TrackKind::Text),
+            other => return envelope(false, "PRECONDITION_FAILED", &format!("未知轨道类型: {other:?}(允许 video/audio/text)"), json!({})),
+        }
+    }
+    match cutforge_io::scaffold::scaffold_project(root, &slug, fps, width, height, &kinds) {
+        Ok(path) => envelope(true, "OK", "空工程已创建(可独立起步,不依赖 CutFlow)", json!({
+            "project": path.to_string_lossy(),
+            "hint": format!("打开:cutforge-cli serve {} 或 cutforge-mcp serve --root {}", root.display(), root.display()),
+        })),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            envelope(false, "PRECONDITION_FAILED", &e.to_string(), json!({}))
+        }
+        Err(e) => envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
+    }
+}
+
 fn next_clip_id_for(project: &cutforge_core::model::Project, track_id: &str) -> String {
     project
         .find_track(track_id)
@@ -484,6 +746,9 @@ fn timeline_projection(project: &cutforge_core::model::Project) -> Vec<Value> {
                 "speed": c.speed, "volume": c.volume, "opacity": c.opacity,
                 "scale": c.scale, "position": c.position, "overlay": c.overlay,
                 "motion": c.motion, "text": c.text, "freezeMs": c.freeze_ms,
+                // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
+                "transition": c.transition, "fade": c.fade,
+                "punchIn": c.punch_in, "role": c.role,
             }));
         }
     }
@@ -841,6 +1106,12 @@ fn capability_matrix() -> Value {
 
 /// 处理一条 JSON-RPC 请求;通知(无 id)返回 None。
 pub fn handle_rpc(req: &Value) -> Option<Value> {
+    handle_rpc_as(req, Actor::agent("cutforge-mcp"))
+}
+
+/// 带显式 actor 的 JSON-RPC 处理:工作区数据面(编辑器壳)传 user,
+/// 使人在编辑器里的手势在 OpLog 上如实归因(RT-1 会话摘要的采集依据)。
+pub fn handle_rpc_as(req: &Value, actor: Actor) -> Option<Value> {
     let method = req["method"].as_str()?;
     let id = req["id"].clone();
     if id.is_null() {
@@ -860,7 +1131,7 @@ pub fn handle_rpc(req: &Value) -> Option<Value> {
         "tools/call" => {
             let name = req["params"]["name"].as_str().unwrap_or("");
             let args = req["params"]["arguments"].clone();
-            let env = dispatch(name, &args);
+            let env = dispatch_with_actor(name, &args, actor);
             json!({
                 "content": [{"type": "text", "text": env.to_string()}],
                 "isError": env["ok"] != json!(true),
@@ -977,14 +1248,64 @@ pub fn default_web_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web")
 }
 
+/// E1-4/E6-1:交互式工程选择(05_ir/project.json 存在者;按修改时间倒序,回车 = 最近工程)。
+/// 单一实现纪律:cli serve 与 mcp serve 的无 --root 交互列工程都走这里(不再各写一份)。
+pub fn pick_project_interactive() -> Option<PathBuf> {
+    use std::io::Write as _;
+    let base = std::env::var_os("CUTFORGE_PROJECTS")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    let mut cands: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![base.clone()];
+    while let Some(d) = stack.pop() {
+        let depth = d.strip_prefix(&base).map(|r| r.components().count()).unwrap_or(0);
+        if depth > 2 {
+            continue;
+        }
+        if d.join("05_ir").join("project.json").is_file() {
+            cands.push(d.clone());
+        }
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                if e.path().is_dir() && !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    stack.push(e.path());
+                }
+            }
+        }
+    }
+    cands.sort_by_key(|p| std::cmp::Reverse(
+        p.join("05_ir").join("project.json").metadata().and_then(|m| m.modified()).ok()));
+    if cands.is_empty() {
+        return None;
+    }
+    println!("CutForge 编辑器 —— 选择工程(回车 = 最近工程):");
+    for (i, p) in cands.iter().take(12).enumerate() {
+        println!("  [{}] {}", i + 1, p.display());
+    }
+    print!("编号: ");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    let idx: usize = line.trim().parse().unwrap_or(1);
+    cands.get(idx.saturating_sub(1)).cloned()
+}
+
 /// 工作区常驻服务(M10 本地服务化):静态托管 Web 编辑器 + /rpc + /events +
-/// /session 会话信息 + /media(E2)。随机 token 落盘 `.cutforge/session`(仅 127.0.0.1)。
+/// /session 会话信息 + /media(E2)+ /media/browse 与 /ui-fields(E3/E4)。
+/// 随机 token 落盘 `.cutforge/session`(仅 127.0.0.1)。
 pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open_browser: bool) -> i32 {
     use std::sync::Arc;
     let _ = cutforge_io::watcher::ensure_sync_daemon(root);
     if let Err(e) = serve_preflight(root, web_dir) {
         eprintln!("启动中止:{e}");
         return 3;
+    }
+    // E6-2 首次运行体验:.cutforge/ 记账面一次建齐并打印位置。锁文件不预建——
+    // 它由首次写操作的 create_exclusive 自动创建并随操作结束释放(预占会挡住 open_exclusive)。
+    for sub in [".cutforge", ".cutforge/bases", ".cutforge/oplog"] {
+        let _ = std::fs::create_dir_all(root.join(sub));
     }
     let session = json!({
         "root": root.to_string_lossy(),
@@ -1000,6 +1321,14 @@ pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open
     let session_str = session.to_string();
     let root_s = root.to_string_lossy().to_string();
     let web = Arc::new(web_dir.to_path_buf());
+    // RT-1:会话变更摘要从 serve 启动即建档,写操作后增量落盘(Ctrl+C/崩溃也不丢)
+    session_journal_begin(root);
+    eprintln!("── 首次运行/会话位置 ──");
+    eprintln!("  会话: {}", dir.join("session").display());
+    eprintln!("  写锁: {}(首次写操作时自动创建/释放)", dir.join("lock").display());
+    eprintln!("  基线快照: {}", dir.join("bases").display());
+    eprintln!("  本次变更摘要: {}", session_summary_path(root).display());
+    eprintln!("────────────────────────");
     let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
@@ -1023,6 +1352,101 @@ pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open
         });
     }
     0
+}
+
+// ---------------- RT-1:会话变更摘要(.cutforge/session-summary.json) ----------------
+//
+// 编辑器改完之后,Agent(CutFlow 侧)要能"读懂这次会话改了什么"。摘要记录:
+// 服务启动 rev → 当前 rev 区间 + actor=human(user)的 Op 清单。落盘时机为
+// **每次成功写之后增量写**——与"关闭服务时留一份"验收等价,且进程被 Ctrl+C/
+// 崩溃杀死时不丢账(幂等:同一 rev 区间重复覆盖写,不追加)。
+
+struct SessionJournal {
+    started_at: String,
+    rev_from: u64,
+    rev_to: u64,
+    ops: Vec<Value>,
+}
+
+fn sessions() -> &'static std::sync::Mutex<std::collections::BTreeMap<PathBuf, SessionJournal>> {
+    static S: OnceLock<std::sync::Mutex<std::collections::BTreeMap<PathBuf, SessionJournal>>> = OnceLock::new();
+    S.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
+}
+
+fn session_summary_path(root: &Path) -> PathBuf {
+    root.join(".cutforge/session-summary.json")
+}
+
+fn disk_rev(root: &Path) -> u64 {
+    std::fs::read_to_string(root.join(".cutforge/rev"))
+        .ok()
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn session_journal_begin(root: &Path) {
+    if let Ok(mut m) = sessions().lock() {
+        let rev = disk_rev(root);
+        m.insert(root.to_path_buf(), SessionJournal {
+            started_at: cutforge_core::timeutil::now_rfc3339(),
+            rev_from: rev,
+            rev_to: rev,
+            ops: Vec::new(),
+        });
+    }
+    let _ = write_session_summary(root);
+}
+
+/// 数据面上一次成功写之后调用:把 (cursor, rev_now] 区间内 actor=user 的 Op 追加进摘要。
+fn session_journal_note(root: &Path, rev_now: u64) {
+    let cursor = sessions()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(root).map(|j| j.rev_to));
+    let Some(cursor) = cursor else { return };
+    if rev_now <= cursor {
+        return;
+    }
+    let new_ops: Vec<Value> = match cutforge_io::Workspace::open(root) {
+        Ok(ws) => match ws.engine().query(Query::OpLogTail {
+            since_rev: Some(cursor),
+            actor_kind: Some(ActorKind::User),
+        }) {
+            Answer::Ops(ops) => ops
+                .iter()
+                .filter_map(|op| serde_json::to_value(op).ok())
+                .collect(),
+            _ => Vec::new(),
+        },
+        Err(_) => Vec::new(),
+    };
+    if let Ok(mut m) = sessions().lock()
+        && let Some(j) = m.get_mut(root) {
+            j.ops.extend(new_ops);
+            j.rev_to = rev_now;
+        }
+    let _ = write_session_summary(root);
+}
+
+fn write_session_summary(root: &Path) -> std::io::Result<()> {
+    let snapshot = sessions().lock().ok().and_then(|m| {
+        m.get(root).map(|j| {
+            json!({
+                "kind": "cutforge-session-summary",
+                "doc": "本次服务会话的变更摘要:actor=human(user)的 Op 清单 + rev 区间;供 CutFlow 侧变更识别(RT-1)",
+                "startedAt": j.started_at,
+                "updatedAt": cutforge_core::timeutil::now_rfc3339(),
+                "revFrom": j.rev_from,
+                "revTo": j.rev_to,
+                "userOpCount": j.ops.len(),
+                "ops": j.ops,
+            })
+        })
+    });
+    let Some(doc) = snapshot else { return Ok(()) };
+    let mut buf = serde_json::to_vec_pretty(&doc)?;
+    buf.push(b'\n');
+    cutforge_io::atomic::atomic_write(&session_summary_path(root), &buf)
 }
 
 fn static_content(web: &Path, path: &str) -> Option<(&'static str, Vec<u8>)> {
@@ -1086,21 +1510,17 @@ fn mime_of(ext: &str) -> &'static str {
 /// E2-1:GET /media?path=<工程内相对路径>。
 /// 安全:①只收工程内相对路径;②canonicalize 后必须仍位于工程根之内(拒绝对外穿越);
 /// 鉴权走数据面统一 token(非静态白名单);支持 Range(浏览器 seek 的前提)。
+/// 路径校验统一走 resolve_within_root(与 /media/browse、clip_add、media_probe 同一实现)。
 fn media_response(root: &Path, path_param: Option<&str>, range: Option<&str>) -> HttpResp {
     use std::io::{Read as _, Seek as _};
     let Some(rel) = path_param else {
         return resp_plain("400 Bad Request", "缺 path 参数");
     };
-    if Path::new(rel).is_absolute() || rel.split(['/', '\\']).any(|seg| seg == "..") {
-        return resp_plain("400 Bad Request", "非法路径");
-    }
-    let (Ok(canon_t), Ok(canon_r)) = (root.join(rel).canonicalize(), root.canonicalize()) else {
-        return resp_plain("404 Not Found", "媒体不存在");
+    let canon_t = match resolve_within_root(root, rel) {
+        Ok(p) => p,
+        Err("非法路径") => return resp_plain("400 Bad Request", "非法路径"),
+        Err(_) => return resp_plain("404 Not Found", "媒体不存在"),
     };
-    if !canon_t.starts_with(&canon_r) {
-        // 对外穿越与不存在同形响应,不泄露目录结构
-        return resp_plain("404 Not Found", "媒体不存在");
-    }
     let ctype = mime_of(canon_t.extension().and_then(|e| e.to_str()).unwrap_or("")).to_string();
     let Ok(mut file) = std::fs::File::open(&canon_t) else {
         return resp_plain("404 Not Found", "媒体不可读");
@@ -1176,6 +1596,9 @@ fn handle_workspace_conn(
     let is_rpc = path_only == "/rpc" && first_line.starts_with("POST");
     let is_events = path_only == "/events";
     let is_media = path_only == "/media" && first_line.starts_with("GET");
+    // E3-3 素材浏览 + E4-2 检查器字段真相源:数据面(带 token),不进静态白名单
+    let is_media_browse = path_only == "/media/browse" && first_line.starts_with("GET");
+    let is_ui_fields = path_only == "/ui-fields" && first_line.starts_with("GET");
     let range = head
         .lines()
         .find(|l| l.len() > 6 && l[..6].eq_ignore_ascii_case("range:"))
@@ -1202,13 +1625,47 @@ fn handle_workspace_conn(
             }
         });
         media_response(Path::new(root), path_param.as_deref(), range.as_deref())
+    } else if is_media_browse {
+        // E3-3:素材浏览(与 media_browse 工具同一 payload 实现,不建并行)
+        let dir = query.split('&').find_map(|kv| {
+            let mut it = kv.split('=');
+            match (it.next(), it.next()) {
+                (Some("dir"), Some(v)) => Some(pct_decode(v)),
+                _ => None,
+            }
+        }).unwrap_or_default();
+        match media_browse_payload(Path::new(root), &dir) {
+            Ok(doc) => HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() },
+            Err(m) => HttpResp {
+                status: "400 Bad Request", ctype: "application/json".into(), extra: String::new(),
+                body: json!({"ok": false, "code": "PRECONDITION_FAILED", "message": m}).to_string().into_bytes(),
+            },
+        }
+    } else if is_ui_fields {
+        // E4-2 单一真相源下发:壳检查器分组由此渲染(壳不读文件系统,壳纯度)
+        let doc: Value = serde_json::from_str(UI_FIELDS_JSON)
+            .expect("schemas/ui-fields.json 必须合法(受 check-ui-fields 机械校验)");
+        HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() }
     } else if is_get_session {
         HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: session_str.as_bytes().to_vec() }
     } else if is_rpc {
+        let tool_name = serde_json::from_str::<Value>(&body).ok()
+            .and_then(|req| req["params"]["name"].as_str().map(String::from));
         let v = match serde_json::from_str::<Value>(&body) {
-            Ok(req) => handle_rpc(&req).map(|r| r.to_string()).unwrap_or_default(),
+            // 数据面 = 编辑器壳:user 归因(RT-1 摘要的过滤依据)
+            Ok(req) => handle_rpc_as(&req, Actor::user("editor")).map(|r| r.to_string()).unwrap_or_default(),
             Err(e) => json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}}).to_string(),
         };
+        // RT-1:成功的写操作 → 增量更新 .cutforge/session-summary.json
+        if tool_name.as_deref().is_some_and(produces_rev_mutation) {
+            let parsed: Value = serde_json::from_str(&v).unwrap_or(Value::Null);
+            let env_text = parsed["result"]["content"][0]["text"].as_str().unwrap_or("");
+            if let Ok(env) = serde_json::from_str::<Value>(env_text)
+                && env["ok"] == json!(true)
+                && let Some(rev) = env["data"]["rev"].as_u64() {
+                    session_journal_note(Path::new(root), rev);
+                }
+        }
         HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: v.into_bytes() }
     } else if is_events {
         let mut since: u64 = 0;
@@ -1430,5 +1887,72 @@ mod tests {
             assert!(resp["ok"].is_boolean(), "{name} ok 必须为布尔: {resp}");
         }
         cutforge_io::fsutil::cleanup(&root);
+    }
+
+    /// E3-1/E3-2 门禁:clip_add 内部走 Command::ClipInsert → rev 上涨 → 盘面出现新
+    /// clip;路径穿越拒绝;durationMs 缺省在有 ffprobe 时由探测自动填(时长语义断言)。
+    #[test]
+    fn clip_add_inserts_and_rejects_traversal() {
+        let root = cutforge_io::tests_fixture("mcp-clip-add").unwrap();
+        let root_s = root.to_string_lossy().to_string();
+
+        // 穿越路径 → PRECONDITION_FAILED,不触碰盘面
+        let rev0 = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+        let bad = dispatch("clip_add", &json!({"root": root_s, "trackId": "V1", "src": "../逃逸.mp4", "startMs": 0}));
+        assert_eq!(bad["code"], json!("PRECONDITION_FAILED"), "{bad}");
+        // track 不存在 → PRECONDITION_FAILED
+        let no_track = dispatch("clip_add", &json!({"root": root_s, "trackId": "V9", "src": "a.mp4", "startMs": 0}));
+        assert_eq!(no_track["code"], json!("PRECONDITION_FAILED"), "{no_track}");
+
+        // 显式时长:不依赖 ffprobe(CI 兜底路径);requestId 去重语义由引擎承接
+        cutforge_io::fsutil::ensure(&root.join("01_materials")).unwrap();
+        cutforge_io::atomic::atomic_write(&root.join("01_materials/take1.mp4"), b"x").unwrap();
+        let add = dispatch("clip_add", &json!({
+            "root": root_s, "trackId": "V1", "src": "01_materials/take1.mp4",
+            "startMs": 999_000, "durationMs": 1500, "volume": 0.5, "requestId": "add-1",
+        }));
+        assert_eq!(add["code"], json!("OK"), "clip_add 必须成功: {add}");
+        assert!(add["data"]["rev"].as_u64().unwrap() > rev0, "rev 必须上涨");
+        let after = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+        let v1 = after["tracks"].as_array().unwrap().iter().find(|t| t["id"] == "V1").unwrap();
+        let clip = v1["clips"].as_array().unwrap().iter().find(|c| c["src"] == "01_materials/take1.mp4");
+        assert!(clip.is_some(), "盘面必须出现新 clip: {v1}");
+        assert_eq!(clip.unwrap()["volume"], json!(0.5));
+        cutforge_io::fsutil::cleanup(&root);
+    }
+
+    /// E3-3 门禁:media_browse 列出可导入媒体;非法目录 → PRECONDITION_FAILED。
+    #[test]
+    fn media_browse_lists_media_and_rejects_bad_dir() {
+        let root = cutforge_io::tests_fixture("mcp-browse").unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        cutforge_io::fsutil::ensure(&root.join("01_materials")).unwrap();
+        cutforge_io::atomic::atomic_write(&root.join("01_materials/a.mp4"), b"x").unwrap();
+        cutforge_io::atomic::atomic_write(&root.join("01_materials/notes.txt"), b"x").unwrap();
+
+        let resp = dispatch("media_browse", &json!({"root": root_s, "dir": "01_materials"}));
+        assert_eq!(resp["code"], json!("OK"), "{resp}");
+        let files = resp["data"]["files"].as_array().unwrap();
+        assert_eq!(files.len(), 1, "只列媒体扩展名,不列 .txt: {files:?}");
+        assert_eq!(files[0]["path"], json!("01_materials/a.mp4"));
+        assert_eq!(files[0]["kind"], json!("video"));
+
+        let bad = dispatch("media_browse", &json!({"root": root_s, "dir": "../.."}));
+        assert_eq!(bad["code"], json!("PRECONDITION_FAILED"), "穿越目录必须拒绝: {bad}");
+        cutforge_io::fsutil::cleanup(&root);
+    }
+
+    /// RT-1 前置口径:produces_rev_mutation 的分类面(查询/静态类不采集)。
+    #[test]
+    fn mutation_classification() {
+        for q in ["project_get", "timeline_get", "oplog_tail", "notes_list", "conflict_list",
+                  "render_probe", "stage_status", "media_probe", "media_browse", "capability_matrix",
+                  "render_run", "render_progress", "project_new"] {
+            assert!(!produces_rev_mutation(q), "{q} 不应计入会话变更");
+        }
+        for w in ["clip_update", "clip_add", "clip_delete", "clip_split", "clip_move",
+                  "track_add", "undo", "redo", "cut_apply", "notes_add"] {
+            assert!(produces_rev_mutation(w), "{w} 应计入会话变更");
+        }
     }
 }

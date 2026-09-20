@@ -17,6 +17,7 @@ pub mod backup;
 pub mod fsutil;
 pub mod lock;
 pub mod probe;
+pub mod scaffold;
 pub mod stage;
 pub mod watcher;
 
@@ -762,7 +763,8 @@ fn prune_bases(dir: &Path, keep: usize) {
     revs.sort_by_key(|(n, _)| *n);
     while revs.len() > keep {
         let (_, path) = revs.remove(0);
-        let _ = std::fs::remove_file(path);
+        // 唯一落盘点纪律(M2-4):删除同样收敛 atomic.rs,不走旁路 API
+        let _ = atomic::remove(&path);
     }
 }
 
@@ -927,7 +929,8 @@ mod tests {
         };
         let root = fsutil::temp_dir("ws-real-ir");
         fsutil::ensure(&root.join("05_ir")).unwrap();
-        std::fs::write(root.join(PROJECT_REL), &text).unwrap();
+        // 唯一落盘点纪律(M2-4):测试写盘同样走 atomic.rs
+        atomic::atomic_write(&root.join(PROJECT_REL), text.as_bytes()).unwrap();
         {
             let mut ws = Workspace::open_exclusive(&root).unwrap();
             ws.apply(
@@ -961,7 +964,12 @@ mod m9_tests {
     }
 
     fn write_project(root: &Path, v: &serde_json::Value) {
-        std::fs::write(root.join(PROJECT_REL), serde_json::to_string_pretty(v).unwrap()).unwrap();
+        // 唯一落盘点纪律(M2-4):测试写盘同样走 atomic.rs
+        atomic::atomic_write(
+            &root.join(PROJECT_REL),
+            serde_json::to_string_pretty(v).unwrap().as_bytes(),
+        )
+        .unwrap();
     }
 
     /// M9-1 门禁:外部改 A 字段 + 本地改 A 字段 → 必须 CF-001 + 停写

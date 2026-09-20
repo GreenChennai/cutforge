@@ -98,17 +98,23 @@ fn repo_root() -> PathBuf {
 }
 
 pub fn run(argv: Vec<String>) -> i32 {
+    // 旗标先行归一:`cutforge-cli --json <子命令>` 与 `<子命令> … --json` 等价
+    // (B7 口径对拍需要机器可读的自述/结果,无须记忆旗标位置)。
+    let json_first = argv.first().map(|a| a == "--json").unwrap_or(false);
+    let argv: Vec<String> = if json_first { argv[1..].to_vec() } else { argv };
     let Some(cmd) = argv.first().cloned() else {
-        return emit(false, false, "PRECONDITION_FAILED", "用法: cutforge-cli <子命令> […]", serde_json::json!({
-            // E7-3/B8:自述与实际实现保持同步(新增子命令时必须更新此清单)
-            "subcommands": ["project", "timeline", "clip", "clip-update", "split", "undo", "redo",
+        // E7-3/B8:自述与实际实现保持同步(新增子命令时必须更新此清单)
+        return emit(json_first, false, "PRECONDITION_FAILED", "用法: cutforge-cli <子命令> […]", serde_json::json!({
+            "subcommands": ["new", "project", "timeline", "clip", "clip-update", "split", "undo", "redo",
                 "oplog", "notes", "notes-add", "notes-resolve", "notes-reject", "conflicts",
-                "serve", "check-shell-purity", "check-write-paths", "check-deps"]
+                "serve", "check-shell-purity", "check-write-paths", "check-deps", "check-ui-fields"]
         }));
     };
-    let args = parse_args(&argv[1..]);
+    let mut args = parse_args(&argv[1..]);
+    args.json = args.json || json_first;
     match cmd.as_str() {
         "serve" => serve_cmd(&args),
+        "new" => new_project_cmd(&args),
         "project" => {
             let Some(root) = args.positional.first() else { return emit(false, args.json, "PRECONDITION_FAILED", "用法: project <工程目录>", serde_json::json!({})) };
             match open_ws(Path::new(root)) {
@@ -161,17 +167,34 @@ pub fn run(argv: Vec<String>) -> i32 {
                 let receipt = match cmd.as_str() {
                     "clip-update" => {
                         if args.positional.len() < 2 {
-                            return Err("用法: clip-update <工程目录> <clipId> --duration-ms N …".into());
+                            return Err("用法: clip-update <工程目录> <clipId> --duration-ms N …(支持字段与 MCP clip_update 对齐)".into());
                         }
+                        // B9-1:字段与 MCP clip_update 完全对齐(9 个 ClipPatch 字段)
                         let mut patch = ClipPatch::default();
+                        let num = |flag: &str| -> Result<Option<f64>, String> {
+                            match args.flags.get(flag) {
+                                Some(v) => v.parse::<f64>().map(Some).map_err(|_| format!("{flag} 非数字")),
+                                None => Ok(None),
+                            }
+                        };
                         if let Some(v) = args.flags.get("duration-ms") {
                             patch.duration_ms = Some(v.parse().map_err(|_| "duration-ms 非数字")?);
                         }
                         if let Some(v) = args.flags.get("start-ms") {
                             patch.start_ms = Some(v.parse().map_err(|_| "start-ms 非数字")?);
                         }
-                        if let Some(v) = args.flags.get("volume") {
-                            patch.volume = Some(v.parse().map_err(|_| "volume 非数字")?);
+                        if let Some(v) = args.flags.get("source-in-ms") {
+                            patch.source_in_ms = Some(v.parse().map_err(|_| "source-in-ms 非数字")?);
+                        }
+                        if let Some(v) = args.flags.get("freeze-ms") {
+                            patch.freeze_ms = Some(v.parse().map_err(|_| "freeze-ms 非数字")?);
+                        }
+                        if let Some(v) = num("volume")? { patch.volume = Some(v); }
+                        if let Some(v) = num("opacity")? { patch.opacity = Some(v); }
+                        if let Some(v) = num("scale")? { patch.scale = Some(v); }
+                        if let Some(v) = num("speed")? { patch.speed = Some(v); }
+                        if let Some(v) = args.flags.get("text") {
+                            patch.text = Some(v.clone());
                         }
                         ws.apply(Command::ClipUpdate { clip_id: args.positional[1].clone(), patch }, actor, opts)
                     }
@@ -226,6 +249,7 @@ pub fn run(argv: Vec<String>) -> i32 {
         "check-shell-purity" => check_shell_purity(args.json),
         "check-write-paths" => check_write_paths(args.json),
         "check-deps" => check_deps(args.json),
+        "check-ui-fields" => check_ui_fields(args.json),
         other => emit(false, args.json, "PRECONDITION_FAILED", &format!("未知子命令: {other}"), serde_json::json!({})),
     }
 }
@@ -244,10 +268,11 @@ fn serve_cmd(a: &Args) -> i32 {
                     "用法: serve <工程目录> [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录",
                     serde_json::json!({}));
             }
-            match pick_project_interactive() {
+            // 单一实现:E1-4 交互选择器迁至 cutforge_mcp(mcp serve 无 --root 同一行为)
+            match cutforge_mcp::pick_project_interactive() {
                 Some(p) => p,
                 None => return emit(a.json, false, "NO_CONFIG",
-                    "未找到候选工程(查找:CUTFORGE_PROJECTS 或当前目录下两层内的 05_ir/project.json)",
+                    "未找到候选工程(查找:CUTFORGE_PROJECTS 或当前目录下两层内的 05_ir/project.json;或先新建:cutforge-cli new <目录>)",
                     serde_json::json!({})),
             }
         }
@@ -269,47 +294,130 @@ fn serve_cmd(a: &Args) -> i32 {
     cutforge_mcp::serve_workspace(&root, port, &token, &web, open)
 }
 
-/// E1-4:交互式工程选择(05_ir/project.json 存在者;按修改时间倒序,回车 = 最近工程)。
-fn pick_project_interactive() -> Option<PathBuf> {
-    use std::io::Write as _;
-    let base = std::env::var_os("CUTFORGE_PROJECTS")
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_default();
-    let mut cands: Vec<PathBuf> = Vec::new();
-    let mut stack = vec![base.clone()];
-    while let Some(d) = stack.pop() {
-        let depth = d.strip_prefix(&base).map(|r| r.components().count()).unwrap_or(0);
-        if depth > 2 {
-            continue;
+/// B11-1:新建空工程(与 MCP `project_new` 工具同走 cutforge_io::scaffold,单一实现)。
+/// 用法: new <工程目录> [--slug S] [--fps 30] [--width 1080] [--height 1920] [--track video --track audio]
+fn new_project_cmd(a: &Args) -> i32 {
+    let Some(root) = a.positional.first() else {
+        return emit(a.json, false, "PRECONDITION_FAILED",
+            "用法: new <工程目录> [--slug S] [--fps 30] [--width 1080] [--height 1920] [--track video,audio]",
+            serde_json::json!({}));
+    };
+    let slug = a.flags.get("slug").cloned()
+        .or_else(|| std::path::Path::new(root).file_name().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "cutforge-project".into());
+    let fps = a.flags.get("fps").and_then(|s| s.parse().ok()).unwrap_or(30);
+    let width = a.flags.get("width").and_then(|s| s.parse().ok()).unwrap_or(1080);
+    let height = a.flags.get("height").and_then(|s| s.parse().ok()).unwrap_or(1920);
+    let mut kinds = Vec::new();
+    // 轨道类型支持逗号分隔(--track video,audio);手写参数解析的 flags 表同键覆盖,
+    // 故不采用重复旗标形式
+    if let Some(v) = a.flags.get("track") {
+        for t in v.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let kind = match t {
+                "video" => cutforge_core::model::TrackKind::Video,
+                "audio" => cutforge_core::model::TrackKind::Audio,
+                "text" => cutforge_core::model::TrackKind::Text,
+                other => return emit(a.json, false, "PRECONDITION_FAILED",
+                    &format!("未知轨道类型: {other}(允许 video/audio/text)"), serde_json::json!({})),
+            };
+            kinds.push(kind);
         }
-        if d.join("05_ir").join("project.json").is_file() {
-            cands.push(d.clone());
-        }
-        if let Ok(rd) = std::fs::read_dir(&d) {
-            for e in rd.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if e.path().is_dir() && !name.starts_with('.') && name != "target" && name != "node_modules" {
-                    stack.push(e.path());
-                }
+    }
+    if kinds.is_empty() {
+        kinds = vec![cutforge_core::model::TrackKind::Video, cutforge_core::model::TrackKind::Audio];
+    }
+    match cutforge_io::scaffold::scaffold_project(Path::new(root), &slug, fps, width, height, &kinds) {
+        Ok(path) => emit(a.json, true, "OK", "空工程已创建(可独立起步,不依赖 CutFlow)", serde_json::json!({
+            "project": path.to_string_lossy(),
+            "slug": slug, "fps": fps, "canvas": {"width": width, "height": height},
+            "hint": format!("打开:cutforge-cli serve {root} --open"),
+        })),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => emit(a.json, false, "PRECONDITION_FAILED", &e.to_string(), serde_json::json!({})),
+        Err(e) => emit(a.json, false, "SCHEMA_INVALID", &e.to_string(), serde_json::json!({})),
+    }
+}
+
+/// E4-2 机械校验:schemas/ui-fields.json 声明的"壳允许编辑字段集" ⊆ ClipPatch 字段集。
+/// 与 check-shell-purity 同风格(判定器进 CLI,可入门禁);真相源漂移在此红。
+fn check_ui_fields(json: bool) -> i32 {
+    let root = repo_root();
+    let doc: serde_json::Value = match std::fs::read_to_string(root.join("schemas/ui-fields.json"))
+        .map_err(|e| e.to_string())
+        .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+    {
+        Ok(v) => v,
+        Err(e) => return emit(json, false, "NO_CONFIG", &format!("schemas/ui-fields.json 不可读: {e}"), serde_json::json!({})),
+    };
+    // ClipPatch 字段集:从 command.rs 的 struct ClipPatch 块按 `pub <snake>_ms…` 抽取,再转 camelCase
+    let src = match std::fs::read_to_string(root.join("crates/cutforge-core/src/command.rs")) {
+        Ok(s) => s,
+        Err(e) => return emit(json, false, "NO_CONFIG", &format!("command.rs 不可读: {e}"), serde_json::json!({})),
+    };
+    let patch_fields = clippatch_fields(&src);
+    if patch_fields.is_empty() {
+        return emit(json, false, "INTERNAL", "未能从 command.rs 解析出 ClipPatch 字段(结构变化需同步本判定器)", serde_json::json!({}));
+    }
+    let mut ui_fields: Vec<String> = Vec::new();
+    if let Some(groups) = doc["editable"].as_object() {
+        for (group, fields) in groups {
+            for f in fields.as_array().map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect::<Vec<_>>()).unwrap_or_default() {
+                ui_fields.push(f.clone());
+                let _ = group; // 分组名单独校验存在性(下方)
             }
         }
     }
-    cands.sort_by_key(|p| std::cmp::Reverse(
-        p.join("05_ir").join("project.json").metadata().and_then(|m| m.modified()).ok()));
-    if cands.is_empty() {
-        return None;
+    let mut violations: Vec<serde_json::Value> = Vec::new();
+    for f in &ui_fields {
+        if !patch_fields.contains(f) {
+            violations.push(serde_json::json!({"field": f, "reason": "ui-fields 声明可编辑,但 ClipPatch 无此字段(内核不支持,编辑会成幻觉)"}));
+        }
     }
-    println!("CutForge 编辑器 —— 选择工程(回车 = 最近工程):");
-    for (i, p) in cands.iter().take(12).enumerate() {
-        println!("  [{}] {}", i + 1, p.display());
+    // 分组声明完整性:分组名单不得为空(壳按分组渲染)
+    let groups = doc["editable"].as_object().map(|o| o.len()).unwrap_or(0);
+    if groups == 0 {
+        violations.push(serde_json::json!({"field": "editable", "reason": "editable 分组缺失或为空"}));
     }
-    print!("编号: ");
-    let _ = std::io::stdout().flush();
-    let mut line = String::new();
-    let _ = std::io::stdin().read_line(&mut line);
-    let idx: usize = line.trim().parse().unwrap_or(1);
-    cands.get(idx.saturating_sub(1)).cloned()
+    let data = serde_json::json!({
+        "uiFields": ui_fields,
+        "clipPatchFields": patch_fields,
+        "readonlyDisplay": doc["readonly"].clone(),
+        "violations": violations,
+        "rule": "壳可编辑字段集 ⊆ ClipPatch 字段集(E4-2);差异必须显式声明,不得静默漂移",
+    });
+    if violations.is_empty() {
+        emit(json, true, "OK", &format!("ui-fields 合规:{} 个可编辑字段全部被 ClipPatch 支撑", ui_fields.len()), data)
+    } else {
+        emit(json, false, "UI_FIELDS_VIOLATION", &format!("违规 {} 处", violations.len()), data)
+    }
+}
+
+/// 从 `struct ClipPatch { … }` 块抽取 `pub <snake>: Option<…>` 字段名并转 camelCase。
+fn clippatch_fields(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(start) = src.find("pub struct ClipPatch") else { return out };
+    let body = &src[start..];
+    let Some(end) = body.find('}') else { return out };
+    for line in body[..end].lines() {
+        let t = line.trim();
+        let Some(rest) = t.strip_prefix("pub ") else { continue };
+        let Some((name, _)) = rest.split_once(':') else { continue };
+        let name = name.trim();
+        // snake_case → camelCase(字段名均无前导下划线)
+        let mut camel = String::new();
+        let mut upper_next = false;
+        for ch in name.chars() {
+            if ch == '_' {
+                upper_next = true;
+            } else if upper_next {
+                camel.extend(ch.to_uppercase());
+                upper_next = false;
+            } else {
+                camel.push(ch);
+            }
+        }
+        out.push(camel);
+    }
+    out
 }
 
 // ---------- 标注与冲突(计划书 4.9 / 4.7) ----------
@@ -472,7 +580,10 @@ fn check_write_paths(json: bool) -> i32 {
         ["Open", "Options"].join(""),
         ["write", "_all"].join(""),
         ["fs", "rename"].join("::"),
-        ["remove", "_file"].join("::"),
+        // 注意:必须 join("") 拼出删除类 API 名(fs 的 remove 与 file 两段相连),
+        // 此前误用 join("::"),拼出的模式中间带冒号,永远匹配不到真实调用,
+        // 导致删除类旁路对判定器不可见(清账时实测修正)。
+        ["remove", "_file"].join(""),
         ["fs", "copy"].join("::"),
     ];
     let mut violations: Vec<serde_json::Value> = Vec::new();

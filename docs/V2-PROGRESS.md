@@ -171,6 +171,43 @@ OTIO 违背最小依赖需独立论证。触发重启条件与启动资产(parit
   seek 对齐 ≤1 帧、canvas 非全黑、播放推进、编辑器内导出→产物时长断言、壳纯度仍绿。
 - **顺带清账**:工具数 34(11 查询+16 写+7 编排)三方对拍(`_doc`/protocol_conformance/CLI 自述补全 17 子命令,
   B7/B8 部分);mcp session 落盘改走 `atomic.rs`(write-paths 判定器命中 7→4,余 4 处为 render 测试夹具×2
-  与 io lib×2 的**基线既有**命中,待专项清账);Cargo/文档描述去陈旧数量。
+  与 io lib×2 的**基线既有**命中;**已专项清账**:四处全改走 `atomic.rs`,判定器 remove_file 模式
+  拼接 bug 修正(join("::")→join(""))后审计 0 命中);Cargo/文档描述去陈旧数量。
 - **验证**:cargo 全测试 0 failed;M10-1/M10-2 e2e PASS;e2e_preview 全 PASS;shell-purity/check-deps/M0/M1 绿。
 - **版本**:workspace 0.2.0 → **0.3.0**(E1/E5/E2 批次);tag v0.3.0,release 产物改为每平台单 zip(三二进制 + web/,SHA256SUMS 对应)。
+
+## 阶段二批次(2026-09-20,来源:《副文档 02 · 阶段二:CutForge 编辑器闭环与"从零剪"》)
+
+- **E3 素材导入**:新增 MCP 工具 `clip_add`(内部走既有 `Command::ClipInsert`,requestId 去重;
+  durationMs 缺省由 `cutforge_io::probe` 探测自动填)与只读工具 `media_probe`(时长/分辨率/音轨,
+  B12 死代码接线)、`media_browse`(列可导入媒体;`GET /media/browse` 同一 payload 实现);
+  路径校验统一收敛 `resolve_within_root`(/media 的 canonicalize 函数化,/media、browse、clip_add、
+  probe 共用,不建并行实现);壳加素材面板(双击 = 播放头帧磁吸落点,拖拽 = 轨道任意落点)。
+- **E4 检查器**:壳检查器按语义分组(基础/画面/音频/变速/文本),字段分组由单一真相源
+  `schemas/ui-fields.json` 声明并经 `GET /ui-fields` 下发(壳不读文件);新增机械校验
+  `cutforge-cli check-ui-fields`(可编辑字段集 ⊆ ClipPatch 字段集);ClipPatch 未承接的
+  position/transition/fade/punchIn 等投影字段做只读展示(E4-3)。
+- **E6 工程/首次运行**:`cutforge-mcp serve` 无 `--root` 时交互列工程(picker 迁至 mcp,与 CLI
+  同一实现);serve 启动建齐 `.cutforge/{session,bases,oplog}` 并打印位置,token 失配时页面顶部
+  横幅提示;**只读工具(project_get/timeline_get/notes_list/conflict_list/oplog_tail/cutlist_get/
+  wordline_get/render_probe/stage_status/media_*)不再持排他锁**(E6-3/B14),写通道仍全程锁;
+  e2e 断言"渲染进行中查询/编辑不被阻塞"。
+- **B11 新建工程**:空工程模板 + `cutforge_io::scaffold`(CLI `new` 子命令与 MCP `project_new`
+  工具同走单一实现;模板必须过 v2 schema;已存在拒绝覆盖);壳新建向导(画幅/帧率/工程名);
+  README 定位更新为"可独立起步的编辑器(也能打开 CutFlow 工程)"。
+- **RT-1/RT-5**:工作区数据面 dispatch 归因 `Actor::user("editor")`(stdio/内嵌 HTTP 仍 agent),
+  serve 期间每次成功写后增量落盘 `.cutforge/session-summary.json`(actor=human 的 Op 清单 +
+  rev 区间,Ctrl+C 也不丢账);watcher 忽略表加入 CutFlow 记账文件(`05_ir/pipeline.json`、
+  `_state/*.json`),跑阶段不再给编辑器推假变更。
+- **B 系扫尾**:B7 工具数四处同源(34→**38** = 13 查询+18 写+7 编排:`_doc`/protocol_conformance/
+  gate 契约比对/README·FLOW·ACCEPTANCE 注明时点);B8 CLI 自述补全至 19 子命令(+new/check-ui-fields);
+  B9 CLI `clip-update` 补齐 source-in-ms/speed/opacity/scale/text/freeze-ms;B10 于 FLOW.md §7.1
+  明文说明 M8–M13 门禁以 cargo test + e2e 承载(不新增 gate.py 注册)。
+- **壳(E8)**:工具栏(播放/首尾/时间) + 素材面板 + 预览 + 分组检查器 + 轨道区 + toast 状态
+  (替代单行 footer,#status 保留为诊断锚点);冲突顶部停写横幅;未选中空态引导与按钮置灰;
+  快捷键补 Home/End。**RT-2/RT-3/RT-4(CutFlow 侧)不在本仓波次,移交后续。**
+- **验证**:cargo 全测试 0 failed(含 protocol_conformance 38 口径、readonly 不持锁、project_new
+  从零、clip_add 穿越/探测断言、scaffold 模板校验);M10-1/M10-2/M10-3 e2e PASS;e2e_preview 全 PASS;
+  新增 `tools/e2e_from_zero.py`(CLI new → 导入 → 改 4 字段 → 导出成片时长对拍 + 渲染期间并发
+  + RT-1 摘要)入 CI;check-shell-purity / check-ui-fields / check-write-paths / check-deps 绿;
+  clippy 无新告警。

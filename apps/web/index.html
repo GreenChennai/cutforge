@@ -6,10 +6,22 @@
 <link rel="stylesheet" href="./style.css">
 </head>
 <body>
+<!-- 顶部横幅区:token 变更提示(E6-2)/ 冲突停写(E8) -->
+<div id="banner" hidden>
+  <div id="token-banner" class="banner-row warn" hidden></div>
+  <div id="conflict-banner" class="banner-row danger" hidden></div>
+</div>
 <header>
   <h1>CutForge</h1>
   <span class="sub" id="session-info">连接中…</span>
   <span class="spacer"></span>
+  <button id="btn-project-new" title="新建空工程(向导)">＋ 新建工程</button>
+  <span class="tb-sep"></span>
+  <button id="pv-to-start" title="跳到开头(Home)">⏮</button>
+  <button id="pv-play" title="空格">▶ 播放</button>
+  <button id="pv-to-end" title="跳到结尾(End)">⏭</button>
+  <span id="tb-time">0ms</span>
+  <span class="tb-sep"></span>
   <label class="toggle"><input type="checkbox" id="magnet" checked> 磁吸(帧网格)</label>
   <label class="toggle"><input type="checkbox" id="ripple"> 波纹删除(Shift+Del)</label>
   <button id="btn-undo" title="Ctrl+Z">↩ 撤销</button>
@@ -26,54 +38,66 @@
   <!-- ============ 时间线 ============ -->
   <div id="tab-timeline" class="tab active">
     <div id="toolbar">
+      <span id="sel-info">未选中片段:点击下方片段,或从左侧素材面板双击插入(S 分割 / Del 删除)</span>
       <span>播放头 <b id="playhead-ms">0</b>ms</span>
-      <span id="sel-info">未选中片段(S 分割 / Del 删除 / Ctrl+C 复制)</span>
       <span>rev <b id="rev">-</b></span>
     </div>
-    <div id="pv-row">
-      <div id="preview">
-        <div id="pv-stage"><canvas id="pv-canvas" width="1080" height="1920"></canvas></div>
-        <div class="pv-hint">预览为画质代理:不含转场 / 特效 / 字幕烧录的最终效果;成片请用右侧导出(E2-6 诚实标注)</div>
-        <div id="pv-transport">
-          <button id="pv-play" title="空格">▶ 播放</button>
-          <button id="pv-frame-prev" title="←">← 一帧</button>
-          <button id="pv-frame-next" title="→">一帧 →</button>
-          <span id="pv-time">0.000s</span>
+    <!-- E8 工作台三栏:素材面板 | 预览+导出 | 分组检查器 -->
+    <div id="workbench">
+      <div id="media-panel" class="panel">
+        <h3>素材面板</h3>
+        <div class="media-dir-row">
+          <input type="text" id="media-dir" value="01_materials" title="工程内相对目录">
+          <button id="media-refresh" title="刷新列表">⟳</button>
         </div>
-        <div id="pv-media" hidden></div>
+        <div id="media-list"><div class="empty-hint">加载中…</div></div>
+        <div class="hint">双击 = 插到匹配轨道的播放头(帧磁吸);或拖到下方轨道任意落点</div>
       </div>
-      <div id="export" class="panel">
-        <h3>导出(编辑器内出片,E5)</h3>
-        <label>后端
-          <select id="exp-backend">
-            <option value="cutforge">cutforge 内核(不依赖 CutFlow)</option>
-            <option value="ffmpeg">ffmpeg(CutFlow rs_render)</option>
-          </select>
-        </label>
-        <label>画幅(仅 ffmpeg 后端)
-          <select id="exp-ratio"><option>9x16</option><option>3x4</option><option>16x9</option></select>
-        </label>
-        <button id="exp-run">导出成片</button>
-        <div id="exp-progress" class="exp-progress"></div>
-        <h3>产物(06_output)</h3>
-        <div id="exp-files"></div>
+      <div id="pv-col">
+        <div id="preview">
+          <div id="pv-stage"><canvas id="pv-canvas" width="1080" height="1920"></canvas></div>
+          <div class="pv-hint">预览为画质代理:不含转场 / 特效 / 字幕烧录的最终效果;成片请用右侧导出(E2-6 诚实标注)</div>
+          <div id="pv-transport">
+            <button id="pv-frame-prev" title="←">← 一帧</button>
+            <button id="pv-frame-next" title="→">一帧 →</button>
+            <span id="pv-time">0.000s</span>
+          </div>
+          <div id="pv-media" hidden></div>
+        </div>
+        <div id="export" class="panel">
+          <h3>导出(编辑器内出片,E5)</h3>
+          <label>后端
+            <select id="exp-backend">
+              <option value="cutforge">cutforge 内核(不依赖 CutFlow)</option>
+              <option value="ffmpeg">ffmpeg(CutFlow rs_render)</option>
+            </select>
+          </label>
+          <label>画幅(仅 ffmpeg 后端)
+            <select id="exp-ratio"><option>9x16</option><option>3x4</option><option>16x9</option></select>
+          </label>
+          <button id="exp-run">导出成片</button>
+          <div id="exp-progress" class="exp-progress"></div>
+          <h3>产物(06_output)</h3>
+          <div id="exp-files"></div>
+        </div>
+      </div>
+      <div id="inspector" class="panel">
+        <h3>检查器(分组)</h3>
+        <div id="insp-fields">未选中片段:点击时间线片段,或从左侧素材面板双击插入</div>
+        <div id="insp-groups"></div>
+        <button id="insp-apply" disabled title="改动生成可撤销的 Op(clip_update)">应用(clip_update)</button>
+        <button id="insp-dup" disabled title="复制选中片段到播放头(clip_duplicate)">复制到播放头</button>
+        <div id="insp-readonly" class="insp-readonly" hidden></div>
+        <span class="tb-sep"></span>
+        <button id="track-add-video">+视频轨</button>
+        <button id="track-add-audio">+音频轨</button>
+        <button id="track-add-text">+文本轨</button>
       </div>
     </div>
     <div id="timeline-wrap">
       <div id="ruler"></div>
       <div id="playhead"></div>
       <div id="tracks"></div>
-    </div>
-    <div id="inspector">
-      <h3>检查器</h3>
-      <div id="insp-fields">选择一个片段</div>
-      <label>startMs <input type="number" id="insp-start" min="0"></label>
-      <label>durationMs <input type="number" id="insp-dur" min="1"></label>
-      <label>volume <input type="number" id="insp-vol" step="0.1" min="0" max="2"></label>
-      <button id="insp-apply">应用(clip_update)</button>
-      <button id="insp-dup">复制到播放头(clip_duplicate)</button>
-      <button id="track-add-video">+视频轨</button>
-      <button id="track-add-audio">+音频轨</button>
     </div>
   </div>
 
@@ -122,7 +146,38 @@
   </div>
 </main>
 
-<footer><span id="status"></span></footer>
+<!-- B11-2 新建工程向导(模态) -->
+<div id="wizard" class="wizard-mask" hidden>
+  <div class="wizard-card panel">
+    <h3>新建空工程(CutForge 可独立起步,不依赖 CutFlow)</h3>
+    <label>工程名 <input type="text" id="wiz-name" placeholder="my-first-cut"></label>
+    <label>画幅
+      <select id="wiz-ratio">
+        <option value="1080x1920">9:16 竖屏(1080×1920)</option>
+        <option value="1080x1440">3:4(1080×1440)</option>
+        <option value="1920x1080">16:9 横屏(1920×1080)</option>
+      </select>
+    </label>
+    <label>帧率
+      <select id="wiz-fps"><option>24</option><option>25</option><option selected>30</option><option>50</option><option>60</option></select>
+    </label>
+    <label>初始轨道
+      <span class="toggle"><input type="checkbox" id="wiz-tr-v" checked> 视频</span>
+      <span class="toggle"><input type="checkbox" id="wiz-tr-a" checked> 音频</span>
+      <span class="toggle"><input type="checkbox" id="wiz-tr-t"> 文本</span>
+    </label>
+    <div class="hint" id="wiz-hint">将在当前工程旁创建同名目录并生成 05_ir/project.json;创建后用打印的命令打开它。</div>
+    <div class="wizard-actions">
+      <button id="wiz-create">创建</button>
+      <button id="wiz-cancel">取消</button>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <div id="toasts"></div>
+  <span id="status" class="sr-only"></span>
+</footer>
 <script src="./app.js"></script>
 </body>
 </html>

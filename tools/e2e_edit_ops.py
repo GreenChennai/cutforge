@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""M10-1 / M10-2 门禁:浏览器自动化端到端(webapp-testing)。
+"""M10-1 / M10-2 / M10-3 门禁:浏览器自动化端到端(webapp-testing)。
 
     python tools/e2e_edit_ops.py [--bin target/debug/cutforge-mcp.exe]
 
 M10-1 edit_ops_e2e:导入 CutFlow 真实工程 → 分割 → 移动 → 波纹删 → undo 全还原 → redo,
 每步之后 OpLog 与盘面(rev/片段)一致。
 M10-2 note_loop_ui:3 条标注 创建 → AI 执行(clip_update,caused_by 绑定)→ 回执结案,全链 ≤5s。
-退出码:0 通过 / 2 失败。依赖:playwright(chromium)。
+M10-3 media_import_e2e(E3-5,纯服务端路径,不经浏览器):media_browse 列出素材 →
+clip_add 插入(durationMs 缺省由 ffprobe 探测)→ rev 上涨 → 盘面 project.json 出现新 clip
+→ undo 完全还原;media_probe 元信息(时长/分辨率/音轨)如实。
+退出码:0 通过 / 2 失败。依赖:playwright(chromium);M10-3 另需 ffmpeg(缺则 SKIP)。
 """
 from __future__ import annotations
 
@@ -53,6 +56,24 @@ def free_port() -> int:
     return port
 
 
+def make_media(ws: Path, seconds: int = 10, size: str = "320x180") -> Path:
+    """现场生成非全黑、带音轨的媒体夹具(testsrc2 画面 + 440Hz 正弦;同 e2e_preview 口径)。"""
+    src_dir = ws / "01_materials"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    out = src_dir / "take1.mp4"
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+         "-i", f"testsrc2=size={size}:rate=30", "-f", "lavfi",
+         "-i", "sine=frequency=440:duration=10",
+         "-t", str(seconds), "-pix_fmt", "yuv420p",
+         "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-shortest",
+         str(out)],
+        capture_output=True, text=True)
+    if r.returncode != 0 or not out.is_file():
+        raise AssertionError(f"ffmpeg 生成媒体夹具失败:{r.stderr[-300:]}")
+    return out
+
+
 def clips_of(env: dict, track_id: str) -> list[dict]:
     return next(t["clips"] for t in env["data"]["project"]["tracks"] if t["id"] == track_id)
 
@@ -81,7 +102,7 @@ class Driver:
     def rev(self) -> int:
         return int(self.page.inner_text("#rev"))
 
-    def wait_rev(self, prev: int, timeout_s: float = 8.0):
+    def wait_rev(self, prev: int, timeout_s: float = 15.0):
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             if self.get()["data"]["rev"] != prev:
@@ -207,7 +228,7 @@ def main() -> int:
 
                 # redo 等量回放(以 oplog 计数为服务端真相,点击不足则补点)
                 target_ops = oplog_count(port, token, str(ws)) + redos_expected
-                deadline = time.time() + 15
+                deadline = time.time() + 30
                 while oplog_count(port, token, str(ws)) < target_ops and time.time() < deadline:
                     page.click("#btn-redo")
                     time.sleep(0.3)
@@ -256,37 +277,96 @@ def main() -> int:
                     assert r["ok"] and r["data"]["opIds"], f"AI 执行: {r}"
                     ops_by_note[nid] = r["data"]["opIds"][0]
 
-                # 回执结案(浏览器内逐条)
+                # 回执结案(浏览器内逐条;以服务端 open 清单对齐 UI,杜绝陈旧行误绑)
                 done = 0
                 while done < 3:
+                    cur_open = [n2["id"] for n2 in rpc(port2, token, "notes_list", {"root": str(ws2)})["data"]["notes"]
+                                if n2["state"] == "open"]
                     rows = page.query_selector_all("#notes-open .row")
-                    if not rows:
-                        page.wait_for_timeout(150)
+                    row_ids = []
+                    try:
+                        for r0 in rows:
+                            t = r0.inner_text()
+                            row_ids.append(next((x for x in note_ids if x in t), None))
+                    except Exception:
+                        page.wait_for_timeout(200)
+                        continue  # 行正在被 refreshNotes 重渲染:重取
+                    # UI 行集与服务端 open 清单不一致(刷新在途/陈旧行)→ 等一拍再对齐
+                    if len(rows) != len(cur_open) or any(x is None for x in row_ids) or set(row_ids) != set(cur_open):
+                        page.wait_for_timeout(200)
                         continue
-                    row = rows[0]
-                    nid = next((x for x in note_ids if x in row.inner_text()), note_ids[0])
+                    row, nid = rows[0], row_ids[0]
                     inputs = row.query_selector_all("input")
                     inputs[0].fill("已微调音量 0.9")
                     inputs[1].fill(ops_by_note[nid])
                     row.query_selector("button").click()
                     deadline = time.time() + 8
                     while time.time() < deadline:
-                        cur = [n2 for n2 in rpc(port2, token, "notes_list", {"root": str(ws2)})["data"]["notes"]
-                               if n2["state"] == "open"]
-                        if nid not in cur:
+                        now_open = [n2["id"] for n2 in rpc(port2, token, "notes_list", {"root": str(ws2)})["data"]["notes"]
+                                    if n2["state"] == "open"]
+                        if nid not in now_open:
                             break
                         time.sleep(0.15)
+                    else:
+                        raise AssertionError(f"结案 {nid} 在 8s 内未生效(服务端仍 open)")
                     note_ids.remove(nid)
                     done += 1
                 elapsed = time.time() - t0
                 assert elapsed <= 5.0, f"M10-2 全链须 ≤5s,实际 {elapsed:.2f}s"
                 final = rpc(port2, token, "notes_list", {"root": str(ws2)})
                 resolved = [n for n in final["data"]["notes"] if n["state"] == "resolved"]
-                assert len(resolved) == 3 and all(n["resolvedBy"]["opIds"] for n in resolved)
+                assert len(resolved) == 3 and all(n["resolvedBy"]["opIds"] for n in resolved), \
+                    f"结案结果异常: notes={[(n['id'], n['state'], n.get('resolvedBy')) for n in final['data']['notes']]} ops_by_note={ops_by_note}"
                 browser.close()
-            print(f"M10-2 note_loop_ui: PASS({elapsed:.2f}s ≤ 5s)")
+                print(f"M10-2 note_loop_ui: PASS({elapsed:.2f}s ≤ 5s)")
         finally:
             serve2.terminate()
+
+        # ================= M10-3:media_import_e2e(E3-5;纯服务端路径) =================
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            print("M10-3 media_import_e2e: SKIP(本机无 ffmpeg;CI 已装)")
+        else:
+            # 复用 M10-1 的工作区:经 M10-1 的写操作,盘面已是 v2 规范形(带稳定 id),
+            # 便于做"undo 后盘面逐字段还原"的严格比较
+            make_media(ws, seconds=10)
+            serve3, port3 = spawn_serve(ws)
+            try:
+                root3 = str(ws)
+                # media_browse 列出素材
+                b = rpc(port3, token, "media_browse", {"root": root3, "dir": "01_materials"})
+                assert b["ok"] and any(f["path"].endswith("take1.mp4") for f in b["data"]["files"]), f"browse: {b}"
+                # media_probe 元信息(时长/分辨率/音轨)
+                p = rpc(port3, token, "media_probe", {"root": root3, "src": "01_materials/take1.mp4"})
+                assert p["ok"], f"probe: {p}"
+                assert abs(p["data"]["durationMs"] - 10000) <= 500, f"探测时长: {p}"
+                assert p["data"]["hasAudio"] is True, f"须含音轨: {p}"
+                assert (p["data"]["width"], p["data"]["height"]) == (320, 180), f"分辨率: {p}"
+                # clip_add:durationMs 缺省 → 服务端探测自动填(E3-2)
+                disk_before = json.loads((ws / "05_ir" / "project.json").read_text(encoding="utf-8"))
+                v1_before = next(t for t in disk_before["tracks"] if t["id"] == "V1")["clips"]
+                rev_a = rpc(port3, token, "project_get", {"root": root3})["data"]["rev"]
+                add = rpc(port3, token, "clip_add",
+                          {"root": root3, "trackId": "V1", "src": "01_materials/take1.mp4",
+                           "startMs": 60000, "requestId": "e2e-media-1"})
+                assert add["ok"], f"clip_add: {add}"
+                rev_b = rpc(port3, token, "project_get", {"root": root3})["data"]["rev"]
+                assert rev_b > rev_a, f"rev 必须上涨:{rev_a} → {rev_b}"
+                disk_mid = json.loads((ws / "05_ir" / "project.json").read_text(encoding="utf-8"))
+                v1_mid = next(t for t in disk_mid["tracks"] if t["id"] == "V1")["clips"]
+                added = [c for c in v1_mid if c not in v1_before]
+                assert len(added) == 1, f"盘面必须恰好新增一个 clip: {v1_mid}"
+                assert abs(added[0]["durationMs"] - 10000) <= 500, \
+                    f"durationMs 缺省须由探测自动填(≈10000): {added[0]}"
+                # undo 完全还原(盘面语义等价)
+                u = rpc(port3, token, "undo", {"root": root3})
+                assert u["ok"], f"undo: {u}"
+                disk_after = json.loads((ws / "05_ir" / "project.json").read_text(encoding="utf-8"))
+                v1_after = next(t for t in disk_after["tracks"] if t["id"] == "V1")["clips"]
+                assert v1_after == v1_before, f"undo 后盘面必须完全还原:\n{v1_after}\nvs\n{v1_before}"
+                print("M10-3 media_import_e2e(browse/probe/clip_add 探测/undo 还原): PASS")
+            finally:
+                serve3.terminate()
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

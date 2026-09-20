@@ -1,5 +1,7 @@
 /* CutForge Web 编辑器(壳不持有真相:查询走投影,变更走 MCP 工具 → Op)。
- * 壳纯度纪律(check-shell-purity):禁 node/fs/子进程;时间语义一律来自内核投影。 */
+ * 壳纯度纪律(check-shell-purity):禁 node/fs/子进程;时间语义一律来自内核投影。
+ * 阶段二:素材面板(E3-4)、分组检查器(E4,字段集来自 GET /ui-fields 单一真相源)、
+ * 新建向导(B11-2)、toast/横幅/空态置灰(E8)、token 变更提示(E6-2)。 */
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -10,9 +12,23 @@ const state = {
   playing: false, baseMs: 0, t0: 0,
   pvRows: [],          // [{row, el}] —— 每个带 src 的时间线行对应一个隐藏媒体元素
   pvDrift: 0,          // 上次漂移校正时刻(节流)
+  uiFields: null,      // E4-2:GET /ui-fields 下发的可编辑字段分组(单一真相源)
+  media: [],           // E3-4:素材面板当前列表
+  conflicts: 0,        // E8:未裁决冲突数(>0 顶部停写横幅)
 };
 
-function status(msg, ok = true) { $("status").textContent = msg; $("status").style.color = ok ? "" : "#c25b5b"; }
+/* ---------------- 状态反馈(E8:toast 顶替单行 footer;#status 保留作诊断锚点) */
+
+function status(msg, ok = true) {
+  $("status").textContent = msg;
+  const box = $("toasts");
+  const t = document.createElement("div");
+  t.className = "toast" + (ok ? "" : " err");
+  t.textContent = msg;
+  box.appendChild(t);
+  while (box.children.length > 4) box.removeChild(box.firstChild);
+  setTimeout(() => t.remove(), 4000);
+}
 
 async function api(name, args = {}) {
   const resp = await fetch("/rpc", {
@@ -56,6 +72,7 @@ function renderTimeline() {
     const lane = document.createElement("div");
     lane.className = "track"; lane.style.width = width + "px";
     lane.dataset.trackId = t.id;
+    lane.dataset.kind = t.kind;
     const label = document.createElement("span");
     label.className = "lane-label"; label.textContent = t.id;
     lane.appendChild(label);
@@ -74,12 +91,25 @@ function renderTimeline() {
       lane.appendChild(el);
     }
     lane.addEventListener("mousedown", (e) => { if (e.target === lane) select(null); });
+    // E3-4:素材可拖放到任意轨道落点(dragover/drop;落点换算只做像素→ms 显示映射)
+    lane.addEventListener("dragover", (e) => { e.preventDefault(); lane.classList.add("drop-hint"); });
+    lane.addEventListener("dragleave", () => lane.classList.remove("drop-hint"));
+    lane.addEventListener("drop", (e) => {
+      e.preventDefault();
+      lane.classList.remove("drop-hint");
+      const src = e.dataTransfer.getData("text/cutforge-media");
+      if (!src) return;
+      const rect = lane.getBoundingClientRect();
+      const at = snap(Math.max(0, (e.clientX - rect.left) / state.pxPerMs));
+      insertMedia(src, t.id, at);
+    });
     tracksEl.appendChild(lane);
   }
   const ph = $("playhead");
   ph.style.left = (state.playheadMs * state.pxPerMs) + "px";
   $("playhead-ms").textContent = Math.round(state.playheadMs);
   $("rev").textContent = state.rev;
+  $("tb-time").textContent = Math.round(state.playheadMs) + "ms";
 }
 
 function findClip(id) {
@@ -90,23 +120,173 @@ function findClip(id) {
   return clip ? { track, clip } : null;
 }
 
+/* ---------------- E4 分组检查器(字段集来自 /ui-fields 单一真相源) */
+
+// 展示元数据:仅输入控件形态(min/step 等),字段全集与分组以 ui-fields 为准
+const FIELD_META = {
+  startMs:     { type: "number", step: 1, min: 0, legacy: "insp-start" },
+  durationMs:  { type: "number", step: 1, min: 1, legacy: "insp-dur" },
+  sourceInMs:  { type: "number", step: 1, min: 0 },
+  speed:       { type: "number", step: 0.05, min: 0.25, max: 4 },
+  volume:      { type: "number", step: 0.1, min: 0, max: 2, legacy: "insp-vol" },
+  opacity:     { type: "number", step: 0.05, min: 0, max: 1 },
+  scale:       { type: "number", step: 0.05, min: 0 },
+  text:        { type: "text" },
+  freezeMs:    { type: "number", step: 1, min: 0 },
+};
+
+function buildInspectorGroups() {
+  const host = $("insp-groups");
+  host.innerHTML = "";
+  if (!state.uiFields || !state.uiFields.editable) return;
+  for (const [group, fields] of Object.entries(state.uiFields.editable)) {
+    const box = document.createElement("fieldset");
+    box.className = "insp-group";
+    const legend = document.createElement("legend");
+    legend.textContent = group;
+    box.appendChild(legend);
+    for (const f of fields) {
+      const meta = FIELD_META[f] || { type: "text" };
+      const label = document.createElement("label");
+      label.textContent = f;
+      const input = document.createElement("input");
+      input.type = meta.type;
+      if (meta.step !== undefined) input.step = meta.step;
+      if (meta.min !== undefined) input.min = meta.min;
+      if (meta.max !== undefined) input.max = meta.max;
+      // 兼容既有 e2e/手势锚点:基础三字段沿用原 id
+      input.id = meta.legacy || ("insp-f-" + f);
+      input.dataset.field = f;
+      label.appendChild(input);
+      box.appendChild(label);
+    }
+    host.appendChild(box);
+  }
+}
+
+// 只读展示(E4-3):投影里有、ClipPatch 未承接的字段(转场/位置/淡入淡出等)
+function renderReadonly(hit) {
+  const box = $("insp-readonly");
+  const ro = (state.uiFields && state.uiFields.readonly) || [];
+  const vals = [];
+  for (const f of ro) {
+    const v = hit.clip[f];
+    if (v === undefined || v === null) continue;
+    vals.push(`${f}=${JSON.stringify(v)}`);
+  }
+  if (!vals.length) { box.hidden = true; box.textContent = ""; return; }
+  box.hidden = false;
+  box.textContent = "只读(内核 ClipPatch 暂未承接,E4-3):" + vals.join("  ");
+}
+
+function setInspectEnabled(on) {
+  $("insp-apply").disabled = !on;
+  $("insp-dup").disabled = !on;
+}
+
 function select(id) {
   state.selected = id;
   document.querySelectorAll(".clip.selected").forEach((e) => e.classList.remove("selected"));
-  if (!id) { $("sel-info").textContent = "未选中片段"; $("insp-fields").textContent = "选择一个片段"; renderTimeline(); return; }
+  if (!id) {
+    $("sel-info").textContent = "未选中片段:点击时间线片段,或从左侧素材面板双击插入(S 分割 / Del 删除)";
+    $("insp-fields").textContent = "未选中片段:点击时间线片段,或从左侧素材面板双击插入";
+    document.querySelectorAll("#insp-groups input").forEach((i) => { i.value = ""; });
+    $("insp-readonly").hidden = true;
+    setInspectEnabled(false);
+    renderTimeline();
+    return;
+  }
   const hit = findClip(id);
   if (!hit) return;
   const el = document.querySelector(`.clip[data-id="${id}"]`);
   if (el) el.classList.add("selected");
   $("sel-info").textContent = `选中 ${id}(${hit.track.kind})`;
   $("insp-fields").textContent = `id=${id} track=${hit.track.id} src=${hit.clip.src ?? "-"}`;
-  $("insp-start").value = hit.clip.startMs;
-  $("insp-dur").value = hit.clip.durationMs;
-  $("insp-vol").value = hit.clip.volume ?? 0;
+  for (const input of document.querySelectorAll("#insp-groups input")) {
+    const f = input.dataset.field;
+    const v = hit.clip[f];
+    input.value = (v === undefined || v === null) ? "" : v;
+  }
+  renderReadonly(hit);
+  setInspectEnabled(true);
   renderTimeline();
 }
 
-/* ---------------- E2 预览(画质代理;一切时间字段来自 timeline_get 投影) ---------------- */
+async function applyInspector() {
+  if (!state.selected) return;
+  const hit = findClip(state.selected);
+  if (!hit) return;
+  const patch = {};
+  for (const input of document.querySelectorAll("#insp-groups input")) {
+    const f = input.dataset.field;
+    if (input.value === "") continue;
+    const meta = FIELD_META[f] || {};
+    const v = meta.type === "number" ? Number(input.value) : input.value;
+    if (Number.isNaN(v)) continue;
+    const cur = hit.clip[f];
+    const curN = (cur === undefined || cur === null) ? null : cur;
+    if (meta.type === "number" ? Number(v) !== Number(curN ?? NaN) : String(v) !== String(curN ?? "")) {
+      patch[f] = v;
+    }
+  }
+  if (!Object.keys(patch).length) { status("无改动"); return; }
+  const r = await api("clip_update", { clipId: state.selected, patch });
+  if (r.ok) status(`已应用 ${Object.keys(patch).join("/")}(可撤销)`);
+  await refresh();
+}
+
+/* ---------------- E3-4 素材面板 ---------------- */
+
+function kindOfMedia(k) { return k === "audio" ? "audio" : (k === "image" ? "video" : k); }
+
+async function refreshMedia() {
+  const dir = $("media-dir").value.trim();
+  const env = await api("media_browse", dir ? { dir } : {});
+  const list = $("media-list");
+  if (!env.ok) { list.innerHTML = `<div class="empty-hint">${escapeHtml(env.message)}</div>`; return; }
+  state.media = env.data.files || [];
+  list.innerHTML = "";
+  if (!state.media.length) {
+    list.innerHTML = `<div class="empty-hint">(${escapeHtml(env.data.dir || "工程根")}) 无可导入媒体;把 mp4/mp3/png 等放进该目录后点 ⟳</div>`;
+    return;
+  }
+  for (const f of state.media) {
+    const row = document.createElement("div");
+    row.className = "media-item";
+    row.draggable = true;
+    row.title = `${f.path}${f.durationMs ? ` · ${f.durationMs}ms` : ""}`;
+    row.innerHTML = `<span class="badge">${f.kind}</span><span class="bd">${escapeHtml(f.name)}${
+      f.durationMs ? ` <span class="dim">${(f.durationMs / 1000).toFixed(1)}s</span>` : ""}</span>`;
+    row.addEventListener("dblclick", () => insertMedia(f.path, targetTrackFor(f.kind), snap(state.playheadMs)));
+    row.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/cutforge-media", f.path));
+    list.appendChild(row);
+  }
+}
+
+function targetTrackFor(kind) {
+  const want = kindOfMedia(kind);
+  const tracks = (state.project && state.project.tracks) || [];
+  return tracks.find((t) => t.kind === want)?.id
+      || tracks.find((t) => t.kind === "video")?.id
+      || tracks[0]?.id || null;
+}
+
+async function insertMedia(src, trackId, startMs) {
+  if (!trackId) { status("工程没有轨道:先点「+视频轨」再插入素材", false); return; }
+  // durationMs 优先用浏览元信息(避免无谓的二次探测);缺省由服务端 ffprobe 自动填
+  const item = state.media.find((m) => m.path === src);
+  const args = { trackId, src, startMs, requestId: `ui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+  if (item && item.durationMs) args.durationMs = item.durationMs;
+  const r = await api("clip_add", args);
+  if (!r.ok) return;
+  status(`已插入 ${src.split("/").pop()} → ${trackId}@${startMs}ms`);
+  await refresh();
+  const clips = state.timeline.filter((c) => c.track === trackId);
+  const mine = clips[clips.length - 1];
+  if (mine) select(mine.id);
+}
+
+/* ---------------- E2 预览(画质代理;一切时间字段来自 timeline_get 投影) */
 
 function mediaUrl(src) {
   return `/media?path=${encodeURIComponent(src)}&token=${encodeURIComponent(state.token)}`;
@@ -242,7 +422,7 @@ async function refreshExportFiles() {
     : "(暂无产物)";
 }
 
-/* ---------------- E5 导出(cutforge 后端走 render_run/render_progress 异步轮询) ---------------- */
+/* ---------------- E5 导出(cutforge 后端走 render_run/render_progress 异步轮询) */
 
 let expPoll = null;
 
@@ -277,7 +457,7 @@ async function runExport() {
   }
 }
 
-/* ---------------- 手势(全部落为 MCP 工具调用) ---------------- */
+/* ---------------- 手势(全部落为 MCP 工具调用) */
 
 function onClipMouseDown(e, clip, kind, trackId) {
   e.stopPropagation();
@@ -346,7 +526,7 @@ async function rippleDelete(clipId) {
 }
 
 async function doSplit() {
-  if (!state.selected) return status("先选中片段再分割", false);
+  if (!state.selected) { status("先选中片段再分割(点时间线上的片段)", false); return; }
   const hit = findClip(state.selected);
   if (!hit) return;
   const { clip } = hit;
@@ -371,9 +551,20 @@ async function refresh() {
   renderTimeline();
   rebuildPreviewMedia();
   syncPreview(true);
+  await refreshConflictBanner();
   if ($("tab-notes").classList.contains("active")) await refreshNotes();
   if ($("tab-diff").classList.contains("active")) await refreshDiff();
   if ($("tab-conflicts").classList.contains("active")) await refreshConflicts();
+}
+
+/* E8:冲突未裁决 → 顶部固定停写横幅(写操作会在服务端被停写,这里只提示) */
+async function refreshConflictBanner() {
+  const env = await api("conflict_list");
+  const n = env.ok ? (env.data.conflicts || []).length : 0;
+  state.conflicts = n;
+  const b = $("conflict-banner");
+  b.hidden = n === 0;
+  if (n) b.textContent = `⛔ 存在 ${n} 项未裁决冲突,已停写(到「冲突」页查看;裁决后删除 .cutforge/conflicts/*.json)`;
 }
 
 async function pollEvents() {
@@ -436,6 +627,39 @@ async function refreshConflicts() {
 
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch])); }
 
+/* ---------------- B11-2 新建工程向导 ---------------- */
+
+function openWizard() {
+  $("wizard").hidden = false;
+  $("wiz-name").value = "";
+  $("wiz-name").focus();
+}
+
+async function createProject() {
+  const name = $("wiz-name").value.trim();
+  if (!name || /[\\/:*?"<>|]/.test(name)) { status("工程名必填,且不能含路径非法字符", false); return; }
+  const [w, h] = $("wiz-ratio").value.split("x").map(Number);
+  const tracks = [];
+  if ($("wiz-tr-v").checked) tracks.push("video");
+  if ($("wiz-tr-a").checked) tracks.push("audio");
+  if ($("wiz-tr-t").checked) tracks.push("text");
+  if (!tracks.length) { status("至少勾选一条初始轨道", false); return; }
+  // 新工程目录 = 当前工程根的同名父目录下(壳只做字符串拼接,创建由服务端完成)
+  const sep = state.root.includes("\\") ? "\\" : "/";
+  const parts = state.root.replace(/[\\/]+$/, "").split(/[\\/]/);
+  parts.pop();
+  const target = parts.join(sep) + sep + name;
+  const r = await api("project_new", {
+    root: target, slug: name, fps: Number($("wiz-fps").value), canvasW: w, canvasH: h, tracks,
+  });
+  if (!r.ok) return;
+  $("wizard").hidden = true;
+  const hint = `已创建 ${r.data.project}。新工程需单独启动服务:cutforge-cli serve "${target}" --open`;
+  status(hint);
+  $("token-banner").hidden = false;
+  $("token-banner").textContent = "✅ " + hint;
+}
+
 /* ---------------- 启动 ---------------- */
 
 function bindUI() {
@@ -465,16 +689,9 @@ function bindUI() {
   });
   $("btn-undo").addEventListener("click", async () => { await api("undo", {}); await refresh(); });
   $("btn-redo").addEventListener("click", async () => { await api("redo", {}); await refresh(); });
-  $("insp-apply").addEventListener("click", async () => {
-    if (!state.selected) return;
-    const patch = {};
-    const s = Number($("insp-start").value), d = Number($("insp-dur").value), v = Number($("insp-vol").value);
-    const hit = findClip(state.selected);
-    if (hit && s !== hit.clip.startMs) patch.startMs = s;
-    if (hit && d !== hit.clip.durationMs) patch.durationMs = d;
-    if (hit && v !== (hit.clip.volume ?? 0)) patch.volume = v;
-    if (Object.keys(patch).length) { await api("clip_update", { clipId: state.selected, patch }); await refresh(); }
-  });
+  $("pv-to-start").addEventListener("click", () => seekTo(0));
+  $("pv-to-end").addEventListener("click", () => seekTo(timelineEndMs()));
+  $("insp-apply").addEventListener("click", applyInspector);
   $("insp-dup").addEventListener("click", async () => {
     if (!state.selected) return;
     await api("clip_duplicate", { clipId: state.selected, startMs: snap(state.playheadMs) });
@@ -482,6 +699,14 @@ function bindUI() {
   });
   $("track-add-video").addEventListener("click", async () => { await api("track_add", { kind: "video" }); await refresh(); });
   $("track-add-audio").addEventListener("click", async () => { await api("track_add", { kind: "audio" }); await refresh(); });
+  $("track-add-text").addEventListener("click", async () => { await api("track_add", { kind: "text" }); await refresh(); });
+  // ---- E3-4 素材面板 ----
+  $("media-refresh").addEventListener("click", refreshMedia);
+  $("media-dir").addEventListener("keydown", (e) => { if (e.key === "Enter") refreshMedia(); });
+  // ---- B11-2 新建向导 ----
+  $("btn-project-new").addEventListener("click", openWizard);
+  $("wiz-cancel").addEventListener("click", () => { $("wizard").hidden = true; });
+  $("wiz-create").addEventListener("click", createProject);
   $("note-create").addEventListener("click", async () => {
     const body = $("note-body").value.trim();
     if (!body) return status("标注正文必填", false);
@@ -505,6 +730,8 @@ function bindUI() {
       setPlaying(!state.playing);
     } else if (e.key === "ArrowLeft") { e.preventDefault(); seekTo(state.playheadMs - frameMs()); }
     else if (e.key === "ArrowRight") { e.preventDefault(); seekTo(state.playheadMs + frameMs()); }
+    else if (e.key === "Home") { e.preventDefault(); seekTo(0); }
+    else if (e.key === "End") { e.preventDefault(); seekTo(timelineEndMs()); }
     else if (e.key === "s" || e.key === "S") { await doSplit(); }
     else if (e.key === "Delete") {
       if (!state.selected) return;
@@ -512,7 +739,7 @@ function bindUI() {
       else { await api("clip_delete", { clipId: state.selected }); state.selected = null; await refresh(); }
     }
     else if ((e.ctrlKey || e.metaKey) && e.key === "z") { await api("undo", {}); await refresh(); }
-    else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.shiftKey)) { await api("redo", {}); await refresh(); }
+    else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.shiftKey && e.key === "Z"))) { await api("redo", {}); await refresh(); }
     else if ((e.ctrlKey || e.metaKey) && e.key === "c") { state.clipboard = state.selected; }
     else if ((e.ctrlKey || e.metaKey) && e.key === "v") {
       if (state.clipboard) { await api("clip_duplicate", { clipId: state.clipboard, startMs: snap(state.playheadMs) }); await refresh(); }
@@ -529,12 +756,40 @@ function bindUI() {
 async function boot() {
   const params = new URLSearchParams(location.search);
   state.token = params.get("token") || "";
-  const sess = await fetch("/session", { headers: { "Authorization": `Bearer ${state.token}` } }).then((r) => r.json());
+  let sess;
+  try {
+    sess = await fetch("/session", { headers: { "Authorization": `Bearer ${state.token}` } }).then((r) => {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    });
+  } catch {
+    // E6-2:token 已随服务重启更换(或缺失)——旧链接无法过数据面鉴权
+    $("token-banner").hidden = false;
+    $("token-banner").textContent = "⚠ token 已变更或缺失(服务重启会换新 token):请回到服务窗口复制最新链接重新打开本页。";
+    status("token 鉴权失败", false);
+    return;
+  }
   state.root = sess.root;
+  if (sess.token && sess.token !== state.token) {
+    // 正常经 URL 进入时二者相等;不等说明链接与令牌不一致,提示刷新
+    $("token-banner").hidden = false;
+    $("token-banner").textContent = "⚠ 本页 token 与服务当前 token 不一致,请改用服务窗口打印的最新链接。";
+  }
   $("session-info").textContent = `root=${sess.root}`;
   bindUI();
+  // E4-2:检查器字段分组由服务端单一真相源下发(壳不读文件)
+  try {
+    const uf = await fetch("/ui-fields", { headers: { "Authorization": `Bearer ${state.token}` } });
+    if (uf.ok) {
+      state.uiFields = await uf.json();
+      buildInspectorGroups();
+    } else {
+      status("ui-fields 下发失败:检查器退化为空分组", false);
+    }
+  } catch { status("ui-fields 下发异常", false); }
   await refresh();
   await refreshExportFiles();
+  await refreshMedia();
   requestAnimationFrame(pvTick);
   pollEvents();
 }

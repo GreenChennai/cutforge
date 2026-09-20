@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。34 工具 = 11 查询 + 16 写 + 7 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。38 工具 = 13 查询 + 18 写 + 7 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
  "channels": [
   "stdio",
   "embedded-http"
@@ -1102,13 +1102,64 @@
    "name": "timeline_get",
    "kind": "query",
    "idempotent": true,
-   "description": "时间线投影(逐 clip 全字段:id/track/trackKind/src/startMs/endMs/durationMs/sourceInMs/speed/volume/opacity/scale/position/overlay/motion/text/freezeMs;endMs 由内核计算,壳禁时间线语义)",
+   "description": "时间线投影(逐 clip 全字段:id/track/trackKind/src/startMs/endMs/durationMs/sourceInMs/speed/volume/opacity/scale/position/overlay/motion/text/freezeMs/transition/fade/punchIn/role;endMs 由内核计算,壳禁时间线语义;后四者为 E4-3 只读展示面)",
    "inputSchema": {
     "type": "object",
     "properties": {
      "root": {
       "type": "string",
       "description": "工程目录绝对路径"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "media_probe",
+   "kind": "query",
+   "idempotent": true,
+   "description": "媒体元信息(E3-2/B12 probe 接线):durationMs/分辨率/是否含音轨;src 为工程内相对路径;ffprobe 不可用如实 DEP_MISSING",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "src": {
+      "type": "string",
+      "description": "媒体相对路径(工程根内;拒绝 .. 与绝对路径)"
+     }
+    },
+    "required": [
+     "root",
+     "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "media_browse",
+   "kind": "query",
+   "idempotent": true,
+   "description": "素材浏览(E3-3):列工程内可导入媒体(name/path/bytes/kind;前 64 个附 durationMs)。壳素材面板与 Agent 共用;路径校验与 /media 同一 canonicalize 实现",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "dir": {
+      "type": "string",
+      "description": "浏览起始目录(工程内相对路径;缺省 = 工程根)"
      }
     },
     "required": [
@@ -1164,6 +1215,134 @@
     "required": [
      "root",
      "runId"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_add",
+   "kind": "write",
+   "idempotent": false,
+   "description": "素材导入/新建片段(E3-1):内部走 Command::ClipInsert;durationMs 缺省由 ffprobe 探测自动填(E3-2);src 须为工程内相对路径;非幂等写,需 requestId 去重",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "requestId": {
+      "type": "string",
+      "description": "非幂等写操作去重键"
+     },
+     "trackId": {
+      "type": "string",
+      "description": "目标轨道 id(如 V1)"
+     },
+     "src": {
+      "type": "string",
+      "description": "素材相对路径(工程根内;拒绝 .. 与绝对路径)"
+     },
+     "startMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "时间线落点(毫秒;同轨重叠 → GUARD_FAILED)"
+     },
+     "durationMs": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "description": "片段时长;缺省 = ffprobe 探测的媒体时长 - sourceInMs"
+     },
+     "sourceInMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "素材入点(缺省 0)"
+     },
+     "volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "description": "音量(缺省自然音量)"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "trackId",
+     "src",
+     "startMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "project_new",
+   "kind": "write",
+   "idempotent": true,
+   "description": "新建空工程(B11):最小 IR(canvas/fps/schemaVersion/稳定 id 空轨道);与 CLI `new` 子命令同走 cutforge_io::scaffold;工程已存在拒绝覆盖",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "目标工程目录(绝对路径;05_ir/project.json 将创建于此)"
+     },
+     "slug": {
+      "type": "string",
+      "description": "工程标识;缺省取目录名"
+     },
+     "fps": {
+      "type": "integer",
+      "enum": [
+       24,
+       25,
+       30,
+       50,
+       60
+      ],
+      "description": "帧率(契约枚举;缺省 30)"
+     },
+     "canvasW": {
+      "type": "integer",
+      "enum": [
+       1080,
+       1440,
+       1920
+      ],
+      "description": "画幅宽(缺省 1080)"
+     },
+     "canvasH": {
+      "type": "integer",
+      "enum": [
+       1080,
+       1440,
+       1920
+      ],
+      "description": "画幅高(缺省 1920)"
+     },
+     "tracks": {
+      "type": "array",
+      "items": {
+       "enum": [
+        "video",
+        "audio",
+        "text"
+       ]
+      },
+      "description": "初始空轨道(缺省 [video, audio] → V1+A1)"
+     }
+    },
+    "required": [
+     "root"
     ]
    },
    "outputSchema": {

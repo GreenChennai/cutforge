@@ -98,9 +98,9 @@ fn silence_regions(p: &Path) -> Vec<(f64, f64)> {
 }
 
 fn write_project(dir: &Path, slug: &str, v: &Value) -> PathBuf {
-    std::fs::create_dir_all(dir.join("05_ir")).unwrap();
+    // 唯一落盘点纪律(M2-4):测试夹具同样走 atomic.rs(临时文件+rename 原子替换,父目录自建)
     let p = dir.join("05_ir/project.json");
-    std::fs::write(&p, serde_json::to_string_pretty(v).unwrap()).unwrap();
+    cutforge_io::atomic::atomic_write(&p, serde_json::to_string_pretty(v).unwrap().as_bytes()).unwrap();
     p
 }
 

@@ -211,3 +211,14 @@ OTIO 违背最小依赖需独立论证。触发重启条件与启动资产(parit
   新增 `tools/e2e_from_zero.py`(CLI new → 导入 → 改 4 字段 → 导出成片时长对拍 + 渲染期间并发
   + RT-1 摘要)入 CI;check-shell-purity / check-ui-fields / check-write-paths / check-deps 绿;
   clippy 无新告警。
+
+## 版本 v0.4.0(2026-09-21 发行)
+
+- **版本**:workspace 0.3.0 → **0.4.0**(阶段二编辑器闭环批次);tag v0.4.0。
+- **本批内容**:E3 素材导入(clip_add/media_probe/media_browse + 壳素材面板)/ E4 检查器
+  ui-fields 单一真相源 + check-ui-fields 机械校验 / E6 只读并发(查询类不持排他锁,
+  并发 e2e 断言)/ B11 从零新建(scaffold + project_new + 新建向导)/ RT-1 会话变更摘要
+  / RT-5 watcher 忽略 CutFlow 记账 / write-paths 基线 4 处清账(判定器 remove_file
+  漏报一并修复)/ J6 剪映出口对拍(tests/test_jy_bridge.py,与 CutFlow rs_jy_draft
+  编排同一脚本)/ ADR-0006~0008 / NOTICE·README 定位升级(可独立起步的编辑器)。
+- **CI**:三 job 全绿;tests job 的 pytest 含跨仓桥测试(CUTFLOW_REPO 浅克隆同跑)。

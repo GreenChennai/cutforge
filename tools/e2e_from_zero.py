@@ -101,9 +101,13 @@ def main() -> int:
         assert r.returncode == 0, f"cli new 失败: rc={r.returncode} {r.stdout} {r.stderr}"
         doc = json.loads(r.stdout.strip().splitlines()[-1])
         assert doc["ok"], f"cli new: {doc}"
-        (proj / "01_materials").mkdir(parents=True, exist_ok=True)
-        project_json = proj / "05_ir" / "project.json"
-        assert project_json.is_file(), "new 必须生成 05_ir/project.json"
+        # v0.5.0 目录契约中文化:new 产中文目录;兼容旧布局(双布局感知,断言两态皆过)
+        new_layout = (proj / "05_时间线工程").is_dir()
+        timeline_rel = "05_时间线工程" if new_layout else "05_ir"
+        materials_rel = "01_原始素材" if new_layout else "01_materials"
+        (proj / materials_rel).mkdir(parents=True, exist_ok=True)
+        project_json = proj / timeline_rel / "project.json"
+        assert project_json.is_file(), f"new 必须生成 {timeline_rel}/project.json"
         pj = json.loads(project_json.read_text(encoding="utf-8"))
         assert pj["schemaVersion"] == "2.0.0", f"schemaVersion: {pj.get('schemaVersion')}"
         assert [t["id"] for t in pj["tracks"]] == ["V1", "A1"], f"稳定 id: {pj['tracks']}"
@@ -111,7 +115,7 @@ def main() -> int:
         print("B11-1/B11-2 新建空工程(模板/schemaVersion/稳定 id): PASS")
 
         # ---------- 素材夹具 ----------
-        src = proj / "01_materials" / "main.mp4"
+        src = proj / materials_rel / "main.mp4"
         rr = subprocess.run(
             ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
              "-i", "testsrc2=size=640x360:rate=30", "-f", "lavfi",
@@ -149,16 +153,16 @@ def main() -> int:
             assert "editable" in uf and len(uf["editable"]) >= 4, f"ui-fields 分组: {uf.keys()}"
             print(f"/ui-fields 单一真相源下发(分组 {len(uf['editable'])}): PASS")
 
-            code, _ = http_get(f"http://127.0.0.1:{port}/media/browse?dir=01_materials")
+            code, _ = http_get(f"http://127.0.0.1:{port}/media/browse?dir={materials_rel}")
             assert code == 401, f"/media/browse 无 token 应 401,实得 {code}"
-            code, body = http_get(f"http://127.0.0.1:{port}/media/browse?dir=01_materials", token)
+            code, body = http_get(f"http://127.0.0.1:{port}/media/browse?dir={materials_rel}", token)
             assert code == 200, f"/media/browse 带 token 应 200,实得 {code}"
             files = json.loads(body)["files"]
             assert any(f["path"].endswith("main.mp4") for f in files), f"browse: {files}"
             print("/media/browse 端点(鉴权/列表): PASS")
 
             # ---------- 2b. media_browse + media_probe 工具 ----------
-            b = rpc(port, token, "media_browse", {"root": root_s, "dir": "01_materials"})
+            b = rpc(port, token, "media_browse", {"root": root_s, "dir": materials_rel})
             assert b["ok"] and b["data"]["total"] >= 1, f"media_browse: {b}"
             item = next(f for f in b["data"]["files"] if f["path"].endswith("main.mp4"))
             p = rpc(port, token, "media_probe", {"root": root_s, "src": item["path"]})

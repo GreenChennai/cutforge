@@ -10,6 +10,7 @@ use cutforge_core::command::{ClipPatch, Command};
 use cutforge_core::engine::{Answer, ApplyOpts, Query};
 use cutforge_core::oplog::{Actor, ActorKind};
 use cutforge_core::anchor::{Anchor, AnchorKind};
+use cutforge_io::paths;
 use cutforge_io::Workspace;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -143,11 +144,18 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             Answer::Project(v) => envelope(true, "OK", "工程视图", json!({"project": v, "rev": ws.rev()})),
             _ => unreachable!(),
         },
-        "wordline_get" => read_truth(&ws_root, "05_ir/wordline.json", "wordline"),
+        "wordline_get" => read_truth(
+            &paths::resolve_rel(&ws_root, paths::WORDLINE_REL, paths::LEGACY_WORDLINE_REL),
+            "wordline",
+        ),
         "cutlist_get" => {
             let applied = args["applied"].as_bool().unwrap_or(false);
-            let rel = if applied { "04_cut/cutlist.applied.json" } else { "04_cut/cutlist.json" };
-            read_truth(&ws_root, rel, "cutlist")
+            let (rel, legacy) = if applied {
+                (paths::CUTLIST_APPLIED_REL, paths::LEGACY_CUTLIST_APPLIED_REL)
+            } else {
+                (paths::CUTLIST_REL, paths::LEGACY_CUTLIST_REL)
+            };
+            read_truth(&paths::resolve_rel(&ws_root, rel, legacy), "cutlist")
         }
         "notes_list" => {
             let state = args["state"].as_str().and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
@@ -482,9 +490,9 @@ fn reject_to_envelope(msg: String) -> Value {
     envelope(false, code, &msg, json!({}))
 }
 
-fn read_truth(root: &Path, rel: &str, label: &str) -> Value {
-    let p = root.join(rel);
-    match std::fs::read_to_string(&p) {
+/// 真相源文件读取(wordline/cutlist;`root` 已按 paths 双布局解析到具体文件)。
+fn read_truth(p: &Path, label: &str) -> Value {
+    match std::fs::read_to_string(p) {
         Ok(text) => match serde_json::from_str::<Value>(&text) {
             Ok(v) => envelope(true, "OK", label, json!({label.to_string().replace('-', "_"): v})),
             Err(e) => envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
@@ -651,9 +659,10 @@ fn media_browse_payload(root: &Path, dir: &str) -> Result<Value, String> {
     Ok(json!({"dir": dir, "total": files.len(), "truncated": truncated, "files": files}))
 }
 
-/// render_probe(E6-3 起):仅读 06_output 目录存在性,不再为此申请排他锁。
+/// render_probe(E6-3 起):仅读成片输出目录存在性,不再为此申请排他锁。
+/// 目录名走 paths 契约(`06_成片输出`;0.4.x 旧工程回退 `06_output`)。
 fn render_probe_tool(root: &Path) -> Value {
-    let dir = root.join("06_output");
+    let dir = paths::resolve_dir(root, paths::OUTPUT, paths::LEGACY_OUTPUT);
     let mut files = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
@@ -662,13 +671,17 @@ fn render_probe_tool(root: &Path) -> Value {
             }
         }
     }
-    envelope(true, "OK", "产物清单", json!({"dir": "06_output", "files": files}))
+    let dir_name = dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| paths::OUTPUT.to_string());
+    envelope(true, "OK", "产物清单", json!({"dir": dir_name, "files": files}))
 }
 
-/// stage_status(E6-3 起):编排 + _state 存在性,均不需要打开工作区(不持排他锁)。
+/// stage_status(E6-3 起):编排 + 内部状态目录存在性,均不需要打开工作区(不持排他锁)。
 fn stage_status_tool(ws_root: &Path) -> Value {
     // M9-3 同口径:优先解析 rs_run --status(done/stale/missing + staleReason),
-    // CutFlow 不可用时回退 _state 存在性并如实标注 degraded。
+    // CutFlow 不可用时回退 _内部状态(旧布局 _state)存在性并如实标注 degraded。
     let resp = orchestrate(ws_root, "rs_run.py", &[json!("--status")]);
     if resp.get("ok") == Some(&json!(true)) {
         if let Some(stages) = resp.get("data").and_then(|d| d.get("stages")).cloned() {
@@ -682,12 +695,12 @@ fn stage_status_tool(ws_root: &Path) -> Value {
                 }
         }
     }
-    let dir = ws_root.join("_state");
+    let dir = paths::resolve_dir(ws_root, paths::STATE, paths::LEGACY_STATE);
     let mut map = serde_json::Map::new();
     for s in cutforge_io::stage::STAGES {
         map.insert(s.to_string(), json!(dir.join(format!("{s}.json")).is_file()));
     }
-    envelope(true, "OK", "阶段状态(_state 存在性;rs_run 不可用,降级)", json!({"stages": map, "source": "existence"}))
+    envelope(true, "OK", "阶段状态(_内部状态 存在性;rs_run 不可用,降级)", json!({"stages": map, "source": "existence"}))
 }
 
 /// B11-1:project_new——空工程模板 + 建盘(与 CLI `new` 子命令同走 cutforge_io::scaffold,
@@ -771,7 +784,8 @@ fn count_sfx_near(project: &cutforge_core::model::Project, t_ms: u64, window: u6
 /// RFC7386 merge-patch 应用到 cutlist.json,schema 校验后走 record_change 审计。
 /// 文件本体由 Workspace 的 reconcile(先文件后记账)落盘——不再旁路自写。
 fn apply_cut_merge_patch(ws: &mut Workspace, patch: &Value) -> Value {
-    let rel = ws.root().join("04_cut/cutlist.json");
+    // cutlist 按 Workspace 盘面布局解析(新 04_粗剪决策 / 旧 04_cut)
+    let rel = paths::resolve_rel(ws.root(), paths::CUTLIST_REL, paths::LEGACY_CUTLIST_REL);
     let Ok(text) = std::fs::read_to_string(&rel) else {
         return envelope(false, "NO_CONFIG", &format!("文件不存在: {}", rel.display()), json!({}));
     };
@@ -1174,14 +1188,15 @@ pub fn serve_stdio() -> i32 {
 /// E1-6:serve 启动自检。缺工程(致命)→ Err;其余(渲染依赖/静态资源)→ 打印 △ 提示。
 fn serve_preflight(root: &Path, web_dir: &Path) -> Result<(), String> {
     eprintln!("── CutForge 编辑器启动自检 ──");
-    let project = root.join("05_ir").join("project.json");
+    // 目录契约 0.5:优先 05_时间线工程/project.json,0.4.x 旧布局 05_ir/ 兼容
+    let project = paths::project_path(root);
     eprintln!("{} 工程: {}", if project.is_file() { "✓" } else { "✗" }, project.display());
     if !root.is_dir() {
         return Err(format!("工程目录不存在:{}(补救:检查 --root 拼写,或先用 CutFlow 建工程)", root.display()));
     }
     if !project.is_file() {
         return Err(format!(
-            "缺 05_ir/project.json:{} 不是 CutForge/CutFlow 工程(补救:用 CutFlow `rs_run.py --init` 建工程,或换 --root)",
+            "缺 05_时间线工程/project.json(兼容旧 05_ir/):{} 不是 CutForge/CutFlow 工程(补救:用 CutFlow `rs_run.py --init` 建工程,或换 --root)",
             root.display()
         ));
     }
@@ -1248,7 +1263,7 @@ pub fn default_web_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web")
 }
 
-/// E1-4/E6-1:交互式工程选择(05_ir/project.json 存在者;按修改时间倒序,回车 = 最近工程)。
+/// E1-4/E6-1:交互式工程选择(工程存在者,新旧布局皆认;按修改时间倒序,回车 = 最近工程)。
 /// 单一实现纪律:cli serve 与 mcp serve 的无 --root 交互列工程都走这里(不再各写一份)。
 pub fn pick_project_interactive() -> Option<PathBuf> {
     use std::io::Write as _;
@@ -1263,7 +1278,7 @@ pub fn pick_project_interactive() -> Option<PathBuf> {
         if depth > 2 {
             continue;
         }
-        if d.join("05_ir").join("project.json").is_file() {
+        if paths::has_project(&d) {
             cands.push(d.clone());
         }
         if let Ok(rd) = std::fs::read_dir(&d) {
@@ -1275,8 +1290,7 @@ pub fn pick_project_interactive() -> Option<PathBuf> {
             }
         }
     }
-    cands.sort_by_key(|p| std::cmp::Reverse(
-        p.join("05_ir").join("project.json").metadata().and_then(|m| m.modified()).ok()));
+    cands.sort_by_key(|p| std::cmp::Reverse(paths::project_path(p).metadata().and_then(|m| m.modified()).ok()));
     if cands.is_empty() {
         return None;
     }
@@ -1313,6 +1327,9 @@ pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open
         "token": token,
         "pid": std::process::id(),
         "startedAt": cutforge_core::timeutil::now_rfc3339(),
+        // 目录契约 0.5:project.json 的工程内相对路径(新布局中文目录;旧布局回退英文),
+        // 供壳组装外部脚本参数(如 rs_render 的工程路径)时使用,壳不得硬编码目录名
+        "projectRel": paths::project_rel_on_disk(root),
     });
     let dir = root.join(".cutforge");
     let _ = std::fs::create_dir_all(&dir);
@@ -1905,17 +1922,17 @@ mod tests {
         assert_eq!(no_track["code"], json!("PRECONDITION_FAILED"), "{no_track}");
 
         // 显式时长:不依赖 ffprobe(CI 兜底路径);requestId 去重语义由引擎承接
-        cutforge_io::fsutil::ensure(&root.join("01_materials")).unwrap();
-        cutforge_io::atomic::atomic_write(&root.join("01_materials/take1.mp4"), b"x").unwrap();
+        cutforge_io::fsutil::ensure(&root.join("01_原始素材")).unwrap();
+        cutforge_io::atomic::atomic_write(&root.join("01_原始素材/take1.mp4"), b"x").unwrap();
         let add = dispatch("clip_add", &json!({
-            "root": root_s, "trackId": "V1", "src": "01_materials/take1.mp4",
+            "root": root_s, "trackId": "V1", "src": "01_原始素材/take1.mp4",
             "startMs": 999_000, "durationMs": 1500, "volume": 0.5, "requestId": "add-1",
         }));
         assert_eq!(add["code"], json!("OK"), "clip_add 必须成功: {add}");
         assert!(add["data"]["rev"].as_u64().unwrap() > rev0, "rev 必须上涨");
         let after = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
         let v1 = after["tracks"].as_array().unwrap().iter().find(|t| t["id"] == "V1").unwrap();
-        let clip = v1["clips"].as_array().unwrap().iter().find(|c| c["src"] == "01_materials/take1.mp4");
+        let clip = v1["clips"].as_array().unwrap().iter().find(|c| c["src"] == "01_原始素材/take1.mp4");
         assert!(clip.is_some(), "盘面必须出现新 clip: {v1}");
         assert_eq!(clip.unwrap()["volume"], json!(0.5));
         cutforge_io::fsutil::cleanup(&root);
@@ -1926,15 +1943,15 @@ mod tests {
     fn media_browse_lists_media_and_rejects_bad_dir() {
         let root = cutforge_io::tests_fixture("mcp-browse").unwrap();
         let root_s = root.to_string_lossy().to_string();
-        cutforge_io::fsutil::ensure(&root.join("01_materials")).unwrap();
-        cutforge_io::atomic::atomic_write(&root.join("01_materials/a.mp4"), b"x").unwrap();
-        cutforge_io::atomic::atomic_write(&root.join("01_materials/notes.txt"), b"x").unwrap();
+        cutforge_io::fsutil::ensure(&root.join("01_原始素材")).unwrap();
+        cutforge_io::atomic::atomic_write(&root.join("01_原始素材/a.mp4"), b"x").unwrap();
+        cutforge_io::atomic::atomic_write(&root.join("01_原始素材/notes.txt"), b"x").unwrap();
 
-        let resp = dispatch("media_browse", &json!({"root": root_s, "dir": "01_materials"}));
+        let resp = dispatch("media_browse", &json!({"root": root_s, "dir": "01_原始素材"}));
         assert_eq!(resp["code"], json!("OK"), "{resp}");
         let files = resp["data"]["files"].as_array().unwrap();
         assert_eq!(files.len(), 1, "只列媒体扩展名,不列 .txt: {files:?}");
-        assert_eq!(files[0]["path"], json!("01_materials/a.mp4"));
+        assert_eq!(files[0]["path"], json!("01_原始素材/a.mp4"));
         assert_eq!(files[0]["kind"], json!("video"));
 
         let bad = dispatch("media_browse", &json!({"root": root_s, "dir": "../.."}));

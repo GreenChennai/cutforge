@@ -60,22 +60,33 @@ cutforge/
 └── .github/workflows/gate.yml  CI(跨仓检查拉 CutFlow;rust job 有 crates 才启用)
 ```
 
-## 四、工程目录契约(CutFlow 既有 + CutForge 增量)
+## 四、工程目录契约(目录契约 v2,0.5.0 起中文化)
+
+单一真相源:`crates/cutforge-io/src/paths.rs`(与 CutFlow 侧 `rs_paths.py`,ADR-0046 同构)。
+**文件名全部 ASCII 不变**;`artboard` 子目录保留英文;工程根 `notes.json` 与 `.cutforge/` 不动。
 
 ```
 <工程>/
-├── 00_brief/ 01_materials/ 02_sensed/ 03_assets/artboard/
-├── 04_cut/          cutlist.json / cutlist.applied.json / rebuild.py
-├── 05_ir/           project.json / wordline.json / rebuild.py
-├── 06_output/       final_*.mp4 / subtitles.ass / rebuild.py
-├── _state/          backup/<ts>/   ← 每次覆写前的备份
-├── notes.json       ★ 标注(人的意图,进 git)
-└── .cutforge/       ★ 同步与审计(可整目录删除重建,不进 git)
+├── 00_制作简报/
+├── 01_原始素材/            (只读语义不变)
+├── 02_转写与校对/
+├── 03_创作素材/artboard/   ← artboard 子目录保留英文
+├── 04_粗剪决策/            cutlist.json / cutlist.applied.json / rebuild.py
+├── 05_时间线工程/          project.json / wordline.json / rebuild.py
+├── 06_成片输出/            final_*.mp4 / subtitles.ass / rebuild.py
+├── 成品/                   ★ 交付区(0.5 新增;NEVER_CLEAN,任何清理不得触碰)
+├── _内部状态/              backup/<ts>/   ← 每次覆写前的备份;阶段记账 S*.json
+├── notes.json              ★ 标注(人的意图,进 git)
+└── .cutforge/              ★ 同步与审计(可整目录删除重建,不进 git)
     ├── oplog/YYYYMMDD.jsonl   追加式操作日志(按天切分)
     ├── rev                    单调修订号
     ├── lock                   写锁(pid+时间戳,过期可接管)
     └── conflicts/             冲突三方快照(CF-*)
 ```
+
+**兼容口径**:0.4.x 旧布局(`00_brief`/`01_materials`/`02_sensed`/`03_assets`/`04_cut`/
+`05_ir`/`06_output`/`_state`)的既有工程**原地读写、不自动迁移**;
+新建工程(`cutforge-cli new` / MCP `project_new`)一律产新布局。
 
 ## 五、核心流程
 

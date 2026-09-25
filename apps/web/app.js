@@ -450,8 +450,10 @@ async function runExport() {
     }, 800);
   } else {
     const ratio = $("exp-ratio").value;
+    // 目录契约 0.5:工程相对路径由 /session 下发(projectRel),壳不得硬编码目录名
+    const projectRel = state.projectRel || "05_时间线工程/project.json";
     const r = await api("render", { backend: "ffmpeg", ratio,
-      scriptArgs: ["05_ir/project.json", "--ratio", ratio, "--profile", "final"] });
+      scriptArgs: [projectRel, "--ratio", ratio, "--profile", "final"] });
     prog.textContent = r.ok ? "完成(CutFlow rs_render)" : `失败:${r.code} ${r.message}`;
     if (r.ok) await refreshExportFiles();
   }
@@ -770,6 +772,8 @@ async function boot() {
     return;
   }
   state.root = sess.root;
+  // 目录契约 0.5:project.json 相对路径(新布局中文目录;0.4.x 旧工程回退 05_ir/)
+  state.projectRel = sess.projectRel || "05_时间线工程/project.json";
   if (sess.token && sess.token !== state.token) {
     // 正常经 URL 进入时二者相等;不等说明链接与令牌不一致,提示刷新
     $("token-banner").hidden = false;

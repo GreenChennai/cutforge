@@ -272,7 +272,7 @@ fn serve_cmd(a: &Args) -> i32 {
             match cutforge_mcp::pick_project_interactive() {
                 Some(p) => p,
                 None => return emit(a.json, false, "NO_CONFIG",
-                    "未找到候选工程(查找:CUTFORGE_PROJECTS 或当前目录下两层内的 05_ir/project.json;或先新建:cutforge-cli new <目录>)",
+                    "未找到候选工程(查找:CUTFORGE_PROJECTS 或当前目录下两层内的 05_时间线工程/project.json,兼容旧 05_ir/;或先新建:cutforge-cli new <目录>)",
                     serde_json::json!({})),
             }
         }

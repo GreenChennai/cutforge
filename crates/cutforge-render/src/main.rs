@@ -22,7 +22,8 @@ fn main() {
         eprintln!("用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>]");
         std::process::exit(3);
     };
-    let text = match std::fs::read_to_string(root.join("05_ir/project.json")) {
+    // 目录契约 0.5:优先 05_时间线工程/project.json,0.4.x 旧布局 05_ir/ 兼容
+    let text = match std::fs::read_to_string(cutforge_io::paths::project_path(&root)) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("NO_CONFIG: {e}");

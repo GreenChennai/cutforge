@@ -25,7 +25,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 
 [[package]]
 name = "cutforge-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cutforge-core",
  "cutforge-io",
@@ -36,7 +36,7 @@ dependencies = [
 
 [[package]]
 name = "cutforge-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cutforge-schema",
  "serde",
@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "cutforge-io"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cutforge-core",
  "cutforge-schema",
@@ -55,7 +55,7 @@ dependencies = [
 
 [[package]]
 name = "cutforge-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cutforge-core",
  "cutforge-io",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "cutforge-render"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cutforge-core",
  "cutforge-io",
@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "cutforge-schema"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "regex",
  "serde",
@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "cutforge-script"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cutforge-core",
  "serde",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "cutforge-wasm"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cutforge-core",
  "cutforge-io",

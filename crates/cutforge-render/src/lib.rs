@@ -165,7 +165,12 @@ pub fn render(
     progress: &mut dyn FnMut(Value),
 ) -> Result<RenderOutcome, String> {
     let mut steps = Vec::new();
-    let out_dir = project_dir.join("06_output");
+    // 目录契约 0.5:成片输出 06_成片输出;0.4.x 旧布局工程原地写 06_output(不迁移)
+    let out_dir = if cutforge_io::paths::is_legacy_layout(project_dir) {
+        project_dir.join(cutforge_io::paths::LEGACY_OUTPUT)
+    } else {
+        project_dir.join(cutforge_io::paths::OUTPUT)
+    };
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
     let cache_dir = project_dir.join(".cutforge/render-cache");
     std::fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;

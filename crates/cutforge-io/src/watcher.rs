@@ -1,8 +1,9 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 文件监听(计划书 4.5,M2 基础版:轮询 + 去抖)。
 //!
-//! 忽略规则:`.cutforge/oplog/*`(自己写的)、`*.tmp`、`_state/backup/*`、
-//! `06_output/*`(大产物)、CutFlow 记账文件(`05_ir/pipeline.json`、`_state/*.json`,
+//! 忽略规则:`.cutforge/oplog/*`(自己写的)、`*.tmp`、`_内部状态/backup/*`
+//! (0.4.x 旧布局 `_state/backup/*` 同样忽略)、`06_成片输出/*`(大产物)、
+//! CutFlow 记账文件(`05_时间线工程/pipeline.json`、`_内部状态/*.json`,
 //! O7/RT-5:跑阶段写的簿记不应给编辑器推假变更)。
 //! 真相判定不依赖事件——rev 才是真相(M3 起接三路合并)。
 
@@ -10,6 +11,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// 内部状态目录:新旧布局(0.4.x `_state` / 0.5 `_内部状态`)都伺候。
+const STATE_DIRS: [&str; 2] = [crate::paths::LEGACY_STATE, crate::paths::STATE];
+/// 成片输出目录:新旧布局都忽略(大产物)。
+const OUTPUT_DIRS: [&str; 2] = [crate::paths::LEGACY_OUTPUT, crate::paths::OUTPUT];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -33,15 +39,18 @@ fn ignored(rel: &Path) -> bool {
     if s.contains(".cutforge/oplog/") || s.ends_with(".cutforge/lock") {
         return true;
     }
-    if s.starts_with("_state/backup/") || s.starts_with("06_output/") {
+    if OUTPUT_DIRS.iter().any(|d| s.starts_with(&format!("{d}/"))) {
         return true;
     }
-    // O7/RT-5:CutFlow 记账文件——rs_run 每个阶段都会写 `_state/S*.json`,
-    // `05_ir/pipeline.json` 是管线清单;这些不是工程真相源的编辑,不得惊动编辑器。
-    if s == "05_ir/pipeline.json" {
+    // O7/RT-5:CutFlow 记账文件——rs_run 每个阶段都会写 `_内部状态/S*.json`
+    // (旧布局 `_state/S*.json`),`05_时间线工程/pipeline.json`(旧 `05_ir/`)是
+    // 管线清单;这些不是工程真相源的编辑,不得惊动编辑器。
+    if s == format!("{}/pipeline.json", crate::paths::TIMELINE)
+        || s == format!("{}/pipeline.json", crate::paths::LEGACY_TIMELINE)
+    {
         return true;
     }
-    if s.starts_with("_state/") && s.ends_with(".json") {
+    if STATE_DIRS.iter().any(|d| s.starts_with(&format!("{d}/"))) && s.ends_with(".json") {
         return true;
     }
     s.ends_with(".tmp")
@@ -197,31 +206,37 @@ pub fn ensure_sync_daemon(root: &Path) -> std::sync::Arc<SyncHub> {
 mod tests {
     use super::*;
     use crate::fsutil;
+    use crate::paths;
 
     #[test]
     fn watcher_reports_changes_and_honors_ignore_rules() {
         let root = fsutil::temp_dir("cutforge-watch");
-        fsutil::ensure(&root.join("05_ir")).unwrap();
+        fsutil::ensure(&root.join(paths::TIMELINE)).unwrap();
         fsutil::ensure(&root.join(".cutforge/oplog")).unwrap();
-        crate::atomic::atomic_write(&root.join("05_ir/project.json"), b"{}").unwrap();
+        crate::atomic::atomic_write(&root.join(paths::PROJECT_REL), b"{}").unwrap();
         let mut w = Watcher::new(&root, 50);
         assert!(w.poll().is_empty(), "初扫不产出事件");
 
-        // 修改 + 忽略面
-        crate::atomic::atomic_write(&root.join("05_ir/project.json"), b"{\"a\":1}").unwrap();
+        // 修改 + 忽略面(新布局)
+        crate::atomic::atomic_write(&root.join(paths::PROJECT_REL), b"{\"a\":1}").unwrap();
         crate::atomic::atomic_write(&root.join(".cutforge/oplog/20260918.jsonl"), b"{}\n").unwrap();
-        crate::atomic::atomic_write(&root.join("05_ir/tmp.tmp"), b"x").unwrap();
+        crate::atomic::atomic_write(&root.join(paths::TIMELINE).join("tmp.tmp"), b"x").unwrap();
         // O7/RT-5:CutFlow 记账文件必须被忽略(rs_run 每阶段都会写,不是编辑变更)
-        crate::atomic::atomic_write(&root.join("05_ir/pipeline.json"), b"{}").unwrap();
-        fsutil::ensure(&root.join("_state")).unwrap();
-        crate::atomic::atomic_write(&root.join("_state/S3.json"), b"{}").unwrap();
+        crate::atomic::atomic_write(&root.join(paths::TIMELINE).join("pipeline.json"), b"{}").unwrap();
+        fsutil::ensure(&root.join(paths::STATE)).unwrap();
+        crate::atomic::atomic_write(&root.join(paths::STATE).join("S3.json"), b"{}").unwrap();
+        // 旧布局(0.4.x)同名记账/产物/备份同样忽略
+        crate::atomic::atomic_write(&root.join(paths::LEGACY_TIMELINE).join("pipeline.json"), b"{}").unwrap();
+        crate::atomic::atomic_write(&root.join(paths::LEGACY_STATE).join("S4.json"), b"{}").unwrap();
+        crate::atomic::atomic_write(&root.join(paths::LEGACY_OUTPUT).join("final_x.mp4"), b"x").unwrap();
+        crate::atomic::atomic_write(&root.join(paths::OUTPUT).join("final_x.mp4"), b"x").unwrap();
         let ev = w.poll();
-        assert_eq!(ev.len(), 1, "oplog/*.tmp/CutFlow 记账文件必须被忽略: {ev:?}");
+        assert_eq!(ev.len(), 1, "oplog/*.tmp/CutFlow 记账文件(新旧布局)/产物必须被忽略: {ev:?}");
         assert_eq!(ev[0].kind, EventKind::Modified);
         assert!(ev[0].path.ends_with("project.json"));
 
         // 删除(project.json 消失 → Removed;tmp 被忽略,从不进快照,不报事件)
-        crate::atomic::remove(&root.join("05_ir/project.json")).unwrap();
+        crate::atomic::remove(&root.join(paths::PROJECT_REL)).unwrap();
         let ev = w.poll();
         assert_eq!(ev.len(), 1, "只有 project.json 的 Removed: {ev:?}");
         assert_eq!(ev[0].kind, EventKind::Removed);

@@ -111,6 +111,14 @@ cutforge/
 | 四桥 | `rs_editor`(视图/变更识别)/ `rs_notes`(标注)/ `rs_oplog`(OpLog 审计)/ `rs_gate`(门禁透传),错误码与 5.4 码表对拍 |
 | 剪映出口 | `export_jianying` 与 CutFlow `rs_jy_draft.py` 编排**同一个脚本**,映射真相只有一份 |
 
+### 兼容矩阵(CutFlow ↔ cutforge ↔ 目录契约)
+
+| CutFlow 版本 | cutforge 版本 | 目录契约 | 说明 |
+|---|---|---|---|
+| ≥ v0.19 | ≥ 0.5.0 | v2(中文目录) | `00_制作简报`/`01_原始素材`/`02_转写与校对`/`03_创作素材`/`04_粗剪决策`/`05_时间线工程`/`06_成片输出`/`_内部状态`/`成品`(NEVER_CLEAN);唯一真相源 `crates/cutforge-io/src/paths.rs` ↔ CutFlow `rs_paths.py`(ADR-0046) |
+| < v0.19 | 0.4.x | v1(英文目录) | `00_brief`…`05_ir`/`06_output`/`_state` |
+| 任意(旧工程) | ≥ 0.5.0 | v1 盘面 | 0.4.x 旧布局工程在 0.5.0 中**原地读写、不自动迁移** |
+
 架构决策见 [docs/adr/](docs/adr/);整体流程与工作区地图见 [docs/FLOW.md](docs/FLOW.md)。
 
 ## 📄 许可

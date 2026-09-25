@@ -372,7 +372,10 @@ def _cutflow_md_py_texts() -> list[tuple[str, str]]:
     for pat in ("*.md", "*.py"):
         for p in CUTFLOW_REPO.rglob(pat):
             rel = str(p)
-            if any(seg in rel for seg in (".venv", "probes", "06_output", "_backup",
+            # 目录契约 0.5:CutFlow 工程目录已中文化(06_成片输出/成品/_内部状态/01_原始素材),
+            # 这些大产物/交付面目录不参与扫描;旧英文名保留以防历史工作区
+            if any(seg in rel for seg in (".venv", "probes", "06_output", "06_成片输出",
+                                          "01_原始素材", "_内部状态", "成品", "_backup",
                                           "vendor", ".git", ".pytest_cache")):
                 continue
             try:

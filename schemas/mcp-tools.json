@@ -158,7 +158,7 @@
    "name": "stage_status",
    "kind": "query",
    "idempotent": true,
-   "description": "CutFlow 阶段状态(_state/S*.json 存在性)",
+   "description": "CutFlow 阶段状态(_内部状态/S*.json 存在性;0.4.x 旧布局 _state 兼容)",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -234,7 +234,7 @@
    "name": "render_probe",
    "kind": "query",
    "idempotent": true,
-   "description": "06_output 产物清单+媒体信息",
+   "description": "成片输出目录(06_成片输出;旧布局 06_output 兼容)产物清单+媒体信息",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -959,7 +959,12 @@
       "description": "工程目录绝对路径"
      },
      "dir": {
+      "description": "阶段目录(目录契约 0.5 中文;0.4.x 旧英文名兼容)",
       "enum": [
+       "03_创作素材/artboard",
+       "04_粗剪决策",
+       "05_时间线工程",
+       "06_成片输出",
        "03_assets/artboard",
        "04_cut",
        "05_ir",
@@ -1294,7 +1299,7 @@
     "properties": {
      "root": {
       "type": "string",
-      "description": "目标工程目录(绝对路径;05_ir/project.json 将创建于此)"
+      "description": "目标工程目录(绝对路径;05_时间线工程/project.json 将创建于此)"
      },
      "slug": {
       "type": "string",

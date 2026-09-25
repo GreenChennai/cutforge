@@ -37,8 +37,11 @@ def test_editor_timeline_id_fallback_on_real_ir(tmp_path):
     proj = ROOT / "tests" / "fixtures" / "real_ir" / "project.json"
     assert proj.is_file()
     ws = tmp_path / "ws"
-    (ws / "05_ir").mkdir(parents=True)
-    (ws / "05_ir" / "project.json").write_text(proj.read_text(encoding="utf-8"), encoding="utf-8")
+    # 目录契约 v2(0.5.0):工程目录中文化,cutforge 与 CutFlow 两侧同表
+    # (cutforge crates/cutforge-io/src/paths.rs ↔ CutFlow rs_paths.py)。
+    ir = ws / "05_时间线工程"
+    ir.mkdir(parents=True)
+    (ir / "project.json").write_text(proj.read_text(encoding="utf-8"), encoding="utf-8")
     out = run_bridge("rs_editor.py", "timeline", str(ws))
     rows = (out.get("data") or {}).get("clips") or []
     assert rows, f"timeline 必须有行: {out}"

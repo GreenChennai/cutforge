@@ -52,7 +52,7 @@ fn roundtrip_semantic_eq() {
 
     // 重新打开(从盘面),再取内存视图:两者必须语义相等
     let disk: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(root.join("05_ir/project.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(root.join(cutforge_io::PROJECT_REL)).unwrap()).unwrap();
     assert!(
         semantic_eq(&expected, &disk),
         "盘面与内存语义不一致:\n内存={expected}\n盘面={disk}"
@@ -72,11 +72,11 @@ fn roundtrip_noop_is_byte_identical() {
     // 不做任何修改时,save 不得改变盘面(读入的 v2 内容原样往返)。
     let root = cutforge_io::tests_fixture("rt-noop").unwrap();
     // 先以 v2 形态落一次盘(打开+零命令+显式保存路径经 reopen 验证)
-    let before = std::fs::read_to_string(root.join("05_ir/project.json")).unwrap();
+    let before = std::fs::read_to_string(root.join(cutforge_io::PROJECT_REL)).unwrap();
     {
         let _ws = Workspace::open(&root).unwrap();
     }
-    let after = std::fs::read_to_string(root.join("05_ir/project.json")).unwrap();
+    let after = std::fs::read_to_string(root.join(cutforge_io::PROJECT_REL)).unwrap();
     assert_eq!(before, after, "无命令不得触碰盘面");
     fsutil::cleanup(&root);
 }

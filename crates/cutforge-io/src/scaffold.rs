@@ -66,7 +66,8 @@ pub fn new_project_value(
     Ok(v)
 }
 
-/// 在 `root` 新建空工程:写 `05_ir/project.json`(已存在则拒绝,绝不静默覆盖)。
+/// 在 `root` 新建空工程:写 `05_时间线工程/project.json`(0.5 中文目录契约,
+/// 目录名唯一来源 `paths`;已存在则拒绝,绝不静默覆盖)。
 /// 返回工程文件路径;目录创建不算文件写(同 fsutil 口径),文件本体走唯一落盘点。
 pub fn scaffold_project(
     root: &Path,
@@ -85,7 +86,7 @@ pub fn scaffold_project(
             format!("工程已存在,拒绝覆盖: {}", project_path.display()),
         ));
     }
-    fsutil::ensure(&root.join("05_ir"))?;
+    fsutil::ensure(&root.join(crate::paths::TIMELINE))?;
     let mut buf = serde_json::to_vec_pretty(&v)?;
     buf.push(b'\n');
     atomic::atomic_write(&project_path, &buf)?;

@@ -16,6 +16,7 @@ pub mod atomic;
 pub mod backup;
 pub mod fsutil;
 pub mod lock;
+pub mod paths;
 pub mod probe;
 pub mod scaffold;
 pub mod stage;
@@ -31,11 +32,27 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub const PROJECT_REL: &str = "05_ir/project.json";
-pub const WORDLINE_REL: &str = "05_ir/wordline.json";
-pub const CUTLIST_REL: &str = "04_cut/cutlist.json";
-pub const CUTLIST_APPLIED_REL: &str = "04_cut/cutlist.applied.json";
-pub const NOTES_REL: &str = "notes.json";
+// 目录契约唯一真相源在 `paths`(0.5.0 目录中文化,与 CutFlow rs_paths.py 同构);
+// 这里原样再导出,老调用面(API 兼容)不破。
+pub use paths::{CUTLIST_APPLIED_REL, CUTLIST_REL, NOTES_REL, PROJECT_REL, WORDLINE_REL};
+
+/// 盘面布局(打开时判定一次,整个生命周期一致):
+/// 新布局(0.5 中文目录)或旧布局(0.4.x 英文目录;兼容读写、原地保留、不自动迁移)。
+#[derive(Clone, Copy)]
+struct Layout {
+    project_rel: &'static str,
+    truths: &'static [(&'static str, &'static str)],
+}
+
+impl Layout {
+    fn detect(root: &Path) -> Self {
+        if paths::is_legacy_layout(root) {
+            Self { project_rel: paths::LEGACY_PROJECT_REL, truths: &paths::FILE_TRUTHS_LEGACY }
+        } else {
+            Self { project_rel: paths::PROJECT_REL, truths: &paths::FILE_TRUTHS_NEW }
+        }
+    }
+}
 
 /// baseRev 快照目录(M9-1):`.cutforge/bases/<rev>.json` = rev N 时刻的工程视图。
 /// 三路合并的共同祖先由此取得;"本地充当 base"的死代码口径退役。
@@ -43,21 +60,18 @@ pub const BASES_REL: &str = ".cutforge/bases";
 /// 快照保留上限(LRU 按 rev 淘汰,防膨胀;计划书 V2-R4)。
 const BASES_KEEP: usize = 32;
 
-/// 非工程真相源文件与其在工程目录内的相对路径(file_states 初始化与落盘的依据)。
-const FILE_TRUTHS: [(&str, &str); 3] = [
-    ("wordline.json", WORDLINE_REL),
-    ("cutlist.json", CUTLIST_REL),
-    ("cutlist.applied.json", CUTLIST_APPLIED_REL),
-];
+/// 非工程真相源文件与其在工程目录内的相对路径:唯一登记处在 `paths`
+/// (FILE_TRUTHS_NEW / FILE_TRUTHS_LEGACY,按盘面布局择一)。
 
-/// 测试夹具:从仓库回归样本搭建完整工程目录(v1 形态,顺带覆盖迁移路径)。
+/// 测试夹具:从仓库回归样本搭建完整工程目录(0.5 新布局/中文目录;旧布局夹具见
+/// tests/layout_compat.rs 的兼容用例)。
 #[doc(hidden)]
 pub fn tests_fixture(tag: &str) -> io::Result<PathBuf> {
     let sample =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/regression/talking-head");
     let root = fsutil::temp_dir(tag);
-    fsutil::ensure(&root.join("05_ir"))?;
-    fsutil::ensure(&root.join("04_cut"))?;
+    fsutil::ensure(&root.join(paths::TIMELINE))?;
+    fsutil::ensure(&root.join(paths::CUT))?;
     fsutil::copy_file(&sample.join("project.json"), &root.join(PROJECT_REL))?;
     fsutil::copy_file(&sample.join("wordline.json"), &root.join(WORDLINE_REL))?;
     fsutil::copy_file(&sample.join("cutlist.json"), &root.join(CUTLIST_REL))?;
@@ -76,6 +90,8 @@ pub struct Workspace {
     meta_bypass: Option<serde_json::Value>,
     /// 非工程真相源文件最近一次落盘值(撤销/登记后 diff 落盘,避免无谓重写)。
     files: BTreeMap<String, serde_json::Value>,
+    /// 盘面布局(打开时判定;新中文目录或旧英文目录,写回一律原地)。
+    layout: Layout,
     /// open_exclusive 持有的全程锁(含 Drop 自动释放)。
     lock: Option<lock::LockGuard>,
     /// 最近一次与磁盘同步时的 project 视图(去 `_meta`;写入窗口漂移检测的基准)。
@@ -85,10 +101,10 @@ pub struct Workspace {
 impl Workspace {
     /// 打开工程目录(只读语义安全;写操作走 `open_exclusive` 或依赖方法内临时锁)。
     pub fn open(root: &Path) -> io::Result<Self> {
-        let (engine, persisted, notes, meta_bypass, files, synced_disk) = Self::load(root)?;
+        let (engine, persisted, notes, meta_bypass, files, synced_disk, layout) = Self::load(root)?;
         Ok(Self {
             root: root.to_path_buf(), engine, persisted, notes,
-            notes_dirty: false, meta_bypass, files, lock: None, synced_disk,
+            notes_dirty: false, meta_bypass, files, layout, lock: None, synced_disk,
         })
     }
 
@@ -96,10 +112,10 @@ impl Workspace {
     /// MCP 写通道与 CLI 变更子命令一律走本入口。
     pub fn open_exclusive(root: &Path) -> io::Result<Self> {
         let guard = lock::acquire(root, 30_000, 20)?;
-        let (engine, persisted, notes, meta_bypass, files, synced_disk) = Self::load(root)?;
+        let (engine, persisted, notes, meta_bypass, files, synced_disk, layout) = Self::load(root)?;
         let mut ws = Self {
             root: root.to_path_buf(), engine, persisted, notes,
-            notes_dirty: false, meta_bypass, files, lock: Some(guard), synced_disk,
+            notes_dirty: false, meta_bypass, files, layout, lock: Some(guard), synced_disk,
         };
         // 迁移升级:盘面为旧形态(v1/缺 id)时,独占打开即落规范形,
         // 使后续外部改动检测与守护合并都以 v2 规范形为基准。
@@ -114,8 +130,10 @@ impl Workspace {
     #[allow(clippy::type_complexity)]
     fn load(
         root: &Path,
-    ) -> io::Result<(Engine, usize, NotesStore, Option<serde_json::Value>, BTreeMap<String, serde_json::Value>, Option<serde_json::Value>)> {
-        let project_path = root.join(PROJECT_REL);
+    ) -> io::Result<(Engine, usize, NotesStore, Option<serde_json::Value>, BTreeMap<String, serde_json::Value>, Option<serde_json::Value>, Layout)> {
+        // 盘面布局判定(0.5 中文目录为准;0.4.x 英文目录工程兼容读写、原地保留)
+        let layout = Layout::detect(root);
+        let project_path = root.join(layout.project_rel);
         let text = std::fs::read_to_string(&project_path).map_err(|e| {
             io::Error::new(e.kind(), format!("打开工程失败({project_path:?}): {e}"))
         })?;
@@ -179,7 +197,7 @@ impl Workspace {
 
         // 文件态初始化(ADR-0001:文件级 Op 撤销/重做的路由目标)
         let mut file_states: BTreeMap<String, serde_json::Value> = BTreeMap::new();
-        for (name, rel) in FILE_TRUTHS {
+        for (name, rel) in layout.truths {
             if let Ok(text) = std::fs::read_to_string(root.join(rel))
                 && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                     file_states.insert(name.to_string(), v);
@@ -192,13 +210,13 @@ impl Workspace {
 
         // 最近落盘值快照(落盘 diff 用)
         let mut files = BTreeMap::new();
-        for (name, rel) in FILE_TRUTHS {
+        for (name, rel) in layout.truths {
             if let Ok(text) = std::fs::read_to_string(root.join(rel))
                 && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                     files.insert(name.to_string(), v);
                 }
         }
-        Ok((engine, persisted, notes, meta_bypass, files, value.clone().into()))
+        Ok((engine, persisted, notes, meta_bypass, files, value.clone().into(), layout))
     }
 
     pub fn root(&self) -> &Path {
@@ -275,7 +293,7 @@ impl Workspace {
     /// 与磁盘做一次三路合并(base = baseRev 快照链的真祖先;不再"本地充当 base")。
     /// 返回 Ok(true) = 采纳了外部改动;Err = 不可自动合并(冲突已落盘)。
     pub fn sync_with_disk(&mut self) -> Result<bool, Vec<(String, Conflict)>> {
-        let disk_text = match std::fs::read_to_string(self.root.join(PROJECT_REL)) {
+        let disk_text = match std::fs::read_to_string(self.root.join(self.layout.project_rel)) {
             Ok(t) => t,
             Err(_) => return Ok(false),
         };
@@ -370,6 +388,7 @@ impl Workspace {
     /// 引擎脏文件 → 盘面(先文件后记账;P1-9:写失败时 oplog 尚未记账)。
     /// notes.json 特殊:重载 NotesStore(撤销/重做恢复标注态)。
     fn reconcile_files(&mut self) -> io::Result<()> {
+        let truths = self.layout.truths;
         for file in self.engine.take_dirty_files() {
             if file == "notes.json" {
                 let Some(v) = self.engine.file_state("notes.json").cloned() else { continue };
@@ -382,7 +401,7 @@ impl Workspace {
                 }
                 continue;
             }
-            let Some(rel) = FILE_TRUTHS.iter().find(|(n, _)| *n == file).map(|(_, r)| r) else { continue };
+            let Some(rel) = truths.iter().find(|(n, _)| *n == file).map(|(_, r)| r) else { continue };
             let Some(v) = self.engine.file_state(&file).cloned() else { continue };
             if self.files.get(&file) != Some(&v) {
                 let mut buf = serde_json::to_vec_pretty(&v)?;
@@ -615,8 +634,8 @@ impl Workspace {
         let ops = self.engine.oplog().ops();
         // 备份旧 project.json(全局约定 B.8:可回滚)
         if (self.persisted == 0 || self.persisted < ops.len())
-            && let Ok(old) = std::fs::read(self.root.join(PROJECT_REL)) {
-                backup::backup_file(&self.root, PROJECT_REL, &old)?;
+            && let Ok(old) = std::fs::read(self.root.join(self.layout.project_rel)) {
+                backup::backup_file(&self.root, self.layout.project_rel, &old)?;
             }
         let value = self.engine.query(cutforge_core::engine::Query::ProjectView);
         let cutforge_core::engine::Answer::Project(mut v) = value else { unreachable!() };
@@ -626,7 +645,7 @@ impl Workspace {
             }
         let mut buf = serde_json::to_vec_pretty(&v)?;
         buf.push(b'\n');
-        atomic::atomic_write(&self.root.join(PROJECT_REL), &buf)?;
+        atomic::atomic_write(&self.root.join(self.layout.project_rel), &buf)?;
         self.synced_disk = Some(v);
 
         // baseRev 快照(M9-1):同步点的工程视图(不含 _meta,与契约面一致)
@@ -664,7 +683,7 @@ impl Workspace {
     /// 可自动合并 → 采纳(继续写);冲突 → 冲突落盘、本地重载、报 CONFLICT。
     fn check_window_drift(&mut self) -> io::Result<()> {
         let Some(synced) = self.synced_disk.clone() else { return Ok(()) };
-        let Ok(text) = std::fs::read_to_string(self.root.join(PROJECT_REL)) else { return Ok(()) };
+        let Ok(text) = std::fs::read_to_string(self.root.join(self.layout.project_rel)) else { return Ok(()) };
         let Ok(mut cur) = serde_json::from_str::<serde_json::Value>(&text) else { return Ok(()) };
         let cur_meta = cur.as_object_mut().and_then(|o| o.remove("_meta"));
         if let Some(m) = cur_meta {
@@ -699,7 +718,7 @@ impl Workspace {
 
     /// 弃用本地待写:从磁盘真相重载全部状态(外部改动获胜,4.7)。
     fn reload_from_disk(&mut self) -> io::Result<()> {
-        let (engine, persisted, notes, meta_bypass, files, synced_disk) = Self::load(&self.root)?;
+        let (engine, persisted, notes, meta_bypass, files, synced_disk, layout) = Self::load(&self.root)?;
         self.engine = engine;
         self.persisted = persisted;
         self.notes = notes;
@@ -707,6 +726,7 @@ impl Workspace {
         self.meta_bypass = meta_bypass;
         self.files = files;
         self.synced_disk = synced_disk;
+        self.layout = layout;
         Ok(())
     }
 }
@@ -928,7 +948,7 @@ mod tests {
             v.get("_meta").cloned().expect("夹具必须含顶层 _meta(CutFlow 真实 IR 的判别特征)")
         };
         let root = fsutil::temp_dir("ws-real-ir");
-        fsutil::ensure(&root.join("05_ir")).unwrap();
+        fsutil::ensure(&root.join(paths::TIMELINE)).unwrap();
         // 唯一落盘点纪律(M2-4):测试写盘同样走 atomic.rs
         atomic::atomic_write(&root.join(PROJECT_REL), text.as_bytes()).unwrap();
         {

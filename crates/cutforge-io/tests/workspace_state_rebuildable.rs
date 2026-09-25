@@ -22,7 +22,7 @@ fn workspace_state_rebuildable() {
         )
         .unwrap();
     }
-    let disk_after_edit = std::fs::read_to_string(root.join("05_ir/project.json")).unwrap();
+    let disk_after_edit = std::fs::read_to_string(root.join(cutforge_io::PROJECT_REL)).unwrap();
 
     // 删除 .cutforge/(同步状态,不是交付物)
     std::fs::remove_dir_all(root.join(".cutforge")).unwrap();

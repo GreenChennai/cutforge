@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -153,9 +154,11 @@ def main() -> int:
             assert "editable" in uf and len(uf["editable"]) >= 4, f"ui-fields 分组: {uf.keys()}"
             print(f"/ui-fields 单一真相源下发(分组 {len(uf['editable'])}): PASS")
 
-            code, _ = http_get(f"http://127.0.0.1:{port}/media/browse?dir={materials_rel}")
+            # HTTP 请求行只收 ASCII:中文目录名必须百分号编码(http.client putrequest 会先 ascii 编码)
+            browse_dir = urllib.parse.quote(materials_rel)
+            code, _ = http_get(f"http://127.0.0.1:{port}/media/browse?dir={browse_dir}")
             assert code == 401, f"/media/browse 无 token 应 401,实得 {code}"
-            code, body = http_get(f"http://127.0.0.1:{port}/media/browse?dir={materials_rel}", token)
+            code, body = http_get(f"http://127.0.0.1:{port}/media/browse?dir={browse_dir}", token)
             assert code == 200, f"/media/browse 带 token 应 200,实得 {code}"
             files = json.loads(body)["files"]
             assert any(f["path"].endswith("main.mp4") for f in files), f"browse: {files}"

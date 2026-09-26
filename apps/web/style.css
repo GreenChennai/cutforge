@@ -114,3 +114,45 @@ footer { padding: 6px 14px; border-top: 1px solid var(--line); color: var(--dim)
 .exp-progress { color: var(--dim); font-family: Consolas, monospace; font-size: 12px;
                 white-space: pre-wrap; min-height: 18px; margin: 6px 0; }
 #exp-files { max-height: 160px; overflow-y: auto; color: var(--dim); font-size: 12px; }
+
+/* ================ v0.6 NLE 观感增强 ================ */
+body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+header { background: linear-gradient(180deg, #1b2030, #161a26); border-bottom: 1px solid #2a3040; }
+#tabs { background: #12151f; border-bottom: 1px solid #2a3040; }
+#tabs button { border-radius: 6px 6px 0 0; }
+#tabs button.active { background: #232a3d; color: #7fb2ff; border: 1px solid #2a3040; border-bottom: none; }
+#workbench { gap: 8px; padding: 8px; }
+.panel { background: #1a1f2c; border: 1px solid #2a3040; border-radius: 10px; padding: 10px 12px; }
+.panel h3 { color: #9fc1ff; font-size: 12px; letter-spacing: 1px; margin: 2px 0 8px; }
+.media-item { border-radius: 8px; margin-bottom: 4px; }
+.media-item:hover { background: #232a3d; }
+.set-bgm { float: right; font-size: 10px; padding: 1px 6px; border-radius: 6px;
+  border: 1px solid #3a4a6a; background: #202840; color: #9fc1ff; cursor: pointer; }
+.set-bgm:hover { background: #2a3a5e; }
+.clip { border-radius: 6px; color: #eaf0ff; font-size: 11px; overflow: hidden; white-space: nowrap;
+  text-overflow: ellipsis; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+.clip:not(.audio):not(.text) { background: linear-gradient(180deg, #2f5fa8, #24487e); }
+.clip.audio { background: linear-gradient(180deg, #2c7a4f, #1f5c3a); color: #eafff2; }
+.clip.text { background: linear-gradient(180deg, #a08a2c, #7d6a1f); }
+.clip.selected { outline: 2px solid #ffd76a; outline-offset: -1px; box-shadow: 0 0 10px rgba(255,215,106,.45); }
+.edge { width: 7px; }
+.edge-l { border-radius: 6px 0 0 6px; } .edge-r { border-radius: 0 6px 6px 0; }
+.lane-label { background: #202636; color: #8fa8d8; font-weight: 600; width: 74px; position: sticky; left: 0; z-index: 2; }
+#ruler { background: #141824; color: #7a8aa8; }
+#playhead { background: #ff5c5c; width: 2px; z-index: 3; }
+.insp-group { border: 1px solid #2a3040; border-radius: 8px; margin-bottom: 8px; }
+.insp-group legend { color: #9fc1ff; font-size: 11px; padding: 0 6px; }
+.v2-field { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 4px 0; }
+.v2-field input, .v2-field select { width: 150px; }
+.bgm-row { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+#internal-banner { position: sticky; top: 0; z-index: 5; }
+button { border-radius: 7px; border: 1px solid #33405e; background: #232a3d; color: #dce6ff; padding: 4px 10px; cursor: pointer; }
+button:hover { background: #2c3650; }
+input, select { background: #12151f; color: #e6ecff; border: 1px solid #33405e; border-radius: 6px; padding: 3px 6px; }
+
+/* v0.6 布局:工作台定高 + 时间线常驻可见 */
+main { display: block; }
+#tab-timeline { display: flex; flex-direction: column; height: calc(100vh - 150px); }
+#workbench { flex: 0 0 auto; max-height: 52vh; overflow: auto; }
+#timeline-wrap { flex: 1 1 auto; min-height: 220px; overflow: auto; }
+.track { height: 56px; }

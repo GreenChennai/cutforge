@@ -15,6 +15,7 @@ const state = {
   uiFields: null,      // E4-2:GET /ui-fields 下发的可编辑字段分组(单一真相源)
   media: [],           // E3-4:素材面板当前列表
   conflicts: 0,        // E8:未裁决冲突数(>0 顶部停写横幅)
+  internalErrors: 0,   // v0.6:契约错误折叠计数
 };
 
 /* ---------------- 状态反馈(E8:toast 顶替单行 footer;#status 保留作诊断锚点) */
@@ -39,7 +40,17 @@ async function api(name, args = {}) {
   });
   const rpc = await resp.json();
   const env = JSON.parse(rpc.result.content[0].text);
-  if (!env.ok) { status(`${name}: ${env.code} ${env.message}`, false); }
+  if (!env.ok) {
+    // v0.6:INTERNAL 类错误折叠为首行汇总+计数(此前整屏红块刷屏,观感差且无操作价值)
+    if (env.code === "INTERNAL" || env.code === "SCHEMA_INVALID") {
+      state.internalErrors = (state.internalErrors || 0) + 1;
+      const b = $("internal-banner");
+      b.hidden = false;
+      b.textContent = `⚠ ${state.internalErrors} 次契约错误(最近:${env.code} @ ${name};详情见服务端日志)。工程可能是旧版 id/字段,请用 CutFlow rs_ir validate 检查。`;
+    } else {
+      status(`${name}: ${env.code} ${env.message}`, false);
+    }
+  }
   return env;
 }
 
@@ -84,7 +95,8 @@ function renderTimeline() {
       el.dataset.id = c.id; el.dataset.track = t.id;
       el.style.left = (c.startMs * state.pxPerMs) + "px";
       el.style.width = Math.max(6, (c.endMs - c.startMs) * state.pxPerMs) + "px";
-      el.textContent = `${c.id} ${c.endMs - c.startMs}ms`;
+      const nm = (c.src || c.text || c.id).split(/[\/]/).pop();
+      el.textContent = `${nm} ${((c.endMs - c.startMs) / 1000).toFixed(1)}s`;
       el.appendChild(Object.assign(document.createElement("span"), { className: "edge edge-l" }));
       el.appendChild(Object.assign(document.createElement("span"), { className: "edge edge-r" }));
       el.addEventListener("mousedown", (e) => onClipMouseDown(e, c, kind, t.id));
@@ -134,6 +146,22 @@ const FIELD_META = {
   text:        { type: "text" },
   freezeMs:    { type: "number", step: 1, min: 0 },
 };
+// v0.6 NLE 化:枚举下拉与嵌套对象字段(转场/动效)。label=人话;enum=下拉选项;
+// 值写入 clip_update 的嵌套 patch(transition/motion,ClipPatch v0.6 已承接)。
+const FIELD_META_V2 = {
+  "transition.type": { type: "select", label: "转场类型",
+    enum: [["", "(无)"], ["fade", "叠化"], ["wipeleft", "左划"], ["wipeup", "上划"],
+           ["slideleft", "左滑"], ["circleopen", "圆形展开"], ["cut", "硬切"], ["none", "关闭"]] },
+  "transition.durMs": { type: "number", label: "转场时长(ms)", step: 10, min: 0 },
+  "transition.fx":    { type: "text", label: "转场 fx(效果目录 id,可空)" },
+  "motion.in":   { type: "select", label: "入场",
+    enum: [["", "(无)"], ["fadeIn", "淡入"], ["slideInLeft", "左侧滑入"], ["slideInRight", "右侧滑入"],
+           ["scaleIn", "缩放入场"], ["zoomIn", "推近入场"]] },
+  "motion.inMs":  { type: "number", label: "入场时长(ms)", step: 50, min: 0 },
+  "motion.out":   { type: "select", label: "出场",
+    enum: [["", "(无)"], ["fadeOut", "淡出"], ["slideOutLeft", "左滑出"], ["slideOutRight", "右滑出"]] },
+  "motion.outMs": { type: "number", label: "出场时长(ms)", step: 50, min: 0 },
+};
 
 function buildInspectorGroups() {
   const host = $("insp-groups");
@@ -146,6 +174,14 @@ function buildInspectorGroups() {
     legend.textContent = group;
     box.appendChild(legend);
     for (const f of fields) {
+      // 后端对嵌套对象(transition/motion)下发收敛后的对象键——展开为子字段控件
+      const sub = Object.keys(FIELD_META_V2).filter((k) => k.startsWith(f + "."));
+      if (!FIELD_META_V2[f] && sub.length) {
+        for (const k of sub) buildV2Field(box, k, FIELD_META_V2[k]);
+        continue;
+      }
+      const v2 = FIELD_META_V2[f];
+      if (v2) { buildV2Field(box, f, v2); continue; }
       const meta = FIELD_META[f] || { type: "text" };
       const label = document.createElement("label");
       label.textContent = f;
@@ -161,6 +197,59 @@ function buildInspectorGroups() {
       box.appendChild(label);
     }
     host.appendChild(box);
+  }
+}
+
+function buildV2Field(box, f, meta) {
+  // v0.6:转场/动效的人话控件(下拉/数字);dataset.field 保留带点全名
+  const label = document.createElement("label");
+  label.className = "v2-field";
+  label.textContent = meta.label || f;
+  let input;
+  if (meta.type === "select") {
+    input = document.createElement("select");
+    for (const pair of meta.enum) {
+      const opt = document.createElement("option");
+      opt.value = pair[0]; opt.textContent = pair[1];
+      input.appendChild(opt);
+    }
+  } else {
+    input = document.createElement("input");
+    input.type = meta.type;
+    if (meta.step !== undefined) input.step = meta.step;
+    if (meta.min !== undefined) input.min = meta.min;
+    if (meta.max !== undefined) input.max = meta.max;
+  }
+  input.id = "insp-f-" + f;
+  input.dataset.field = f;
+  label.appendChild(input);
+  box.appendChild(label);
+}
+
+// 读 clip 的嵌套值("transition.type" → clip.transition?.type)
+function getNested(clip, field) {
+  const dot = field.indexOf(".");
+  const obj = clip[field.slice(0, dot)];
+  return obj ? obj[field.slice(dot + 1)] : undefined;
+}
+
+// 带点字段收拢为 patch.transition / patch.motion(空串/null → 显式 null 清空)
+function collectNestedPatches(patch, inputs) {
+  for (const input of inputs) {
+    const f = input.dataset.field || "";
+    const dot = f.indexOf(".");
+    if (dot < 0) continue;
+    const obj = f.slice(0, dot), key = f.slice(dot + 1);
+    const meta = FIELD_META_V2[f] || {};
+    const raw = input.value;
+    let v = null;
+    if (meta.type === "select") { if (raw !== "") v = raw; }
+    else if (raw !== "") { v = Number(raw); if (Number.isNaN(v)) v = null; }
+    patch[obj] = patch[obj] || {};
+    patch[obj][key] = v;
+  }
+  for (const obj of Object.keys(patch)) {
+    if (!Object.keys(patch[obj]).length) delete patch[obj];
   }
 }
 
@@ -202,9 +291,10 @@ function select(id) {
   if (el) el.classList.add("selected");
   $("sel-info").textContent = `选中 ${id}(${hit.track.kind})`;
   $("insp-fields").textContent = `id=${id} track=${hit.track.id} src=${hit.clip.src ?? "-"}`;
-  for (const input of document.querySelectorAll("#insp-groups input")) {
+  for (const input of document.querySelectorAll("#insp-groups input, #insp-groups select")) {
     const f = input.dataset.field;
-    const v = hit.clip[f];
+    if (!f) continue;
+    const v = f.indexOf(".") >= 0 ? getNested(hit.clip, f) : hit.clip[f];
     input.value = (v === undefined || v === null) ? "" : v;
   }
   renderReadonly(hit);
@@ -217,9 +307,15 @@ async function applyInspector() {
   const hit = findClip(state.selected);
   if (!hit) return;
   const patch = {};
-  for (const input of document.querySelectorAll("#insp-groups input")) {
+  const flat = [];
+  for (const input of document.querySelectorAll("#insp-groups input, #insp-groups select")) {
+    if (!input.dataset.field) continue;
+    if (input.dataset.field.indexOf(".") >= 0 || input.value !== "") flat.push(input);
+  }
+  collectNestedPatches(patch, flat);
+  for (const input of flat) {
     const f = input.dataset.field;
-    if (input.value === "") continue;
+    if (f.indexOf(".") >= 0) continue;
     const meta = FIELD_META[f] || {};
     const v = meta.type === "number" ? Number(input.value) : input.value;
     if (Number.isNaN(v)) continue;
@@ -256,7 +352,8 @@ async function refreshMedia() {
     row.draggable = true;
     row.title = `${f.path}${f.durationMs ? ` · ${f.durationMs}ms` : ""}`;
     row.innerHTML = `<span class="badge">${f.kind}</span><span class="bd">${escapeHtml(f.name)}${
-      f.durationMs ? ` <span class="dim">${(f.durationMs / 1000).toFixed(1)}s</span>` : ""}</span>`;
+      f.durationMs ? ` <span class="dim">${(f.durationMs / 1000).toFixed(1)}s</span>` : ""}</span>` +
+      (f.kind === "audio" ? `<button class="set-bgm" data-src="${escapeHtml(f.path)}" title="设为工程背景乐">BGM</button>` : "");
     row.addEventListener("dblclick", () => insertMedia(f.path, targetTrackFor(f.kind), snap(state.playheadMs)));
     row.addEventListener("dragstart", (e) => e.dataTransfer.setData("text/cutforge-media", f.path));
     list.appendChild(row);
@@ -540,6 +637,34 @@ async function doSplit() {
   await refresh();
 }
 
+/* ---------------- v0.6 BGM 面板(bgm_set/bgm_clear;工程级) */
+
+async function refreshBgm() {
+  const bgm = state.project && state.project.bgm;
+  $("bgm-src").value = (bgm && bgm.src) || "";
+  $("bgm-gain").value = bgm && bgm.gainDb !== undefined ? bgm.gainDb : -18;
+  $("bgm-duck").checked = bgm ? bgm.ducking !== false : true;
+  $("bgm-loop").checked = bgm ? bgm.loop !== false : true;
+  $("bgm-state").textContent = bgm && bgm.src ? `当前:${bgm.src.split(/[\/]/).pop()}(${bgm.gainDb ?? -18}dB)` : "(未设置)";
+}
+
+async function applyBgm(clear = false) {
+  const args = {};
+  if (clear) args.src = null;
+  else {
+    const src = $("bgm-src").value.trim();
+    if (!src) return status("先填 BGM 音频路径(或从素材面板选)", false);
+    args.src = src;
+    const g = Number($("bgm-gain").value);
+    if (!Number.isNaN(g)) args.gainDb = g;
+    args.ducking = $("bgm-duck").checked;
+    args.loop = $("bgm-loop").checked;
+  }
+  const r = await api("bgm_set", args);
+  if (r.ok) status(clear ? "已清除 BGM(可撤销)" : "BGM 已更新(可撤销)");
+  await refresh();
+}
+
 /* ---------------- 数据刷新与事件 ---------------- */
 
 async function refresh() {
@@ -553,6 +678,7 @@ async function refresh() {
   renderTimeline();
   rebuildPreviewMedia();
   syncPreview(true);
+  await refreshBgm();
   await refreshConflictBanner();
   if ($("tab-notes").classList.contains("active")) await refreshNotes();
   if ($("tab-diff").classList.contains("active")) await refreshDiff();
@@ -702,6 +828,16 @@ function bindUI() {
   $("track-add-video").addEventListener("click", async () => { await api("track_add", { kind: "video" }); await refresh(); });
   $("track-add-audio").addEventListener("click", async () => { await api("track_add", { kind: "audio" }); await refresh(); });
   $("track-add-text").addEventListener("click", async () => { await api("track_add", { kind: "text" }); await refresh(); });
+  // ---- v0.6 BGM 面板 ----
+  $("bgm-apply").addEventListener("click", () => applyBgm(false));
+  $("bgm-clear").addEventListener("click", () => applyBgm(true));
+  // 素材行「设为 BGM」按钮(事件代理到素材列表)
+  $("media-list").addEventListener("click", async (e) => {
+    if (!e.target.classList.contains("set-bgm")) return;
+    const path = e.target.dataset.src;
+    $("bgm-src").value = path;
+    await applyBgm(false);
+  });
   // ---- E3-4 素材面板 ----
   $("media-refresh").addEventListener("click", refreshMedia);
   $("media-dir").addEventListener("keydown", (e) => { if (e.key === "Enter") refreshMedia(); });

@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。38 工具 = 13 查询 + 18 写 + 7 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。41 工具 = 13 查询 + 21 写 + 7 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
  "channels": [
   "stdio",
   "embedded-http"
@@ -1344,6 +1344,190 @@
        ]
       },
       "description": "初始空轨道(缺省 [video, audio] → V1+A1)"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "transition_set",
+   "kind": "write",
+   "idempotent": true,
+   "description": "设置片段转场(clip.transition):type 必给(fade/wipeleft/wipeup/slideleft/circleopen/cut/none;cut/none=显式硬切或关闭);durMs/fx/reason 可选,按字段合并不覆盖未给字段;枚举外值由 schema 层拒绝(SCHEMA_INVALID)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string",
+      "description": "目标片段 id(转场语义=与前一片段之间)"
+     },
+     "type": {
+      "enum": [
+       "fade",
+       "wipeleft",
+       "wipeup",
+       "slideleft",
+       "circleopen",
+       "cut",
+       "none"
+      ],
+      "description": "转场类型;cut/none=显式硬切/关闭"
+     },
+     "durMs": {
+      "type": "number",
+      "description": "转场时长(毫秒),缺省沿用现值"
+     },
+     "fx": {
+      "type": "string",
+      "description": "转场 fxId(CutFlow 分册04 §3.3);与 type 同给以 fx 为准"
+     },
+     "reason": {
+      "enum": [
+       "jumpcut",
+       "topic"
+      ],
+      "description": "转场语法制"
+     },
+     "summary": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "expectRev": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "root",
+     "clipId",
+     "type"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "motion_set",
+   "kind": "write",
+   "idempotent": true,
+   "description": "设置片段入场/出场动效(clip.motion):in/inMs/out/outMs 至少给一,按字段合并不覆盖未给字段;枚举外值由 schema 层拒绝(SCHEMA_INVALID)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string",
+      "description": "目标片段 id"
+     },
+     "in": {
+      "enum": [
+       "none",
+       "fadeIn",
+       "slideInLeft",
+       "slideInRight",
+       "scaleIn",
+       "zoomIn"
+      ],
+      "description": "入场动效类型"
+     },
+     "inMs": {
+      "type": "number",
+      "description": "入场时长(毫秒),缺省沿用现值"
+     },
+     "out": {
+      "enum": [
+       "none",
+       "fadeOut",
+       "slideOutLeft",
+       "slideOutRight"
+      ],
+      "description": "出场动效类型"
+     },
+     "outMs": {
+      "type": "number",
+      "description": "出场时长(毫秒),缺省沿用现值"
+     },
+     "summary": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "expectRev": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "root",
+     "clipId"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "bgm_set",
+   "kind": "write",
+   "idempotent": true,
+   "description": "设置工程级背景乐(doc.bgm):src 为工程内相对路径(设置/合并;工程尚无 bgm 时必给);src 显式 null=清除背景乐;gainDb/ducking/loop 可选按字段合并,新建时落 schema 默认(gainDb=-18/ducking=true/loop=true)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "src": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "背景乐音频路径(工程内相对路径);显式 null=清除"
+     },
+     "gainDb": {
+      "type": "number",
+      "description": "增益(分贝),缺省沿用现值(新建默认 -18)"
+     },
+     "ducking": {
+      "type": "boolean",
+      "description": "人声闪避开关(新建默认 true)"
+     },
+     "loop": {
+      "type": "boolean",
+      "description": "循环播放开关(新建默认 true)"
+     },
+     "summary": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     },
+     "expectRev": {
+      "type": "integer"
      }
     },
     "required": [

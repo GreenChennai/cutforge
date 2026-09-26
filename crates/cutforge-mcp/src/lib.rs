@@ -6,7 +6,7 @@
 //! `{ok, code, message, data}` 结果协议;code 取值限于计划书 5.4 表。
 //! 编排类工具只封装 CutFlow 既有脚本(子进程透传),不实现任何阶段逻辑。
 
-use cutforge_core::command::{ClipPatch, Command};
+use cutforge_core::command::{BgmPatch, ClipPatch, Command, MotionPatch, TransitionPatch};
 use cutforge_core::engine::{Answer, ApplyOpts, Query};
 use cutforge_core::oplog::{Actor, ActorKind};
 use cutforge_core::anchor::{Anchor, AnchorKind};
@@ -263,8 +263,81 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 scale: p["scale"].as_f64(),
                 text: p["text"].as_str().map(String::from),
                 freeze_ms: p["freezeMs"].as_u64(),
+                // 嵌套子 patch:对象缺席/显式 null 均为"不改";给出则按字段合并
+                transition: p.get("transition").filter(|t| t.is_object()).map(|t| TransitionPatch {
+                    type_: t["type"].as_str().map(String::from),
+                    dur_ms: t["durMs"].as_f64(),
+                    reason: t["reason"].as_str().map(String::from),
+                    fx: t["fx"].as_str().map(String::from),
+                }),
+                motion: p.get("motion").filter(|t| t.is_object()).map(|t| MotionPatch {
+                    in_: t["in"].as_str().map(String::from),
+                    in_ms: t["inMs"].as_f64(),
+                    out: t["out"].as_str().map(String::from),
+                    out_ms: t["outMs"].as_f64(),
+                }),
             };
             finish(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+        }
+        "transition_set" => {
+            // 设置片段转场(clip.transition):type 必给(durMs/fx/reason 可选,按字段合并);
+            // 显式硬切/关闭用 type="cut"/"none"(schema 语义),枚举外值由 schema 层拒。
+            let Some(clip_id) = args["clipId"].as_str() else {
+                return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
+            };
+            let Some(t) = args["type"].as_str() else {
+                return envelope(false, "PRECONDITION_FAILED", "缺 type(fade/wipeleft/wipeup/slideleft/circleopen/cut/none)", json!({}));
+            };
+            let patch = ClipPatch {
+                transition: Some(TransitionPatch {
+                    type_: Some(t.into()),
+                    dur_ms: args["durMs"].as_f64(),
+                    reason: args["reason"].as_str().map(String::from),
+                    fx: args["fx"].as_str().map(String::from),
+                }),
+                ..Default::default()
+            };
+            finish(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+        }
+        "motion_set" => {
+            // 设置片段入场/出场动效(clip.motion):至少给 in/inMs/out/outMs 之一,按字段合并
+            let Some(clip_id) = args["clipId"].as_str() else {
+                return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
+            };
+            let motion = MotionPatch {
+                in_: args["in"].as_str().map(String::from),
+                in_ms: args["inMs"].as_f64(),
+                out: args["out"].as_str().map(String::from),
+                out_ms: args["outMs"].as_f64(),
+            };
+            if motion.is_empty() {
+                return envelope(false, "PRECONDITION_FAILED", "motion_set 至少给 in/inMs/out/outMs 之一", json!({}));
+            }
+            let patch = ClipPatch { motion: Some(motion), ..Default::default() };
+            finish(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+        }
+        "bgm_set" => {
+            // 工程级背景乐(doc.bgm;不经 ClipPatch):src 为字符串=设置/合并;
+            // src 显式 null=清除;src 缺省=仅调 gainDb/ducking/loop(工程尚无 bgm 时须先给 src)。
+            if args.get("src").is_some_and(Value::is_null) {
+                return finish(ws.apply(Command::BgmClear, actor, opts));
+            }
+            let patch = BgmPatch {
+                src: args["src"].as_str().map(String::from),
+                gain_db: args["gainDb"].as_f64(),
+                ducking: args["ducking"].as_bool(),
+                loop_: args["loop"].as_bool(),
+            };
+            if patch.is_empty() {
+                return envelope(false, "PRECONDITION_FAILED",
+                    "bgm_set 至少给 src/gainDb/ducking/loop 之一(清除背景乐用 src:null)", json!({}));
+            }
+            // 音源路径与 clip_add 同一校验(不建并行实现)
+            if let Some(src) = patch.src.as_deref()
+                && let Err(msg) = resolve_within_root(&ws_root, src) {
+                    return envelope(false, "PRECONDITION_FAILED", &format!("bgm 路径不合法({src}): {msg}"), json!({}));
+                }
+            finish(ws.apply(Command::BgmSet { patch }, actor, opts))
         }
         "clip_split" => match args["clipId"].as_str().zip(args["tMs"].as_u64()) {
             Some((clip_id, t_ms)) => finish(ws.apply(Command::ClipSplit { clip_id: clip_id.into(), t_ms }, actor, opts)),
@@ -759,8 +832,10 @@ fn timeline_projection(project: &cutforge_core::model::Project) -> Vec<Value> {
                 "speed": c.speed, "volume": c.volume, "opacity": c.opacity,
                 "scale": c.scale, "position": c.position, "overlay": c.overlay,
                 "motion": c.motion, "text": c.text, "freezeMs": c.freeze_ms,
+                "transition": c.transition,
                 // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
-                "transition": c.transition, "fade": c.fade,
+                // (transition/motion 已于 ClipPatch 扩展后承接,不再列只读)
+                "fade": c.fade,
                 "punchIn": c.punch_in, "role": c.role,
             }));
         }
@@ -1968,8 +2043,104 @@ mod tests {
             assert!(!produces_rev_mutation(q), "{q} 不应计入会话变更");
         }
         for w in ["clip_update", "clip_add", "clip_delete", "clip_split", "clip_move",
-                  "track_add", "undo", "redo", "cut_apply", "notes_add"] {
+                  "track_add", "undo", "redo", "cut_apply", "notes_add",
+                  "transition_set", "motion_set", "bgm_set"] {
             assert!(produces_rev_mutation(w), "{w} 应计入会话变更");
         }
+    }
+
+    /// 阶段三门禁:transition_set/motion_set 走 ClipPatch,逐字段落盘;bgm_set 走
+    /// /bgm 项目级 op(src=null 清除);全部经既有 rev/冲突/原子写通道。
+    #[test]
+    fn transition_motion_bgm_tools_end_to_end() {
+        let root = cutforge_io::tests_fixture("mcp-tmb-tools").unwrap();
+        let root_s = root.to_string_lossy().to_string();
+        let rev0 = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+
+        // 缺参 → PRECONDITION_FAILED(协议完整)
+        for (name, args) in [
+            ("transition_set", json!({"root": root_s})),
+            ("transition_set", json!({"root": root_s, "clipId": "V1-002"})),
+            ("motion_set", json!({"root": root_s, "clipId": "V1-002"})),
+            ("motion_set", json!({"root": root_s})),
+            ("bgm_set", json!({"root": root_s})),
+        ] {
+            let resp = dispatch(name, &args);
+            assert_eq!(resp["code"], json!("PRECONDITION_FAILED"), "{name} 缺参: {resp}");
+            assert!(CODES.contains(&resp["code"].as_str().unwrap()));
+        }
+
+        // transition_set:设置转场(枚举内值)→ rev 上涨 → 盘面可读回
+        let r = dispatch("transition_set", &json!({
+            "root": root_s, "clipId": "V1-002", "type": "slideleft", "durMs": 320, "reason": "topic",
+        }));
+        assert_eq!(r["code"], json!("OK"), "{r}");
+        assert!(r["data"]["rev"].as_u64().unwrap() > rev0, "rev 必须上涨");
+        // 部分合并:再给 fx,既有 type/durMs/reason 保持
+        let r = dispatch("transition_set", &json!({
+            "root": root_s, "clipId": "V1-002", "type": "slideleft", "fx": "tr.demo",
+        }));
+        assert_eq!(r["code"], json!("OK"), "{r}");
+        // 枚举外 type → schema 层拒(SCHEMA_INVALID)
+        let bad = dispatch("transition_set", &json!({"root": root_s, "clipId": "V1-002", "type": "爆闪"}));
+        assert_eq!(bad["code"], json!("SCHEMA_INVALID"), "{bad}");
+
+        // motion_set:in+out 设置;缺 clipId 已在上面覆盖
+        let r = dispatch("motion_set", &json!({
+            "root": root_s, "clipId": "V1-002", "in": "zoomIn", "inMs": 280, "out": "fadeOut",
+        }));
+        assert_eq!(r["code"], json!("OK"), "{r}");
+
+        // 盘面核对:transition 按字段合并(fx 加入,其余保持),motion 全量在位
+        let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+        let v1 = proj["tracks"].as_array().unwrap().iter().find(|t| t["id"] == "V1").unwrap();
+        let clip = v1["clips"].as_array().unwrap().iter().find(|c| c["id"] == "V1-002").unwrap();
+        assert_eq!(clip["transition"]["type"], json!("slideleft"));
+        assert_eq!(clip["transition"]["durMs"], json!(320.0), "先设的 durMs 不得被部分合并清掉");
+        assert_eq!(clip["transition"]["reason"], json!("topic"));
+        assert_eq!(clip["transition"]["fx"], json!("tr.demo"));
+        assert_eq!(clip["motion"]["in"], json!("zoomIn"));
+        assert_eq!(clip["motion"]["inMs"], json!(280.0));
+        assert_eq!(clip["motion"]["out"], json!("fadeOut"));
+
+        // bgm_set:夹具工程自带 bgm → 合并 gainDb(src/ducking 保持);
+        // "无 bgm 须先给 src"的前置拒绝由 engine 单测覆盖(MissingBgm)。
+        let r = dispatch("bgm_set", &json!({"root": root_s, "gainDb": -12}));
+        assert_eq!(r["code"], json!("OK"), "{r}");
+        let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+        assert_eq!(proj["bgm"]["gainDb"], json!(-12.0));
+        assert_eq!(proj["bgm"]["src"], json!("03_assets/bgm/loop1.mp3"), "未给出的 src 不得被清掉");
+        assert_eq!(proj["bgm"]["ducking"], json!(true));
+        let bad_src = dispatch("bgm_set", &json!({"root": root_s, "src": "../逃逸.mp3"}));
+        assert_eq!(bad_src["code"], json!("PRECONDITION_FAILED"), "bgm 路径穿越必须拒绝: {bad_src}");
+        let rev_before_clear = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+        let r = dispatch("bgm_set", &json!({"root": root_s, "src": null}));
+        assert_eq!(r["code"], json!("OK"), "src:null 必须清除 bgm: {r}");
+        assert!(r["data"]["rev"].as_u64().unwrap() > rev_before_clear);
+        let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+        assert!(proj.get("bgm").is_none(), "清除后 bgm 必须消失: {proj}");
+
+        // 撤销清除 → bgm 恢复(撤销语义对齐既有)
+        let r = dispatch("undo", &json!({"root": root_s}));
+        assert_eq!(r["code"], json!("OK"), "{r}");
+        let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+        assert_eq!(proj["bgm"]["src"], json!("03_assets/bgm/loop1.mp3"), "撤销清除必须恢复 bgm");
+        assert_eq!(proj["bgm"]["gainDb"], json!(-12.0), "撤销只回退清除,不得连带回退合并");
+
+        // clip_update 嵌套 patch 同通道:patch.transition/patch.motion 对象与专用工具同一承接
+        let r = dispatch("clip_update", &json!({
+            "root": root_s, "clipId": "V1-001",
+            "patch": {"transition": {"type": "circleopen", "durMs": 450}, "motion": {"out": "slideOutRight", "outMs": 260}},
+        }));
+        assert_eq!(r["code"], json!("OK"), "{r}");
+        let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+        let v1 = proj["tracks"].as_array().unwrap().iter().find(|t| t["id"] == "V1").unwrap();
+        let first = v1["clips"].as_array().unwrap().iter().find(|c| c["id"] == "V1-001").unwrap();
+        assert_eq!(first["transition"]["type"], json!("circleopen"));
+        assert_eq!(first["transition"]["durMs"], json!(450.0));
+        assert_eq!(first["motion"]["out"], json!("slideOutRight"));
+        assert_eq!(first["motion"]["outMs"], json!(260.0));
+
+        cutforge_io::fsutil::cleanup(&root);
     }
 }

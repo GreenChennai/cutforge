@@ -145,7 +145,7 @@ pub struct Reframe {
     pub anchor_y: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Motion {
     #[serde(rename = "in", default, skip_serializing_if = "Option::is_none")]
@@ -158,7 +158,7 @@ pub struct Motion {
     pub out_ms: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transition {
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
@@ -167,6 +167,9 @@ pub struct Transition {
     pub dur_ms: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// 转场 fxId(CutFlow 分册04 §3.3;与 type 并存,同给以 fx 为准)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

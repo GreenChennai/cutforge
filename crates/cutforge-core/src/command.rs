@@ -6,8 +6,51 @@ use crate::model::Clip;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// 转场子 patch(对应 clip.transition;枚举约束在 schema 层)。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransitionPatch {
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub type_: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dur_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx: Option<String>,
+}
+
+/// 动效子 patch(对应 clip.motion 的 in/inMs/out/outMs;枚举约束在 schema 层)。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionPatch {
+    #[serde(rename = "in", default, skip_serializing_if = "Option::is_none")]
+    pub in_: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out_ms: Option<f64>,
+}
+
+/// 工程级背景乐 patch(对应 doc.bgm;项目级字段,不经 ClipPatch)。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BgmPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gain_db: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ducking: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "loop")]
+    pub loop_: Option<bool>,
+}
+
 /// 片段属性 patch(对应 MCP `clip_update`):只改出现的字段;
-/// 字段级 Op 的 before/after 由此派生。
+/// 字段级 Op 的 before/after 由此派生。transition/motion 为嵌套子 patch:
+/// 外层 Some = 承接该对象,内部再按字段合并(None 不改)。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipPatch {
@@ -29,11 +72,72 @@ pub struct ClipPatch {
     pub text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freeze_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transition: Option<TransitionPatch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion: Option<MotionPatch>,
 }
 
 impl ClipPatch {
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
+    }
+}
+
+impl TransitionPatch {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl MotionPatch {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl BgmPatch {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// 应用到 doc.bgm 并返回字段级变更(指针相对工程根,即 /bgm/…)。
+    /// 工程尚无 bgm 时按 schema 默认值(gainDb=-18/ducking=true/loop=true)新建;
+    /// 是否"无 bgm 且无 src"的前置拒绝由 Engine::mutate 承接。
+    pub fn apply_to(self, bgm: &mut Option<crate::model::Bgm>) -> Vec<FieldChange> {
+        let mut changes: Vec<FieldChange> = Vec::new();
+        let mut record = |name: &str, old: Value, new: Value| {
+            if old != new {
+                changes.push((format!("/bgm/{name}"), old, new));
+            }
+        };
+        let mut b = bgm.take().unwrap_or(crate::model::Bgm {
+            src: String::new(),
+            gain_db: -18.0,
+            ducking: true,
+            loop_: true,
+        });
+        if let Some(v) = self.src {
+            let old = std::mem::replace(&mut b.src, v.clone());
+            record("src", Value::String(old), Value::String(v));
+        }
+        if let Some(v) = self.gain_db {
+            let old = b.gain_db;
+            b.gain_db = v;
+            record("gainDb", json_f64(old), json_f64(v));
+        }
+        if let Some(v) = self.ducking {
+            let old = b.ducking;
+            b.ducking = v;
+            record("ducking", Value::from(old), Value::from(v));
+        }
+        if let Some(v) = self.loop_ {
+            let old = b.loop_;
+            b.loop_ = v;
+            record("loop", Value::from(old), Value::from(v));
+        }
+        *bgm = Some(b);
+        changes
     }
 }
 
@@ -57,6 +161,10 @@ pub enum Command {
     ClipMerge { left_id: String, right_id: String },
     /// 新增空轨道(M10 多轨管理;id 由 Engine 按 kind 确定性生成)。
     TrackAdd { kind: crate::model::TrackKind, request_id: Option<String> },
+    /// 设置/合并工程级背景乐(doc.bgm;工程尚无 bgm 时 patch 必须携带 src)。
+    BgmSet { patch: BgmPatch },
+    /// 清除工程级背景乐(已无 bgm 时幂等)。
+    BgmClear,
 }
 
 /// 从 patch 派生的字段级变更(指针片段 → before/after),用于生成叶级 Op。
@@ -116,6 +224,45 @@ impl ClipPatch {
             clip.freeze_ms = Some(v);
             record("freezeMs", opt_json_num(old), json_num(v));
         }
+        if let Some(tp) = self.transition {
+            // 按字段合并(None 不改;transition 对象本身不存在则按 schema 默认新建)
+            let t = clip.transition.get_or_insert_with(Default::default);
+            if let Some(v) = tp.type_ {
+                let old = t.type_.replace(v.clone());
+                record("transition/type", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+            if let Some(v) = tp.dur_ms {
+                let old = t.dur_ms.replace(v);
+                record("transition/durMs", opt_json_f64(old), json_f64(v));
+            }
+            if let Some(v) = tp.reason {
+                let old = t.reason.replace(v.clone());
+                record("transition/reason", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+            if let Some(v) = tp.fx {
+                let old = t.fx.replace(v.clone());
+                record("transition/fx", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+        }
+        if let Some(mp) = self.motion {
+            let m = clip.motion.get_or_insert_with(Default::default);
+            if let Some(v) = mp.in_ {
+                let old = m.in_.replace(v.clone());
+                record("motion/in", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+            if let Some(v) = mp.in_ms {
+                let old = m.in_ms.replace(v);
+                record("motion/inMs", opt_json_f64(old), json_f64(v));
+            }
+            if let Some(v) = mp.out {
+                let old = m.out.replace(v.clone());
+                record("motion/out", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+            if let Some(v) = mp.out_ms {
+                let old = m.out_ms.replace(v);
+                record("motion/outMs", opt_json_f64(old), json_f64(v));
+            }
+        }
         changes
     }
 }
@@ -161,9 +308,11 @@ mod tests {
             scale: Some(1.1),
             text: Some("字幕".into()),
             freeze_ms: Some(300),
+            transition: Some(TransitionPatch { type_: Some("fade".into()), dur_ms: Some(300.0), ..Default::default() }),
+            motion: Some(MotionPatch { in_: Some("fadeIn".into()), ..Default::default() }),
         }
         .apply_to(&mut c);
-        assert_eq!(changes.len(), 9);
+        assert_eq!(changes.len(), 12);
         assert_eq!(c.start_ms, 100);
         assert_eq!(c.duration_ms, 8000);
         assert_eq!(c.source_in_ms, Some(12100));
@@ -173,12 +322,19 @@ mod tests {
         assert_eq!(c.scale, Some(1.1));
         assert_eq!(c.text.as_deref(), Some("字幕"));
         assert_eq!(c.freeze_ms, Some(300));
+        let tr = c.transition.as_ref().unwrap();
+        assert_eq!(tr.type_.as_deref(), Some("fade"));
+        assert_eq!(tr.dur_ms, Some(300.0));
+        assert_eq!(c.motion.as_ref().unwrap().in_.as_deref(), Some("fadeIn"));
         // 指针路径与 before/after 成对
         let m: std::collections::BTreeMap<String, (serde_json::Value, serde_json::Value)> =
             changes.into_iter().map(|(p, o, n)| (p, (o, n))).collect();
         let (o, n) = m.get("/volume").unwrap();
         assert_eq!(*o, serde_json::json!(1.0));
         assert_eq!(*n, serde_json::json!(0.8));
+        let (o, n) = m.get("/transition/type").unwrap();
+        assert_eq!(*o, serde_json::Value::Null);
+        assert_eq!(*n, serde_json::json!("fade"));
     }
 
     #[test]
@@ -186,5 +342,101 @@ mod tests {
         let mut c = clip();
         let changes = ClipPatch { volume: Some(1.0), ..Default::default() }.apply_to(&mut c);
         assert!(changes.is_empty(), "同值字段不得计入变更");
+    }
+
+    /// 嵌套子 patch 合并语义:None 不改;Some 只覆盖给出的字段(部分合并);
+    /// transition 对象不存在时按字段新建;同值不产变更。
+    #[test]
+    fn nested_transition_motion_patch_merges_by_field() {
+        let mut c = clip();
+        assert!(c.transition.is_none() && c.motion.is_none());
+
+        // None = 不改:对象仍缺席
+        let changes = ClipPatch::default().apply_to(&mut c);
+        assert!(changes.is_empty());
+        assert!(c.transition.is_none() && c.motion.is_none());
+
+        // 首次给出:只给 type/fx,其余字段缺席 → 新建对象且只含给出的字段
+        let changes = ClipPatch {
+            transition: Some(TransitionPatch { type_: Some("wipeleft".into()), fx: Some("tr.demo".into()), ..Default::default() }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(changes.len(), 2);
+        let tr = c.transition.as_ref().unwrap();
+        assert_eq!(tr.type_.as_deref(), Some("wipeleft"));
+        assert_eq!(tr.fx.as_deref(), Some("tr.demo"));
+        assert_eq!(tr.dur_ms, None, "未给出的字段不得臆造");
+        assert!(tr.reason.is_none());
+
+        // 部分覆盖:durMs/reason 合并进既有对象,type/fx 保持
+        let changes = ClipPatch {
+            transition: Some(TransitionPatch { dur_ms: Some(420.0), reason: Some("topic".into()), ..Default::default() }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(changes.len(), 2);
+        let tr = c.transition.as_ref().unwrap();
+        assert_eq!(tr.type_.as_deref(), Some("wipeleft"), "未给出的字段不得被清掉");
+        assert_eq!(tr.fx.as_deref(), Some("tr.demo"));
+        assert_eq!(tr.dur_ms, Some(420.0));
+        assert_eq!(tr.reason.as_deref(), Some("topic"));
+
+        // Some 覆盖同名字段
+        ClipPatch {
+            transition: Some(TransitionPatch { type_: Some("circleopen".into()), ..Default::default() }),
+            motion: Some(MotionPatch { in_: Some("slideInLeft".into()), in_ms: Some(280.0), ..Default::default() }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(c.transition.as_ref().unwrap().type_.as_deref(), Some("circleopen"));
+        let m = c.motion.as_ref().unwrap();
+        assert_eq!(m.in_.as_deref(), Some("slideInLeft"));
+        assert_eq!(m.in_ms, Some(280.0));
+        assert!(m.out.is_none(), "未给出的 out 不得臆造");
+
+        // 同值 patch 不产变更
+        let changes = ClipPatch {
+            transition: Some(TransitionPatch { type_: Some("circleopen".into()), ..Default::default() }),
+            motion: Some(MotionPatch { in_ms: Some(280.0), ..Default::default() }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert!(changes.is_empty(), "同值嵌套字段不得计入变更: {changes:?}");
+    }
+
+    /// BgmPatch:合并语义 + 无 bgm 时按 schema 默认新建;is_empty 口径。
+    #[test]
+    fn bgm_patch_merges_and_creates_with_schema_defaults() {
+        let mut bgm: Option<crate::model::Bgm> = None;
+        // 无 bgm 时只给 gainDb → 新建但 src 为空串(Engine 层拒绝此前置,见 engine 测试)
+        let changes = BgmPatch { gain_db: Some(-12.0), ..Default::default() }.apply_to(&mut bgm);
+        let b = bgm.as_ref().unwrap();
+        assert_eq!(b.gain_db, -12.0);
+        assert_eq!(b.src, "");
+        assert!(b.ducking && b.loop_, "新建必须落 schema 默认 ducking=true/loop=true");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, "/bgm/gainDb");
+
+        // 合并:src/loop 覆盖,gainDb/ducking 保持
+        let changes = BgmPatch {
+            src: Some("02_音乐/bgm.mp3".into()),
+            loop_: Some(false),
+            ..Default::default()
+        }
+        .apply_to(&mut bgm);
+        assert_eq!(changes.len(), 2);
+        let b = bgm.as_ref().unwrap();
+        assert_eq!(b.src, "02_音乐/bgm.mp3");
+        assert!(!b.loop_);
+        assert_eq!(b.gain_db, -12.0, "未给出的 gainDb 不得被重置");
+        assert!(b.ducking);
+
+        // 同值不产变更
+        let changes = BgmPatch { src: Some("02_音乐/bgm.mp3".into()), ..Default::default() }.apply_to(&mut bgm);
+        assert!(changes.is_empty(), "同值 bgm 字段不得计入变更");
+
+        assert!(BgmPatch::default().is_empty());
+        assert!(!BgmPatch { src: Some("x".into()), ..Default::default() }.is_empty());
     }
 }

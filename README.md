@@ -39,7 +39,7 @@ M0–M4 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
 - **M2**:`cutforge-core`(领域模型/命令通道/撤销栈/OpLog/三路合并骨架/锚点,行覆盖 ≥80%,wasm32 可构建)+ `cutforge-io`(工程读写/原子写唯一落盘点/锁/备份/媒体探测/轮询 watcher)+ `cutforge-cli`(打开/查询/应用/撤销重做/OpLog + 门禁判定器)。
 - **M3**:双向同步全链——三路合并九行判定表零静默覆盖(12,000 组属性测试)、OpLog 回放等价(含 undo/redo 混入)、冲突三方快照落盘(`.cutforge/conflicts/`)、标注(notes.json)读写/结案回执绑定 opIds/锚点重定位(100 组场景零丢失)、阶段脏传播(改 IR 只标 S3+;改字幕只重烧 S8)、往返延迟基准(AI 可见 P95 ≤100ms,实测个位数毫秒)。
-- **M4**:MCP 层——单注册表(28 工具为 M4 时点;阶段二新增 clip_add/media_probe/media_browse/project_new 后为 **38 工具 = 13 查询+18 写+7 编排**,当前一律以 `schemas/mcp-tools.json` 为准),stdio 与内嵌 HTTP(127.0.0.1+token)双通道共用同一 dispatch;脚本宿主 `cutforge-script`(批式步骤+策略沙箱,六类逃逸零到达派发器);CutFlow 侧四个桥脚本(rs_editor/rs_notes/rs_oplog/rs_gate)入 doctor 体检与命令速查表。
+- **M4**:MCP 层——单注册表(28 工具为 M4 时点;阶段二新增 clip_add/media_probe/media_browse/project_new,阶段三新增 transition_set/motion_set/bgm_set;现为 **41 工具 = 13 查询+21 写+7 编排**,当前一律以 `schemas/mcp-tools.json` 为准),stdio 与内嵌 HTTP(127.0.0.1+token)双通道共用同一 dispatch;脚本宿主 `cutforge-script`(批式步骤+策略沙箱,六类逃逸零到达派发器);CutFlow 侧四个桥脚本(rs_editor/rs_notes/rs_oplog/rs_gate)入 doctor 体检与命令速查表。
 
 ## 🚀 快速开始(编辑器,4 步)
 

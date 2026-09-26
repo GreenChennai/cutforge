@@ -26,6 +26,8 @@ pub enum Reject {
     PreconditionFailed { expected: u64, actual: u64 },
     SchemaInvalid(Vec<String>),
     InvariantViolation(String),
+    /// bgm_set 要求工程已有 doc.bgm,或 patch 携带 src(新建须有音源)。
+    MissingBgm,
     NothingToUndo,
     NothingToRedo,
 }
@@ -599,6 +601,26 @@ impl Engine {
                 let after = serde_json::to_value(&p.tracks[lt].clips).unwrap();
                 Ok((path, before, after, format!("clip_merge {left_id}+{right_id}"), OpKind::Merge))
             }
+            Command::BgmSet { patch } => {
+                // 新建前置:工程尚无 bgm 时必须携带 src(拒绝 src 为空的幽灵背景乐)
+                if p.bgm.is_none() && patch.src.is_none() {
+                    return Err(Reject::MissingBgm);
+                }
+                let before = serde_json::to_value(&p.bgm).unwrap_or(Value::Null);
+                let changes = patch.apply_to(&mut p.bgm);
+                let summary = if changes.is_empty() {
+                    "无实际变更".to_string()
+                } else {
+                    changes.iter().map(|(ptr, o, n)| format!("{ptr}: {o}→{n}")).collect::<Vec<_>>().join(", ")
+                };
+                let after = serde_json::to_value(&p.bgm).unwrap_or(Value::Null);
+                Ok(("/bgm".to_string(), before, after, format!("bgm_set: {summary}"), OpKind::Set))
+            }
+            Command::BgmClear => {
+                let before = serde_json::to_value(&p.bgm).unwrap_or(Value::Null);
+                p.bgm = None;
+                Ok(("/bgm".to_string(), before, Value::Null, "bgm_clear".to_string(), OpKind::Delete))
+            }
         }
     }
 }
@@ -896,5 +918,143 @@ mod tests {
         let op = &eng.oplog().ops()[0];
         assert_eq!(op.caused_by.as_deref(), Some(&["n-0001".to_string()][..]));
         assert_eq!(op.summary, "按标注缩短");
+    }
+
+    /// transition/motion 经 ClipUpdate 应用:合并语义 + 枚举外值由 schema 层拒(SCHEMA_INVALID 回滚)。
+    #[test]
+    fn clip_update_transition_motion_apply_and_schema_guard() {
+        let mut eng = Engine::new(sample_project()).unwrap();
+        let r = eng.apply(Command::ClipUpdate {
+            clip_id: "V1-002".into(),
+            patch: ClipPatch {
+                transition: Some(crate::command::TransitionPatch {
+                    type_: Some("slideleft".into()), dur_ms: Some(320.0), ..Default::default()
+                }),
+                motion: Some(crate::command::MotionPatch {
+                    in_: Some("zoomIn".into()), out: Some("fadeOut".into()), ..Default::default()
+                }),
+                ..Default::default()
+            },
+        }, agent(), ApplyOpts::default()).unwrap();
+        assert_eq!(r.rev, 1);
+        match eng.query(Query::Clip { id: "V1-002".into() }) {
+            Answer::Clip(Some(c)) => {
+                assert_eq!(c["transition"]["type"], json!("slideleft"));
+                assert_eq!(c["transition"]["durMs"], json!(320.0));
+                assert_eq!(c["motion"]["in"], json!("zoomIn"));
+                assert_eq!(c["motion"]["out"], json!("fadeOut"));
+                assert!(c["motion"].get("inMs").is_none(), "未给出的字段不得臆造");
+            }
+            other => panic!("意外: {other:?}"),
+        }
+        // 部分合并:再给 reason,既有 type/durMs 保持
+        eng.apply(Command::ClipUpdate {
+            clip_id: "V1-002".into(),
+            patch: ClipPatch {
+                transition: Some(crate::command::TransitionPatch { reason: Some("topic".into()), ..Default::default() }),
+                ..Default::default()
+            },
+        }, agent(), ApplyOpts::default()).unwrap();
+        match eng.query(Query::Clip { id: "V1-002".into() }) {
+            Answer::Clip(Some(c)) => {
+                assert_eq!(c["transition"]["type"], json!("slideleft"), "未给出的字段不得被清掉");
+                assert_eq!(c["transition"]["reason"], json!("topic"));
+            }
+            other => panic!("意外: {other:?}"),
+        }
+        // 枚举外值:内核不设枚举约束,由 schema 层拒绝并回滚
+        let before = eng.query(Query::Clip { id: "V1-002".into() });
+        let r = eng.apply(Command::ClipUpdate {
+            clip_id: "V1-002".into(),
+            patch: ClipPatch {
+                transition: Some(crate::command::TransitionPatch { type_: Some("爆闪".into()), ..Default::default() }),
+                ..Default::default()
+            },
+        }, agent(), ApplyOpts::default());
+        assert!(matches!(r, Err(Reject::SchemaInvalid(_))), "枚举外转场必须被 schema 层拒: {r:?}");
+        assert_eq!(eng.query(Query::Clip { id: "V1-002".into() }), before, "拒绝必须回滚");
+        assert_eq!(eng.rev(), 2, "拒绝不得升 rev");
+        let r = eng.apply(Command::ClipUpdate {
+            clip_id: "V1-002".into(),
+            patch: ClipPatch {
+                motion: Some(crate::command::MotionPatch { in_: Some("乱入".into()), ..Default::default() }),
+                ..Default::default()
+            },
+        }, agent(), ApplyOpts::default());
+        assert!(matches!(r, Err(Reject::SchemaInvalid(_))), "枚举外动效必须被 schema 层拒: {r:?}");
+    }
+
+    /// bgm_set/bgm_clear:创建带 schema 默认、合并、无 src 拒绝、撤销/重做回环。
+    #[test]
+    fn bgm_set_clear_undo_redo_roundtrip() {
+        let mut eng = Engine::new(sample_project()).unwrap();
+        // 无 bgm 且不带 src → MissingBgm
+        let r = eng.apply(Command::BgmSet { patch: crate::command::BgmPatch { gain_db: Some(-12.0), ..Default::default() } }, agent(), ApplyOpts::default());
+        assert!(matches!(r, Err(Reject::MissingBgm)), "{r:?}");
+        // 创建:未给出的字段落 schema 默认(gainDb=-18/ducking=true/loop=true)
+        let r = eng.apply(Command::BgmSet {
+            patch: crate::command::BgmPatch { src: Some("02_音乐/bgm.mp3".into()), ..Default::default() },
+        }, agent(), ApplyOpts::default()).unwrap();
+        assert_eq!(r.rev, 1);
+        let op = &eng.oplog().ops()[0];
+        assert_eq!(op.target.path, "/bgm");
+        assert_eq!(op.target.file, "project.json");
+        match eng.query(Query::ProjectView) {
+            Answer::Project(v) => {
+                assert_eq!(v["bgm"]["src"], json!("02_音乐/bgm.mp3"));
+                assert_eq!(v["bgm"]["gainDb"], json!(-18.0));
+                assert_eq!(v["bgm"]["ducking"], json!(true));
+                assert_eq!(v["bgm"]["loop"], json!(true));
+            }
+            other => panic!("意外: {other:?}"),
+        }
+        // 合并:只改 gainDb/loop,src/ducking 保持
+        eng.apply(Command::BgmSet {
+            patch: crate::command::BgmPatch { gain_db: Some(-9.0), loop_: Some(false), ..Default::default() },
+        }, agent(), ApplyOpts::default()).unwrap();
+        match eng.query(Query::ProjectView) {
+            Answer::Project(v) => {
+                assert_eq!(v["bgm"]["src"], json!("02_音乐/bgm.mp3"), "src 不得被清掉");
+                assert_eq!(v["bgm"]["gainDb"], json!(-9.0));
+                assert_eq!(v["bgm"]["loop"], json!(false));
+            }
+            other => panic!("意外: {other:?}"),
+        }
+        // 同值 → 幂等回执,rev 不动
+        let r = eng.apply(Command::BgmSet {
+            patch: crate::command::BgmPatch { gain_db: Some(-9.0), ..Default::default() },
+        }, agent(), ApplyOpts::default()).unwrap();
+        assert!(r.idempotent);
+        assert_eq!(eng.rev(), 2);
+        // 撤销合并 → gainDb 回 -18;再撤销创建 → bgm 消失;重做恢复
+        eng.undo(agent()).unwrap();
+        match eng.query(Query::ProjectView) {
+            Answer::Project(v) => assert_eq!(v["bgm"]["gainDb"], json!(-18.0)),
+            other => panic!("意外: {other:?}"),
+        }
+        eng.undo(agent()).unwrap();
+        match eng.query(Query::ProjectView) {
+            Answer::Project(v) => assert!(v.get("bgm").is_none(), "撤销创建后 bgm 必须消失: {v}"),
+            other => panic!("意外: {other:?}"),
+        }
+        eng.redo(agent()).unwrap();
+        match eng.query(Query::ProjectView) {
+            Answer::Project(v) => assert_eq!(v["bgm"]["gainDb"], json!(-18.0), "重做恢复创建态"),
+            other => panic!("意外: {other:?}"),
+        }
+        // 清除:rev 上涨;再清除幂等;撤销清除恢复
+        let r = eng.apply(Command::BgmClear, agent(), ApplyOpts::default()).unwrap();
+        assert!(!r.idempotent);
+        match eng.query(Query::ProjectView) {
+            Answer::Project(v) => assert!(v.get("bgm").is_none()),
+            other => panic!("意外: {other:?}"),
+        }
+        let r = eng.apply(Command::BgmClear, agent(), ApplyOpts::default()).unwrap();
+        assert!(r.idempotent, "已无 bgm 时清除必须幂等");
+        eng.undo(agent()).unwrap();
+        match eng.query(Query::ProjectView) {
+            Answer::Project(v) => assert_eq!(v["bgm"]["src"], json!("02_音乐/bgm.mp3"), "撤销清除必须恢复 bgm"),
+            other => panic!("意外: {other:?}"),
+        }
     }
 }

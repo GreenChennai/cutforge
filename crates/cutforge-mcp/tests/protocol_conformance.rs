@@ -53,6 +53,12 @@ fn protocol_conformance() {
         ("notes_add", json!({"root": root_s})),
         ("notes_resolve", json!({"root": root_s})),
         ("sfx_add", json!({})),
+        // 阶段三新工具同样受缺参门禁约束
+        ("transition_set", json!({"root": root_s})),
+        ("transition_set", json!({"root": root_s, "clipId": "V1-002"})),
+        ("motion_set", json!({"root": root_s})),
+        ("motion_set", json!({"root": root_s, "clipId": "V1-002"})),
+        ("bgm_set", json!({"root": root_s})),
     ] {
         let resp = cutforge_mcp::dispatch(name, &args);
         assert_envelope(&resp, name);
@@ -76,22 +82,35 @@ fn protocol_conformance() {
     assert_eq!(resp["code"], json!("NO_CONFIG"));
 
     // 注册表与 mcp-tools.json 契约:工具全部有名/有描述/有双 schema
-    // (数量与 json 对拍;阶段二新增 clip_add/media_probe/media_browse/project_new → 38)
+    // (数量与 json 对拍;阶段二 34→38;阶段三新增 transition_set/motion_set/bgm_set → 41)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 38, "B7 口径:工具数以 schemas/mcp-tools.json 为准");
+    assert_eq!(names.len(), 41, "B7 口径:工具数以 schemas/mcp-tools.json 为准");
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);
         assert!(t["outputSchema"].is_object(), "{} 缺 outputSchema", t["name"]);
     }
-    // kind 口径:13 查询 + 18 写 + 7 编排(与 _doc 同句)
+    // kind 口径:13 查询 + 21 写 + 7 编排(与 _doc 同句)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds.entry(t["kind"].as_str().unwrap().to_string()).or_insert(0usize) += 1;
     }
     assert_eq!(kinds.get("query"), Some(&13), "查询 13:{kinds:?}");
-    assert_eq!(kinds.get("write"), Some(&18), "写 18:{kinds:?}");
+    assert_eq!(kinds.get("write"), Some(&21), "写 21:{kinds:?}");
     assert_eq!(kinds.get("orchestrate"), Some(&7), "编排 7:{kinds:?}");
+
+    // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
+    // 实现分支,不得出现"已注册但未实现"。统一以缺 root 空参探针:所有工具(capability_matrix
+    // 除外)在 {} 下必须返回协议完整的 PRECONDITION_FAILED;"未实现"分支返回 INTERNAL,在此红。
+    for t in cutforge_mcp::registry() {
+        let name = t["name"].as_str().unwrap();
+        let resp = cutforge_mcp::dispatch(name, &json!({}));
+        assert_envelope(&resp, name);
+        let msg = resp["message"].as_str().unwrap_or_default();
+        assert!(!msg.contains("未实现"), "{name} 已注册但 dispatch 无实现分支: {resp}");
+        let expected = if name == "capability_matrix" { "OK" } else { "PRECONDITION_FAILED" };
+        assert_eq!(resp["code"], json!(expected), "{name} 空参探针口径漂移: {resp}");
+    }
     cutforge_io::fsutil::cleanup(&root);
 }
 

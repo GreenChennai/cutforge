@@ -10,6 +10,7 @@
 <div id="banner" hidden>
   <div id="token-banner" class="banner-row warn" hidden></div>
   <div id="conflict-banner" class="banner-row danger" hidden></div>
+  <div id="internal-banner" class="banner-row warn" hidden></div>
 </div>
 <header>
   <h1>CutForge</h1>
@@ -63,6 +64,20 @@
             <span id="pv-time">0.000s</span>
           </div>
           <div id="pv-media" hidden></div>
+        </div>
+        <div id="bgm-panel" class="panel">
+          <h3>背景乐 BGM(bgm_set,可撤销)</h3>
+          <label>音频路径 <input type="text" id="bgm-src" placeholder="01_原始素材/bgm.mp3 或素材面板点 BGM"></label>
+          <div class="bgm-row">
+            <label>音量(dB) <input type="number" id="bgm-gain" value="-18" step="1" max="0"></label>
+            <label class="toggle"><input type="checkbox" id="bgm-duck" checked> 人声闪避</label>
+            <label class="toggle"><input type="checkbox" id="bgm-loop" checked> 循环</label>
+          </div>
+          <div class="bgm-row">
+            <button id="bgm-apply">应用 BGM</button>
+            <button id="bgm-clear">清除</button>
+            <span id="bgm-state" class="dim">(未设置)</span>
+          </div>
         </div>
         <div id="export" class="panel">
           <h3>导出(编辑器内出片,E5)</h3>

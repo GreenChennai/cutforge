@@ -152,7 +152,7 @@ input, select { background: #12151f; color: #e6ecff; border: 1px solid #33405e; 
 
 /* v0.6 布局:工作台定高 + 时间线常驻可见 */
 main { display: block; }
-#tab-timeline { display: flex; flex-direction: column; height: calc(100vh - 150px); }
+#tab-timeline.active { display: flex; flex-direction: column; height: calc(100vh - 150px); }
 #workbench { flex: 0 0 auto; max-height: 52vh; overflow: auto; }
 #timeline-wrap { flex: 1 1 auto; min-height: 220px; overflow: auto; }
 .track { height: 56px; }

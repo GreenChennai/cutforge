@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "runId": "<RUN_ID>"
    },
    "response": {
@@ -11,24 +11,24 @@
     "data": {
      "error": null,
      "lines": [
-      "{\"ok\":true,\"step\":\"probe\"}",
-      "{\"cacheHits\":0,\"ok\":true,\"segments\":3,\"step\":\"segment\"}",
-      "{\"ok\":true,\"step\":\"compose-video\"}",
-      "{\"count\":0,\"ok\":true,\"step\":\"overlay\"}",
-      "{\"cacheHit\":false,\"ok\":true,\"step\":\"mix\"}",
-      "{\"burned\":false,\"ok\":true,\"step\":\"subtitle\"}",
-      "{\"ok\":true,\"output\":\"<ABS>\",\"step\":\"encode\"}",
-      "{\"ok\":true,\"step\":\"probe\"}",
-      "{\"ok\":true,\"step\":\"segment\"}",
-      "{\"ok\":true,\"step\":\"compose-video\"}",
-      "{\"ok\":true,\"step\":\"overlay\"}",
-      "{\"ok\":true,\"step\":\"mix\"}",
-      "{\"ok\":true,\"step\":\"subtitle\"}",
-      "{\"ok\":true,\"step\":\"encode\"}",
-      "{\"cacheHits\":0,\"done\":true,\"output\":\"<ABS>\",\"segments\":3}",
-      "RENDER_OK <TMP>\\proot\\06_成片输出\\final_cutforge_parity-main_1080x1920.mp4"
+      "{\"ok\": true, \"step\": \"probe\"}",
+      "{\"cacheHits\": 0, \"ok\": true, \"segments\": 3, \"step\": \"segment\"}",
+      "{\"ok\": true, \"step\": \"compose-video\"}",
+      "{\"count\": 0, \"ok\": true, \"step\": \"overlay\"}",
+      "{\"cacheHit\": false, \"ok\": true, \"step\": \"mix\"}",
+      "{\"burned\": false, \"ok\": true, \"step\": \"subtitle\"}",
+      "{\"ok\": true, \"output\": \"<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4\", \"step\": \"encode\"}",
+      "{\"ok\": true, \"step\": \"probe\"}",
+      "{\"ok\": true, \"step\": \"segment\"}",
+      "{\"ok\": true, \"step\": \"compose-video\"}",
+      "{\"ok\": true, \"step\": \"overlay\"}",
+      "{\"ok\": true, \"step\": \"mix\"}",
+      "{\"ok\": true, \"step\": \"subtitle\"}",
+      "{\"ok\": true, \"step\": \"encode\"}",
+      "{\"cacheHits\": 0, \"done\": true, \"output\": \"<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4\", \"segments\": 3}",
+      "RENDER_OK <TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4"
      ],
-     "output": "<TMP>\\proot\\06_成片输出\\final_cutforge_parity-main_1080x1920.mp4",
+     "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4",
      "state": "ok"
     },
     "message": "渲染进度",

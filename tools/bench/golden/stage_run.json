@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "stage": "S3",
     "scriptArgs": [
      "--only",

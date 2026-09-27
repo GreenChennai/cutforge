@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "level": "L1",
     "scriptArgs": [
      "--level",

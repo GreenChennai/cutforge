@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "clipId": "V1-001",
     "startMs": 0,
     "durationMs": 1800

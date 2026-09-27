@@ -2,7 +2,8 @@
 """阶段六 J6 门禁:export_jianying ↔ CutFlow rs_jy_draft.py 出口对拍(副文档 06 §6 判据 6)。
 
 对拍口径(务实双层):
-  1. 源级:lib.rs 的编排组把 export_jianying 落到**同一个** rs_jy_draft.py,
+  1. 源级:cutforge-mcp crate 全部 src/**/*.rs 拼接源里,编排组把 export_jianying
+     落到**同一个** rs_jy_draft.py,
      scriptArgs 原样透传、不注旗标(映射真相只在 CutFlow 一处,两处不得各自漂移);
   2. 行级:对真实夹具 IR 以 export_jianying 的调用形态(cwd=工程根,
      scriptArgs=['05_ir/project.json','--name','x','--dry-run'])真跑该脚本,
@@ -25,13 +26,27 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CUTFLOW = Path(os.environ.get("CUTFLOW_REPO", ROOT.parent / "CutFlow"))
 SCRIPTS = CUTFLOW / "skills" / "cutflow" / "scripts"
-LIB_RS = ROOT / "crates" / "cutforge-mcp" / "src" / "lib.rs"
+MCP_SRC = ROOT / "crates" / "cutforge-mcp" / "src"
 
 pytestmark = [
     pytest.mark.skipif(not (SCRIPTS / "rs_jy_draft.py").is_file(),
                        reason="CutFlow 仓库不可用(CUTFLOW_REPO 未设且无同级目录)"),
-    pytest.mark.skipif(not LIB_RS.is_file(), reason="cutforge-mcp 源码缺失"),
+    pytest.mark.skipif(not MCP_SRC.is_dir(), reason="cutforge-mcp 源码缺失"),
 ]
+
+
+def mcp_source() -> str:
+    """cutforge-mcp crate 全部 src/**/*.rs 按相对路径稳定排序后拼接。
+
+    T1.1 拆分后派发表在 dispatch.rs、编排体在 orchestrate.rs,模块归属仍会演进;
+    被测源取整 crate 拼接,断言语义不变,模块再挪位也不假红。
+    """
+    parts = []
+    for p in sorted(MCP_SRC.rglob("*.rs"), key=lambda p: p.relative_to(MCP_SRC).as_posix()):
+        parts.append(f"// ===== {p.relative_to(MCP_SRC).as_posix()} =====\n")
+        parts.append(p.read_text(encoding="utf-8"))
+    assert parts, "cutforge-mcp/src 下没有任何 .rs 源文件"
+    return "".join(parts)
 
 
 def run_jy_draft(*args: str, cwd: Path) -> subprocess.CompletedProcess:
@@ -51,8 +66,8 @@ def last_json(text: str) -> dict:
 # ---------------------------------------------------------------- 源级对拍
 
 def test_export_jianying_dispatch_maps_to_same_script():
-    """lib.rs:export_jianying 与 stage_run 等同组,统一落到 rs_jy_draft.py。"""
-    src = LIB_RS.read_text(encoding="utf-8")
+    """cutforge-mcp 源级:export_jianying 与 stage_run 等同组,统一落到 rs_jy_draft.py。"""
+    src = mcp_source()
     m = re.search(r'"stage_run"[^\n]*\n(?:.*\n){0,12}?.*_ => "rs_jy_draft\.py"', src)
     assert m, "export_jianying 编排组必须落 rs_jy_draft.py(同一脚本同一映射)"
     assert "export_jianying" in m.group(0), "export_jianying 必须在同一编排组内"
@@ -60,7 +75,7 @@ def test_export_jianying_dispatch_maps_to_same_script():
 
 def test_export_jianying_passthrough_no_flag_injection():
     """scriptArgs 原样透传;--json 白名单仅 rs_verify(不给 rs_jy_draft 注旗标)。"""
-    src = LIB_RS.read_text(encoding="utf-8")
+    src = mcp_source()
     assert 'let supports_json = matches!(script, "rs_verify.py");' in src
     # 编排 = 子进程跑脚本 + 透传(CutFlow 码表原样回传),不重实现映射
     assert 'fn orchestrate(ws_root: &Path, script: &str, script_args: &[Value])' in src

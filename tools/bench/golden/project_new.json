@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\wsnew",
+    "root": "<TMP>/wsnew",
     "slug": "parity-new",
     "fps": 30,
     "canvasW": 1080,
@@ -16,8 +16,8 @@
    "response": {
     "code": "OK",
     "data": {
-     "hint": "打开:cutforge-cli serve <TMP>\\wsnew 或 cutforge-mcp serve --root <TMP>\\wsnew",
-     "project": "<TMP>\\wsnew\\05_时间线工程/project.json"
+     "hint": "打开:cutforge-cli serve <TMP>/wsnew 或 cutforge-mcp serve --root <TMP>/wsnew",
+     "project": "<TMP>/wsnew/05_时间线工程/project.json"
     },
     "message": "空工程已创建(可独立起步,不依赖 CutFlow)",
     "ns": "ok",

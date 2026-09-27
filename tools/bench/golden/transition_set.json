@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "clipId": "V1-002",
     "type": "fade",
     "durMs": 300,

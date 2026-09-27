@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "trackId": "V1",
     "src": "01_原始素材/take1.mp4",
     "startMs": 0,
@@ -27,7 +27,7 @@
   },
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "trackId": "V1",
     "src": "01_原始素材/take1.mp4",
     "startMs": 4000,

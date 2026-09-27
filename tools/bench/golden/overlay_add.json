@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "trackId": "T1",
     "element": {
      "src": "01_原始素材/take1.mp4",

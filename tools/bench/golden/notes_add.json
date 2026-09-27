@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "anchor": {
      "kind": "clip",
      "ref": "V1-001"
@@ -28,7 +28,7 @@
   },
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "anchor": {
      "kind": "time",
      "tMs": 500

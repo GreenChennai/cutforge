@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot"
+    "root": "<TMP>/proot"
    },
    "response": {
     "code": "OK",
@@ -44,7 +44,7 @@
   },
   {
    "args": {
-    "root": "<TMP>\\proot"
+    "root": "<TMP>/proot"
    },
    "response": {
     "code": "OK",

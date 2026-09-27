@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "clipId": "V1-001",
     "patch": {
      "volume": 0.9
@@ -26,7 +26,7 @@
   },
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "clipId": "V1-001",
     "patch": {
      "volume": 0.85

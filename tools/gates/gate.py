@@ -1155,12 +1155,29 @@ def check_bench_threshold() -> CheckResult:
                        {"exit": rc, **(data.get("data") or {})})
 
 
+def check_pytest_suite() -> CheckResult:
+    """A1-8(加固): python -m pytest tests -q 全绿。
+    tests/ 面含 JY 桥源级对拍、契约烟测、四桥冒烟,此前只在 CI python-gates job 跑、
+    本地 A1 未含,T1.1 拆分后的源级断言假红由此逃逸;纳为本项本地兜底(仓库根可执行)。
+    CI gate.yml 的 python-gates job 照旧跑 pytest,两处口径一致;不影响 M0-M7。"""
+    r = subprocess.run([sys.executable, "-m", "pytest", "tests", "-q"],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       timeout=900, cwd=str(REPO_ROOT))
+    tail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-3:]
+    if r.returncode != 0:
+        return CheckResult("pytest-suite", True, False, GATE_FAILED,
+                           f"pytest tests 失败(exit={r.returncode}): {' | '.join(tail)}", {})
+    return CheckResult("pytest-suite", True, True, OK,
+                       f"pytest tests 全绿({tail[-1] if tail else 'ok'})", {"tail": tail})
+
+
 CHECKS_A1: dict[str, tuple[Callable[[], CheckResult], bool]] = {
     "bench-threshold": (check_bench_threshold, False),  # bench.py 未落库前为观察 SKIP(T1.8)
     "cargo-clippy": (check_cargo_clippy, True),
     "cargo-test-workspace": (check_cargo_test_workspace, True),
     "e2e-events": (check_e2e_events, True),
     "e2e-static": (check_e2e_static, True),
+    "pytest-suite": (check_pytest_suite, True),  # 本地兜底:pytest 纳入 A1(此前仅 CI 跑)
     "rust-line-limit": (check_rust_line_limit, True),
     "tool-parity": (check_tool_parity, True),
 }

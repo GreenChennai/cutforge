@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "dir": "05_时间线工程",
     "scriptArgs": [
      "05_时间线工程"
@@ -12,7 +12,7 @@
    "response": {
     "code": "OK",
     "data": {
-     "stdout": "{\"argv\": [\"05_\\u65f6\\u95f4\\u7ebf\\u5de5\\u7a0b\"], \"stub\": true}"
+     "stdout": "{\"argv\": [\"05_时间线工程\"], \"stub\": true}"
     },
     "message": "编排完成",
     "ns": "ok",

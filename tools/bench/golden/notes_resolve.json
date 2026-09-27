@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "noteId": "n-0001",
     "reply": "已微调音量 0.85",
     "opIds": [

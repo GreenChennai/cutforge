@@ -3,7 +3,7 @@
  "calls": [
   {
    "args": {
-    "root": "<TMP>\\proot",
+    "root": "<TMP>/proot",
     "tMs": 500,
     "src": "01_原始素材/sfx.mp3",
     "volume": 0.8,

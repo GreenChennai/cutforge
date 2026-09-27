@@ -15,6 +15,9 @@
   3. 逐工具发 /rpc,归一化响应后与黄金快照对比。
 
 归一化(剥离易变字段,采集与对比同规则):
+  - 分隔符统一(第一步):字符串里所有反斜杠(含 JSON-in-JSON 的 \\ 转义连写)
+    坍缩为单正斜杠;能整体 json.loads 的"JSON-in-JSON"行(渲染进度行、编排 stdout)
+    先解析、递归归一字段值、再 sort_keys 重序列化 —— Windows 录制与 ubuntu 实测自此同形;
   - rev / rev-N 串 → <REV>;ts/createdAt 等 RFC3339 → <TS>;runId → <RUN_ID>;
   - 临时目录 / 仓库根 / token → <TMP> / <REPO> / <TOKEN>;残余绝对路径 → <ABS>;
   - 媒体探测值(ffprobe 口径):durationMs 就近取整到 100ms、bytes → <BYTES>
@@ -130,25 +133,50 @@ RE_ISO_TS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\
 RE_REV = re.compile(r"(?<![A-Za-z0-9-])rev-\d+(?![A-Za-z0-9-])")
 RE_WIN_PATH = re.compile(r"(?i)\b[a-z]:[\\/](?:[^\s\"'\\/:*?<>|]+[\\/])*[^\s\"'<>|]*")
 RE_POSIX_PATH = re.compile(r"(?<![\w\">])/(?:tmp|home|Users|usr|var)/[^\s\"']*" )
+RE_BS_RUN = re.compile(r"\\+")  # 反斜杠串(含 JSON-in-JSON 里 \\ 转义出的连写形态)
+
+
+def _fwd(p: str) -> str:
+    """与归一化同规则的路径展平:反斜杠串(含 canonicalize 的 \\\\?\\ 前缀)归一为单正斜杠。"""
+    return RE_BS_RUN.sub("/", p)
 
 
 class Normalizer:
-    """采集与对比共用同一规则;tmp/repo/token 上下文在构造时注入。"""
+    """采集与对比共用同一规则;tmp/repo/token 上下文在构造时注入。
+
+    跨平台口径(golden 在 Windows 录制,parity 也在 ubuntu CI 跑,两者必须同形):
+      1. 分隔符统一先于一切占位替换 —— 字符串里所有反斜杠(含 JSON 转义出的
+         \\\\ 连写形态)一律坍缩为单正斜杠,Windows 路径与 POSIX 路径自此同形;
+      2. "JSON-in-JSON"字符串(渲染进度行、编排 stdout 行)先按原文 json.loads、
+         递归归一化字段值、再 sort_keys 重序列化 —— 转义形态交给解析器还原,
+         避免字符串里的 \\\\ 形态躲过 tmp 占位替换。
+    """
 
     def __init__(self, tmp: Path, token: str) -> None:
         subs: list[tuple[str, str]] = []
-        # canonicalize 的 \\?\ 前缀、正/反斜杠两种方向都替换
-        for base in {str(tmp), str(tmp).replace("\\", "/"), "\\\\?\\" + str(tmp)}:
+        # 占位替换发生在分隔符统一之后,基准路径只需正斜杠形态;
+        # canonicalize 的 \\\\?\\ 前缀按同规则展平成 /?/ 一并收录
+        for base in {_fwd(str(tmp)), _fwd("\\\\?\\" + str(tmp))}:
             if base:
                 subs.append((base, "<TMP>"))
-        repo = str(REPO)
-        for base in {repo, repo.replace("\\", "/")}:
-            subs.append((base, "<REPO>"))
+        subs.append((_fwd(str(REPO)), "<REPO>"))
         subs.append((token, "<TOKEN>"))
         # 长路径优先替换,避免前缀互相吞
         self.subs = sorted(subs, key=lambda kv: -len(kv[0]))
 
-    def _s(self, s: str) -> str:
+    def _s(self, s: str, probe_mode: bool = False) -> str:
+        # 0) JSON-in-JSON 结构化:能整体解析为对象/数组的字符串先解析、递归归一、
+        #    定形重序列化(键序固定,跨机可比);解析失败按普通字符串走
+        if s.lstrip()[:1] in ("{", "["):
+            try:
+                obj = json.loads(s)
+            except ValueError:
+                obj = None
+            if isinstance(obj, (dict, list)):
+                return json.dumps(self(obj, probe_mode), ensure_ascii=False, sort_keys=True)
+        # 1) 分隔符统一:反斜杠串坍缩为单正斜杠(先于占位替换,两边自此同形)
+        s = RE_BS_RUN.sub("/", s)
+        # 2) 占位符替换 + 残余绝对路径/时间戳/修订号
         for a, b in self.subs:
             if a in s:
                 s = s.replace(a, b)
@@ -180,7 +208,7 @@ class Normalizer:
         if isinstance(v, list):
             return [self(x, probe_mode) for x in v]
         if isinstance(v, str):
-            return self._s(v)
+            return self._s(v, probe_mode)
         return v
 
 

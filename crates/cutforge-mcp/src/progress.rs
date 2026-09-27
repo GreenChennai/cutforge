@@ -103,9 +103,13 @@ pub(crate) fn render_run_async(root: &Path, ass: Option<&str>) -> Value {
     if let Ok(mut m) = renders().lock() {
         m.insert(run_id.clone(), RenderJob { state: "running", lines: Vec::new(), output: None, error: None });
     }
+    // T1.6:任务状态入 SSE 事件面(hub 未建立即丢弃,见 transport::events)
+    crate::transport::events::publish_render(root, &run_id, "running");
     let run_id_thread = run_id.clone();
+    let root_thread = root.to_path_buf();
     std::thread::spawn(move || {
         let run_id = run_id_thread;
+        let root = root_thread;
         let Ok(mut child) = cmd
             .stdout(std::process::Stdio::piped())
             .spawn()
@@ -115,6 +119,7 @@ pub(crate) fn render_run_async(root: &Path, ass: Option<&str>) -> Value {
                     j.state = "fail";
                     j.error = Some("cutforge-render 子进程启动失败".into());
                 }
+            crate::transport::events::publish_render(&root, &run_id, "fail");
             return;
         };
         // 只接 stdout(JSON 行进度);stderr 直通服务端控制台(不读不堵塞)。
@@ -142,6 +147,7 @@ pub(crate) fn render_run_async(root: &Path, ass: Option<&str>) -> Value {
                     j.error = Some("cutforge-render 非零退出;详见服务端控制台".into());
                 }
             }
+        crate::transport::events::publish_render(&root, &run_id, if ok { "ok" } else { "fail" });
     });
     envelope(true, "OK", "渲染已开始", json!({"runId": run_id}))
 }

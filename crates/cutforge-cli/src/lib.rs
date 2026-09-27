@@ -9,6 +9,9 @@ use cutforge_core::oplog::{Actor, ActorKind};
 use cutforge_io::Workspace;
 use std::path::{Path, PathBuf};
 
+/// 渲染缓存治理(T1.5):cache {info,gc,clear}。
+mod cache;
+
 const EXIT_OK: i32 = 0;
 const EXIT_FAIL: i32 = 2;
 const EXIT_ENV: i32 = 3;
@@ -107,7 +110,7 @@ pub fn run(argv: Vec<String>) -> i32 {
         return emit(json_first, false, "PRECONDITION_FAILED", "用法: cutforge-cli <子命令> […]", serde_json::json!({
             "subcommands": ["new", "project", "timeline", "clip", "clip-update", "split", "undo", "redo",
                 "oplog", "notes", "notes-add", "notes-resolve", "notes-reject", "conflicts",
-                "serve", "check-shell-purity", "check-write-paths", "check-deps", "check-ui-fields"]
+                "cache", "serve", "check-shell-purity", "check-write-paths", "check-deps", "check-ui-fields"]
         }));
     };
     let mut args = parse_args(&argv[1..]);
@@ -246,6 +249,7 @@ pub fn run(argv: Vec<String>) -> i32 {
         "notes-resolve" => notes_resolve(&args),
         "notes-reject" => notes_reject(&args),
         "conflicts" => conflicts_list(&args),
+        "cache" => cache::run(&args),
         "check-shell-purity" => check_shell_purity(args.json),
         "check-write-paths" => check_write_paths(args.json),
         "check-deps" => check_deps(args.json),

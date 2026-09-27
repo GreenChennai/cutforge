@@ -7,7 +7,9 @@ use crate::progress::resolve_render_bin;
 use crate::registry::UI_FIELDS_JSON;
 use crate::session::{session_journal_begin, session_journal_note, session_summary_path};
 use crate::tools_nolock::media_browse_payload;
-use crate::transport::http::{HttpResp, mime_of, pct_decode, resp_plain, static_content};
+use crate::transport::events;
+use crate::transport::http::{self, HttpResp, mime_of, pct_decode, resp_plain};
+use crate::transport::static_files;
 use cutforge_core::oplog::Actor;
 use cutforge_io::paths;
 use serde_json::{json, Value};
@@ -243,63 +245,46 @@ fn handle_workspace_conn(
     web: &Path,
     session_str: &str,
 ) -> std::io::Result<()> {
-    use std::io::Read as _;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
-    let mut buf = Vec::new();
-    let mut tmp = [0u8; 4096];
-    let header_end = b"\r\n\r\n";
-    loop {
-        match stream.read(&mut tmp) {
-            Ok(0) => break,
-            Ok(n) => buf.extend_from_slice(&tmp[..n]),
-            Err(_) => break,
+    // 连接纪律(T1.6/AC-1.7):请求读取统一走 http::read_request(读超时/头体上限/
+    // 总时限,慢连接在此被隔离回收);与辅通道单一实现,不再各写一份读循环。
+    let req = match http::read_request(&mut stream) {
+        Ok(r) => r,
+        Err(crate::transport::ReadFail::TooLarge) => {
+            let _ = write!(stream, "{}", http::RESP_TOO_LARGE);
+            return Ok(());
         }
-        if buf.windows(4).any(|w| w == header_end) {
-            // headers 完整后还须读满 Content-Length:body 滞留接收缓冲时关闭
-            // 连接会被 Windows 记为 RST,客户端读响应即间歇性 ConnectionReset
-            let pos = buf.windows(4).position(|w| w == header_end).unwrap_or(0) + 4;
-            let len: usize = String::from_utf8_lossy(&buf[..pos])
-                .to_ascii_lowercase()
-                .lines()
-                .find(|l| l.starts_with("content-length:"))
-                .and_then(|l| l.split(':').nth(1).and_then(|n| n.trim().parse().ok()))
-                .unwrap_or(0);
-            if buf.len() >= pos + len {
-                break;
-            }
-        }
-    }
-    let head = String::from_utf8_lossy(&buf);
-    let first_line = head.lines().next().unwrap_or("");
-    let authorized = head.contains(&format!("Authorization: Bearer {token}"))
+        // 挂死/半途而废的连接:直接回收,不回写
+        Err(crate::transport::ReadFail::Closed) => return Ok(()),
+    };
+    let first_line = req.first_line().to_string();
+    let authorized = req.head.contains(&format!("Authorization: Bearer {token}"))
         || first_line.contains(&format!("token={token}"));
     let raw_path = first_line.split(' ').nth(1).unwrap_or("");
     let (path_only, query) = raw_path.split_once('?').unwrap_or((raw_path, ""));
+    // 静态面(T1.6):旧四别名 + /assets/ 目录映射;数据面口径零变化
     let is_get_session = path_only == "/session";
-    let is_get_static = matches!(path_only, "/" | "/index.html" | "/app.js" | "/style.css");
+    let is_get_static = static_files::is_static_path(path_only);
     let is_rpc = path_only == "/rpc" && first_line.starts_with("POST");
     let is_events = path_only == "/events";
     let is_media = path_only == "/media" && first_line.starts_with("GET");
     // E3-3 素材浏览 + E4-2 检查器字段真相源:数据面(带 token),不进静态白名单
     let is_media_browse = path_only == "/media/browse" && first_line.starts_with("GET");
     let is_ui_fields = path_only == "/ui-fields" && first_line.starts_with("GET");
-    let range = head
-        .lines()
-        .find(|l| l.len() > 6 && l[..6].eq_ignore_ascii_case("range:"))
-        .map(|l| l[6..].trim().to_string());
-    let body_start = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(buf.len());
-    let body = String::from_utf8_lossy(&buf[body_start..]).to_string();
+    let range = req.header("range");
+    let body = req.body.as_str();
 
     // 静态资源公开(纯客户端代码,无秘密);数据面(/session /rpc /events /media)必须持 token
     if !authorized && !is_get_static {
-        let _ = write!(stream, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let _ = write!(stream, "{}", http::RESP_UNAUTHORIZED);
         return Ok(());
     }
+    // SSE(T1.6/AC-1.5):Accept 头点名 text/event-stream → 单向流式推送。
+    // 旧壳 fetch 不带该头,自然落进下方长轮询分支,行为零变化(兼容红线)。
+    if is_events && req.header("accept").is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream")) {
+        return events::serve_sse(&mut stream, Path::new(root), query, req.header("last-event-id").as_deref());
+    }
     let resp: HttpResp = if is_get_static {
-        match static_content(web, path_only) {
-            Some((ctype, data)) => HttpResp { status: "200 OK", ctype: ctype.to_string(), extra: String::new(), body: data },
-            None => resp_plain("404 Not Found", "not found"),
-        }
+        static_files::static_resp(web, path_only, req.header("if-none-match").as_deref())
     } else if is_media {
         let path_param = query.split('&').find_map(|kv| {
             let mut it = kv.split('=');
@@ -333,9 +318,9 @@ fn handle_workspace_conn(
     } else if is_get_session {
         HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: session_str.as_bytes().to_vec() }
     } else if is_rpc {
-        let tool_name = serde_json::from_str::<Value>(&body).ok()
+        let tool_name = serde_json::from_str::<Value>(body).ok()
             .and_then(|req| req["params"]["name"].as_str().map(String::from));
-        let v = match serde_json::from_str::<Value>(&body) {
+        let v = match serde_json::from_str::<Value>(body) {
             // 数据面 = 编辑器壳:user 归因(RT-1 摘要的过滤依据)
             Ok(req) => handle_rpc_as(&req, Actor::user("editor")).map(|r| r.to_string()).unwrap_or_default(),
             Err(e) => json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}}).to_string(),
@@ -352,6 +337,8 @@ fn handle_workspace_conn(
         }
         HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: v.into_bytes() }
     } else if is_events {
+        // 长轮询降级路径(A1-R2:兼容旧壳,册二完成后移除;负载老字段一个不少,
+        // ok/code/event/seq 原样);新壳走上方 SSE,事件面经 transport::events。
         let mut since: u64 = 0;
         for kv in query.split('&') {
             let mut it = kv.split('=');
@@ -381,6 +368,7 @@ fn handle_workspace_conn(
     let _ = std::io::copy(&mut resp.body.as_slice(), &mut stream);
     // 优雅关闭:先 shutdown(Write) 再把对端残余/确认读净,避免 Windows
     // 在未读数据存在时直接 RST(客户端表现为间歇性 ConnectionReset)
+    use std::io::Read as _;
     let _ = stream.flush();
     let _ = stream.shutdown(std::net::Shutdown::Write);
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));

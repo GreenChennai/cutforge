@@ -15,7 +15,7 @@
 //! - `progress`:cutforge-render 后端同步/异步渲染与进度轮询;
 //! - `session`:new_token 与 RT-1 会话变更摘要(.cutforge/session-summary.json);
 //! - `workspace_svc`:工作区常驻服务(serve 启动自检 + /rpc + /media + /events + /ui-fields);
-//! - `transport::{stdio,http}`:双通道传输。
+//! - `transport::{stdio,http,static_files,events}`:双通道传输 + 静态目录面 + SSE 事件面(T1.6);
 
 #[cfg(test)]
 mod tests;

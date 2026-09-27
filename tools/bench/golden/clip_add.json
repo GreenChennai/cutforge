@@ -1,0 +1,53 @@
+{
+ "tool": "clip_add",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "trackId": "V1",
+    "src": "01_原始素材/take1.mp4",
+    "startMs": 0,
+    "durationMs": 4000,
+    "volume": 1.0,
+    "requestId": "parity-add-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-1"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "trackId": "V1",
+    "src": "01_原始素材/take1.mp4",
+    "startMs": 4000,
+    "durationMs": 6000,
+    "sourceInMs": 1000,
+    "requestId": "parity-add-2"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-2"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

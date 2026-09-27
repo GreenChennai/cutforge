@@ -1,0 +1,28 @@
+{
+ "tool": "motion_set",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "clipId": "V1-001",
+    "in": "zoomIn",
+    "inMs": 280,
+    "out": "fadeOut",
+    "outMs": 260
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-11"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

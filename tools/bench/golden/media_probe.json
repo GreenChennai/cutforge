@@ -1,0 +1,24 @@
+{
+ "tool": "media_probe",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "src": "01_原始素材/take1.mp4"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "durationMs": 10000,
+     "hasAudio": true,
+     "height": 180,
+     "src": "01_原始素材/take1.mp4",
+     "width": 320
+    },
+    "message": "媒体元信息(ffprobe 单一实现)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

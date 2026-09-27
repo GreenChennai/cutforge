@@ -1,0 +1,30 @@
+{
+ "tool": "cut_apply",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "patch": {
+     "script": [
+      {
+       "action": "review",
+       "text": "对拍补丁旁白"
+      }
+     ]
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "opIds": [
+      "op-17"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "cutlist 已更新",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

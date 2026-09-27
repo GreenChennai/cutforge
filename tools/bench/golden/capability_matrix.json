@@ -1,0 +1,143 @@
+{
+ "tool": "capability_matrix",
+ "calls": [
+  {
+   "args": {},
+   "response": {
+    "code": "OK",
+    "data": {
+     "matrix": {
+      "items": [
+       {
+        "evidence": "cutforge-render segment/concat 管线 + dual_validation 契约对拍",
+        "ffmpeg": "支持",
+        "item": "视频片段裁剪/排序",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M11:parity_matrix 变速夹具(setpts/atempo,2x 时长保持语义)",
+        "ffmpeg": "支持",
+        "item": "变速 0.25–4x",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M8 P0-4 per-clip volume + M11 parity_matrix afade 夹具(头部 RMS ≤稳态-6dB)",
+        "ffmpeg": "支持",
+        "item": "音量/淡入淡出",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M11 parity_matrix overlay 夹具(绝对像素+时间窗);旋转:契约无字段(CutFlow 同口径),不入渲染域",
+        "ffmpeg": "支持",
+        "item": "位置/缩放/旋转",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M11 parity_matrix xfade 链夹具(尾帧扩展零漂移,总时长 4.000s 无吞切)",
+        "ffmpeg": "支持",
+        "item": "转场(三级语法)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": null,
+        "ffmpeg": "不支持",
+        "item": "关键词",
+        "jianying": "支持",
+        "status": "optional",
+        "target": null
+       },
+       {
+        "evidence": "ASS 烧录链(M6 字幕对拍)",
+        "ffmpeg": "支持",
+        "item": "花字/描边/底衬",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M8 P0-4 修复:adelay 落点 + render_matrix_fixture 起播断言(修复前全部 0 秒炸响)",
+        "ffmpeg": "支持",
+        "item": "音效落点",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M11 parity_matrix ducking 夹具(sidechain on/off 能量差可测)",
+        "ffmpeg": "支持",
+        "item": "BGM ducking",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": null,
+        "ffmpeg": "支持",
+        "item": "蒙版",
+        "jianying": "支持",
+        "status": "optional",
+        "target": null
+       },
+       {
+        "evidence": "tpad stop_mode=clone(render/lib.rs segment 步)",
+        "ffmpeg": "支持",
+        "item": "冻结帧补长",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M11 parity_matrix punch-in 夹具(中心裁剪紧构图,帧字节改变)",
+        "ffmpeg": "支持",
+        "item": "punch-in 变焦",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M6 响度对拍 0.02LU + 字幕烧录链",
+        "ffmpeg": "支持",
+        "item": "字幕(ASS 烧录)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "M8 P0-3 修复:缓存键并入 canvas+fps,双画幅互不污染(render_matrix_fixture 分辨率断言)",
+        "ffmpeg": "支持",
+        "item": "多画幅变体",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": "M11:真·共享缓存分叉 encode"
+       },
+       {
+        "evidence": "OpLog/undo 语义为真(M8 P0-1/P0-5 后),file_level_undo + concurrent_writes_no_loss 夹具",
+        "ffmpeg": "不支持",
+        "item": "工程可继续精修",
+        "jianying": "原生",
+        "status": "achieved",
+        "target": null
+       }
+      ],
+      "rule": "诚实口径:status 只认实码 + 对拍夹具(M8-5)。achieved=有专属夹具证据;partial=字段被契约接受但渲染端不完整消费;missing=契约字段存在、渲染零消费;optional=规划可选未启动。本文件是唯一真相源:docs/capability-matrix.md 与 MCP capability_matrix 工具均由它生成(M11-1 起 evidence 由 parity_matrix 夹具实测回填,ADR-0003)。",
+      "updated": "2026-09-19(M11)",
+      "version": 2
+     }
+    },
+    "message": "能力对等矩阵(实码口径,单一真相源)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -127,7 +127,7 @@ pub fn forge_script_run(project_json: &str, steps_json: &str) -> Result<String, 
     };
     let policy = Policy::new(Path::new("."));
     let report = run_script(&script, &mut host, &policy).map_err(|e| e.to_string())?;
-    Ok(serde_json::to_string(&report).map_err(|e| e.to_string())?)
+    serde_json::to_string(&report).map_err(|e| e.to_string())
 }
 
 /// native/wasm 共用:Answer 投影规范化(跨壳等价测试用)。

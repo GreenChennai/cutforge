@@ -1,0 +1,21 @@
+{
+ "tool": "notes_reject",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "noteId": "n-0002",
+    "reason": "风格即如此"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "noteId": "n-0002"
+    },
+    "message": "标注已否决",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -1,0 +1,25 @@
+{
+ "tool": "track_add",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "kind": "text",
+    "requestId": "parity-track-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-0"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

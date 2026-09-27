@@ -307,7 +307,9 @@ fn handle_workspace_conn(
             Ok(doc) => HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() },
             Err(m) => HttpResp {
                 status: "400 Bad Request", ctype: "application/json".into(), extra: String::new(),
-                body: json!({"ok": false, "code": "PRECONDITION_FAILED", "message": m}).to_string().into_bytes(),
+                // T1.7 三面同码:此面错误也带 ns(加法字段;code 取值不变)
+                body: json!({"ok": false, "code": "PRECONDITION_FAILED",
+                    "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": m}).to_string().into_bytes(),
             },
         }
     } else if is_ui_fields {

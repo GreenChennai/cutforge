@@ -1,0 +1,26 @@
+{
+ "tool": "clip_duplicate",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "clipId": "V1-001",
+    "startMs": 20000,
+    "requestId": "parity-dup-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-6"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

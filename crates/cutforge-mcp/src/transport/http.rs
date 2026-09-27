@@ -233,7 +233,9 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
         return match root_p {
             Some(r) => events::serve_sse(&mut stream, Path::new(&r), query, req.header("last-event-id").as_deref()),
             None => {
-                let body = json!({"ok": false, "code": "PRECONDITION_FAILED", "message": "缺 root"}).to_string();
+                // T1.7 三面同码:事件面错误也带 ns(加法字段;code 取值不变)
+                let body = json!({"ok": false, "code": "PRECONDITION_FAILED",
+                    "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": "缺 root"}).to_string();
                 let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
                 Ok(())
             }
@@ -259,7 +261,9 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
             }
         }
         if root_p.is_empty() {
-            json!({"ok": false, "code": "PRECONDITION_FAILED", "message": "缺 root"}).to_string()
+            // T1.7 三面同码:事件面错误也带 ns(加法字段;code 取值不变)
+            json!({"ok": false, "code": "PRECONDITION_FAILED",
+                "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": "缺 root"}).to_string()
         } else {
             let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(&root_p));
             let wait = Duration::from_millis(900);

@@ -1,0 +1,37 @@
+{
+ "tool": "render",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "backend": "cutforge"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "backend": "cutforge",
+     "output": "<TMP>\\proot\\06_成片输出\\final_cutforge_parity-main_1080x1920.mp4",
+     "stdout": "{\"ok\":true,\"step\":\"probe\"}\n{\"cacheHits\":3,\"ok\":true,\"segments\":3,\"step\":\"segment\"}\n{\"ok\":true,\"step\":\"compose-video\"}\n{\"count\":0,\"ok\":true,\"step\":\"overlay\"}\n{\"cacheHit\":true,\"ok\":true,\"step\":\"mix\"}\n{\"burned\":false,\"ok\":true,\"step\":\"subtitle\"}\n{\"ok\":true,\"output\":\"<ABS>\",\"step\":\"encode\"}\n{\"ok\":true,\"step\":\"probe\"}\n{\"ok\":true,\"step\":\"segment\"}\n{\"ok\":true,\"step\":\"compose-video\"}\n{\"ok\":true,\"step\":\"overlay\"}\n{\"ok\":true,\"step\":\"mix\"}\n{\"ok\":true,\"step\":\"subtitle\"}\n{\"ok\":true,\"step\":\"encode\"}\n{\"cacheHits\":3,\"done\":true,\"output\":\"<ABS>\",\"segments\":3}\nRENDER_OK <TMP>\\proot\\06_成片输出\\final_cutforge_parity-main_1080x1920.mp4"
+    },
+    "message": "渲染完成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "backend": "ffmpeg"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "stdout": "{\"argv\": [], \"stub\": true}"
+    },
+    "message": "编排完成",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

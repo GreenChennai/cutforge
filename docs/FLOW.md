@@ -133,6 +133,31 @@ CLI / 未来的 MCP / 编辑器
 | 05_ir/wordline.json | S2(级联) | `python rebuild.py --from S2` |
 | 其他文件 | 不标脏 | — |
 
+### 5.5 结果协议错误码表(计划书 5.4;T1.7 命名空间化)
+
+结果协议 `{"ok","code","message","data"}` 为 CLI/MCP/HTTP 三面共用;T1.7 起错误码带
+**命名空间加法维度 `ns`**——由单一真相源 `crates/cutforge-mcp/src/registry.rs` 的 `CODE_NS`
+表派生,三面同源取值;**既有 code 取值逐字不变**(线上断言兼容红线):
+
+| code | ns | 语义 |
+|---|---|---|
+| OK | ok | 成功(非错误,单列) |
+| CONFLICT | core | 编辑冲突:合并冲突 / rev 前置不满足 |
+| SCHEMA_INVALID | core | schema 契约校验失败 |
+| PRECONDITION_FAILED | core | 命令前置校验失败:缺参 / 对象不存在 |
+| GUARD_FAILED | core | 内核守护拒绝:密度 / 跨 kind / keep 守卫 |
+| JIANYING_RUNNING | mcp | 编排面:剪映占用工程 / 草稿 |
+| NO_CONFIG | io | 工程 / 文件 / 环境资源不存在 |
+| DEP_MISSING | io | 外部依赖缺失(ffmpeg/ffprobe/CutFlow 环境) |
+| GREEN_SCREEN_INPUT | render | 绿幕输入校验失败 |
+| INTERNAL | mcp | 协议面内部错误(未知工具 / 未实现分支 / 意外失败) |
+
+- 命名空间口径:`io.*` 文件系统 / 环境资源;`core.*` 内核编辑语义(命令 / 契约 / 守护 / 合并);
+  `mcp.*` 协议与编排面;`render.*` 渲染链路;`ok` 成功码。
+- 三面同码:MCP/HTTP 工具面在 `registry::envelope` 统一派生 `ns`;CLI 在 `emit` 经
+  `cutforge_mcp::code_namespace` 同源取值。表外码(CLI 门禁判定器专用码)诚实派生为
+  `unknown`,不冒充表内命名空间;新增码必须先登记 `CODE_NS`(单测锁定与 `CODES` 同序同值)。
+
 ## 六、契约与单源体系(杜绝双栈漂移)
 
 ```

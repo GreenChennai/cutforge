@@ -1,0 +1,45 @@
+{
+ "tool": "media_browse",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "dir": ""
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "dir": "",
+     "files": [
+      {
+       "bytes": "<BYTES>",
+       "durationMs": 5000,
+       "kind": "audio",
+       "name": "bgm.mp3",
+       "path": "01_原始素材/bgm.mp3"
+      },
+      {
+       "bytes": "<BYTES>",
+       "durationMs": 1000,
+       "kind": "audio",
+       "name": "sfx.mp3",
+       "path": "01_原始素材/sfx.mp3"
+      },
+      {
+       "bytes": "<BYTES>",
+       "durationMs": 10000,
+       "kind": "video",
+       "name": "take1.mp4",
+       "path": "01_原始素材/take1.mp4"
+      }
+     ],
+     "total": 3,
+     "truncated": false
+    },
+    "message": "素材清单",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

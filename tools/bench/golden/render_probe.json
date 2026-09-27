@@ -1,0 +1,20 @@
+{
+ "tool": "render_probe",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "dir": "06_成片输出",
+     "files": []
+    },
+    "message": "产物清单",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

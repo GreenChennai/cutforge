@@ -1,0 +1,28 @@
+{
+ "tool": "verify_run",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "level": "L1",
+    "scriptArgs": [
+     "--level",
+     "L1"
+    ]
+   },
+   "response": {
+    "code": "VERIFY_STATUS",
+    "data": {
+     "argv": [
+      "--level",
+      "L1",
+      "--json"
+     ],
+     "verdict": "pass"
+    },
+    "ok": true,
+    "stub": true
+   }
+  }
+ ]
+}

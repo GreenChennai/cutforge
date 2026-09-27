@@ -1,0 +1,51 @@
+{
+ "tool": "notes_add",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "anchor": {
+     "kind": "clip",
+     "ref": "V1-001"
+    },
+    "body": "这里语速偏快",
+    "author": "agent",
+    "tags": [
+     "parity"
+    ],
+    "requestId": "parity-note-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "noteId": "n-0001",
+     "rev": "<REV>"
+    },
+    "message": "标注已创建",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "anchor": {
+     "kind": "time",
+     "tMs": 500
+    },
+    "body": "开头音效偏响",
+    "author": "user"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "noteId": "n-0002",
+     "rev": "<REV>"
+    },
+    "message": "标注已创建",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

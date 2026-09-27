@@ -1,0 +1,54 @@
+{
+ "tool": "clip_update",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "clipId": "V1-001",
+    "patch": {
+     "volume": 0.9
+    },
+    "summary": "对拍:微调音量"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-4"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "clipId": "V1-001",
+    "patch": {
+     "volume": 0.85
+    },
+    "causedBy": [
+     "n-0001"
+    ],
+    "summary": "按 n-0001 微调音量"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-19"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

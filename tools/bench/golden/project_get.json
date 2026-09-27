@@ -1,0 +1,158 @@
+{
+ "tool": "project_get",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "project": {
+      "backends": [
+       "ffmpeg",
+       "cutforge"
+      ],
+      "canvas": {
+       "height": 1920,
+       "width": 1080
+      },
+      "fps": 30,
+      "notes": "notes.json",
+      "schemaVersion": "2.0.0",
+      "slug": "parity-main",
+      "tracks": [
+       {
+        "clips": [],
+        "id": "V1",
+        "kind": "video"
+       },
+       {
+        "clips": [],
+        "id": "A1",
+        "kind": "audio"
+       }
+      ],
+      "version": 1
+     },
+     "rev": "<REV>"
+    },
+    "message": "工程视图",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "project": {
+      "backends": [
+       "ffmpeg",
+       "cutforge"
+      ],
+      "bgm": {
+       "ducking": true,
+       "gainDb": -12.0,
+       "loop": true,
+       "src": "01_原始素材/bgm.mp3"
+      },
+      "canvas": {
+       "height": 1920,
+       "width": 1080
+      },
+      "fps": 30,
+      "notes": "notes.json",
+      "schemaVersion": "2.0.0",
+      "slug": "parity-main",
+      "tracks": [
+       {
+        "clips": [
+         {
+          "durationMs": 1800,
+          "id": "V1-001",
+          "motion": {
+           "in": "zoomIn",
+           "inMs": 280.0,
+           "out": "fadeOut",
+           "outMs": 260.0
+          },
+          "sourceInMs": 0,
+          "src": "01_原始素材/take1.mp4",
+          "startMs": 0,
+          "text": "第一句字幕",
+          "volume": 0.85
+         },
+         {
+          "durationMs": 2000,
+          "id": "V1-003",
+          "sourceInMs": 2000,
+          "src": "01_原始素材/take1.mp4",
+          "startMs": 12000,
+          "volume": 1.0
+         },
+         {
+          "durationMs": 6000,
+          "id": "V1-002",
+          "sourceInMs": 1000,
+          "src": "01_原始素材/take1.mp4",
+          "startMs": 4000,
+          "transition": {
+           "durMs": 300.0,
+           "reason": "topic",
+           "type": "fade"
+          }
+         }
+        ],
+        "id": "V1",
+        "kind": "video"
+       },
+       {
+        "clips": [
+         {
+          "durationMs": 400,
+          "id": "A1-001",
+          "role": "sfx",
+          "src": "01_原始素材/sfx.mp3",
+          "startMs": 500,
+          "volume": 0.8
+         }
+        ],
+        "id": "A1",
+        "kind": "audio"
+       },
+       {
+        "clips": [
+         {
+          "durationMs": 2000,
+          "id": "T1-001",
+          "overlay": {
+           "h": 200,
+           "opacity": 0.5,
+           "w": 400,
+           "x": 84,
+           "y": 240
+          },
+          "src": "01_原始素材/take1.mp4",
+          "startMs": 1000,
+          "volume": 0.0
+         }
+        ],
+        "id": "T1",
+        "kind": "text"
+       }
+      ],
+      "version": 1
+     },
+     "rev": "<REV>"
+    },
+    "message": "工程视图",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

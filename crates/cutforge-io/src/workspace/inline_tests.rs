@@ -181,7 +181,7 @@ mod tests {
             .unwrap();
         }
         // 重开:roundtrip 后 _meta 原样保留
-        let mut ws2 = Workspace::open(&root).unwrap();
+        let ws2 = Workspace::open(&root).unwrap();
         assert_eq!(ws2.rev(), 1);
         let _ = ws2; // 打开即证明 roundtrip 后文件仍合法
         let disk: serde_json::Value =

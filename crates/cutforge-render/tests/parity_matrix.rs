@@ -72,7 +72,7 @@ fn rms_of_window(p: &Path, from: f64, to: f64) -> f64 {
         "-af", &format!("atrim={from}:{to},astats=metadata=1"), "-f", "null", "-",
     ], Path::new("."));
     let pos = err.rfind("RMS level dB:").expect(err.as_str());
-    err[pos + 13..].trim().split_whitespace().next().unwrap().parse().unwrap()
+    err[pos + 13..].split_whitespace().next().unwrap().parse().unwrap()
 }
 
 fn write_project(dir: &Path, slug: &str, v: &Value) -> PathBuf {
@@ -231,7 +231,7 @@ fn parity_matrix_full() {
                 "-af", "bandpass=f=220:w=60,atrim=0.8:1.6,astats=metadata=1", "-f", "null", "-",
             ], Path::new("."));
             let pos = err.rfind("RMS level dB:").expect(err.as_str());
-            err[pos + 13..].trim().split_whitespace().next().unwrap().parse().unwrap()
+            err[pos + 13..].split_whitespace().next().unwrap().parse().unwrap()
         };
         let rms_on: f64 = bgm_band_rms(&out_on.output);
         let rms_off: f64 = bgm_band_rms(&out_off.output);

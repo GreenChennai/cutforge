@@ -1,0 +1,24 @@
+{
+ "tool": "notes_resolve",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "noteId": "n-0001",
+    "reply": "已微调音量 0.85",
+    "opIds": [
+     "op-19"
+    ]
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "noteId": "n-0001"
+    },
+    "message": "标注已结案",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

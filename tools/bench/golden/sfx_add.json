@@ -1,0 +1,27 @@
+{
+ "tool": "sfx_add",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "tMs": 500,
+    "src": "01_原始素材/sfx.mp3",
+    "volume": 0.8,
+    "requestId": "parity-sfx-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-15"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

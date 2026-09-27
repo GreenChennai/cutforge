@@ -4,6 +4,8 @@
 //! **单注册表双通道**:stdio(主)与内嵌 HTTP(辅,仅 127.0.0.1 + token)共用同一
 //! `dispatch`,工具集差异恒为 0(M4-1)。所有返回值都是
 //! `{ok, code, message, data}` 结果协议;code 取值限于计划书 5.4 表。
+//! T1.7:envelope 另派生加法字段 `ns`(命名空间 io/core/mcp/render,单一真相源
+//! registry::CODE_NS;CLI/MCP/HTTP 三面同源取值),既有 code 取值逐字不变。
 //! 编排类工具只封装 CutFlow 既有脚本(子进程透传),不实现任何阶段逻辑。
 //!
 //! T1.1(册一):原单文件 lib.rs 拆分为模块目录(纯移动重构,导出面与行为零变化):
@@ -31,7 +33,7 @@ mod workspace_svc;
 
 // ---- 公开 API:路径与拆分前完全一致(main.rs、cutforge-cli、tests/ 零改动) ----
 pub use dispatch::{dispatch, dispatch_with_actor, handle_rpc, handle_rpc_as};
-pub use registry::{registry, tool_names, CAPABILITY_MATRIX_JSON, CODES, MCP_TOOLS_JSON, UI_FIELDS_JSON};
+pub use registry::{code_namespace, registry, tool_names, CODE_NS, CAPABILITY_MATRIX_JSON, CODES, MCP_TOOLS_JSON, UI_FIELDS_JSON};
 pub use session::new_token;
 pub use transport::http::serve_http;
 pub use transport::stdio::serve_stdio;

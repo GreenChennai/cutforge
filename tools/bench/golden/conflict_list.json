@@ -1,0 +1,33 @@
+{
+ "tool": "conflict_list",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "conflicts": []
+    },
+    "message": "冲突清单",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "conflicts": []
+    },
+    "message": "冲突清单",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

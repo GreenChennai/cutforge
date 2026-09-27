@@ -1,0 +1,25 @@
+{
+ "tool": "sync_check",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "video": "06_成片输出/final_cutforge_parity-main_1080x1920.mp4",
+    "qc": true,
+    "scriptArgs": [
+     "--video",
+     "06_成片输出/final.mp4"
+    ]
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "stdout": "{\"argv\": [\"--video\", \"06_\\u6210\\u7247\\u8f93\\u51fa/final.mp4\"], \"stub\": true}"
+    },
+    "message": "编排完成",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+  "renderMs": 6586.1,
+  "renderMedianMs": 7092.2,
+  "renderSamples": [
+    7092.2,
+    6586.1,
+    7907.4
+  ],
+  "statistic": "min(后台负载鲁棒)",
+  "capturedAt": "2026-09-28T02:05:05+08:00",
+  "buildProfile": "release",
+  "fixture": "lavfi testsrc2 1080x1920 30s,30fps;V1+A1 各 1 剪辑;render_run(backend=cutforge)含 cutforge-render 子进程全程",
+  "env": {
+    "cpu": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+    "os": "Windows 11 (AMD64)"
+  }
+}

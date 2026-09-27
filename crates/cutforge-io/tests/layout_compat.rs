@@ -3,7 +3,7 @@
 //! - 新布局(中文目录)是新建工程的唯一形态(`tests_fixture` 即按新常量搭台);
 //! - 旧布局(0.4.x 英文目录)工程**原地可开可写、不自动迁移**(避免在
 //!   CutFlow 并行升级期间挪动正在使用的工程)。
-//! 回归样本 JSON 内容不变(talking-head),只换目录树形态。
+//!   回归样本 JSON 内容不变(talking-head),只换目录树形态。
 
 use cutforge_core::command::{ClipPatch, Command};
 use cutforge_core::oplog::Actor;

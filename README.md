@@ -35,6 +35,12 @@
 
 M0–M4 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约固化 ✓ → M2 Rust 内核 ✓ → M3 双向同步与标注 ✓ → M4 MCP 与脚本 ✓ → M5 多端壳 → M6 渲染后端 → M7 开源发布。
 
+**册一(A1 · 内核重构与架构加固)已完成**：三巨石拆分（mcp / io / core 模块化）、渲染
+RenderPlan 七步分解、渲染缓存内容寻址（+ `cache` CLI）、`/assets` 目录托管、SSE 事件面、
+HTTP 连接加固（ADR-0009）、错误码命名空间 + `doctor` 诊断、`bench` 性能基准、
+`tool_parity` 黄金对拍、`gate.py A1` 册级门禁注册；台账见
+[docs/A1-PROGRESS.md](docs/A1-PROGRESS.md)。
+
 - **M0**:ARL-1.0 混合授权三件套、命名核查存档、工具链 pin(与上游一致)、统一门禁入口、CI 骨架。
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
 - **M2**:`cutforge-core`(领域模型/命令通道/撤销栈/OpLog/三路合并骨架/锚点,行覆盖 ≥80%,wasm32 可构建)+ `cutforge-io`(工程读写/原子写唯一落盘点/锁/备份/媒体探测/轮询 watcher)+ `cutforge-cli`(打开/查询/应用/撤销重做/OpLog + 门禁判定器)。
@@ -50,7 +56,7 @@ M0–M4 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 3. **编辑与导出**:素材面板双击/拖拽导入(时长自动探测)、时间线拖拽 / trim / 分割 / 波纹删,预览(画质代理,空格播放、←/→ 逐帧),分组检查器(字段集由 `schemas/ui-fields.json` 单一真相源约束),标注,差异面板;导出选 `cutforge` 后端即由本机内核出片,不依赖 CutFlow。
 4. **从零新建**:编辑器顶部「＋ 新建工程」向导,或命令行 `cutforge-cli new <目录> --slug 名字 --fps 30 --track video,audio` 生成空工程后 `serve` 打开——对没有任何 CutFlow 工程的目录同样成立。
 
-要点:服务仅监听 127.0.0.1;数据面(/rpc /media /session)经 Bearer token 鉴权,重启服务会换新 token;退出 = 在服务窗口按 Ctrl+C。启动自检会逐项报告工程 / Web 资源 / ffmpeg / cutforge-render 的就绪状态与补救命令。预览不含转场 / 特效 / 字幕烧录的最终效果,成片请用导出。
+要点:服务仅监听 127.0.0.1;数据面(/rpc /media /session)经 Bearer token 鉴权,重启服务会换新 token;改动经 `/events` SSE 实时推送(旧壳长轮询降级保留),静态资源由 `/assets/*` 目录托管(前端新增文件零 Rust 改动);退出 = 在服务窗口按 Ctrl+C。启动自检(`cutforge-cli doctor`)逐项报告工程 / ffmpeg / ffprobe / Web 资源 / 缓存目录 / 端口的就绪状态与可复制执行的补救命令。预览不含转场 / 特效 / 字幕烧录的最终效果,成片请用导出。
 
 ### 给 AI 用户的打开方式
 
@@ -70,8 +76,9 @@ M0–M4 已完成并通过门禁。路线图：M0 合规立项 ✓ → M1 契约
 | `check-ui-fields` | 检查器可编辑字段 ⊆ 内核 `ClipPatch`(从实码解析,单一真相源) |
 | `check_doc_counts` | 文档里的工具数口径必须与 `schemas/mcp-tools.json` 一致,漂移点名到文件:行 |
 | `protocol_conformance` | MCP 注册表与 dispatch 逐一相等,stdio 与内嵌 HTTP 差异恒为 0 |
-| `cargo test` | 领域模型/合并/OpLog/渲染对拍(ffmpeg 实测矩阵)/脚手架/只读并发 |
-| e2e × 3 | 编辑操作全链(Playwright)、预览(画面/声音/seek/像素非黑)、**从零剪**(新建→导入→改字段→导出+并发+会话摘要) |
+| `tool_parity` | 41 工具黄金响应库逐键对拍,行为漂移即红(册一 AC-1.2) |
+| `cargo test` | 领域模型/合并/OpLog/渲染对拍(ffmpeg 实测矩阵)/脚手架/只读并发/HTTP 加固/缓存寻址 |
+| e2e × 5 | 编辑操作全链(Playwright)、预览(画面/声音/seek/像素非黑)、**从零剪**(新建→导入→改字段→导出+并发+会话摘要)、静态托管(穿越 100% 拒绝/ETag 304)、事件推送(SSE P95/长轮询降级) |
 
 ```bash
 python tools/gates/gate.py M0 --json     # 统一门禁入口(结果协议见下)
@@ -79,6 +86,9 @@ cargo test --workspace --locked
 python tools/e2e_edit_ops.py             # 需先 cargo build -p cutforge-mcp
 python tools/e2e_preview.py
 python tools/e2e_from_zero.py
+python tools/e2e_static.py
+python tools/e2e_events.py
+python tools/gates/gate.py A1 --json     # 册级门禁(clippy/≤800 行红线/tool_parity/e2e/bench 聚合)
 ```
 
 结果协议:`{"ok":bool,"code":str,"message":str,"data":object}`;退出码 `0`=通过、`2`=门禁失败、`3`=前置/环境缺失、`4`=内部错误。
@@ -88,18 +98,18 @@ python tools/e2e_from_zero.py
 ```
 cutforge/
 ├── crates/
-│   ├── cutforge-core/      # 领域模型/命令通道/撤销栈/OpLog/三路合并/锚点
+│   ├── cutforge-core/      # 领域模型/命令通道/撤销栈/OpLog/三路合并/锚点(engine/ 五模块)
 │   ├── cutforge-schema/    # 契约代码生成(与 Python 生成端对拍)
-│   ├── cutforge-io/        # 工程读写/atomic.rs 唯一落盘点/锁/备份/探测/watcher/脚手架
-│   ├── cutforge-render/    # 渲染后端(ffmpeg 直出,backend 枚举真实消费)
-│   ├── cutforge-mcp/       # MCP server:注册表/dispatch/HTTP+/media/会话摘要
-│   ├── cutforge-cli/       # CLI:serve/new/查询/应用/撤销重做/门禁判定器
+│   ├── cutforge-io/        # 工程读写/atomic.rs 唯一落盘点/锁/备份/探测/watcher(workspace/ 八步状态机)
+│   ├── cutforge-render/    # 渲染后端(ffmpeg 直出;RenderPlan 七步 + 内容寻址缓存)
+│   ├── cutforge-mcp/       # MCP server:registry/dispatch + transport/{stdio,HTTP,SSE,/assets 静态托管}
+│   ├── cutforge-cli/       # CLI:serve/new/查询/应用/撤销重做/cache/doctor/门禁判定器
 │   └── cutforge-script/    # 脚本宿主(批式步骤+策略沙箱)
 ├── apps/web/               # 薄壳:素材面板/时间线/分组检查器/差异面板/新建向导
 ├── schemas/                # mcp-tools.json(工具契约唯一真相源)/ui-fields.json/project.schema.json
-├── tools/                  # gates/gate.py 门禁入口 + e2e × 3 + 夹具生成器 + 文档对拍
+├── tools/                  # gates/gate.py 门禁入口 + bench(基准/黄金对拍)+ e2e × 5 + 夹具生成器 + 文档对拍
 ├── tests/                  # 跨仓桥测试(四桥冒烟/剪映出口对拍)
-└── docs/                   # FLOW.md 工作区地图 / V2-PROGRESS.md 台账 / adr/ 决策记录
+└── docs/                   # FLOW.md 工作区地图 / V2-PROGRESS·A1-PROGRESS 台账 / adr/ 决策记录 / bench/ 基准
 ```
 
 ## 🔗 与 CutFlow 的双向闭环
@@ -129,6 +139,10 @@ cutforge/
 2. 派生/参考自 OpenCut 的部分必须遵守其 **MIT 许可**，全文见 [LICENSE-OPENCUT.MIT](LICENSE-OPENCUT.MIT)（逐字保留，未修改）。
 3. CutFlow 的**已发布 MIT 版本（`v0.1.0`–`v0.12` 等 tag）授权不可撤回**；任何许可变更仅对其后发布的新版本生效。
 
+> **定位注记（[ADR-0010](docs/adr/0010-定位转向个人自用闭源非商业许可简化.md)，2026-09-27）**：
+> 本项目已转向**个人自用、闭源、非商业**；上述「发布前律师复核」义务挂起，仅当恢复对外
+> 公开发行时重新生效。许可三件套原样保留，已发布版本的授权效力与 MIT 归属保留义务不受影响。
+
 ## 🛠️ 开发
 
 工具链与上游 OpenCut 保持一致（`proto` + `moon` + `bun` + `rust 1.97.0`，edition 2024），保留未来接口层回流上游的可能。**整体流程与工作区地图见 [docs/FLOW.md](docs/FLOW.md)。**
@@ -140,6 +154,7 @@ python tools/gates/gate.py M1 --json
 python tools/gates/gate.py M2 --json
 python tools/gates/gate.py M3 --json
 python tools/gates/gate.py M4 --json
+python tools/gates/gate.py A1 --json   # 册级门禁(每册一个 A<n> 入口,决策 D-A2)
 ```
 
 参与贡献前请读 [CONTRIBUTING.md](CONTRIBUTING.md)。

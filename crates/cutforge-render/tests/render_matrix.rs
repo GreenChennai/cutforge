@@ -63,17 +63,17 @@ fn silence_regions(p: &Path) -> Vec<(f64, f64)> {
     let mut starts: Vec<f64> = Vec::new();
     let mut regions = Vec::new();
     for line in err.lines() {
-        if let Some(pos) = line.find("silence_start:") {
-            if let Ok(t) = line[pos + 14..].trim().split_whitespace().next().unwrap_or("").parse::<f64>() {
-                starts.push(t);
-            }
+        // split_whitespace 自带首尾空白容忍,无需 trim(纯 lint 化简,解析口径零变化)
+        if let Some(pos) = line.find("silence_start:")
+            && let Ok(t) = line[pos + 14..].split_whitespace().next().unwrap_or("").parse::<f64>()
+        {
+            starts.push(t);
         }
-        if let Some(pos) = line.find("silence_end:") {
-            if let Ok(t) = line[pos + 13..].trim().split_whitespace().next().unwrap_or("").parse::<f64>() {
-                if let Some(s) = starts.pop() {
-                    regions.push((s, t));
-                }
-            }
+        if let Some(pos) = line.find("silence_end:")
+            && let Ok(t) = line[pos + 13..].split_whitespace().next().unwrap_or("").parse::<f64>()
+            && let Some(s) = starts.pop()
+        {
+            regions.push((s, t));
         }
     }
     regions

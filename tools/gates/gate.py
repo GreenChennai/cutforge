@@ -1030,6 +1030,142 @@ CHECKS_M7: dict[str, tuple[Callable[[], CheckResult], bool]] = {
 }
 
 
+# ---------------- A1 · 册一「内核重构与架构加固」册级门禁 ----------------
+# D-A2(册级门禁注册制):每册一个 A<n> 入口聚合本册验收,分级沿用 M0-M7 的
+# 阻断/观察二元;与里程碑门禁互不干扰(CI 只跑 M0/M1,A1 本机册收官跑)。
+
+RUST_LINE_LIMIT = 800  # AC-1.1 红线:非测试源文件 ≤800 行
+
+
+def check_cargo_test_workspace() -> CheckResult:
+    """A1-1(AC-1.9): cargo test --workspace --locked 全绿。
+    http_hardening(T1.6/AC-1.7)与 cache_addressing(T1.5/AC-1.4)的测试均已含在
+    workspace 测试面内,A1 不重复单跑。"""
+    if shutil.which("cargo") is None:
+        return CheckResult("cargo-test-workspace", True, False, NO_ENV, "未找到 cargo", {})
+    r = _cargo(["test", "--workspace", "--locked"])
+    tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
+    if r.returncode != 0:
+        return CheckResult("cargo-test-workspace", True, False, GATE_FAILED,
+                           f"cargo test --workspace 失败: {' | '.join(tail)}", {})
+    return CheckResult("cargo-test-workspace", True, True, OK,
+                       "cargo test --workspace --locked 全绿"
+                       "(含 http_hardening / cache_addressing / protocol_conformance)", {"tail": tail})
+
+
+def check_cargo_clippy() -> CheckResult:
+    """A1-2(AC-1.1): clippy --workspace --all-targets -D warnings,新增告警 = 0。"""
+    if shutil.which("cargo") is None:
+        return CheckResult("cargo-clippy", True, False, NO_ENV, "未找到 cargo", {})
+    r = _cargo(["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"])
+    tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
+    if r.returncode != 0:
+        return CheckResult("cargo-clippy", True, False, GATE_FAILED,
+                           f"clippy 告警非零(-D warnings 升级为错误): {' | '.join(tail)}", {})
+    return CheckResult("cargo-clippy", True, True, OK,
+                       "clippy --workspace --all-targets 零告警", {"tail": tail})
+
+
+def check_rust_line_limit() -> CheckResult:
+    """A1-3(AC-1.1): crates 下非测试 .rs 全部 ≤800 行(内联实现,不依赖 shell 管道)。
+    「非测试」口径:目录树含 tests/ 段的不算,与 AC-1.1 判定命令(! -path '*/tests/*')一致。"""
+    root = REPO_ROOT / "crates"
+    if not root.is_dir():
+        return CheckResult("rust-line-limit", True, False, NO_ENV, "crates/ 不存在", {})
+    offenders: list[tuple[str, int]] = []
+    scanned, max_f, max_n = 0, "", 0
+    for p in root.rglob("*.rs"):
+        rel = p.relative_to(REPO_ROOT)
+        parts = rel.parts
+        if "tests" in parts or "target" in parts:
+            continue
+        try:
+            with p.open("r", encoding="utf-8", errors="replace") as f:
+                n = sum(1 for _ in f)
+        except OSError:
+            continue
+        scanned += 1
+        if n > max_n:
+            max_f, max_n = "/".join(parts), n
+        if n > RUST_LINE_LIMIT:
+            offenders.append(("/".join(parts), n))
+    if offenders:
+        offenders.sort(key=lambda x: -x[1])
+        head = "; ".join(f"{f}:{n}" for f, n in offenders[:6])
+        return CheckResult("rust-line-limit", True, False, GATE_FAILED,
+                           f"{len(offenders)} 个非测试源文件超 {RUST_LINE_LIMIT} 行红线: {head}",
+                           {"offenders": offenders})
+    return CheckResult("rust-line-limit", True, True, OK,
+                       f"crates 非测试 .rs 共 {scanned} 个,最大 {max_n} 行({max_f})≤ {RUST_LINE_LIMIT}",
+                       {"scanned": scanned, "max": max_f, "max_lines": max_n})
+
+
+def check_tool_parity() -> CheckResult:
+    """A1-4(AC-1.2): MCP 41 工具黄金响应库对拍。
+    加法容忍:实际多出的键仅警告;值变化/键缺失 = DRIFT 阻断。
+    重建快照:python tools/bench/tool_parity.py --update-golden(须随有计划的行为变更同步重建)。"""
+    script = REPO_ROOT / "tools" / "bench" / "tool_parity.py"
+    if not script.exists():
+        return CheckResult("tool-parity", True, False, NO_ENV, f"工具不存在: {script}", {})
+    rc, data = _run_tool("tools/bench/tool_parity.py", "--json")
+    ok = rc == 0 and data.get("ok") is True
+    return CheckResult("tool-parity", True, ok, OK if ok else GATE_FAILED,
+                       data.get("message", f"tool_parity exit={rc}"),
+                       {"exit": rc, "counts": data.get("data", {}).get("counts", {})})
+
+
+def _py_e2e_gate(name: str, rel: str, *args: str) -> CheckResult:
+    """A1 通用 python e2e 门禁:exit 0 = 通过,输出尾行进 message。"""
+    script = REPO_ROOT / rel
+    if not script.exists():
+        return CheckResult(name, True, False, NO_ENV, f"工具不存在: {script}", {})
+    r = subprocess.run([sys.executable, str(script), *args], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=1800, cwd=str(REPO_ROOT))
+    tail = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()[-3:]
+    if r.returncode != 0:
+        return CheckResult(name, True, False, GATE_FAILED,
+                           f"{script.name} 失败(exit={r.returncode}): {' | '.join(tail)}", {})
+    return CheckResult(name, True, True, OK, f"{script.name} 断言链全过", {"tail": tail})
+
+
+def check_e2e_static() -> CheckResult:
+    """A1-5(AC-1.6/T1.6): 静态目录托管 e2e(穿越 100% 拒绝 + ETag/304 + 零 Rust 改动可达)。"""
+    return _py_e2e_gate("e2e-static", "tools/e2e_static.py")
+
+
+def check_e2e_events() -> CheckResult:
+    """A1-6(AC-1.5/T1.6): 事件推送 e2e(SSE P95 ≤200ms + 长轮询降级 ≤1s + notes/cutlist 事件面)。"""
+    return _py_e2e_gate("e2e-events", "tools/e2e_events.py")
+
+
+def check_bench_threshold() -> CheckResult:
+    """A1-7(AC-1.8/T1.8): 性能阈值 `bench.py --check`(劣化 >20% 阻断)。
+    该脚本由 T1.8 并行落库;缺失时如实 SKIP(观察,不冒充通过)并注明待 T1.8;
+    脚本落库后本项自动转为阻断,命令契约固定为:python tools/bench/bench.py --check。"""
+    script = REPO_ROOT / "tools" / "bench" / "bench.py"
+    if not script.exists():
+        return CheckResult("bench-threshold", False, False, GATE_FAILED,
+                           "SKIP(观察): tools/bench/bench.py 尚未落库(待 T1.8);落库后本项为真阻断",
+                           {"skip": True, "reason": "待 T1.8 落库",
+                            "command": "python tools/bench/bench.py --check"})
+    rc, data = _run_tool("tools/bench/bench.py", "--check")
+    ok = rc == 0 and data.get("ok") is not False
+    return CheckResult("bench-threshold", True, ok, OK if ok else GATE_FAILED,
+                       data.get("message", f"bench --check exit={rc}"),
+                       {"exit": rc, **(data.get("data") or {})})
+
+
+CHECKS_A1: dict[str, tuple[Callable[[], CheckResult], bool]] = {
+    "bench-threshold": (check_bench_threshold, False),  # bench.py 未落库前为观察 SKIP(T1.8)
+    "cargo-clippy": (check_cargo_clippy, True),
+    "cargo-test-workspace": (check_cargo_test_workspace, True),
+    "e2e-events": (check_e2e_events, True),
+    "e2e-static": (check_e2e_static, True),
+    "rust-line-limit": (check_rust_line_limit, True),
+    "tool-parity": (check_tool_parity, True),
+}
+
+
 MILESTONES: dict[str, dict[str, tuple[Callable[[], CheckResult], bool]]] = {
     "M0": CHECKS_M0,
     "M1": CHECKS_M1,
@@ -1039,6 +1175,7 @@ MILESTONES: dict[str, dict[str, tuple[Callable[[], CheckResult], bool]]] = {
     "M5": CHECKS_M5,
     "M6": CHECKS_M6,
     "M7": CHECKS_M7,
+    "A1": CHECKS_A1,
 }
 
 

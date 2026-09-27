@@ -1,0 +1,23 @@
+{
+ "tool": "redo",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-9"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

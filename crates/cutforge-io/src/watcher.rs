@@ -192,9 +192,19 @@ pub fn ensure_sync_daemon(root: &Path) -> std::sync::Arc<SyncHub> {
             if !project_touched {
                 continue;
             }
-            // 外部改动可见性:锁内合并(短临界区),冲突落盘不打断守护
-            if let Ok(mut ws) = crate::Workspace::open_exclusive(&thread_root) {
-                let _ = ws.merge_from_disk();
+            // 性能专项(T1.8/AC-1.8)守护免开:project.json 变化若来自**本进程刚完成
+            // 的写入**(磁盘指纹 == persist 完成时登记的指纹),锁内 sync_with_disk
+            // 对自身写入必然走"磁盘==同步点"快路径——open_exclusive+merge 是纯空转,
+            // 还与写通道抢工程锁(重试睡眠 50ms 的来源)。指纹一致 → 免开,仅 bump 事件;
+            // 外部改动指纹必不一致 → 照旧 open_exclusive + merge_from_disk(冲突停写
+            // /三路合并语义原样)。指纹字节级判别,不依赖 mtime。
+            let own_write = crate::fresh::disk_fingerprint(&thread_root)
+                .is_some_and(|fp| crate::fresh::is_last_local_write(&thread_root, &fp));
+            if !own_write {
+                // 外部改动可见性:锁内合并(短临界区),冲突落盘不打断守护
+                if let Ok(mut ws) = crate::Workspace::open_exclusive(&thread_root) {
+                    let _ = ws.merge_from_disk();
+                }
             }
             thread_hub.bump();
         }

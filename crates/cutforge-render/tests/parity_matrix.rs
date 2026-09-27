@@ -72,32 +72,11 @@ fn rms_of_window(p: &Path, from: f64, to: f64) -> f64 {
         "-af", &format!("atrim={from}:{to},astats=metadata=1"), "-f", "null", "-",
     ], Path::new("."));
     let pos = err.rfind("RMS level dB:").expect(err.as_str());
-    err[pos + 13..].trim().split_whitespace().next().unwrap().parse().unwrap()
-}
-
-fn silence_regions(p: &Path) -> Vec<(f64, f64)> {
-    let (_o, err) = ff_out(&[
-        "-nostats", "-i", p.to_str().unwrap(),
-        "-af", "silencedetect=noise=-45dB:d=0.3", "-f", "null", "-",
-    ], Path::new("."));
-    let mut starts: Vec<f64> = Vec::new();
-    let mut regions = Vec::new();
-    for line in err.lines() {
-        if let Some(pos) = line.find("silence_start:") {
-            if let Ok(t) = line[pos + 14..].trim().split_whitespace().next().unwrap_or("").parse::<f64>() {
-                starts.push(t);
-            }
-        }
-        if let Some(pos) = line.find("silence_end:") {
-            if let Ok(t) = line[pos + 13..].trim().split_whitespace().next().unwrap_or("").parse::<f64>() {
-                if let Some(s) = starts.pop() { regions.push((s, t)); }
-            }
-        }
-    }
-    regions
+    err[pos + 13..].split_whitespace().next().unwrap().parse().unwrap()
 }
 
 fn write_project(dir: &Path, slug: &str, v: &Value) -> PathBuf {
+    let _ = slug; // slug 已在 v 内;参数仅为可读性
     // 唯一落盘点纪律(M2-4):测试夹具同样走 atomic.rs(临时文件+rename 原子替换,父目录自建)
     let p = dir.join("05_ir/project.json");
     cutforge_io::atomic::atomic_write(&p, serde_json::to_string_pretty(v).unwrap().as_bytes()).unwrap();
@@ -252,7 +231,7 @@ fn parity_matrix_full() {
                 "-af", "bandpass=f=220:w=60,atrim=0.8:1.6,astats=metadata=1", "-f", "null", "-",
             ], Path::new("."));
             let pos = err.rfind("RMS level dB:").expect(err.as_str());
-            err[pos + 13..].trim().split_whitespace().next().unwrap().parse().unwrap()
+            err[pos + 13..].split_whitespace().next().unwrap().parse().unwrap()
         };
         let rms_on: f64 = bgm_band_rms(&out_on.output);
         let rms_off: f64 = bgm_band_rms(&out_off.output);
@@ -300,7 +279,7 @@ fn parity_matrix_full() {
         achieved.push("13 文本轨:结构性锚点不直接渲染(字幕走 ASS 链,与 CutFlow 同口径)");
     }
 
-    // ---- ⑨ 多画幅真分叉:两变体共享同一 mix 缓存 ----
+    // ---- ⑨ 多画幅真分叉(T1.10):画幅无关层(mix)全部仅一份;video/encode 层按画幅分叉 ----
     {
         let dir = workspace("fork");
         make_media(&dir);
@@ -311,13 +290,29 @@ fn parity_matrix_full() {
         for (r, res) in &outs {
             assert!(res.is_ok(), "变体 {r} 失败");
         }
-        let mix_files = std::fs::read_dir(dir.join(".cutforge/render-cache"))
-            .unwrap()
-            .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with("mix-") && !e.file_name().to_string_lossy().starts_with("mix-raw"))
-            .count();
-        assert_eq!(mix_files, 1, "两个画幅必须共享同一份 mix(真分叉)");
-        achieved.push("14 多画幅真分叉:共享 mix 只重做 video/encode");
+        // T1.5 分层缓存:seg/mix/compose/overlay/sub 各自目录内数产物
+        let count_layer = |layer: &str| -> usize {
+            std::fs::read_dir(dir.join(".cutforge/render-cache").join(layer))
+                .expect("缓存分层目录必须存在")
+                .flatten()
+                .filter(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    n.ends_with(".mp4") || n.ends_with(".m4a")
+                })
+                .count()
+        };
+        // 画幅无关层:mix(纯音频)两变体共享 → 全局仅一份(真分叉的核心判据)
+        assert_eq!(count_layer("mix"), 1, "两个画幅必须共享同一份 mix(画幅无关层仅一份)");
+        // 画幅相关层:video/encode 真分叉(compose/sub 每画幅一份;seg = 2 clip × 2 画幅)
+        assert_eq!(count_layer("compose"), 2, "compose 必须按画幅分叉");
+        assert_eq!(count_layer("sub"), 2, "sub 合流必须按画幅分叉");
+        assert_eq!(count_layer("seg"), 4, "seg = 2 clip × 2 画幅(键含 canvas)");
+        assert_eq!(count_layer("overlay"), 0, "无叠加层 → overlay 层零产物");
+        // 两个成片都产出且路径不同(encode 层分叉)
+        let output0 = outs[0].1.as_ref().unwrap();
+        let output1 = outs[1].1.as_ref().unwrap();
+        assert_ne!(output0, output1, "两画幅成片路径必须不同");
+        achieved.push("14 多画幅真分叉:画幅无关层(mix)仅一份,video/encode 层按画幅分叉");
     }
 
     // 汇总证据(供矩阵回填)

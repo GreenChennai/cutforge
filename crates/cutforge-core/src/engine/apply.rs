@@ -1,36 +1,14 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
-//! 引擎(计划书 2.6/4.2/4.4):查询接口与命令接口严格分离。
-//!
-//! - `query`:纯投影,无副作用,可并发;
-//! - `apply`/`undo`/`redo`:唯一写入口——校验 → 变更 → schema 验证 →
-//!   生成 Op(含 baseRev)入 OpLog → rev 递增。
-//!   步骤"校验前置条件"是'所见即所得'能成立的唯一原因:相对 baseRev
-//!   已失效的写入会被拒绝,不存在静默覆盖(北极星指标)。
+//! 命令接口:唯一写入口(计划书 2.6)。
+//! `apply`/`record_file_change` 负责幂等/前置检查 → 变更 → schema 验证 →
+//! 产出 Op 入 OpLog;`mutate` 承担 Command → (路径, before, after, 摘要) 的就地变更。
 
-use crate::command::{ClipPatch, Command};
+use super::invariants::enforce_no_overlap;
+use super::{Engine, Reject};
+use crate::command::Command;
 use crate::model::Project;
-use crate::oplog::{Actor, Op, OpKind, OpLog, OpTarget};
-use serde_json::{json, Value};
-
-/// 撤销/重做以外的拒绝原因;冲突码(CF-001~006)在 M3 的合并器中细化,
-/// 此处 InvariantViolation 预留 CF-004(同轨时间重叠)。
-#[derive(Debug, Clone, PartialEq)]
-pub enum Reject {
-    UnknownClip(String),
-    UnknownTrack(String),
-    UnknownOp(String),
-    SplitOutside { clip_id: String, t_ms: u64 },
-    NotAdjacent { left_id: String, right_id: String },
-    DuplicateClipId(String),
-    EmptyPatch(String),
-    PreconditionFailed { expected: u64, actual: u64 },
-    SchemaInvalid(Vec<String>),
-    InvariantViolation(String),
-    /// bgm_set 要求工程已有 doc.bgm,或 patch 携带 src(新建须有音源)。
-    MissingBgm,
-    NothingToUndo,
-    NothingToRedo,
-}
+use crate::oplog::{Actor, Op, OpKind, OpTarget};
+use serde_json::Value;
 
 /// apply 选项:op_id/request_id 支持幂等;caused_by 把改动与标注绑定(4.9);
 /// expect_rev 是 baseRev 前置检查(调用方声明"我基于哪一版改");
@@ -53,144 +31,7 @@ pub struct OpReceipt {
     pub idempotent: bool,
 }
 
-#[derive(Debug, Clone)]
-pub enum Query {
-    /// 全工程视图(序列化 Value)。
-    ProjectView,
-    /// 单片段。
-    Clip { id: String },
-    /// 单轨道。
-    Track { id: String },
-    /// 时间线概览:(clip_id, start_ms, end_ms, track_id)。
-    Timeline,
-    /// OpLog tail。
-    OpLogTail { since_rev: Option<u64>, actor_kind: Option<crate::oplog::ActorKind> },
-    /// 当前 rev。
-    Rev,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Answer {
-    Project(Value),
-    Clip(Option<Value>),
-    Track(Option<Value>),
-    Timeline(Vec<(String, u64, u64, String)>),
-    Ops(Vec<Op>),
-    Rev(u64),
-}
-
-pub struct Engine {
-    project: Project,
-    log: OpLog,
-    rev: u64,
-    undo_stack: Vec<String>,
-    redo_stack: Vec<String>,
-    /// 非工程真相源(notes.json/cutlist.json 等)的内存态:文件级 Op 的
-    /// 撤销/重做路由目标(ADR-0001:按 target.file 逆写,而非伪造指针回写)。
-    file_states: std::collections::BTreeMap<String, Value>,
-    /// 自上次 drain 以来被写脏的真相源文件(IO 层据此落盘,先文件后记账)。
-    dirty_files: std::collections::BTreeSet<String>,
-}
-
 impl Engine {
-    pub fn new(project: Project) -> Result<Self, Vec<String>> {
-        project.to_validated_value()?;
-        Ok(Self {
-            project, log: OpLog::new(), rev: 0,
-            undo_stack: Vec::new(), redo_stack: Vec::new(),
-            file_states: std::collections::BTreeMap::new(),
-            dirty_files: std::collections::BTreeSet::new(),
-        })
-    }
-
-    /// IO 层加载既有工程时用:恢复(项目, OpLog, rev, 撤销栈, 文件态)五元组。
-    pub fn restore(
-        project: Project,
-        log: OpLog,
-        rev: u64,
-        undo_stack: Vec<String>,
-        file_states: std::collections::BTreeMap<String, Value>,
-    ) -> Result<Self, Vec<String>> {
-        project.to_validated_value()?;
-        Ok(Self {
-            project, log, rev, undo_stack,
-            redo_stack: Vec::new(),
-            file_states, dirty_files: std::collections::BTreeSet::new(),
-        })
-    }
-
-    /// restore 的双栈版本(io 打开工程时用,重做栈跨 dispatch 可用)。
-    #[allow(clippy::too_many_arguments)]
-    pub fn restore_with_stacks(
-        project: Project,
-        log: OpLog,
-        rev: u64,
-        undo_stack: Vec<String>,
-        redo_stack: Vec<String>,
-        file_states: std::collections::BTreeMap<String, Value>,
-    ) -> Result<Self, Vec<String>> {
-        project.to_validated_value()?;
-        Ok(Self { project, log, rev, undo_stack, redo_stack, file_states, dirty_files: std::collections::BTreeSet::new() })
-    }
-
-    pub fn rev(&self) -> u64 {
-        self.rev
-    }
-
-    pub fn project(&self) -> &Project {
-        &self.project
-    }
-
-    pub fn oplog(&self) -> &OpLog {
-        &self.log
-    }
-
-    /// 某真相源文件的当前内存态(撤销/重做路由与 IO 落盘的依据)。
-    pub fn file_state(&self, file: &str) -> Option<&Value> {
-        self.file_states.get(file)
-    }
-
-    /// 全部文件态快照(打开/合并时传递给新 Engine)。
-    pub fn file_states(&self) -> &std::collections::BTreeMap<String, Value> {
-        &self.file_states
-    }
-
-    /// 取走并清空脏文件清单(先文件后记账:IO 层先落盘这些文件再追加 oplog)。
-    pub fn take_dirty_files(&mut self) -> Vec<String> {
-        let files: Vec<String> = self.dirty_files.iter().cloned().collect();
-        self.dirty_files.clear();
-        files
-    }
-
-    /// 查询接口:纯投影。
-    pub fn query(&self, q: Query) -> Answer {
-        match q {
-            Query::ProjectView => Answer::Project(
-                serde_json::to_value(&self.project).unwrap_or(Value::Null),
-            ),
-            Query::Clip { id } => Answer::Clip(
-                self.project.find_clip(&id).map(|(ti, ci)| {
-                    serde_json::to_value(&self.project.tracks[ti].clips[ci]).unwrap_or(Value::Null)
-                }),
-            ),
-            Query::Track { id } => Answer::Track(
-                self.project.find_track(&id)
-                    .map(|ti| serde_json::to_value(&self.project.tracks[ti]).unwrap_or(Value::Null)),
-            ),
-            Query::Timeline => Answer::Timeline(
-                self.project.tracks.iter().flat_map(|t| {
-                    t.clips.iter().map(move |c| {
-                        (c.id.clone(), c.start_ms, c.start_ms + c.duration_ms, t.id.clone())
-                    })
-                }).collect(),
-            ),
-            Query::OpLogTail { since_rev, actor_kind } => {
-                Answer::Ops(self.log.tail(since_rev, actor_kind).into_iter().cloned().collect())
-            }
-            Query::Rev => Answer::Rev(self.rev),
-        }
-    }
-
     /// 命令接口:唯一写入口。
     pub fn apply(&mut self, cmd: Command, actor: Actor, opts: ApplyOpts) -> Result<OpReceipt, Reject> {
         // 幂等 1:request_id 去重(非幂等写操作,计划书 5.2)
@@ -263,138 +104,6 @@ impl Engine {
         }
     }
 
-    /// 撤销:按 target.file 路由逆写(ADR-0001)——project.json 走指针回写,
-    /// 文件级真相源回滚其在 file_states 的内存态(由 IO 层落盘),产生 opKind=undo 的新 Op。
-    pub fn undo(&mut self, actor: Actor) -> Result<OpReceipt, Reject> {
-        let target_id = self.undo_stack.last().cloned().ok_or(Reject::NothingToUndo)?;
-        let original = self.log.ops().iter().find(|o| o.op_id == target_id).cloned().ok_or(Reject::UnknownOp(target_id))?;
-        self.rev += 1;
-        let is_project = original.target.file == "project.json";
-        if !is_project {
-            // 文件级:仅当当前态恰为该 Op 的 after 才允许逆写(LIFO 语义被外部扰动时如实拒绝)
-            match self.file_states.get(&original.target.file) {
-                Some(cur) if *cur == original.after => {}
-                _ => {
-                    self.rev -= 1;
-                    return Err(Reject::InvariantViolation(format!(
-                        "撤销基准不一致:{} 的当前态已偏离待撤销 Op 的 after(外部改动或重放),拒绝盲写",
-                        original.target.file)));
-                }
-            }
-        }
-        let undo_op = Op {
-            op_id: self.log.next_op_id(),
-            ts: crate::timeutil::now_rfc3339(),
-            actor,
-            target: original.target.clone(),
-            op_kind: OpKind::Undo,
-            before: original.after.clone(),
-            after: original.before.clone(),
-            base_rev: crate::format_rev(self.rev - 1),
-            rev: Some(self.rev),
-            caused_by: None,
-            summary: format!("撤销 {}", original.summary),
-            request_id: None,
-            auto: None,
-        };
-        if is_project {
-            let mut project = self.project.clone();
-            apply_value_at(&mut project, &original.target.path, original.before.clone())
-                .map_err(|e| { self.rev -= 1; Reject::InvariantViolation(e) })?;
-            if let Err(errs) = project.to_validated_value() {
-                self.rev -= 1;
-                return Err(Reject::SchemaInvalid(errs));
-            }
-            self.project = project;
-        } else {
-            self.file_states.insert(original.target.file.clone(), original.before.clone());
-            self.dirty_files.insert(original.target.file.clone());
-        }
-        self.log.push(undo_op);
-        self.undo_stack.pop();
-        self.redo_stack.push(original.op_id.clone());
-        Ok(OpReceipt { op_ids: self.log.ops().last().map(|o| vec![o.op_id.clone()]).unwrap_or_default(), rev: self.rev, idempotent: false })
-    }
-
-    /// 重做:按 target.file 路由恢复被撤销 Op 的 after,产生 opKind=redo 的新 Op。
-    pub fn redo(&mut self, actor: Actor) -> Result<OpReceipt, Reject> {
-        let target_id = self.redo_stack.last().cloned().ok_or(Reject::NothingToRedo)?;
-        let original = self.log.ops().iter().find(|o| o.op_id == target_id).cloned().ok_or(Reject::UnknownOp(target_id))?;
-        self.rev += 1;
-        let is_project = original.target.file == "project.json";
-        if !is_project {
-            match self.file_states.get(&original.target.file) {
-                Some(cur) if *cur == original.before => {}
-                _ => {
-                    self.rev -= 1;
-                    return Err(Reject::InvariantViolation(format!(
-                        "重做基准不一致:{} 的当前态已偏离待重做 Op 的 before,拒绝盲写",
-                        original.target.file)));
-                }
-            }
-        }
-        let redo_op = Op {
-            op_id: self.log.next_op_id(),
-            ts: crate::timeutil::now_rfc3339(),
-            actor,
-            target: original.target.clone(),
-            op_kind: OpKind::Redo,
-            before: original.before.clone(),
-            after: original.after.clone(),
-            base_rev: crate::format_rev(self.rev - 1),
-            rev: Some(self.rev),
-            caused_by: None,
-            summary: format!("重做 {}", original.summary),
-            request_id: None,
-            auto: None,
-        };
-        if is_project {
-            let mut project = self.project.clone();
-            apply_value_at(&mut project, &original.target.path, original.after.clone())
-                .map_err(|e| { self.rev -= 1; Reject::InvariantViolation(e) })?;
-            if let Err(errs) = project.to_validated_value() {
-                self.rev -= 1;
-                return Err(Reject::SchemaInvalid(errs));
-            }
-            self.project = project;
-        } else {
-            self.file_states.insert(original.target.file.clone(), original.after.clone());
-            self.dirty_files.insert(original.target.file.clone());
-        }
-        self.log.push(redo_op);
-        self.redo_stack.pop();
-        self.undo_stack.push(original.op_id.clone());
-        Ok(OpReceipt { op_ids: self.log.ops().last().map(|o| vec![o.op_id.clone()]).unwrap_or_default(), rev: self.rev, idempotent: false })
-    }
-
-    /// 从工程 + 完整 OpLog 回放,得到与逐步 apply 语义一致的状态(计划书 4.4 可回放)。
-    /// undo/redo Op 的 after 本身就是当时的状态转移,故全部照序应用;
-    /// 文件级 Op 路由到 file_states(ADR-0001),不与工程文档混淆;
-    /// 撤销栈按日志语义模拟重建(Undo 弹栈、Redo 压回,auto 类跳过)。
-    pub fn replay(base: Project, ops: &[Op]) -> Result<Self, Reject> {
-        let mut eng = Engine::new(base).map_err(Reject::SchemaInvalid)?;
-        eng.rev = 0;
-        for op in ops {
-            if op.target.file == "project.json" {
-                let mut project = eng.project.clone();
-                apply_value_at(&mut project, &op.target.path, op.after.clone())
-                    .map_err(Reject::InvariantViolation)?;
-                if let Err(errs) = project.to_validated_value() {
-                    return Err(Reject::SchemaInvalid(errs));
-                }
-                eng.project = project;
-            } else {
-                eng.file_states.insert(op.target.file.clone(), op.after.clone());
-            }
-            eng.rev = op.rev.unwrap_or(eng.rev + 1);
-            eng.log.push_loaded(op.clone());
-        }
-        let (undo_stack, redo_stack) = rebuild_stacks(ops);
-        eng.undo_stack = undo_stack;
-        eng.redo_stack = redo_stack;
-        Ok(eng)
-    }
-
     /// 非 project.json 真相源(notes.json 等)的变更登记:进 OpLog 审计链、
     /// 升 rev,但不改工程文档(工程文档只能走 `apply`)。
     // 参数与 Op 字段一一对应(显式契约面),收拢成结构体反而遮蔽字段名。
@@ -460,15 +169,6 @@ impl Engine {
                 Ok(OpReceipt { op_ids: vec![op_id], rev: self.rev, idempotent: true })
             }
         }
-    }
-
-    /// 状态语义 hash(测试与 M3 回放等价门禁的基础)。
-    pub fn state_hash(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        let v = serde_json::to_value(&self.project).unwrap_or(Value::Null);
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        canonical_json(&v).hash(&mut h);
-        h.finish()
     }
 
     /// 命令 → (路径, before, after, 摘要)。变更就地生效;失败时调用方回滚快照。
@@ -633,109 +333,6 @@ fn clips_pointer(ti: usize) -> String {
     format!("/tracks/{ti}/clips")
 }
 
-/// 在 Project 上按 JSON Pointer 路径设值(undo/redo/replay 的通用机制)。
-fn apply_value_at(project: &mut Project, pointer: &str, value: Value) -> Result<(), String> {
-    let mut v = serde_json::to_value(&*project).map_err(|e| e.to_string())?;
-    let segs: Vec<&str> = pointer.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
-    let mut payload = Some(value);
-    let mut cur: &mut serde_json::Value = &mut v;
-    for (i, seg) in segs.iter().enumerate() {
-        let last = i + 1 == segs.len();
-        if last {
-            match cur {
-                serde_json::Value::Object(m) => {
-                    m.insert((*seg).to_string(), payload.take().unwrap_or(serde_json::Value::Null));
-                }
-                serde_json::Value::Array(a) => {
-                    let idx: usize = seg.parse().map_err(|_| format!("指针段 '{seg}' 非数组下标"))?;
-                    if idx >= a.len() {
-                        return Err(format!("指针 '{pointer}' 越界({idx} ≥ {})", a.len()));
-                    }
-                    a[idx] = payload.take().unwrap_or(serde_json::Value::Null);
-                }
-                _ => return Err(format!("指针 '{pointer}' 终点不是容器")),
-            }
-        } else {
-            cur = match cur {
-                serde_json::Value::Object(m) => {
-                    m.get_mut(*seg).ok_or_else(|| format!("指针 '{pointer}' 缺键 '{seg}'"))?
-                }
-                serde_json::Value::Array(a) => {
-                    let idx: usize = seg.parse().map_err(|_| format!("指针段 '{seg}' 非数组下标"))?;
-                    if idx >= a.len() {
-                        return Err(format!("指针 '{pointer}' 越界({idx} ≥ {})", a.len()));
-                    }
-                    &mut a[idx]
-                }
-                _ => return Err(format!("指针 '{pointer}' 中段 '{seg}' 处不是容器")),
-            };
-        }
-    }
-    *project = serde_json::from_value(v).map_err(|e| format!("回放反序列化失败: {e}"))?;
-    Ok(())
-}
-
-fn enforce_no_overlap(p: &Project, ti: usize) -> Result<(), Reject> {
-    let ov = Project::overlaps(&p.tracks[ti]);
-    if ov.is_empty() {
-        Ok(())
-    } else {
-        Err(Reject::InvariantViolation(format!(
-            "同轨时间重叠(CF-004): {:?}", ov)))
-    }
-}
-
-/// 按日志语义重建撤销/重做双栈(Undo 弹栈、Redo 压回;io 打开工程与 replay 共用)。
-/// auto 类 Op(锚点重定位等自动簿记)不入栈——撤销深度 = 真实用户手势数(ADR-0001)。
-/// 重做栈同样可从日志确定性重建:M9 修复前 restore 把 redo 置空,而 MCP 每次
-/// dispatch 都重开工程 → redo 跨 dispatch 永远失效(NOTHING_TO_REDO)。
-pub fn rebuild_stacks(ops: &[Op]) -> (Vec<String>, Vec<String>) {
-    let mut undo_stack: Vec<String> = Vec::new();
-    let mut redo_stack: Vec<String> = Vec::new();
-    for op in ops {
-        match op.op_kind {
-            OpKind::Undo => {
-                if let Some(x) = undo_stack.pop() {
-                    redo_stack.push(x);
-                }
-            }
-            OpKind::Redo => {
-                if let Some(x) = redo_stack.pop() {
-                    undo_stack.push(x);
-                }
-            }
-            _ if op.auto == Some(true) => {}
-            _ => undo_stack.push(op.op_id.clone()),
-        }
-    }
-    (undo_stack, redo_stack)
-}
-
-/// 兼容入口:仅撤销栈。
-pub fn rebuild_undo_stack(ops: &[Op]) -> Vec<String> {
-    rebuild_stacks(ops).0
-}
-
-/// 规范化 JSON 文本(键序无关,数值保持 Value 语义)。
-pub fn canonical_json(v: &Value) -> String {
-    match v {
-        Value::Object(m) => {
-            let mut keys: Vec<&String> = m.keys().collect();
-            keys.sort();
-            let inner: Vec<String> = keys
-                .into_iter()
-                .map(|k| format!("{}:{}", serde_json::to_string(k).unwrap(), canonical_json(&m[k])))
-                .collect();
-            format!("{{{}}}", inner.join(","))
-        }
-        Value::Array(a) => {
-            let inner: Vec<String> = a.iter().map(canonical_json).collect();
-            format!("[{}]", inner.join(","))
-        }
-        other => other.to_string(),
-    }
-}
-
 impl crate::model::TrackKind {
     fn kind_json(&self) -> &'static str {
         match self {
@@ -746,36 +343,13 @@ impl crate::model::TrackKind {
     }
 }
 
-/// 便捷:构造测试样本工程。
-pub fn sample_project() -> Project {
-    let v = json!({
-        "version": 1, "schemaVersion": "2.0.0",
-        "slug": "engine-样本", "fps": 30,
-        "canvas": {"width": 1080, "height": 1920},
-        "tracks": [
-            {"id": "V1", "kind": "video", "clips": [
-                {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 8400,
-                 "sourceInMs": 12000, "role": "voice", "volume": 1.0},
-                {"id": "V1-002", "src": "a.mp4", "startMs": 8400, "durationMs": 6200}
-            ]},
-            {"id": "A1", "kind": "audio", "clips": [
-                {"id": "A1-001", "src": "sfx.mp3", "startMs": 8400, "durationMs": 400,
-                 "role": "sfx", "volume": 0.8}
-            ]}
-        ]
-    });
-    Project::from_value(&v).expect("样本工程必须合法")
-}
-
-/// 命令便捷构造(测试用)。
-pub fn patch(duration_ms: u64) -> ClipPatch {
-    ClipPatch { duration_ms: Some(duration_ms), ..Default::default() }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::ClipPatch;
+    use crate::engine::{Answer, Query, Reject, patch, sample_project};
     use crate::oplog::ActorKind;
+    use serde_json::json;
 
     fn agent() -> Actor {
         Actor::agent("test")
@@ -890,24 +464,6 @@ mod tests {
     }
 
     #[test]
-    fn oplog_tail_filters() {
-        let mut eng = Engine::new(sample_project()).unwrap();
-        eng.apply(Command::ClipDelete { clip_id: "A1-001".into() }, Actor::user("用户"), ApplyOpts::default()).unwrap();
-        eng.apply(Command::ClipDelete { clip_id: "V1-002".into() }, Actor::agent("AI"), ApplyOpts::default()).unwrap();
-        match eng.query(Query::OpLogTail { since_rev: Some(0), actor_kind: Some(ActorKind::Agent) }) {
-            Answer::Ops(ops) => {
-                assert_eq!(ops.len(), 1);
-                assert_eq!(ops[0].actor.id, "AI");
-            }
-            other => panic!("意外: {other:?}"),
-        }
-        match eng.query(Query::OpLogTail { since_rev: None, actor_kind: None }) {
-            Answer::Ops(ops) => assert_eq!(ops.len(), 2),
-            other => panic!("意外: {other:?}"),
-        }
-    }
-
-    #[test]
     fn caused_by_and_summary_recorded() {
         let mut eng = Engine::new(sample_project()).unwrap();
         eng.apply(
@@ -982,79 +538,5 @@ mod tests {
             },
         }, agent(), ApplyOpts::default());
         assert!(matches!(r, Err(Reject::SchemaInvalid(_))), "枚举外动效必须被 schema 层拒: {r:?}");
-    }
-
-    /// bgm_set/bgm_clear:创建带 schema 默认、合并、无 src 拒绝、撤销/重做回环。
-    #[test]
-    fn bgm_set_clear_undo_redo_roundtrip() {
-        let mut eng = Engine::new(sample_project()).unwrap();
-        // 无 bgm 且不带 src → MissingBgm
-        let r = eng.apply(Command::BgmSet { patch: crate::command::BgmPatch { gain_db: Some(-12.0), ..Default::default() } }, agent(), ApplyOpts::default());
-        assert!(matches!(r, Err(Reject::MissingBgm)), "{r:?}");
-        // 创建:未给出的字段落 schema 默认(gainDb=-18/ducking=true/loop=true)
-        let r = eng.apply(Command::BgmSet {
-            patch: crate::command::BgmPatch { src: Some("02_音乐/bgm.mp3".into()), ..Default::default() },
-        }, agent(), ApplyOpts::default()).unwrap();
-        assert_eq!(r.rev, 1);
-        let op = &eng.oplog().ops()[0];
-        assert_eq!(op.target.path, "/bgm");
-        assert_eq!(op.target.file, "project.json");
-        match eng.query(Query::ProjectView) {
-            Answer::Project(v) => {
-                assert_eq!(v["bgm"]["src"], json!("02_音乐/bgm.mp3"));
-                assert_eq!(v["bgm"]["gainDb"], json!(-18.0));
-                assert_eq!(v["bgm"]["ducking"], json!(true));
-                assert_eq!(v["bgm"]["loop"], json!(true));
-            }
-            other => panic!("意外: {other:?}"),
-        }
-        // 合并:只改 gainDb/loop,src/ducking 保持
-        eng.apply(Command::BgmSet {
-            patch: crate::command::BgmPatch { gain_db: Some(-9.0), loop_: Some(false), ..Default::default() },
-        }, agent(), ApplyOpts::default()).unwrap();
-        match eng.query(Query::ProjectView) {
-            Answer::Project(v) => {
-                assert_eq!(v["bgm"]["src"], json!("02_音乐/bgm.mp3"), "src 不得被清掉");
-                assert_eq!(v["bgm"]["gainDb"], json!(-9.0));
-                assert_eq!(v["bgm"]["loop"], json!(false));
-            }
-            other => panic!("意外: {other:?}"),
-        }
-        // 同值 → 幂等回执,rev 不动
-        let r = eng.apply(Command::BgmSet {
-            patch: crate::command::BgmPatch { gain_db: Some(-9.0), ..Default::default() },
-        }, agent(), ApplyOpts::default()).unwrap();
-        assert!(r.idempotent);
-        assert_eq!(eng.rev(), 2);
-        // 撤销合并 → gainDb 回 -18;再撤销创建 → bgm 消失;重做恢复
-        eng.undo(agent()).unwrap();
-        match eng.query(Query::ProjectView) {
-            Answer::Project(v) => assert_eq!(v["bgm"]["gainDb"], json!(-18.0)),
-            other => panic!("意外: {other:?}"),
-        }
-        eng.undo(agent()).unwrap();
-        match eng.query(Query::ProjectView) {
-            Answer::Project(v) => assert!(v.get("bgm").is_none(), "撤销创建后 bgm 必须消失: {v}"),
-            other => panic!("意外: {other:?}"),
-        }
-        eng.redo(agent()).unwrap();
-        match eng.query(Query::ProjectView) {
-            Answer::Project(v) => assert_eq!(v["bgm"]["gainDb"], json!(-18.0), "重做恢复创建态"),
-            other => panic!("意外: {other:?}"),
-        }
-        // 清除:rev 上涨;再清除幂等;撤销清除恢复
-        let r = eng.apply(Command::BgmClear, agent(), ApplyOpts::default()).unwrap();
-        assert!(!r.idempotent);
-        match eng.query(Query::ProjectView) {
-            Answer::Project(v) => assert!(v.get("bgm").is_none()),
-            other => panic!("意外: {other:?}"),
-        }
-        let r = eng.apply(Command::BgmClear, agent(), ApplyOpts::default()).unwrap();
-        assert!(r.idempotent, "已无 bgm 时清除必须幂等");
-        eng.undo(agent()).unwrap();
-        match eng.query(Query::ProjectView) {
-            Answer::Project(v) => assert_eq!(v["bgm"]["src"], json!("02_音乐/bgm.mp3"), "撤销清除必须恢复 bgm"),
-            other => panic!("意外: {other:?}"),
-        }
     }
 }

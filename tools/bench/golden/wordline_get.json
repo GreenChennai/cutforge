@@ -1,0 +1,58 @@
+{
+ "tool": "wordline_get",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "wordline": {
+      "charTimingEstimated": false,
+      "chars": [
+       {
+        "ch": "测",
+        "conf": 0.99,
+        "endMs": 400,
+        "i": 0,
+        "srcEndMs": 400,
+        "srcStartMs": 0,
+        "startMs": 0
+       }
+      ],
+      "degradeReasons": [],
+      "degraded": false,
+      "finalDurationMs": 8400,
+      "fps": 30,
+      "gaps": [],
+      "sentences": [
+       {
+        "id": "s1",
+        "punc": "",
+        "span": [
+         0,
+         1
+        ],
+        "text": "测"
+       }
+      ],
+      "source": "parity-fixture",
+      "space": "final",
+      "speakers": [],
+      "srcDurationMs": 10000,
+      "stats": {
+       "charCount": 1,
+       "confMedian": 0.99,
+       "coverage": 1.0
+      },
+      "version": 1
+     }
+    },
+    "message": "wordline",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

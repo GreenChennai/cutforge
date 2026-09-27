@@ -1,0 +1,61 @@
+{
+ "tool": "stage_status",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "source": "existence",
+     "stages": {
+      "S0": false,
+      "S1": false,
+      "S10": false,
+      "S11": false,
+      "S2": false,
+      "S3": false,
+      "S4": false,
+      "S5": false,
+      "S6": false,
+      "S7": false,
+      "S8": false,
+      "S9": false
+     }
+    },
+    "message": "阶段状态(_内部状态 存在性;rs_run 不可用,降级)",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "source": "existence",
+     "stages": {
+      "S0": false,
+      "S1": false,
+      "S10": false,
+      "S11": false,
+      "S2": false,
+      "S3": false,
+      "S4": false,
+      "S5": false,
+      "S6": false,
+      "S7": false,
+      "S8": false,
+      "S9": false
+     }
+    },
+    "message": "阶段状态(_内部状态 存在性;rs_run 不可用,降级)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -1,0 +1,72 @@
+{
+ "tool": "notes_list",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "notes": [],
+     "orphans": 0,
+     "total": 0
+    },
+    "message": "标注清单",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "notes": [
+      {
+       "anchor": {
+        "kind": "clip",
+        "ref": "V1-001",
+        "tMs": 0
+       },
+       "author": "agent",
+       "body": "这里语速偏快",
+       "createdAt": "<TS>",
+       "id": "n-0001",
+       "resolvedBy": {
+        "opIds": [
+         "op-19"
+        ],
+        "reply": "已微调音量 0.85"
+       },
+       "state": "resolved",
+       "tags": [
+        "parity"
+       ]
+      },
+      {
+       "anchor": {
+        "kind": "time",
+        "ref": null,
+        "tMs": 500
+       },
+       "author": "user",
+       "body": "开头音效偏响",
+       "createdAt": "<TS>",
+       "id": "n-0002",
+       "rejectedReason": "风格即如此",
+       "state": "rejected"
+      }
+     ],
+     "orphans": 0,
+     "total": 2
+    },
+    "message": "标注清单",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

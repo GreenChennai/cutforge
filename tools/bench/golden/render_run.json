@@ -1,0 +1,19 @@
+{
+ "tool": "render_run",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "runId": "<RUN_ID>"
+    },
+    "message": "渲染已开始",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

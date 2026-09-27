@@ -1,0 +1,324 @@
+{
+ "tool": "oplog_tail",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "limit": 5
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "count": 0,
+     "ops": [],
+     "rev": "<REV>"
+    },
+    "message": "OpLog tail",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "limit": 4
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "count": 23,
+     "ops": [
+      {
+       "actor": {
+        "id": "editor",
+        "kind": "user"
+       },
+       "after": {
+        "durationMs": 1800,
+        "id": "V1-001",
+        "motion": {
+         "in": "zoomIn",
+         "inMs": 280.0,
+         "out": "fadeOut",
+         "outMs": 260.0
+        },
+        "sourceInMs": 0,
+        "src": "01_原始素材/take1.mp4",
+        "startMs": 0,
+        "text": "第一句字幕",
+        "volume": 0.85
+       },
+       "base_rev": "<REV>",
+       "before": {
+        "durationMs": 1800,
+        "id": "V1-001",
+        "motion": {
+         "in": "zoomIn",
+         "inMs": 280.0,
+         "out": "fadeOut",
+         "outMs": 260.0
+        },
+        "sourceInMs": 0,
+        "src": "01_原始素材/take1.mp4",
+        "startMs": 0,
+        "text": "第一句字幕",
+        "volume": 0.9
+       },
+       "caused_by": [
+        "n-0001"
+       ],
+       "op_id": "op-19",
+       "op_kind": "set",
+       "rev": "<REV>",
+       "summary": "按 n-0001 微调音量",
+       "target": {
+        "file": "project.json",
+        "path": "/tracks/0/clips/0"
+       },
+       "ts": "<TS>"
+      },
+      {
+       "actor": {
+        "id": "editor",
+        "kind": "user"
+       },
+       "after": {
+        "items": [
+         {
+          "anchor": {
+           "kind": "clip",
+           "ref": "V1-001",
+           "tMs": 0
+          },
+          "author": "agent",
+          "body": "这里语速偏快",
+          "createdAt": "<TS>",
+          "id": "n-0001",
+          "resolvedBy": {
+           "opIds": [
+            "op-19"
+           ],
+           "reply": "已微调音量 0.85"
+          },
+          "state": "resolved",
+          "tags": [
+           "parity"
+          ]
+         }
+        ],
+        "version": 1
+       },
+       "base_rev": "<REV>",
+       "before": {
+        "items": [
+         {
+          "anchor": {
+           "kind": "clip",
+           "ref": "V1-001",
+           "tMs": 0
+          },
+          "author": "agent",
+          "body": "这里语速偏快",
+          "createdAt": "<TS>",
+          "id": "n-0001",
+          "state": "open",
+          "tags": [
+           "parity"
+          ]
+         }
+        ],
+        "version": 1
+       },
+       "op_id": "op-20",
+       "op_kind": "set",
+       "rev": "<REV>",
+       "summary": "标注 n-0001 结案",
+       "target": {
+        "file": "notes.json",
+        "path": "/items"
+       },
+       "ts": "<TS>"
+      },
+      {
+       "actor": {
+        "id": "editor",
+        "kind": "user"
+       },
+       "after": {
+        "items": [
+         {
+          "anchor": {
+           "kind": "clip",
+           "ref": "V1-001",
+           "tMs": 0
+          },
+          "author": "agent",
+          "body": "这里语速偏快",
+          "createdAt": "<TS>",
+          "id": "n-0001",
+          "resolvedBy": {
+           "opIds": [
+            "op-19"
+           ],
+           "reply": "已微调音量 0.85"
+          },
+          "state": "resolved",
+          "tags": [
+           "parity"
+          ]
+         },
+         {
+          "anchor": {
+           "kind": "time",
+           "ref": null,
+           "tMs": 500
+          },
+          "author": "user",
+          "body": "开头音效偏响",
+          "createdAt": "<TS>",
+          "id": "n-0002",
+          "state": "open"
+         }
+        ],
+        "version": 1
+       },
+       "base_rev": "<REV>",
+       "before": {
+        "items": [
+         {
+          "anchor": {
+           "kind": "clip",
+           "ref": "V1-001",
+           "tMs": 0
+          },
+          "author": "agent",
+          "body": "这里语速偏快",
+          "createdAt": "<TS>",
+          "id": "n-0001",
+          "resolvedBy": {
+           "opIds": [
+            "op-19"
+           ],
+           "reply": "已微调音量 0.85"
+          },
+          "state": "resolved",
+          "tags": [
+           "parity"
+          ]
+         }
+        ],
+        "version": 1
+       },
+       "op_id": "op-21",
+       "op_kind": "insert",
+       "rev": "<REV>",
+       "summary": "创建标注 n-0002",
+       "target": {
+        "file": "notes.json",
+        "path": "/items"
+       },
+       "ts": "<TS>"
+      },
+      {
+       "actor": {
+        "id": "editor",
+        "kind": "user"
+       },
+       "after": {
+        "items": [
+         {
+          "anchor": {
+           "kind": "clip",
+           "ref": "V1-001",
+           "tMs": 0
+          },
+          "author": "agent",
+          "body": "这里语速偏快",
+          "createdAt": "<TS>",
+          "id": "n-0001",
+          "resolvedBy": {
+           "opIds": [
+            "op-19"
+           ],
+           "reply": "已微调音量 0.85"
+          },
+          "state": "resolved",
+          "tags": [
+           "parity"
+          ]
+         },
+         {
+          "anchor": {
+           "kind": "time",
+           "ref": null,
+           "tMs": 500
+          },
+          "author": "user",
+          "body": "开头音效偏响",
+          "createdAt": "<TS>",
+          "id": "n-0002",
+          "rejectedReason": "风格即如此",
+          "state": "rejected"
+         }
+        ],
+        "version": 1
+       },
+       "base_rev": "<REV>",
+       "before": {
+        "items": [
+         {
+          "anchor": {
+           "kind": "clip",
+           "ref": "V1-001",
+           "tMs": 0
+          },
+          "author": "agent",
+          "body": "这里语速偏快",
+          "createdAt": "<TS>",
+          "id": "n-0001",
+          "resolvedBy": {
+           "opIds": [
+            "op-19"
+           ],
+           "reply": "已微调音量 0.85"
+          },
+          "state": "resolved",
+          "tags": [
+           "parity"
+          ]
+         },
+         {
+          "anchor": {
+           "kind": "time",
+           "ref": null,
+           "tMs": 500
+          },
+          "author": "user",
+          "body": "开头音效偏响",
+          "createdAt": "<TS>",
+          "id": "n-0002",
+          "state": "open"
+         }
+        ],
+        "version": 1
+       },
+       "op_id": "op-22",
+       "op_kind": "set",
+       "rev": "<REV>",
+       "summary": "标注 n-0002 否决",
+       "target": {
+        "file": "notes.json",
+        "path": "/items"
+       },
+       "ts": "<TS>"
+      }
+     ],
+     "rev": "<REV>"
+    },
+    "message": "OpLog tail",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

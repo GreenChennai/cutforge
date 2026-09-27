@@ -1,6 +1,7 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! CutForge CLI(计划书 2.1 接入层):人肉操作、CI、门禁脚本入口。
-//! 全部输出 {ok, code, message, data} 结果协议;退出码 0/2/3/4。
+//! 全部输出 {ok, code, message, data} 结果协议(T1.7 另派生加法字段 ns,三面同码);
+//! 退出码 0/2/3/4。
 //! 手写参数解析(不引第三方 CLI 框架,依赖纪律见 ADR-0034)。
 
 use cutforge_core::command::{ClipPatch, Command};
@@ -9,12 +10,20 @@ use cutforge_core::oplog::{Actor, ActorKind};
 use cutforge_io::Workspace;
 use std::path::{Path, PathBuf};
 
+/// 渲染缓存治理(T1.5):cache {info,gc,clear}。
+mod cache;
+/// 工程环境诊断(T1.7):doctor——每项失败给可复制执行的修复命令。
+mod doctor;
+
 const EXIT_OK: i32 = 0;
 const EXIT_FAIL: i32 = 2;
 const EXIT_ENV: i32 = 3;
 
 fn emit(json: bool, ok: bool, code: &str, message: &str, data: serde_json::Value) -> i32 {
-    let envelope = serde_json::json!({"ok": ok, "code": code, "message": message, "data": data});
+    // T1.7 三面同码:CLI 面的 ns 与 MCP/HTTP 同源(cutforge_mcp::code_namespace,
+    // 单一真相源 registry::CODE_NS)。ns 是加法字段,ok/code/message/data 老字段逐字不变。
+    let envelope = serde_json::json!(
+        {"ok": ok, "code": code, "ns": cutforge_mcp::code_namespace(code), "message": message, "data": data});
     if json {
         println!("{envelope}");
     } else {
@@ -107,7 +116,7 @@ pub fn run(argv: Vec<String>) -> i32 {
         return emit(json_first, false, "PRECONDITION_FAILED", "用法: cutforge-cli <子命令> […]", serde_json::json!({
             "subcommands": ["new", "project", "timeline", "clip", "clip-update", "split", "undo", "redo",
                 "oplog", "notes", "notes-add", "notes-resolve", "notes-reject", "conflicts",
-                "serve", "check-shell-purity", "check-write-paths", "check-deps", "check-ui-fields"]
+                "cache", "doctor", "serve", "check-shell-purity", "check-write-paths", "check-deps", "check-ui-fields"]
         }));
     };
     let mut args = parse_args(&argv[1..]);
@@ -246,6 +255,8 @@ pub fn run(argv: Vec<String>) -> i32 {
         "notes-resolve" => notes_resolve(&args),
         "notes-reject" => notes_reject(&args),
         "conflicts" => conflicts_list(&args),
+        "cache" => cache::run(&args),
+        "doctor" => doctor::run(&args),
         "check-shell-purity" => check_shell_purity(args.json),
         "check-write-paths" => check_write_paths(args.json),
         "check-deps" => check_deps(args.json),

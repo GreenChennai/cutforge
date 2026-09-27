@@ -1,0 +1,24 @@
+{
+ "tool": "stage_run",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "stage": "S3",
+    "scriptArgs": [
+     "--only",
+     "S3"
+    ]
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "stdout": "{\"argv\": [\"--only\", \"S3\"], \"stub\": true}"
+    },
+    "message": "编排完成",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

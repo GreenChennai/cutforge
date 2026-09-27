@@ -1,0 +1,28 @@
+{
+ "tool": "transition_set",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "clipId": "V1-002",
+    "type": "fade",
+    "durMs": 300,
+    "reason": "topic",
+    "summary": "对拍:转场"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-10"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

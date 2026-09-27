@@ -1,0 +1,166 @@
+{
+ "tool": "timeline_get",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "clips": [],
+     "rev": "<REV>"
+    },
+    "message": "时间线投影",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "clips": [
+      {
+       "durationMs": 1800,
+       "endMs": 1800,
+       "fade": null,
+       "freezeMs": null,
+       "id": "V1-001",
+       "motion": {
+        "in": "zoomIn",
+        "inMs": 280.0,
+        "out": "fadeOut",
+        "outMs": 260.0
+       },
+       "opacity": null,
+       "overlay": null,
+       "position": null,
+       "punchIn": null,
+       "role": null,
+       "scale": null,
+       "sourceInMs": 0,
+       "speed": null,
+       "src": "01_原始素材/take1.mp4",
+       "startMs": 0,
+       "text": "第一句字幕",
+       "track": "V1",
+       "trackKind": "video",
+       "transition": null,
+       "volume": 0.85
+      },
+      {
+       "durationMs": 2000,
+       "endMs": 14000,
+       "fade": null,
+       "freezeMs": null,
+       "id": "V1-003",
+       "motion": null,
+       "opacity": null,
+       "overlay": null,
+       "position": null,
+       "punchIn": null,
+       "role": null,
+       "scale": null,
+       "sourceInMs": 2000,
+       "speed": null,
+       "src": "01_原始素材/take1.mp4",
+       "startMs": 12000,
+       "text": null,
+       "track": "V1",
+       "trackKind": "video",
+       "transition": null,
+       "volume": 1.0
+      },
+      {
+       "durationMs": 6000,
+       "endMs": 10000,
+       "fade": null,
+       "freezeMs": null,
+       "id": "V1-002",
+       "motion": null,
+       "opacity": null,
+       "overlay": null,
+       "position": null,
+       "punchIn": null,
+       "role": null,
+       "scale": null,
+       "sourceInMs": 1000,
+       "speed": null,
+       "src": "01_原始素材/take1.mp4",
+       "startMs": 4000,
+       "text": null,
+       "track": "V1",
+       "trackKind": "video",
+       "transition": {
+        "durMs": 300.0,
+        "reason": "topic",
+        "type": "fade"
+       },
+       "volume": null
+      },
+      {
+       "durationMs": 400,
+       "endMs": 900,
+       "fade": null,
+       "freezeMs": null,
+       "id": "A1-001",
+       "motion": null,
+       "opacity": null,
+       "overlay": null,
+       "position": null,
+       "punchIn": null,
+       "role": "sfx",
+       "scale": null,
+       "sourceInMs": null,
+       "speed": null,
+       "src": "01_原始素材/sfx.mp3",
+       "startMs": 500,
+       "text": null,
+       "track": "A1",
+       "trackKind": "audio",
+       "transition": null,
+       "volume": 0.8
+      },
+      {
+       "durationMs": 2000,
+       "endMs": 3000,
+       "fade": null,
+       "freezeMs": null,
+       "id": "T1-001",
+       "motion": null,
+       "opacity": null,
+       "overlay": {
+        "h": 200,
+        "opacity": 0.5,
+        "w": 400,
+        "x": 84,
+        "y": 240
+       },
+       "position": null,
+       "punchIn": null,
+       "role": null,
+       "scale": null,
+       "sourceInMs": null,
+       "speed": null,
+       "src": "01_原始素材/take1.mp4",
+       "startMs": 1000,
+       "text": null,
+       "track": "T1",
+       "trackKind": "text",
+       "transition": null,
+       "volume": 0.0
+      }
+     ],
+     "rev": "<REV>"
+    },
+    "message": "时间线投影",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

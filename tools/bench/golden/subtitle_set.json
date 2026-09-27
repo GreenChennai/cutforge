@@ -1,0 +1,25 @@
+{
+ "tool": "subtitle_set",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "clipId": "V1-001",
+    "text": "第一句字幕"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-12"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -1,0 +1,70 @@
+{
+ "tool": "cutlist_get",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "cutlist": {
+      "cuts": [
+       {
+        "action": "keep",
+        "conf": 0.9,
+        "guard": {},
+        "id": "c001",
+        "inMs": 1000,
+        "note": "",
+        "outMs": 2000,
+        "reason": "silence",
+        "text": ""
+       },
+       {
+        "action": "keep",
+        "conf": 0.9,
+        "guard": {},
+        "id": "c002",
+        "inMs": 5000,
+        "note": "",
+        "outMs": 6500,
+        "reason": "silence",
+        "text": ""
+       },
+       {
+        "action": "keep",
+        "conf": 0.9,
+        "guard": {},
+        "id": "c003",
+        "inMs": 8000,
+        "note": "",
+        "outMs": 8500,
+        "reason": "silence",
+        "text": ""
+       }
+      ],
+      "detector": {
+       "params": {},
+       "version": "parity"
+      },
+      "keep": [
+       [
+        0,
+        10000
+       ]
+      ],
+      "removedMs": 0,
+      "script": [],
+      "source": "parity-fixture",
+      "srcTotalMs": 10000,
+      "version": 1
+     }
+    },
+    "message": "cutlist",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

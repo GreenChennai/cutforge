@@ -1,0 +1,20 @@
+{
+ "tool": "export_jianying",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "name": "parity-成片"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "stdout": "{\"argv\": [], \"stub\": true}"
+    },
+    "message": "编排完成",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

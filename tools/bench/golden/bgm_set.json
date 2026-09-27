@@ -1,0 +1,28 @@
+{
+ "tool": "bgm_set",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>\\proot",
+    "src": "01_原始素材/bgm.mp3",
+    "gainDb": -12,
+    "ducking": true,
+    "loop": true,
+    "summary": "对拍:背景乐"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-16"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -19,9 +19,9 @@
 | M3 | 双向同步与标注(合并/冲突/notes/阶段脏传播/延迟) | ✅ | `gate.py M3` |
 | M4 | MCP 与脚本(28 工具双通道为 M4 时点;数量现以 schemas/mcp-tools.json 为准/批式脚本沙箱/桥脚本) | ✅ | `gate.py M4` |
 | M5 | 多端壳(wasm/Web/GPUI 桌面) | ⬜ | — |
-| M6 | 渲染后端(七步管线/能力对等矩阵) | ⬜ | — |
+| M6 | 渲染后端(七步管线/能力对等矩阵) | ✅ 经 M11 渲染追平(必达 13/13 实码) | `cargo test -p cutforge-render` |
 | M7 | 开源发布(非 Fork/CI 全绿/律师复核) | ✅ 已发布 v0.1.0 | `gate.py M7` |
-| **V2** | **M8 止血 → M9 主链路 → M10 编辑 → M11 渲染追平 → M13 发布** | 📋 计划 | 见 [ITERATION-PLAN-v2.0.md](ITERATION-PLAN-v2.0.md) |
+| **V2** | **M8 止血 → M9 主链路 → M10 编辑 → M11 渲染追平 → M13 发布** | ✅ 台账见 [V2-PROGRESS.md](V2-PROGRESS.md) | 见 [ITERATION-PLAN-v2.0.md](ITERATION-PLAN-v2.0.md) |
 
 ## 三、仓库布局(每个部件一句话)
 
@@ -40,19 +40,21 @@ cutforge/
 │   ├── cutforge-schema/        契约层(叶子):include_str! 嵌入五 schema + draft-07 子集校验引擎 + v1→v2 迁移器
 │   ├── cutforge-core/          内核(ARL-CORE):不碰文件系统、不调 ffmpeg
 │   │   ├── model.rs            Project/Track/Clip 领域模型 + 唯一性/重叠不变量 + id 生成
-│   │   ├── engine.rs           Engine:query(纯投影) 与 apply/undo/redo(唯一写入口) 分离;record_file_change;replay;rebuild_undo_stack
+│   │   ├── engine/             Engine 五模块(册一 T1.3 拆分):apply(唯一写入口)/undo/replay/projection/invariants
 │   │   ├── command.rs          Command 六种 + ClipPatch 字段级变更派生
 │   │   ├── oplog.rs            Op/OpLog(opId 去重、request_id 幂等、tail 过滤)
 │   │   ├── merge.rs            三路合并九行判定表(CF-001/002/003)
 │   │   ├── anchor.rs           锚点五类 + 重定位三规则(跟随→重挂→orphan)
 │   │   ├── notes.rs            NotesStore(创建/结案回执绑 opIds/重定位联动)
 │   │   └── timeutil.rs         RFC3339/紧凑日期(全仓唯一日期算法)
-│   ├── cutforge-io/            IO 层:原子写唯一落盘点 + 锁/备份/探测/轮询 watcher + Workspace 编排 + stage.rs 脏传播 + scaffold.rs 空工程模板(B11)
-│   ├── cutforge-cli/           CLI(lib+bin):查询/命令/撤销/OpLog/标注/冲突 + check-write-paths/check-deps 判定器
-│   ├── cutforge-mcp/           MCP 层:单注册表(数量以 schemas/mcp-tools.json 为准),stdio 主通道 + 内嵌 HTTP 辅通道(127.0.0.1+token)共用同一 dispatch
+│   ├── cutforge-io/            IO 层:原子写唯一落盘点 + 锁/备份/探测/轮询 watcher + stage.rs 脏传播 + scaffold.rs 空工程模板(B11);Workspace 编排在 workspace/ 子模块(册一 T1.2:open/apply/persist/query/sync/bases/conflicts/notes,apply 为显式步骤函数管线)
+│   ├── cutforge-cli/           CLI(lib+bin):查询/命令/撤销/OpLog/标注/冲突 + cache(缓存治理)/doctor(环境诊断) + check-write-paths/check-deps 判定器
+│   ├── cutforge-mcp/           MCP 层:单注册表(数量以 schemas/mcp-tools.json 为准),registry/dispatch/workspace_svc + transport/{stdio,http,events,static_files};stdio 主通道 + 内嵌 HTTP 辅通道(127.0.0.1+token)共用同一 dispatch
 │   └── cutforge-script/        脚本宿主:cutforge-script-v1 批式步骤 + 策略沙箱(白名单/路径/步数/超时,逃逸面结构性为零)
 ├── tools/
-│   ├── gates/gate.py           ★ 统一门禁入口(M0–M3 已注册)
+│   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1 已注册,决策 D-A2)
+│   ├── bench/bench.py          性能基准(T1.8;--check 阈值判定,基线 docs/bench/baseline.json)
+│   ├── bench/tool_parity.py    41 工具黄金响应库对拍(册一 AC-1.2)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
 │   ├── schema_gen.py           生成 tools/_generated/cf_validate.py(Python 校验器)
 │   └── validate_regression.py  回归集校验入口(16/16)
@@ -81,7 +83,12 @@ cutforge/
     ├── oplog/YYYYMMDD.jsonl   追加式操作日志(按天切分)
     ├── rev                    单调修订号
     ├── lock                   写锁(pid+时间戳,过期可接管)
-    └── conflicts/             冲突三方快照(CF-*)
+    ├── bases/                 baseRev 快照链(LRU 上限 32,M9-1)
+    ├── session                serve 会话 token
+    ├── conflicts/             冲突三方快照(CF-*)
+    └── render-cache/          渲染中间产物缓存(册一 T1.5 起内容寻址)
+        ├── {seg,mix,compose,overlay,sub}/   五层键值产物
+        └── cache-index.json   条目键/大小/时间清单(gc 与调试用)
 ```
 
 **兼容口径**:0.4.x 旧布局(`00_brief`/`01_materials`/`02_sensed`/`03_assets`/`04_cut`/
@@ -93,11 +100,11 @@ cutforge/
 ### 5.1 唯一写入路径(任何写入者都走这条,计划书 4.2 八步)
 
 ```
-CLI / 未来的 MCP / 编辑器
+CLI / MCP / 编辑器(同一命令通道)
   └─► Workspace::apply(cmd, actor, opts)                    [cutforge-io]
         1. 申请工程锁(atomic::create_exclusive,过期接管)      [lock.rs]
         2-3. Engine::apply:baseRev 前置校验 → 变更 → schema+重叠不变量
-             (失败即回滚快照,拒绝码 Reject)                    [engine.rs]
+             (失败即回滚快照,拒绝码 Reject)                    [engine/apply.rs]
              before==after → 幂等短路(不升 rev 不产 Op)
         4. Op 追加 .cutforge/oplog/<日>.jsonl(append-only)     [persist]
         5-6. 备份旧 project.json → atomic_write 原子替换       [atomic.rs ★唯一落盘点]
@@ -105,9 +112,15 @@ CLI / 未来的 MCP / 编辑器
         8. 释放锁
 ```
 
+> **实码序说明(册一 T1.2 拆分时声明)**:上图为计划书 4.2 的理想序;实码是
+> `crates/cutforge-io/src/workspace/apply.rs` 的显式步骤函数管线,**先文件后记账**
+> (P1-9:新内容先落盘,再执行"备份 → 原子写 → OpLog 追加 → rev 落盘")——写失败时
+> oplog 尚未记账,崩溃恢复的 rev/oplog 对账依赖该实序,故不按理想序重排(偏差已在
+> `apply.rs` 模块注释声明)。
+
 ### 5.2 双向同步
 
-- **AI/脚本改动 → 编辑器可见**:`apply` 落盘后,编辑器(现阶段的 CLI/未来 UI)重开 Workspace + `Query::Timeline/ProjectView` 即见;基准 P95 9ms(阈值 100ms)。
+- **AI/脚本改动 → 编辑器可见**:`apply` 落盘后,编辑器(CLI / Web 壳)经 `/events`(SSE,§5.6)感知,或重开 Workspace + `Query::Timeline/ProjectView` 即见;基准 P95 9ms(阈值 100ms)。
 - **用户改动 → AI 感知**:所有改动都带 `actor` 落在 OpLog;`Query::OpLogTail {since_rev, actor_kind}` 过滤读取。
 - **外部改动**(编辑器直接改文件):`merge_from_disk()` 三路合并(祖先/磁盘/内存)→ 可合并则采纳(**保留 OpLog/rev 历史**)→ 冲突则写 `.cutforge/conflicts/` 三方快照并停写,**禁止选边**。
 - 撤销/重做:每个 Op 的逆 = before↔after 互换;undo/redo 本身也产生新 Op;`Engine::replay` 从日志重建任意状态(回放 hash 等价有门禁)。
@@ -158,6 +171,22 @@ CLI / 未来的 MCP / 编辑器
   `cutforge_mcp::code_namespace` 同源取值。表外码(CLI 门禁判定器专用码)诚实派生为
   `unknown`,不冒充表内命名空间;新增码必须先登记 `CODE_NS`(单测锁定与 `CODES` 同序同值)。
 
+### 5.6 事件面、静态托管与渲染缓存(T1.5/T1.6;ADR-0009)
+
+- **事件推送**:`/events` 升级为 **SSE**(`text/event-stream`);事件面从「仅 project.json」
+  扩展到 notes.json / cutlist.json 外部改动 + `render.progress`(渲染结构化进度,
+  RenderPlan 步骤边界发数)。复用 cutforge-io watcher(SyncHub),只扩发布面(补 M9-R4)。
+  旧壳长轮询(`?since=`)**降级路径保留**——A1-R2:标注「兼容旧壳,册二完成后移除」。
+- **静态托管**:`/assets/*` 目录映射 `apps/web/`(前缀白名单 + canonicalize 穿越防护 +
+  MIME 表 + ETag/304);此前 4 条硬编码路径白名单已删除,前端新增文件**零 Rust 改动**。
+- **渲染缓存**:`.cutforge/render-cache/{seg,mix,compose,overlay,sub}/` 五层**内容寻址**
+  (键 = hash(输入 spec)+RENDERER_VERSION+相关画幅/帧率),`cache-index.json` 记录
+  条目键/大小/时间;治理走 `cutforge-cli cache {info,gc,clear}`——LRU + 容量上限
+  (默认 10GB),清单外孤儿与 tmp 件 **24h 超龄即清**(新于 24h 视为并发在写,不动)。
+- **连接纪律**:读超时 / 请求体上限 / 总请求时限 / 显式 `Connection: close`(SSE 流除外)
+  以具名常量落码;`crates/cutforge-mcp/tests/http_hardening.rs` 断言「一条挂死连接
+  不阻塞其余请求、超时后连接被回收」。
+
 ## 六、契约与单源体系(杜绝双栈漂移)
 
 ```
@@ -188,9 +217,9 @@ schemas/*.json(唯一手写)
 结果协议:`{"ok","code","message","data"}`;退出码 0 通过 / 2 门禁失败 / 3 环境缺失 / 4 内部错误。
 CI 只跑 M0+M1(跨仓检查拉 CutFlow;M2-M6 依赖本机 ffmpeg/wasm-pack/llvm-cov/CutFlow 工程,为本地阻断项——CI 上缺依赖会以退出码 3 如实暴露,不会误报通过)。
 
-### 7.1 V2 门禁现状(B10 口径,明文说明)
+### 7.1 V2 门禁现状与册级门禁(D-A2 口径,明文说明)
 
-`tools/gates/gate.py` 只注册了 **M0–M7**;**V2 的 M8–M13 不在 gate.py 里**,它们以
+`tools/gates/gate.py` 注册了 **M0–M7**;**V2 的 M8–M13 不在 gate.py 里**,它们以
 cargo 测试与 e2e 脚本形式存在,由 `cargo test --workspace` 与 CI 的 web-e2e job 承载:
 
 | 里程碑 | 门禁载体(测试/脚本名) |
@@ -204,10 +233,15 @@ cargo 测试与 e2e 脚本形式存在,由 `cargo test --workspace` 与 CI 的 w
 即:**V2 里程碑的完成判定 = `cargo test --workspace` 全绿 + 三份 e2e 全绿 + gate.py M0/M1**;
 不新增 gate.py 里程碑注册(避免双份判定器漂移,与"工具数量以 schemas/mcp-tools.json 为准"同一纪律)。
 
+**册级门禁注册制(册一起,D-A2)**:多册计划的验收以 `gate.py A<n>` 聚合注册,避免六册后
+验收碎片化。已注册 **`gate.py A1`**(册一),七项:cargo 全绿 / clippy -D warnings /
+非测试源文件 ≤800 行 / tool_parity 黄金对拍 / e2e_static / e2e_events / bench --check
+(末项为观察项);CI 只跑 M0/M1,A<n> 本机册收官跑。
+
 ## 八、观察项与已知占位(诚实清单)
 
 1. **回归样本是构造的**(9-14 磁盘清理后无现网工程):待下一真实工程用真实产物替换 `tests/regression/` 并复跑。
-2. **baseRev 快照链占位**:`merge_from_disk` 目前以"本地充当祖先",完整三方快照链在引入编辑器(M5)时落地——门禁不依赖它。
+2. ~~baseRev 快照链占位~~ **已闭合(M9-1)**:`.cutforge/bases/` 快照链已落地(LRU 上限 32),冲突触发的真实窗口与三方合并口径见 V2-PROGRESS M9 架构决策。
 3. **CI 远端全绿**需推送后在 GitHub Actions 确认(M0-5 的远端半边)。
-4. **ARL-1.0 发布前须执业律师复核**(计划书附录 A 免责条款)。
+4. **ARL-1.0 发布前须执业律师复核**(计划书附录 A 免责条款;ADR-0010 起定位转向个人自用/闭源/非商业,该义务挂起至恢复对外公开发行)。
 5. watcher 为轮询基础版(M2 决策);M4/M5 若接 notify crate 须先补 ADR(第三方依赖纪律)。

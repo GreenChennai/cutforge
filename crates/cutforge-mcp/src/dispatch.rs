@@ -83,22 +83,12 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
 
     // 常驻同步守护(M9-2):外部改动 ≤1s 可见;幂等(每 root 一个线程)
     let _ = cutforge_io::watcher::ensure_sync_daemon(&ws_root);
-    // E6-3/B14:查询类只读打开(Workspace::open,不申请排他锁)——长渲染/长编辑期间
-    // 查询不被阻塞;写通道仍全程锁:open→apply→persist 同一把锁(P0-5,杜绝锁外读+整文件覆盖)。
-    let ws_result = if is_readonly_tool(name) {
-        Workspace::open(&ws_root)
-    } else {
-        Workspace::open_exclusive(&ws_root)
-    };
-    let mut ws = match ws_result {
-        Ok(w) => w,
-        Err(e) => {
-            let code = if e.kind() == std::io::ErrorKind::NotFound { "NO_CONFIG" } else { "INTERNAL" };
-            return envelope(false, code, &e.to_string(), json!({}));
-        }
-    };
-
-    match name {
+    // 常驻工作区缓存(T1.8/AC-1.8 性能专项):指纹一致 → 复用已打开的 Workspace,
+    // 指纹不一致 → 重开(与既有的每笔无状态重开行为一致)。查询类仍只读零工程锁
+    // (readonly_query_holds_no_lock 铁律);写类经 open_for_write + apply 内部
+    // 临时全程锁,锁内 pre_write_sync 三路合并/冲突停写语义原样保留。
+    let readonly = is_readonly_tool(name);
+    crate::resident::with_resident(root_str, &ws_root, readonly, |ws| match name {
         // ---------- 只读查询(E6-3:只读打开,不持排他锁) ----------
         "project_get" => match ws.engine().query(Query::ProjectView) {
             Answer::Project(v) => envelope(true, "OK", "工程视图", json!({"project": v, "rev": ws.rev()})),
@@ -463,7 +453,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             let Some(patch) = patch else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 patch(merge-patch 对象)", json!({}));
             };
-            apply_cut_merge_patch(&mut ws, &Value::Object(patch))
+            apply_cut_merge_patch(ws, &Value::Object(patch))
         }
         "undo" | "redo" => {
             let batch = args["batch"].as_u64().unwrap_or(1);
@@ -496,7 +486,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         }
 
         other => envelope(false, "INTERNAL", &format!("工具已注册但未实现: {other}"), json!({})),
-    }
+    })
 }
 
 fn finish(r: Result<cutforge_core::engine::OpReceipt, std::io::Error>) -> Value {

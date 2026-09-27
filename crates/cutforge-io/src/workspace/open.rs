@@ -42,6 +42,24 @@ impl Workspace {
         Ok(ws)
     }
 
+    /// 打开工程供写入(常驻复用形态,AC-1.8 性能专项):不持有全程锁,
+    /// 写入时由 `Workspace::apply`/`undo` 等方法内部临时补锁(与 notes 复合写的
+    /// 既有纪律同一口径)。锁外装载的安全性由写前同步兜底:`check_window_drift`
+    /// /`sync_with_disk` 在锁内以装载视图为基准检测外部改动(漂移即三路合并/停写)。
+    /// 与 `open_exclusive` 等价的迁移升级语义:盘面为旧形态(v1/缺 id)时,
+    /// 锁内立即落规范形,使外部改动检测与守护合并都以 v2 规范形为基准。
+    pub fn open_for_write(root: &Path) -> io::Result<Self> {
+        let mut ws = Self::open(root)?;
+        let guard = crate::lock::acquire(root, 30_000, 20)?;
+        let view = ws.engine.query(cutforge_core::engine::Query::ProjectView);
+        let cutforge_core::engine::Answer::Project(ref v) = view else { unreachable!() };
+        if Some(v) != ws.synced_disk.as_ref() {
+            ws.persist()?;
+        }
+        drop(guard);
+        Ok(ws)
+    }
+
     #[allow(clippy::type_complexity)]
     pub(super) fn load(
         root: &Path,

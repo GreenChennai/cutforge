@@ -52,6 +52,9 @@ impl Workspace {
         self.append_oplog()?;         // 4.2 八步之 4:Op 追加 jsonl(append-only)
         self.write_rev()?;            // 4.2 八步之 6/7:rev 落盘
         self.flush_notes()?;          // 标注落盘(有变化才写)
+        // 本进程写入登记(T1.8 性能专项):供同步守护判别"变化来自自己"而免开合并。
+        // 以当下磁盘实况为准(自证写入已完成且一致);失败不影响写路径结果。
+        crate::fresh::note_local_write(&self.root);
         Ok(())
     }
 

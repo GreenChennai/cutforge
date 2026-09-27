@@ -97,13 +97,15 @@ impl Workspace {
         Ok(())
     }
 
-    /// apply/undo/redo 成功后:open 态标注按 3.6 规则重定位;有变化则落盘并留痕。
+    /// apply/undo/redo 成功后:open 态标注按 3.6 规则重定位;有变化则登记 auto Op。
     /// 重定位是自动簿记:`auto` Op,不入撤销栈(ADR-0001)。
+    /// 落盘交给调用方随后的 `persist()` 统一收口(T1.8 性能专项:消除锚点重定位
+    /// 场景的二次 persist——重定位 Op 与主 Op 同批记账,磁盘终态逐字节一致)。
     pub(super) fn sync_notes_after_change(&mut self, actor: Actor) -> io::Result<()> {
         let before = self.notes.to_value();
         let (moved, orphaned) = self.notes.relocate_all(self.engine.project(), 500);
         if moved > 0 || orphaned > 0 {
-            self.record_notes_change(
+            self.record_notes_op(
                 &before,
                 OpKind::Set,
                 actor,
@@ -115,7 +117,7 @@ impl Workspace {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn record_notes_change(
+    fn record_notes_op(
         &mut self,
         before: &serde_json::Value,
         kind: OpKind,
@@ -137,7 +139,22 @@ impl Workspace {
             .record_file_change("notes.json", "/items", before.clone(), after, kind, actor, opts)
             .map_err(reject_to_io)?;
         self.notes_dirty = true;
-        self.persist()?;
         Ok(())
+    }
+
+    /// 登记标注变更并立即落盘(notes_add/resolve/reject 的唯一落盘点)。
+    #[allow(clippy::too_many_arguments)]
+    fn record_notes_change(
+        &mut self,
+        before: &serde_json::Value,
+        kind: OpKind,
+        actor: Actor,
+        summary: String,
+        caused_by: Option<Vec<String>>,
+        request_id: Option<String>,
+        non_undoable: bool,
+    ) -> io::Result<()> {
+        self.record_notes_op(before, kind, actor, summary, caused_by, request_id, non_undoable)?;
+        self.persist()
     }
 }

@@ -21,6 +21,7 @@
 
 pub mod atomic;
 pub mod backup;
+pub mod fresh;
 pub mod fsutil;
 pub mod lock;
 pub mod paths;

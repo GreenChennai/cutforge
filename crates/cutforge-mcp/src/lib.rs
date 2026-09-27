@@ -26,6 +26,7 @@ mod dispatch;
 mod orchestrate;
 mod progress;
 mod registry;
+mod resident;
 mod session;
 mod tools_nolock;
 mod transport;

@@ -4,9 +4,10 @@
 
 ## 未发行(Unreleased)
 
-> 册一「内核重构与架构加固」批次(128856c / 3ce2884 / 7157178);版本号待发行时定
-> (沿用仓库惯例:发行时才把本段改为版本号。此前的 v0.6 批次——编辑器 NLE 化、
-> schema v2 M14 双仓同步——发行时一并补记)。
+> 册一「内核重构与架构加固」批次(128856c / 3ce2884 / 7157178)+ 册二「前端壳重写」
+> 批次(7f02955 之后的未提交工作面);版本号待发行时定(沿用仓库惯例:发行时才把本段
+> 改为版本号。此前的 v0.6 批次——编辑器 NLE 化、schema v2 M14 双仓同步——发行时一并补记)。
+> 册二台账见 [docs/A2-PROGRESS.md](docs/A2-PROGRESS.md)。
 
 ### 新增
 
@@ -20,7 +21,8 @@
 - **HTTP 层**:`/assets/*` 目录托管 `apps/web/`(前缀白名单 + canonicalize 穿越防护 +
   MIME 表 + ETag/304;前端新增文件零 Rust 改动);`/events` 升级 SSE(`text/event-stream`),
   事件面从"仅 project.json"扩展到 notes/cutlist 外部改动与 `render.progress`,旧长轮询
-  降级保留(册二完成后移除);连接纪律(读超时/请求体上限/总时限/慢连接隔离)。
+  降级保留(册二后新壳以 SSE 为主通道,长轮询转为断线降级路径,去留册三定夺);连接纪律
+  (读超时/请求体上限/总时限/慢连接隔离)。
   决策见 ADR-0009(继续纯 std 手工加固,零新增依赖)。
 - **错误码命名空间**:结果协议新增加法维度 `ns`(`io.*`/`core.*`/`mcp.*`/`render.*`),
   单一真相源 `registry::CODE_NS`,三面同码;**既有 code 取值逐字不变**。
@@ -33,6 +35,26 @@
 - **验收载体与门禁**:新增 `e2e_static` / `e2e_events` / `http_hardening` / `cache_addressing`;
   `gate.py A1` 册级门禁注册(决策 D-A2:每册一个 `A<n>` 入口);CI 增补 parity/static/events
   三步;docs/CONTRACT-WORKFLOW.md(新增 IR 字段的标准七步流水线);ADR-0009/0010。
+- **Web 壳模块化重写(册二)**:单文件旧壳拆为 **core/render/panels/ui 四层无构建 ESM**
+  (37 个 js 共 3,555 行,单文件最大 354 行;index.html 78 行),六 store + projector 只读
+  投影 + keyed 增量渲染(一次 clip move 相关 DOM 变更 **7 次**,旧壳数千次)+ 播放解耦
+  媒体元素池 + 1k clips 虚拟化;SSE 主通道 + 长轮询断线降级;`data-testid` 全量锚点
+  (apps/web/TESTIDS.md);新增交互:右键菜单、轨头眼睛开关(ephemeral 视图隐藏)、
+  导出剪映草稿按钮、数字字段拖拽调节、向导模态 a11y、快捷键调度器。旧壳保全
+  `apps/web/legacy/` 经 `/assets/legacy/` 回退(册三收尾删)。决策见 ADR-0011(无构建
+  ESM)/0012(canvas 重绘层+DOM 交互层)/0013(临时投影三原则与 `ephemeral.*`);
+  台账见 [docs/A2-PROGRESS.md](docs/A2-PROGRESS.md)。
+- **`render_frame` 单帧精确预览工具(41→42 = 13 查询 + 21 写 + 8 编排)**:壳「精确预览」
+  按钮消费;帧缓存键 = 工作区指纹 + atMs(100ms 量化)+ 画幅 + 版本 + ASS 哈希,
+  改一笔必 miss;超时 10s 中止、未落账、可恢复。
+- **e2e 体系扩容(册二)**:三份旧脚本选择器迁 `data-testid` 全绿;新增
+  `e2e_ui_smoke`(DOM 变更预算 / selfTest 重建铁律 / 超时-401-SSE 降级三场景)、
+  `e2e_playback_survival`(播放零中断:283 帧采样 currentTime 回跳 0ms)、
+  `e2e_perf_timeline`(1k clips 虚拟化 + 滚动 P95 60.2fps;`--min-fps` 参数化,
+  负载敏感不进 CI);CI web-e2e 增前两步。
+- **壳纯度门禁升级 v2**(`check-shell-purity`):R1 持久化语义禁令 / R2 投影只读
+  (timelineStore 只准 projector 写)/ R3 禁裸 fetch(白名单 api.js)/ R4 legacy 豁免
+  (删 legacy/ 时同步收口);`gate.py A2` 册级门禁注册(11 阻断 + 1 观察 legacy-reminder)。
 
 ### 变更
 
@@ -44,6 +66,13 @@
 - 全仓 `cargo clippy --workspace -D warnings` 清零;非测试源文件全部 ≤800 行(最大 791)。
 - 性能:bench 基准达标(1k 工程查询 18.6ms≤50ms、提交 71.3ms≤100ms;经常驻工作区
   +watcher 免开合并专项优化)。
+
+### 修复
+
+- **Windows 字幕烧录必炸的真实 bug(册二顺带修复)**:烧录滤镜参数内的路径反斜杠会被
+  ffmpeg filtergraph 转义规则吞掉,导致 Windows 上字幕烧录路径必然失败;滤镜参数内路径
+  统一正斜杠(`crates/cutforge-render/src/frame.rs`),并新增「烧录前后帧字节必不同」
+  实渲测试防回归。
 
 ## 0.5.0(2026-09-25)
 

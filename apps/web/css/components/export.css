@@ -1,0 +1,10 @@
+/* 组件:导出面板(双后端 + 剪映草稿) */
+#export { min-width: 280px; flex: 0 0 320px; }
+#export label { display: flex; gap: var(--cf-s2); align-items: center; margin: var(--cf-s2) 0; }
+#export select { flex: 1; }
+.exp-actions { display: flex; gap: var(--cf-s2); flex-wrap: wrap; }
+.exp-progress {
+  color: var(--cf-dim); font-family: var(--cf-font-mono); font-size: var(--cf-fs-m);
+  white-space: pre-wrap; min-height: 18px; margin: var(--cf-s2) 0;
+}
+#exp-files { max-height: 160px; overflow-y: auto; color: var(--cf-dim); font-size: var(--cf-fs-m); }

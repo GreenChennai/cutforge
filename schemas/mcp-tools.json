@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。41 工具 = 13 查询 + 21 写 + 7 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。42 工具 = 13 查询 + 21 写 + 8 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42,编排 7→8)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
  "channels": [
   "stdio",
   "embedded-http"
@@ -1220,6 +1220,44 @@
     "required": [
      "root",
      "runId"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "render_frame",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "渲染指定时间点的一帧合成画面(A2/T2.4 精确预览):含转场/叠加/字幕烧录的真实效果;同步返回不持工程锁;缓存键=工作区指纹+atMs(100ms 量化)+画幅+渲染版本,改一笔即 miss;落盘 .cutforge/render-cache/frame/,壳经 /media 以返回的 media 相对路径加载",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "atMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "时间线时间点(毫秒;按 100ms 网格量化,响应回传量化后的实际抽帧点)"
+     },
+     "format": {
+      "enum": [
+       "png",
+       "jpeg"
+      ],
+      "description": "输出图片格式(缺省 png)"
+     },
+     "ass": {
+      "type": "string",
+      "description": "字幕 ass 相对路径(在帧上烧录字幕;缺省不烧)"
+     }
+    },
+    "required": [
+     "root",
+     "atMs"
     ]
    },
    "outputSchema": {

@@ -1,0 +1,192 @@
+{
+  "meta": {
+    "task": "T1.8 性能基准",
+    "fixture": "1000 clips / 8 轨(V1-V4 video, A1-A4 audio;每轨 125×240ms 顺序相接=30s)",
+    "fixtureBuildSec": 0.65,
+    "fixtureContractCheck": "pass(打开时 Rust Project::from_value v2 契约校验通过)",
+    "fixtureSchemaSelfCheck": {
+      "ok": true,
+      "errors": [],
+      "clips": 1000,
+      "tracks": 8
+    },
+    "elapsedSec": 24.8
+  },
+  "env": {
+    "timestamp": "2026-09-29T02:52:58+08:00",
+    "date": "2026-09-28",
+    "os": "Windows 11 (AMD64)",
+    "cpu": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
+    "cpuCount": 12,
+    "memTotal": "31.9GB",
+    "python": "3.14.6",
+    "rust": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "ffmpeg": "ffmpeg version 2026-07-30-git-2ae2413488-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers",
+    "gitRev": "7f02955",
+    "buildProfile": "release"
+  },
+  "bench": {
+    "open": {
+      "iters": 20,
+      "medianMs": 4.73,
+      "p95Ms": 5.07,
+      "minMs": 4.47,
+      "maxMs": 5.07,
+      "samples": [
+        4.95,
+        4.55,
+        4.75,
+        4.85,
+        5.07,
+        4.54,
+        4.56,
+        4.84,
+        4.49,
+        4.77,
+        4.88,
+        4.71,
+        4.58,
+        4.7,
+        4.66,
+        4.79,
+        4.78,
+        5.07,
+        4.6,
+        4.47
+      ],
+      "metric": "project_get(只读 Workspace::open 至可查询)",
+      "coldFirstMs": 45.33
+    },
+    "query": {
+      "iters": 20,
+      "medianMs": 17.66,
+      "p95Ms": 19.73,
+      "minMs": 17.26,
+      "maxMs": 29.18,
+      "samples": [
+        18.23,
+        17.6,
+        19.73,
+        17.66,
+        17.62,
+        17.26,
+        17.69,
+        17.4,
+        17.46,
+        18.16,
+        17.67,
+        17.85,
+        17.84,
+        29.18,
+        17.49,
+        17.42,
+        17.66,
+        18.39,
+        17.9,
+        17.49
+      ],
+      "metric": "timeline_get(含一次真实只读打开;服务端无状态)"
+    },
+    "apply": {
+      "iters": 12,
+      "medianMs": 69.56,
+      "p95Ms": 79.64,
+      "minMs": 66.73,
+      "maxMs": 79.64,
+      "samples": [
+        67.65,
+        66.73,
+        67.07,
+        69.5,
+        68.11,
+        70.07,
+        67.12,
+        79.64,
+        77.45,
+        69.62,
+        75.58,
+        74.41
+      ],
+      "metric": "clip_update(V1-063 volume 0.9→0.8,独占打开+整文件落盘)"
+    },
+    "undo": {
+      "iters": 12,
+      "medianMs": 73.27,
+      "p95Ms": 120.98,
+      "minMs": 68.11,
+      "maxMs": 120.98,
+      "samples": [
+        68.11,
+        74.37,
+        120.98,
+        72.17,
+        69.19,
+        68.96,
+        75.19,
+        70.85,
+        77.71,
+        69.58,
+        78.9,
+        83.68
+      ],
+      "metric": "undo 一笔(独占打开+回退+落盘)"
+    },
+    "render": {
+      "iters": 3,
+      "medianMs": 5804.6,
+      "minMs": 5802.7,
+      "p95Ms": 5813.1,
+      "maxMs": 5813.1,
+      "samples": [
+        5813.1,
+        5802.7,
+        5804.6
+      ],
+      "output": "C:\\Users\\Velon\\AppData\\Local\\Temp\\cutforge-bench-ycux9yq0\\bench-render\\06_成片输出\\final_cutforge_bench-render_1080x1920.mp4",
+      "outputBytes": 19014417,
+      "outputDurationSec": 30.0,
+      "metric": "render_run(backend=cutforge),lavfi 1080x1920 30s 成片;每轮清 render-cache 冷渲染,取最小值参与判定"
+    }
+  },
+  "check": {
+    "ok": true,
+    "rules": {
+      "open/query/apply": "中位数 vs 阈值",
+      "render": "vs baseline.json,劣化 >20% 失败"
+    },
+    "results": [
+      {
+        "item": "open",
+        "value": 4.73,
+        "limit": 200.0,
+        "marginMs": 195.27,
+        "ok": true
+      },
+      {
+        "item": "query",
+        "value": 17.66,
+        "limit": 50.0,
+        "marginMs": 32.34,
+        "ok": true
+      },
+      {
+        "item": "apply",
+        "value": 69.56,
+        "limit": 100.0,
+        "marginMs": 30.44,
+        "ok": true
+      },
+      {
+        "item": "render",
+        "value": 5802.7,
+        "limit": 7903.3,
+        "baselineMs": 6586.1,
+        "statistic": "min",
+        "note": null,
+        "deltaPct": -11.9,
+        "ok": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,52 @@
+/* 组件:表单三件套(对话框/右键菜单/工具提示)+ toast + 向导 */
+/* ---- toast(E8:顶替单行 footer;aria-live 由容器承担)---- */
+.toast {
+  padding: var(--cf-s1) var(--cf-s3); border-radius: var(--cf-r-s);
+  background: #22303c; color: var(--cf-fg); border: 1px solid var(--cf-line);
+  max-width: 80ch; font-size: var(--cf-fs-m);
+  animation: cf-toast-in var(--cf-dur-med) var(--cf-ease);
+}
+.toast.err { background: #3c2222; color: var(--cf-danger-fg); border-color: var(--cf-danger-line); }
+@keyframes cf-toast-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+
+/* ---- 对话框(W8 修复:role=dialog + 焦点陷阱 + Esc)---- */
+.cf-mask {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: var(--cf-z-dialog);
+}
+.cf-mask[hidden] { display: none; }
+.cf-dialog {
+  background: var(--cf-panel); border: 1px solid var(--cf-line-soft);
+  border-radius: var(--cf-r-l); padding: var(--cf-s4) var(--cf-s5);
+  width: 440px; max-width: 92vw; max-height: 86vh; overflow: auto;
+  box-shadow: 0 12px 40px rgba(0,0,0,.5);
+}
+.cf-dialog h3 { margin: 0 0 var(--cf-s2); font-size: var(--cf-fs-n); color: var(--cf-accent-soft); }
+.cf-dialog label { display: flex; gap: var(--cf-s2); align-items: center; justify-content: space-between; margin: var(--cf-s2) 0; }
+.cf-dialog label input[type="text"], .cf-dialog label select { width: 250px; }
+.cf-dialog .cf-dialog-actions { display: flex; gap: var(--cf-s3); justify-content: flex-end; margin-top: var(--cf-s3); }
+.wizard-actions { display: flex; gap: var(--cf-s3); justify-content: flex-end; margin-top: var(--cf-s3); }
+
+/* ---- 右键菜单 ---- */
+.cf-menu {
+  position: fixed; z-index: var(--cf-z-menu); min-width: 160px;
+  background: #202838; border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-m);
+  padding: var(--cf-s1); box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.cf-menu button {
+  display: block; width: 100%; text-align: left; border: none; background: transparent;
+  padding: var(--cf-s1) var(--cf-s2); border-radius: var(--cf-r-s); color: var(--cf-fg);
+}
+.cf-menu button:hover { background: #2c3650; }
+.cf-menu button[disabled] { opacity: .4; }
+.cf-menu .cf-menu-sep { height: 1px; background: var(--cf-line); margin: var(--cf-s1) 0; }
+
+/* ---- 工具提示(单例浮层)---- */
+.cf-tooltip {
+  position: fixed; z-index: var(--cf-z-tooltip); max-width: 320px;
+  background: #0e1118; color: var(--cf-fg); border: 1px solid var(--cf-line);
+  border-radius: var(--cf-r-s); padding: 2px var(--cf-s2); font-size: var(--cf-fs-m);
+  pointer-events: none; opacity: 0; transition: opacity var(--cf-dur-fast) var(--cf-ease);
+}
+.cf-tooltip.show { opacity: 1; }

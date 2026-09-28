@@ -1,0 +1,39 @@
+/* CutForge 基础层:reset + 排版 + 滚动条(旧壳可判定样式口径迁移) */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--cf-bg);
+  color: var(--cf-fg);
+  font: var(--cf-fs-n)/1.5 var(--cf-font-ui);
+}
+h1, h2, h3 { font-weight: 600; }
+a { color: var(--cf-accent); }
+
+button {
+  background: #232a3d; color: #dce6ff;
+  border: 1px solid #33405e; border-radius: var(--cf-r-m);
+  padding: var(--cf-s1) var(--cf-s4); cursor: pointer;
+  transition: background var(--cf-dur-fast) var(--cf-ease), border-color var(--cf-dur-fast) var(--cf-ease);
+}
+button:hover { background: #2c3650; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button:disabled:hover { background: #232a3d; }
+
+input, select, textarea {
+  background: var(--cf-panel-deep); color: #e6ecff;
+  border: 1px solid #33405e; border-radius: var(--cf-r-m);
+  padding: 3px var(--cf-s2);
+}
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid var(--cf-accent); outline-offset: 1px;
+}
+label { color: var(--cf-dim); }
+.toggle { color: var(--cf-dim); user-select: none; }
+
+/* 读屏专用诊断锚点(#status 保持可见于可访问树) */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+.icon { width: 14px; height: 14px; fill: currentColor; vertical-align: -2px; }

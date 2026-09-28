@@ -1,0 +1,62 @@
+/* CutForge 设计 token 层(T2.1,册三 T3.1 主题化由本层供数)。
+ * 纪律:组件 css 一律引用 var(--cf-*),不得写裸色值/裸间距。 */
+:root {
+  /* ---- 色彩:基底 ---- */
+  --cf-bg: #14161a;            /* 全局底色 */
+  --cf-panel: #1a1f2c;         /* 面板底 */
+  --cf-panel-deep: #12151f;    /* 输入/内嵌区底 */
+  --cf-line: #2c313a;          /* 分隔线 */
+  --cf-line-soft: #2a3040;     /* 圆角卡片描边 */
+  --cf-fg: #dfe3ea;            /* 主文本 */
+  --cf-fg-bright: #eaf0ff;     /* clip 上文本 */
+  --cf-dim: #8b93a1;           /* 次级文本 */
+  --cf-accent: #4da3ff;        /* 强调(选中/链接) */
+  --cf-accent-soft: #9fc1ff;   /* 面板标题/次强调 */
+  --cf-danger: #c25b5b;
+  --cf-warn-fg: #e6c35c;
+  --cf-warn-bg: #4a3d1e;
+  --cf-warn-line: #6a5a2e;
+  --cf-danger-fg: #e68a8a;
+  --cf-danger-bg: #4a1e1e;
+  --cf-danger-line: #6a2e2e;
+  --cf-playhead: #ff5c5c;      /* 播放头(不可与选中混淆) */
+  --cf-select: #ffd76a;        /* 选中描边 */
+
+  /* ---- 色彩:clip 语义轨型 ---- */
+  --cf-video-1: #2f5fa8; --cf-video-2: #24487e;
+  --cf-audio-1: #2c7a4f; --cf-audio-2: #1f5c3a;
+  --cf-textk-1: #a08a2c; --cf-textk-2: #7d6a1f;
+  --cf-ghost: rgba(77, 163, 255, .35);   /* ephemeral 拖拽 ghost */
+
+  /* ---- 间距(4 基准)---- */
+  --cf-s1: 4px; --cf-s2: 6px; --cf-s3: 8px; --cf-s4: 10px;
+  --cf-s5: 12px; --cf-s6: 14px; --cf-s8: 18px; --cf-s10: 24px;
+
+  /* ---- 圆角 ---- */
+  --cf-r-s: 4px; --cf-r-m: 6px; --cf-r-l: 10px; --cf-r-pill: 8px;
+
+  /* ---- 字号/字体 ---- */
+  --cf-fs-xs: 10px; --cf-fs-s: 11px; --cf-fs-m: 12px; --cf-fs-n: 13px; --cf-fs-l: 16px;
+  --cf-font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --cf-font-mono: Consolas, monospace;
+
+  /* ---- 动效时长(册三动效体系由本层供数)---- */
+  --cf-dur-fast: 80ms;   /* 悬停/按压反馈 */
+  --cf-dur-med: 160ms;   /* 面板开合/toast */
+  --cf-dur-slow: 320ms;  /* 模态/页面级过渡 */
+  --cf-ease: cubic-bezier(.2, .7, .3, 1);
+
+  /* ---- 层级 ---- */
+  --cf-z-lane-label: 2;
+  --cf-z-playhead: 3;
+  --cf-z-banner: 5;
+  --cf-z-tooltip: 40;
+  --cf-z-menu: 45;
+  --cf-z-dialog: 50;
+
+  /* ---- 尺寸 ---- */
+  --cf-track-h: 56px;        /* 时间线轨高(旧壳实测兼容值) */
+  --cf-ruler-h: 22px;
+  --cf-lane-label-w: 74px;
+  --cf-edge-w: 7px;          /* clip 左右 trim 热区宽 */
+}

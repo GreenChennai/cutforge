@@ -1,0 +1,27 @@
+/* 组件:素材面板(W12 补课:缩略卡 = 图标卡 + 文件名;真缩略图候册四 T4.1) */
+.media-dir-row { display: flex; gap: var(--cf-s2); margin-bottom: var(--cf-s2); }
+.media-dir-row input { flex: 1; min-width: 0; }
+#media-list {
+  flex: 1; overflow-y: auto; min-height: 80px;
+  border: 1px solid var(--cf-line); border-radius: var(--cf-r-s);
+}
+.media-item {
+  display: flex; gap: var(--cf-s2); align-items: center;
+  padding: var(--cf-s1) var(--cf-s2); margin-bottom: var(--cf-s1);
+  border-radius: var(--cf-r-l); border-bottom: 1px dashed var(--cf-line);
+  cursor: grab; user-select: none;
+}
+.media-item:hover { background: #232a3d; }
+.media-item .bd { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-item .thumb {
+  flex: 0 0 auto; width: 30px; height: 22px; border-radius: var(--cf-r-s);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--cf-panel-deep); color: var(--cf-accent-soft);
+}
+.media-item .thumb .icon { width: 14px; height: 14px; }
+.set-bgm {
+  float: right; font-size: var(--cf-fs-xs); padding: 1px var(--cf-s2);
+  border-radius: var(--cf-r-m); border: 1px solid #3a4a6a;
+  background: #202840; color: var(--cf-accent-soft);
+}
+.set-bgm:hover { background: #2a3a5e; }

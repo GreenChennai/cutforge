@@ -43,6 +43,15 @@ fn fnv1a(data: &[u8]) -> u64 {
     h
 }
 
+impl DiskFingerprint {
+    /// 指纹的紧凑十六进制键(下游缓存键消费;T2.4 render_frame 单帧缓存的
+    /// 新鲜度输入)。对 Debug 表示再做一次 FNV-1a——指纹结构体字段私有,
+    /// 消费方拿键不拿内容,键与指纹一一对应(同指纹同键,异指纹异键)。
+    pub fn cache_key(&self) -> String {
+        format!("{:016x}", fnv1a(format!("{self:?}").as_bytes()))
+    }
+}
+
 fn sig_of(path: &Path) -> Option<FileSig> {
     let data = std::fs::read(path).ok()?;
     Some(FileSig { len: data.len() as u64, hash: fnv1a(&data) })
@@ -137,6 +146,20 @@ mod tests {
 
         // 无工程 → None
         assert!(disk_fingerprint(&root.join("不存在")).is_none());
+        fsutil::cleanup(&root);
+    }
+
+    #[test]
+    fn cache_key_tracks_fingerprint_changes() {
+        let root = fsutil::temp_dir("cutforge-fresh-key");
+        fsutil::ensure(&root.join(paths::TIMELINE)).unwrap();
+        fsutil::ensure(&root.join(".cutforge/oplog")).unwrap();
+        atomic::atomic_write(&root.join(paths::PROJECT_REL), b"{\"a\":1}").unwrap();
+        let k1 = disk_fingerprint(&root).unwrap().cache_key();
+        assert_eq!(k1, disk_fingerprint(&root).unwrap().cache_key(), "盘面未变,键必须稳定");
+        assert_eq!(k1.len(), 16, "键 = 16 位十六进制(FNV-1a 64)");
+        atomic::atomic_write(&root.join(paths::PROJECT_REL), b"{\"a\":2}").unwrap();
+        assert_ne!(k1, disk_fingerprint(&root).unwrap().cache_key(), "工程一笔之差,键必变");
         fsutil::cleanup(&root);
     }
 

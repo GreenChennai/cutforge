@@ -4,14 +4,18 @@
 //! 每步 = steps.rs 纯函数(生成 ffmpeg 参数,可离线单测)+ 本文件执行器(调进程),
 //! 产出结构化 StepReport;进度事件由 StepReport 单源派生(stdout JSON 行接口不变)。
 //! 缓存(T1.5):中间产物全量内容寻址,分层见 cache.rs;最终成片路径与格式不变。
+//! 单帧(T2.4):render_frame 对指定时间点出一帧合成画面(frame 层缓存键含
+//! 工作区指纹),供壳「精确预览」;见 frame.rs。
 
 pub mod cache;
+pub mod frame;
 pub mod plan;
 pub mod steps;
 
 pub use cache::{
     cache_gc, cache_info, CacheEntry, CacheIndex, GcReport, DEFAULT_CAPACITY_BYTES,
 };
+pub use frame::{frame_done_event, frame_extract_args, quantize_ms, render_frame, FrameFormat, FrameOutcome};
 pub use plan::{RenderPlan, StepReport, STEP_NAMES};
 
 use cutforge_core::model::Project;
@@ -345,7 +349,10 @@ fn exec_subtitle(
                     let ass_rel = cache::tmp_rel(&format!("ass-{key}.ass"));
                     let ass_local = plan.cache_dir.join(&ass_rel);
                     cutforge_io::atomic::atomic_write(&ass_local, payload).map_err(|e| e.to_string())?;
-                    let args = steps::subtitle_burn_args(base_video, mixed, &ass_rel.to_string_lossy(), &subbed);
+                    // 滤镜参数内路径必须正斜杠:Windows 的 to_string_lossy 产反斜杠,
+                    // 会被 filtergraph 转义规则吞掉("tmp\ass-k.ass"→"tmpass-k.ass",烧录必炸)
+                    let ass_arg = ass_rel.to_string_lossy().replace('\\', "/");
+                    let args = steps::subtitle_burn_args(base_video, mixed, &ass_arg, &subbed);
                     let r = run_ff_in(&plan.cache_dir, "ffmpeg", &strs(&args));
                     let _ = cutforge_io::atomic::remove(&ass_local);
                     r?;

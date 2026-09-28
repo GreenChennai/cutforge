@@ -1,0 +1,30 @@
+/* 组件:检查器(分组字段,ui-fields 真相源驱动) */
+#inspector { padding: var(--cf-s4); }
+#inspector h3 { margin: 0 var(--cf-s2) var(--cf-s1) 0; font-size: var(--cf-fs-n); color: var(--cf-accent-soft); }
+#inspector .insp-head { display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap; }
+#insp-fields { color: var(--cf-dim); min-width: 200px; margin: var(--cf-s1) 0; }
+#insp-groups { display: flex; flex-direction: column; gap: var(--cf-s2); margin: var(--cf-s1) 0; }
+.insp-group {
+  border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-l);
+  display: flex; flex-wrap: wrap; gap: var(--cf-s2) var(--cf-s5);
+  padding: var(--cf-s2) var(--cf-s4); margin: 0; min-width: 130px;
+}
+.insp-group legend { color: var(--cf-accent-soft); font-size: var(--cf-fs-s); padding: 0 var(--cf-s2); cursor: pointer; }
+.insp-group.collapsed > .insp-fields-wrap { display: none; }
+.insp-group .insp-fields-wrap { display: flex; flex-wrap: wrap; gap: var(--cf-s2) var(--cf-s5); }
+#inspector label { display: flex; gap: var(--cf-s2); align-items: center; }
+#inspector > .insp-actions { display: flex; gap: var(--cf-s2); flex-wrap: wrap; margin-top: var(--cf-s2); }
+#inspector > .insp-tracks { display: flex; gap: var(--cf-s2); margin-top: var(--cf-s2); }
+#insp-readonly { color: var(--cf-dim); font-family: var(--cf-font-mono); font-size: var(--cf-fs-s); margin-top: var(--cf-s2); }
+.v2-field { display: flex; justify-content: space-between; align-items: center; gap: var(--cf-s2); margin: var(--cf-s1) 0; }
+.v2-field input, .v2-field select { width: 150px; }
+
+/* 控件工厂:数字拖拽调节手柄 */
+.num-wrap { display: inline-flex; align-items: center; gap: 2px; }
+.num-drag {
+  cursor: ns-resize; user-select: none; color: var(--cf-dim);
+  border: 1px solid var(--cf-line); border-radius: var(--cf-r-s);
+  padding: 0 3px; font-size: var(--cf-fs-xs); line-height: 1.4;
+  background: var(--cf-panel-deep);
+}
+.num-drag:hover { color: var(--cf-accent); border-color: var(--cf-accent); }

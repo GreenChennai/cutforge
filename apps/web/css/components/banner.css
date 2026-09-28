@@ -1,0 +1,5 @@
+/* 组件:顶部横幅(E6-2 token / E8 冲突停写 / v0.6 契约错误折叠) */
+.banner-row { padding: var(--cf-s2) var(--cf-s6); font-size: var(--cf-fs-m); }
+.banner-row.warn { background: var(--cf-warn-bg); color: var(--cf-warn-fg); border-bottom: 1px solid var(--cf-warn-line); }
+.banner-row.danger { background: var(--cf-danger-bg); color: var(--cf-danger-fg); border-bottom: 1px solid var(--cf-danger-line); }
+#internal-banner { position: sticky; top: 0; z-index: var(--cf-z-banner); }

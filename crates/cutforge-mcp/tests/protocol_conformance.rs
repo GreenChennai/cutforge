@@ -59,6 +59,8 @@ fn protocol_conformance() {
         ("motion_set", json!({"root": root_s})),
         ("motion_set", json!({"root": root_s, "clipId": "V1-002"})),
         ("bgm_set", json!({"root": root_s})),
+        // T2.4:render_frame 缺 atMs 同样 PRECONDITION_FAILED(缺 root 由统一探针覆盖)
+        ("render_frame", json!({"root": root_s})),
     ] {
         let resp = cutforge_mcp::dispatch(name, &args);
         assert_envelope(&resp, name);
@@ -82,22 +84,23 @@ fn protocol_conformance() {
     assert_eq!(resp["code"], json!("NO_CONFIG"));
 
     // 注册表与 mcp-tools.json 契约:工具全部有名/有描述/有双 schema
-    // (数量与 json 对拍;阶段二 34→38;阶段三新增 transition_set/motion_set/bgm_set → 41)
+    // (数量与 json 对拍;阶段二 34→38;阶段三新增 transition_set/motion_set/bgm_set → 41;
+    //  册二 A2 新增 render_frame → 42)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 41, "B7 口径:工具数以 schemas/mcp-tools.json 为准");
+    assert_eq!(names.len(), 42, "B7 口径:工具数以 schemas/mcp-tools.json 为准");
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);
         assert!(t["outputSchema"].is_object(), "{} 缺 outputSchema", t["name"]);
     }
-    // kind 口径:13 查询 + 21 写 + 7 编排(与 _doc 同句)
+    // kind 口径:13 查询 + 21 写 + 8 编排(与 _doc 同句)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds.entry(t["kind"].as_str().unwrap().to_string()).or_insert(0usize) += 1;
     }
     assert_eq!(kinds.get("query"), Some(&13), "查询 13:{kinds:?}");
     assert_eq!(kinds.get("write"), Some(&21), "写 21:{kinds:?}");
-    assert_eq!(kinds.get("orchestrate"), Some(&7), "编排 7:{kinds:?}");
+    assert_eq!(kinds.get("orchestrate"), Some(&8), "编排 8:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
     // 实现分支,不得出现"已注册但未实现"。统一以缺 root 空参探针:所有工具(capability_matrix

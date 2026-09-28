@@ -4,7 +4,8 @@
 > 逐步照抄的流水线说明书。七步链:schema → 双端生成 → 内核模型 → ClipPatch → ui-fields →
 > 壳控件 → 对拍夹具;每步给出**实际可执行命令**(全部以 v0.6 时点实码核实)、改哪里、怎么验证。
 > 文中工具数量口径以 `schemas/mcp-tools.json` 实时为准(v0.6 时点:41 工具 = 13 查询 + 21 写 + 7 编排;
-> `tools/check_doc_counts.py` 目前扫描 README / FLOW / ACCEPTANCE / capability-matrix 四文件,本文不在此列,
+> 册二 A2 起 42 = 13 + 21 + 8,新增 render_frame;`tools/check_doc_counts.py` 目前扫描
+> README / FLOW / ACCEPTANCE / capability-matrix 四文件,本文不在此列,
 > 但口径纪律相同:写数字必须与 schema 一致,或干脆引用不重抄)。
 
 ## 〇、全景图

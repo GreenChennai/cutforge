@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CutForge 编辑器</title>
 <!-- 册二模块化壳(T2.1,ADR-0011 无构建 ESM):静态托管根别名只保 index.html,
-     全部子资源走 /assets/ 绝对路径;旧壳在 /assets/legacy/index.html(B-R1 回退期)。 -->
+     全部子资源走 /assets/ 绝对路径(旧壳 legacy/ 已于册三收尾删除,回退期结束)。 -->
 <link rel="stylesheet" href="/assets/css/tokens.css">
 <link rel="stylesheet" href="/assets/css/base.css">
 <link rel="stylesheet" href="/assets/css/layout.css">
@@ -17,10 +17,12 @@
   <div id="token-banner" class="banner-row warn" hidden data-testid="banner-token"></div>
   <div id="conflict-banner" class="banner-row danger" hidden data-testid="banner-conflict"></div>
   <div id="internal-banner" class="banner-row warn" hidden data-testid="banner-internal"></div>
+  <div id="conn-banner" class="banner-row danger" hidden data-testid="banner-conn"></div>
 </div>
 <header data-testid="topbar">
   <h1>CutForge</h1>
   <span class="sub" id="session-info" data-testid="session-info">连接中…</span>
+  <span id="conn-badge" class="conn-badge" data-testid="conn-badge" data-state="init" title="事件通道连接态(SSE 长流 30min 寿命,断开自动重连/降级)">连接中…</span>
   <span class="spacer"></span>
   <button id="btn-project-new" data-testid="project-new" title="新建空工程(向导)">＋ 新建工程</button>
   <span class="tb-sep"></span>
@@ -46,7 +48,7 @@
     <div id="toolbar" data-testid="toolbar">
       <span id="sel-info" data-testid="sel-info">未选中片段:点击下方片段,或从左侧素材面板双击插入(S 分割 / Del 删除)</span>
       <span>播放头 <b id="playhead-ms" data-testid="playhead-ms">0</b>ms</span>
-      <span>rev <b id="rev" data-testid="rev">-</b></span>
+      <span>rev <b id="rev" data-testid="rev">-</b><span id="rev-dot" class="rev-dot" data-testid="rev-dot" title="投影已落盘(绿色脉冲 = 服务端已保存)" aria-hidden="true"></span></span>
     </div>
     <div id="workbench" data-testid="workbench">
       <div id="media-panel" class="panel" data-testid="media-panel"></div>
@@ -72,6 +74,8 @@
 <footer>
   <div id="toasts" data-testid="toasts" aria-live="polite"></div>
   <span id="status" class="sr-only" data-testid="status" role="status"></span>
+  <!-- 快捷键裁决锚点(T3.4):每次按键写 data-gate(屏蔽原因/命中组合),e2e 可断言 -->
+  <span id="shortcut-gate" class="sr-only" data-testid="shortcut-gate" data-gate="boot" aria-hidden="true"></span>
 </footer>
 <script type="module" src="/assets/js/main.js"></script>
 </body>

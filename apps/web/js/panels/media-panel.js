@@ -5,6 +5,7 @@ import { h, clear } from "../ui/dom.js";
 import { mediaStore } from "../core/store.js";
 import { browseMedia, insertMediaAuto, setBgm } from "../core/commands.js";
 import { textField } from "../ui/controls.js";
+import { openMediaContextMenu } from "../ui/menu.js";
 import { toast } from "../ui/toast.js";
 import { svgUse } from "../../assets/icons.js";
 
@@ -15,7 +16,9 @@ const KIND_ICON = { video: "icon-video", audio: "icon-audio", image: "icon-image
 
 export function mount(container) {
   container.appendChild(h("h3", null, ["素材面板"]));
-  dirField = textField({ id: "media-dir", testid: "media-dir", onEnter: () => refresh() });
+  dirField = textField({
+    id: "media-dir", testid: "media-dir", ariaLabel: "素材目录", onEnter: () => refresh(),
+  });
   dirField.root.value = mediaStore.get().dir;
   container.appendChild(h("div", { class: "media-dir-row" }, [
     dirField.root,
@@ -73,6 +76,11 @@ function renderList() {
         : null,
     ]);
     row.addEventListener("dblclick", () => insertMediaAuto(f));
+    // 右键上下文(T3.6 四菜单之三):素材卡菜单(插入/BGM/刷新)
+    row.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openMediaContextMenu(f, e.clientX, e.clientY);
+    });
     row.addEventListener("dragstart", (e) => {
       e.dataTransfer.setData("text/cutforge-media", f.path);
     });

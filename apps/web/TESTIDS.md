@@ -24,6 +24,8 @@
 | `toolbar` / `sel-info` / `playhead-ms` / `rev` | — | 时间线工具行(rev 为 e2e 就绪锚点,初始 `-`) | 同名 id |
 | `workbench` / `media-panel` / `preview` / `bgm-panel` / `export-panel` / `inspector` | div | 工作台三栏容器 | #workbench/#media-panel/#preview/#bgm-panel/#export/#inspector |
 | `timeline-wrap` / `ruler` / `timeline-tracks` / `tl-overlay` / `playhead` | — | 时间线骨架(旧 .tick 刻度 DOM 已删,canvas 重绘,ADR-0012) | #timeline-wrap/#ruler/#tracks/#playhead |
+| `rev-dot` | span | rev 旁落盘脉冲点(册三 T3.2:rev 翻牌时绿点一次性脉冲 = 已保存;纯视觉,aria-hidden) | — |
+| `banner-conn` | div | 断连/网络错误横幅(册三 T3.2 组件 + A2 遗留①接线:wire-wave3.js 写 uiStore.connBanner;录屏 recordings/18-conn-banner.webm) | — |
 | `panel-notes` / `panel-diff` / `panel-conflicts` | div | 三个次级页容器 | #tab-notes 等(容器 id 保留 `tab-*`) |
 | `wizard` | div | 向导遮罩(动态 id 复用) | #wizard |
 | `toasts` / `status` | — | toast 容器(aria-live)/ 读屏诊断锚点 | 同名 id |
@@ -90,6 +92,8 @@
 | `track-visibility-<trackId>` | button | **轨头眼睛开关**:ephemeral 视图隐藏(ADR-0013:不进 IR/不落盘/不参与撤销;aria-pressed) |
 | `drag-ghost` | div.clip.ghost | 拖拽 ghost(ephemeral.dragGhost;仅手势期存在) |
 | `ruler-canvas` | canvas | 标尺重绘层(ADR-0012) |
+| `snap-pulse` | div | 吸附对齐脉冲(册三 T3.2:80ms 一次性动画;定位走 transform) |
+| `marquee-box` | div | 框选矩形(册三 T3.3:空白拉框多选;仅手势期存在) |
 | `context-menu` | div | 右键菜单 |
 | `tooltip` / `toast` / `toast-err` | — | 提示三件套 |
 | `dialog` / `jy-dialog` | div.cf-mask | 模态(role=dialog + 焦点陷阱 + Esc;`wizard` 复用旧 id) |
@@ -110,7 +114,7 @@
 - `#pv-canvas`(2d 采样非全黑)、`#playhead-ms`(播放推进)、
   `#exp-backend`(option value=cutforge)、`#exp-run`、`#exp-progress`(含 `完成` + `final_cutforge_`)
 - 静态托管字节级别名:`/` `#index.html`、`/app.js`、`/style.css`(apps/web 根三文件,e2e_static 锁定;
-  旧壳本体迁至 `/assets/legacy/`)
+  旧壳本体 legacy/ 已于册三收尾删除,别名桩文件仅存契约,不含旧壳代码)
 
 ## 五、自测入口(T2.2 重建铁律 / AC-2.5)
 
@@ -123,3 +127,41 @@ const r = await window.__cutforgeSelfTest();
 ```
 
 补充:`window.__cfClipboard`(Ctrl+C 复制的片段 id,会话态)。
+T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeCount()` /
+`keyOf(e)` / `comboOf(id)`;下波键位 e2e 遍历口)。
+
+## 六、册三波二新增 testid(T3.4~T3.7 / A2 遗留)
+
+### 静态骨架(index.html)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `conn-badge` | span(topbar) | 事件通道连接态徽标(A2 遗留②):`data-state` = ok/reconnecting/polling/retry,文本即状态 |
+| `shortcut-gate` | span(footer,sr-only) | 快捷键裁决锚点:每次按键写 `data-gate` = input/dialog/native/hit:<组合>/miss:<组合> |
+
+### 快捷键体系(T3.4)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `help-dialog` | div.cf-mask | 「?」帮助面板(role=dialog) |
+| `help-search` / `help-rows` / `help-row` / `help-keys` / `help-empty` | 输入/容器/行/键位 kbd/空结果 | 行带 `data-keybind-id`;搜索过滤后行数可断言 |
+| `settings-dialog` | div.cf-mask | 「Ctrl+,」设置面板(role=dialog) |
+| `keybind-list` / `keybind-row-<id>` / `keybind-combo-<id>` / `keybind-capture-<id>` | 容器/行/当前组合/捕获按钮 | 行 testid 用绑定 id(与 `__cfKeymap.table()` 对表) |
+| `keybind-capture-zone-<id>` / `keybind-conflict-<id>` / `keybind-force-<id>` | 捕获区/冲突提示/强制按钮 | 冲突检测面:强制 = 既有绑定停用 |
+| `keybind-reset` | button | 恢复默认键位(清 localStorage 覆盖) |
+| `blade-mode` | span(toolbar) | 切割模式徽标(B 键;hidden 切换;时间线 wrap 挂 .blade-mode) |
+
+### 性能面板(T3.5)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `perf-panel` / `perf-close` | div/button | Shift+D 唤起(默认关);role=region |
+| `perf-stats` / `perf-stat` | 容器/行 | 行含 帧率/rAF 分布/DOM 节点/未完成请求/投影耗时/媒体池 |
+| `perf-budgets` / `perf-budget` | 容器/行 | 预算表逐行;`data-pass`="1"\|"0"\|"na"(非颜色达标线索),`data-budget-id` 对表 docs/design/perf-budget.md |
+
+### 新手路径(T3.7)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `onboard-bar` / `onboard-dismiss` | div/button | 首启引导条;「知道了」写 localStorage 后不再出现 |
+| `timeline-empty` | div(#timeline-wrap 内) | 空工程下一步提示(clips>0 即隐;aria-live) |
+| `toast-action` | button(toast 内) | 删除类 toast 的「撤销」按钮(5s 窗;真撤销走 undo 队列) |
+| `confirm-dialog` / `confirm-ok` / `confirm-cancel` | div/button | 批量撤销前确认(设置 `setting-confirm-batch` 可关) |
+| `setting-confirm-batch` | input[checkbox] | 设置面板「批量操作前确认」开关(localStorage) |
+

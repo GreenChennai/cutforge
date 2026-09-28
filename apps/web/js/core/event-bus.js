@@ -11,6 +11,8 @@ import { pollOnce } from "./api.js";
 
 /** @type {Map<string, Set<(data: Object) => void>>} */
 const handlers = new Map();
+/** @type {Set<(state: string) => void>} */
+const connCbs = new Set();
 /** @type {EventSource|null} */
 let es = null;
 let lpRunning = false;
@@ -26,6 +28,12 @@ export function subscribe(topic, fn) {
   handlers.get(topic).add(fn);
   return () => handlers.get(topic)?.delete(fn);
 }
+
+/** 连接态变化回调(A2 遗留接线:conn-badge 徽标数据源)。
+ * state ∈ "ok"(SSE 已连)/ "reconnecting"(SSE 重连中)/ "polling"(降级长轮询)/
+ * "retry"(长轮询退避重试)。 */
+export function onConnState(cb) { connCbs.add(cb); return () => connCbs.delete(cb); }
+function emitConn(state) { for (const cb of connCbs) cb(state); }
 
 function dispatch(topic, data) {
   if (data && typeof data.seq === "number" && data.seq > lastSeq) lastSeq = data.seq;
@@ -54,6 +62,7 @@ function connectSse(token) {
     enterLongPoll();
     return;
   }
+  es.onopen = () => emitConn("ok");
   for (const topic of TOPICS) {
     es.addEventListener(topic, (ev) => {
       const data = safeParse(ev.data);
@@ -65,16 +74,19 @@ function connectSse(token) {
     dispatch("workspace.changed", { event: "workspace.changed", resync: true });
   });
   es.addEventListener("bye", () => {
-    // 流寿命到顶:服务端优雅收流,EventSource 自动重连;无需处理
+    // 流寿命到顶(30min):服务端优雅收流,EventSource 自动重连;徽标进「重连中」
+    emitConn("reconnecting");
   });
   es.onerror = () => {
     // readyState CLOSED = 致命(非网络抖动,如 MIME/策略)→ 降级长轮询;
     // CONNECTING = 浏览器自带重连(e2e route.abort 场景),静默等待即可。
     if (es && es.readyState === EventSource.CLOSED) enterLongPoll();
+    else if (es && es.readyState === EventSource.CONNECTING) emitConn("reconnecting");
   };
 }
 
 function enterLongPoll() {
+  emitConn("polling");
   if (lpRunning) return;
   lpRunning = true;
   longPollLoop();
@@ -90,6 +102,7 @@ async function longPollLoop() {
       }
       lpBackoffMs = 1000;
     } catch {
+      emitConn("retry");
       await new Promise((r) => setTimeout(r, lpBackoffMs));
       lpBackoffMs = Math.min(lpBackoffMs * 2, 8000);
     }

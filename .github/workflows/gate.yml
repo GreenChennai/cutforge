@@ -85,8 +85,13 @@ jobs:
         run: python tools/e2e_ui_smoke.py --bin target/debug/cutforge-mcp
       - name: A2 播放存活 e2e(播放中改工程不销毁媒体元素/事件不丢/媒体池增量)
         run: python tools/e2e_playback_survival.py --bin target/debug/cutforge-mcp
-      # A2 e2e_perf_timeline.py 不进 CI:帧率阈值负载敏感(--min-fps 55),共享 runner
-      # 抖动会假红;本地册收官在安静时段跑(python tools/gates/gate.py A2)。
+      - name: A3 键位体系 e2e(注册表 ≥40 条遍历/抽样实按 ≥15/重绑定冲突检测闭环/输入态屏蔽)
+        run: python tools/e2e_hotkeys.py --bin target/debug/cutforge-mcp
+      - name: A3 可访问性 e2e(键盘编辑闭环 rev/OpLog 断言;axe-core 4 全页扫描 0 新增 critical/serious)
+        run: python tools/e2e_a11y.py --bin target/debug/cutforge-mcp
+      # A2/A3 负载敏感 e2e 不进 CI:e2e_perf_timeline / e2e_drag_perf(帧率阈值 --min-fps 55)、
+      # e2e_perf_budget(真实导出+媒体池 200 轮导航)——共享 runner 抖动会假红;本地册收官
+      # 在安静时段跑(python tools/gates/gate.py A3)。
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

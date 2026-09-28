@@ -9,6 +9,7 @@ import { mediaUrlFor } from "../core/model.js";
 import { seekFrame } from "../core/commands.js";
 import { precisePreview } from "../core/render-commands.js";
 import { toast } from "../ui/toast.js";
+import { cssVar } from "../render/theme.js";
 
 let canvas = null;
 let preciseBtn = null;
@@ -61,7 +62,7 @@ function drawProxy(rows) {
     canvas.width = p.canvas.width;
     canvas.height = p.canvas.height;
   }
-  ctx.fillStyle = "#000";
+  ctx.fillStyle = cssVar("--cf-stage"); // 舞台底(经 token,零硬编码)
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!p) return;
   const t = playback.clockMs();

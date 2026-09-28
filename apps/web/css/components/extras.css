@@ -1,0 +1,127 @@
+/* 组件:册三波二新增面(T3.4 键位/帮助/设置 + T3.5 性能面板 + T3.6 可访问性
+ * + T3.7 新手引导)。全部走 var(--cf-*) 语义 token(ADR-0014/R5:本文件零裸色值)。
+ * 动效纪律(T3.2):只做状态变化的 transform/opacity 短动效。 */
+
+/* ---- T3.4 连接态徽标(A2 遗留②:文本即状态)---- */
+.conn-badge {
+  font-size: var(--cf-fs-xs); color: var(--cf-dim);
+  border: 1px solid var(--cf-line); border-radius: var(--cf-r-pill);
+  padding: 1px var(--cf-s2); white-space: nowrap;
+  font-family: var(--cf-font-mono);
+}
+.conn-badge[data-state="ok"] { color: var(--cf-ok-fg); border-color: var(--cf-line); }
+.conn-badge[data-state="polling"], .conn-badge[data-state="reconnecting"],
+.conn-badge[data-state="retry"] { color: var(--cf-warn-fg); }
+
+/* ---- T3.4 快捷键帮助面板 ---- */
+.help-search-row { margin-bottom: var(--cf-s2); }
+.help-search-row input { width: 100%; box-sizing: border-box; }
+.help-list { max-height: 56vh; overflow: auto; }
+.help-group {
+  color: var(--cf-accent-soft); font-size: var(--cf-fs-s); font-weight: 600;
+  margin: var(--cf-s3) 0 var(--cf-s1);
+  border-bottom: 1px solid var(--cf-line-soft); padding-bottom: 2px;
+}
+.help-row {
+  display: flex; gap: var(--cf-s3); align-items: baseline;
+  padding: 2px var(--cf-s1); border-radius: var(--cf-r-s);
+}
+.help-row:hover { background: var(--cf-elevated); }
+.help-keys, kbd.cf-menu-keys {
+  font-family: var(--cf-font-mono); font-size: var(--cf-fs-xs);
+  background: var(--cf-panel-deep); border: 1px solid var(--cf-line);
+  border-radius: var(--cf-r-s); padding: 0 var(--cf-s1);
+  color: var(--cf-fg); min-width: 44px; text-align: center;
+}
+.help-label { flex: 1; }
+.help-empty { margin-top: var(--cf-s2); }
+
+/* ---- T3.4 设置面板(重绑定/冲突/恢复默认)---- */
+.set-sub { margin: var(--cf-s3) 0 var(--cf-s1); font-size: var(--cf-fs-m); color: var(--cf-accent-soft); }
+.set-actions { margin: var(--cf-s2) 0; }
+.keybind-list { max-height: 46vh; overflow: auto; border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-m); padding: var(--cf-s1); }
+.keybind-row {
+  display: flex; gap: var(--cf-s2); align-items: center;
+  padding: 2px var(--cf-s1); border-radius: var(--cf-r-s);
+}
+.keybind-row:hover { background: var(--cf-elevated); }
+.keybind-row kbd { flex: 0 0 88px; }
+.keybind-label { flex: 1; font-size: var(--cf-fs-s); }
+.keybind-capture {
+  display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap;
+  padding: var(--cf-s1); margin: 2px 0;
+  border: 1px dashed var(--cf-accent); border-radius: var(--cf-r-s);
+}
+.keybind-conflict { color: var(--cf-warn-fg); font-size: var(--cf-fs-s); }
+
+/* ---- T3.5 dev 性能面板(Shift+D;默认关)---- */
+.perf-panel {
+  position: fixed; top: var(--cf-s6); right: var(--cf-s6); z-index: var(--cf-z-tooltip);
+  width: 320px; max-height: 80vh; overflow: auto;
+  background: var(--cf-panel); border: 1px solid var(--cf-line-strong);
+  border-radius: var(--cf-r-m); box-shadow: var(--cf-shadow-2);
+  padding: var(--cf-s2) var(--cf-s3); font-size: var(--cf-fs-s);
+  animation: cf-dialog-in var(--cf-dur-base) var(--cf-ease-enter);
+}
+.perf-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--cf-s1); }
+.perf-head b { color: var(--cf-accent-soft); }
+.perf-sub {
+  color: var(--cf-dim); font-size: var(--cf-fs-xs);
+  border-top: 1px solid var(--cf-line-soft); margin-top: var(--cf-s2); padding-top: var(--cf-s1);
+}
+.perf-rows { display: flex; flex-direction: column; gap: 2px; }
+.perf-row { display: flex; gap: var(--cf-s2); align-items: baseline; }
+.perf-row > * { min-width: 0; }
+.perf-mark { flex: 0 0 14px; text-align: center; font-weight: 700; }
+.perf-row[data-pass="1"] .perf-mark { color: var(--cf-ok-fg); }
+.perf-row[data-pass="0"] .perf-mark { color: var(--cf-danger-fg); }
+.perf-row[data-pass="na"] .perf-mark { color: var(--cf-dim); }
+.perf-name { flex: 1 1 auto; }
+.perf-value { font-family: var(--cf-font-mono); }
+.perf-target { color: var(--cf-dim); font-size: var(--cf-fs-xs); flex: 0 0 auto; }
+
+/* ---- T3.6 状态非颜色线索 + 键盘焦点 ---- */
+.clip.selected .clip-name::before { content: "✓ "; }
+:focus-visible {
+  outline: 2px solid var(--cf-accent);
+  outline-offset: 1px;
+}
+#workbench.panels-collapsed #media-panel,
+#workbench.panels-collapsed #inspector { display: none; }
+
+/* ---- T3.4 切割模式(文本徽标 + 十字光标;不引入色值)---- */
+.blade-badge {
+  color: var(--cf-warn-fg); font-size: var(--cf-fs-s); white-space: nowrap;
+}
+.blade-mode, .blade-mode .clip { cursor: crosshair; }
+.blade-mode .clip { cursor: col-resize; }
+
+/* ---- T3.7 首启引导条(可关)---- */
+.onboard-bar {
+  display: flex; gap: var(--cf-s4); align-items: center; flex-wrap: wrap;
+  padding: var(--cf-s1) var(--cf-s6);
+  background: var(--cf-panel-deep); border-bottom: 1px solid var(--cf-line-soft);
+  font-size: var(--cf-fs-s); color: var(--cf-dim);
+}
+.onboard-step { color: var(--cf-fg); }
+.onboard-step::before { content: "→ "; color: var(--cf-accent); }
+.onboard-dismiss { flex: 0 0 auto; }
+
+/* ---- T3.7 时间线空态(下一步提示)---- */
+.timeline-empty {
+  display: none; position: sticky; left: 0;
+  width: max-content; max-width: 100%;
+  margin: 32px auto; padding: var(--cf-s4) var(--cf-s6);
+  border: 1px dashed var(--cf-line-strong); border-radius: var(--cf-r-l);
+  color: var(--cf-dim); text-align: center;
+  flex-direction: column; gap: var(--cf-s1);
+}
+.timeline-empty.show { display: flex; }
+.timeline-empty b { color: var(--cf-fg); }
+
+/* ---- T3.4 导出面板聚焦闪烁(Ctrl+S;结构线索+一次性动效)---- */
+#export.flash { outline: 2px solid var(--cf-accent); outline-offset: 2px; }
+
+/* ---- T3.7 toast 撤销按钮 ---- */
+.toast.has-action { display: flex; gap: var(--cf-s3); align-items: center; justify-content: space-between; }
+.toast-action { flex: 0 0 auto; }

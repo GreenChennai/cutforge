@@ -3,10 +3,24 @@
  * - 一切 startMs/endMs/durationMs 语义值只读自内核投影,壳只做「像素↔毫秒显示映射」
  *   与「播放头→媒体 currentTime 的播放映射」;
  * - 时间算术统一走 msAdd()(避免壳内散落的时间线手算,门禁模式串见 cli check-shell-purity);
- * - 临时投影只允许 ephemeral.*(ADR-0013),本模块全部函数无副作用。 */
+ * - PX_PER_MS 是显示映射会话态:默认 0.06(e2e 兼容红线,e2e_edit_ops/e2e_preview 以
+ *   0.06 换算点击坐标,任何路径不得在装配时改值);缩放(T3.3 滚轮 ±)经 setPxPerMs()
+ *   改显示映射,不触碰投影;临时投影只允许 ephemeral.*(ADR-0013)。 */
 
-/** 时间线默认缩放:像素/毫秒(e2e 兼容红线:e2e_edit_ops/e2e_preview 以 0.06 换算点击坐标)。 */
-export const PX_PER_MS = 0.06;
+/** 时间线缩放:像素/毫秒(ESM live binding,导入方读到最新值)。 */
+export let PX_PER_MS = 0.06;
+
+/** 缩放边界(显示映射;0.02=远看全貌,0.30=近看帧级)。 */
+export const PX_PER_MS_MIN = 0.02;
+export const PX_PER_MS_MAX = 0.3;
+
+/** 设置缩放(滚轮/手势专用;越界夹取。返回是否生效)。 */
+export function setPxPerMs(v) {
+  const next = Math.min(PX_PER_MS_MAX, Math.max(PX_PER_MS_MIN, v));
+  if (next === PX_PER_MS) return false;
+  PX_PER_MS = next;
+  return true;
+}
 
 export function frameMsOf(project) {
   return 1000 / ((project && project.fps) || 30);

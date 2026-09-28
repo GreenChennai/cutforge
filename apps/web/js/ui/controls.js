@@ -63,14 +63,14 @@ export function numberField(opts = {}) {
 
 /**
  * 文本字段。
- * @param {{ id?: string, testid?: string, placeholder?: string, onInput?: (v: string) => void,
- *          onEnter?: () => void }} opts
+ * @param {{ id?: string, testid?: string, placeholder?: string, ariaLabel?: string,
+ *          onInput?: (v: string) => void, onEnter?: () => void }} opts
  * @returns {Field}
  */
 export function textField(opts = {}) {
   const input = h("input", {
     type: "text", id: opts.id || null, testid: opts.testid || null,
-    placeholder: opts.placeholder || null,
+    placeholder: opts.placeholder || null, "aria-label": opts.ariaLabel || null,
   });
   input.addEventListener("input", () => opts.onInput && opts.onInput(input.value));
   if (opts.onEnter) {
@@ -125,6 +125,7 @@ export function toggleField(opts = {}) {
 
 /**
  * 折叠分组(fieldset + legend 点击开合;open 缺省展开)。
+ * T3.2 微交互:展开入场 160ms(cf-expand-in;折叠即时,不演 layout 动画)。
  * @param {string} legend
  * @param {HTMLElement[]} fields
  * @param {{ open?: boolean, testid?: string }} [opts]
@@ -134,7 +135,14 @@ export function collapseGroup(legend, fields, opts = {}) {
   const wrap = h("div", { class: "insp-fields-wrap" }, fields);
   const box = h("fieldset", { class: "insp-group", testid: opts.testid || null }, [
     h("legend", {
-      onclick: () => box.classList.toggle("collapsed"),
+      onclick: () => {
+        const expanding = box.classList.contains("collapsed");
+        box.classList.toggle("collapsed");
+        if (expanding) {
+          wrap.classList.add("cf-anim-expand");
+          wrap.addEventListener("animationend", () => wrap.classList.remove("cf-anim-expand"), { once: true });
+        }
+      },
       "data-tip": "点击折叠/展开",
     }, [legend]),
     wrap,

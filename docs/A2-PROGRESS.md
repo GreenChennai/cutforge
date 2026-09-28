@@ -51,7 +51,7 @@ open 4.73ms / query 17.66ms / apply 69.56ms / render min 5802.7ms 对 A1 基线 
 | # | 发现 | 处置建议 |
 |---|---|---|
 | A2-L1 | 壳对 net 类错误(TIMEOUT/NETWORK)静默收敛、不 toast——用户无感知 | 册三错误面统一时补横幅(与 A1-L2 渲染进度 UI 同一批错误面改造) |
-| A2-L2 | `apps/web/legacy/` 为回退期设施(ADR-0011/B-R1):删除时须**同步删** purity v2 R4 豁免 + `legacy-reminder` 观察项 + TESTIDS §四中指向 `/assets/legacy/` 的表述,否则豁免面变僵尸 | 册三收尾统一删;删除前先确认无回退依赖 |
+| A2-L2 | `apps/web/legacy/` 为回退期设施(ADR-0011/B-R1):删除时须**同步删** purity v2 R4 豁免 + `legacy-reminder` 观察项 + TESTIDS §四中指向 `/assets/legacy/` 的表述,否则豁免面变僵尸 | ✅ 已了断:册三收尾(2026-09-29)删除 `apps/web/legacy/` 整树,同步收口 purity v2 R4 豁免(gates.rs)与 `legacy-reminder` 观察项(gate.py),TESTIDS §四表述同步 |
 | A2-L3 | `js/main.js` 102 行,超 T2.1「装配入口 ≤100 行」纪律 2 行(AC-2.1 红线 ≤400 达标,属建议级微瑕,已如实登记) | 册三顺手收敛(非阻断);纪律口径不变 |
 | A2-L4 | 波形为装饰纹理(非真实音频数据);媒体池无真缩略图 | 册四 T4.1 波形接真数据;媒体池真缩略图随册四代理转码 |
 | A2-L5 | SSE 流寿命约 30min,依赖浏览器自动重连续流,**无 UI 指示**(断连期间用户不知道自己离线) | 册三错误面统一时加连接状态指示;与长轮询降级路径(A1-L3)一并定夺去留 |

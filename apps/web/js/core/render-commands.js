@@ -23,7 +23,7 @@ function report(env, name, okMsg) {
 }
 
 /**
- * cutforge 后端异步导出:onProgress(state, text) 轮询回调(800ms,旧壳口径)。
+ * cutforge 后端异步导出:onProgress(state, text) 轮询回调(500ms,≈2Hz 达导出进度预算)。
  * @param {(state: string, text: string) => void} onProgress
  */
 export async function runExportCutforge(onProgress) {
@@ -38,7 +38,7 @@ export async function runExportCutforge(onProgress) {
   const runId = r.data.runId;
   onProgress("running", "渲染中…");
   for (;;) {
-    await new Promise((res) => setTimeout(res, 800));
+    await new Promise((res) => setTimeout(res, 500));
     const s = await call("render_progress", { runId });
     if (!s.ok) continue; // 单次轮询失败不打断渲染等待(与旧壳口径一致)
     const tail = (s.data.lines || []).slice(-3).join("\n");

@@ -12,9 +12,13 @@
 //!   不参与撤销),ui/selection/playback/media 等会话态 store 不在本条约束内;
 //! - R3 禁裸 fetch:`fetch(` 只准出现在 js/core/api.js(唯一网络收口,T2.3);词边界判定
 //!   (prefetch( 等标识符不误报;window.fetch( 同样算违规),注释行不计;
-//! - R4 legacy 豁免:apps/web/legacy 为旧壳回退期设施(ADR-0011/B-R1,经 /assets/legacy
-//!   仅供回退),整树不在扫描面;**移除条件:册三收尾删除 legacy/ 时一并移除本豁免**
-//!   (判定器同步收面,届时本注释与本 data.legacyExempt 字段一并删除)。
+//! - R4 legacy 豁免(已移除):apps/web/legacy 旧壳回退期豁免于册三收尾随 legacy/ 整树
+//!   删除一并收口(A2-L2 了断),扫描面即 apps/web 全量,不再有目录级豁免;
+//! - R5 色值纪律(册三 T3.1/AC-3.1/ADR-0014):apps/web 的 css/js/html 零硬编码色值
+//!   (hex 3/4/6/8 位与 rgb/rgba/hsl/hsla 函数形态;注释同样计违——色值即使只在注释
+//!   里也会被复制回代码)。唯一色值定义点 css/tokens.css(三层 token);canvas 侧经
+//!   js/render/theme.js 读 var(--cf-*)。豁免登记(逐项可审计):css/tokens.css(定义层)、
+//!   assets/icons.js(SVG 现有 fill 保留)。判定器可单测:注入样例必抓。
 //!
 //! == check-write-paths v2(册二 T2.6 存量收口) ==
 //! 盘面获取/落盘 API 家族(std 文件写的 写/建/改名/删/复制 五族,加 Open+Options 与
@@ -89,7 +93,36 @@ fn bare_fetch_hit(line: &str) -> bool {
     false
 }
 
-/// v2 判定核心(独立于 repo_root,可单测):扫 apps_web 全量(legacy/ 豁免)与 wasm 绑定面。
+/// R5:硬编码色值判定(hex 3/4/6/8 位 + rgb/rgba/hsl/hsla 函数形态)。
+/// 无正则依赖:手扫 `#` 后的十六进制段;函数形态按子串。注释行不豁免(防复制回潮)。
+fn color_literal_hit(line: &str) -> bool {
+    let b = line.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'#' {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_hexdigit() {
+                j += 1;
+            }
+            if matches!(j - i - 1, 3 | 4 | 6 | 8) {
+                return true;
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    ["rgb(", "rgba(", "hsl(", "hsla("]
+        .iter()
+        .any(|f| line.contains(f))
+}
+
+/// R5 豁免面登记(相对 apps/web 的路径):token 定义层 + 图标 SVG 登记点。
+fn color_exempt(rel: &str) -> bool {
+    rel == "css/tokens.css" || rel == "assets/icons.js"
+}
+
+/// v2 判定核心(独立于 repo_root,可单测):扫 apps_web 全量(无目录豁免)与 wasm 绑定面。
 fn shell_purity_scan(repo: &Path, apps_web: &Path, wasm_src: &Path) -> Vec<Violation> {
     // R1 字面量沿用 v1 的拼接构造与字节(含历史双空格形态),旧判定面零漂移;
     // 扫描面不含 cutforge-cli 自身,判定器/测试文件不会自匹配。
@@ -103,20 +136,17 @@ fn shell_purity_scan(repo: &Path, apps_web: &Path, wasm_src: &Path) -> Vec<Viola
         ["durationMs", " +"].join(" "),
     ];
     let mut violations: Vec<Violation> = Vec::new();
-    // JS 壳面:apps/web 全量;legacy/ 整树豁免(R4,理由与移除条件见模块头与 data.legacyExempt)
+    // JS 壳面:apps/web 全量(R4 legacy 豁免已随 legacy/ 删除收口,无目录豁免)
     let mut stack = vec![apps_web.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&dir) else { continue };
         for entry in rd.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                if p.file_name().is_some_and(|n| n == "legacy") {
-                    continue; // R4:旧壳回退期豁免
-                }
                 stack.push(p);
                 continue;
             }
-            if !p.extension().is_some_and(|x| x == "js" || x == "html") {
+            if !p.extension().is_some_and(|x| x == "js" || x == "html" || x == "css") {
                 continue;
             }
             if p.file_name().is_some_and(|n| n.to_string_lossy().contains("min.")) {
@@ -129,6 +159,7 @@ fn shell_purity_scan(repo: &Path, apps_web: &Path, wasm_src: &Path) -> Vec<Viola
                 .unwrap_or_default();
             let is_projector = rel == "js/core/projector.js";
             let is_api = rel == "js/core/api.js";
+            let r5_exempt = color_exempt(&rel);
             for line in text.lines() {
                 if r1.iter().any(|pat| line.contains(pat.as_str())) {
                     violations.push(vio(&p, repo, line, "R1 持久化语义计算/壳能力面"));
@@ -145,6 +176,15 @@ fn shell_purity_scan(repo: &Path, apps_web: &Path, wasm_src: &Path) -> Vec<Viola
                 }
                 if !is_api && bare_fetch_hit(line) {
                     violations.push(vio(&p, repo, line, "R3 裸 fetch(唯一收口 js/core/api.js)"));
+                    continue;
+                }
+                if !r5_exempt && color_literal_hit(line) {
+                    violations.push(vio(
+                        &p,
+                        repo,
+                        line,
+                        "R5 硬编码色值(唯一色值定义点 css/tokens.css;canvas 经 js/render/theme.js)",
+                    ));
                 }
             }
         }
@@ -185,14 +225,14 @@ pub fn check_shell_purity(json: bool) -> i32 {
         .collect();
     let data = json!({
         "violations": items,
-        "version": "v2(T2.6/ADR-0013)",
+        "version": "v3(T2.6/ADR-0013/T3.1 R5 色值;册三收尾 R4 legacy 豁免已收口)",
         "rule": "壳禁文件系统/子进程/持久化语义计算;project/timeline store 投影只读(唯一写入方 \
-                 js/core/projector.js);裸 fetch 唯一收口 js/core/api.js;ephemeral.* 豁免(ADR-0013 三原则)",
-        "legacyExempt": "apps/web/legacy 为旧壳回退期豁免(ADR-0011/B-R1,经 /assets/legacy 仅供回退);\
-                         移除条件:册三收尾删除 legacy/ 时一并移除本豁免并同步收面",
+                 js/core/projector.js);裸 fetch 唯一收口 js/core/api.js;ephemeral.* 豁免(ADR-0013 三原则);\
+                 css/js/html 零硬编码色值(唯一定义点 css/tokens.css;canvas 经 js/render/theme.js 读 token)",
+        "colorExempt": "R5 豁免登记:css/tokens.css(三层 token 唯一定义点)、assets/icons.js(SVG 现有 fill 保留)",
     });
     if violations.is_empty() {
-        crate::emit(json, true, "OK", "壳纯度合规(v2):违规点 = 0", data)
+        crate::emit(json, true, "OK", "壳纯度合规(v3):违规点 = 0", data)
     } else {
         crate::emit(
             json,
@@ -468,17 +508,26 @@ mod tests {
         std::fs::write(p, content).unwrap();
     }
 
-    /// 净树全绿:api.js/projector.js 白名单生效,legacy/ 整树豁免(fetch 与语义字面量并存)。
+    /// 净树全绿:api.js/projector.js 白名单生效;无目录级豁免(R4 已随 legacy/ 删除收口)。
     #[test]
-    fn purity_v2_green_on_clean_tree_and_legacy_exempt() {
+    fn purity_v2_green_on_clean_tree() {
         let root = TempRoot::new("pg");
         write(&root.0, "apps/web/js/core/api.js", "const r = await fetch(path);\n");
         write(&root.0, "apps/web/js/core/projector.js", "timelineStore.set({ clips });\nprojectStore.set(p);\n");
         write(&root.0, "apps/web/js/panels/x.js", "export const x = 1;\n");
-        // legacy 旧壳:裸 fetch + 语义字面量都出现,但整树豁免(R4)
-        write(&root.0, "apps/web/legacy/app.js", "await fetch(\"/rpc\");\nconst t = startMs + 1;\n");
         let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
         assert!(v.is_empty(), "净树必须全绿: {v:?}");
+    }
+
+    /// legacy/ 目录不再豁免(R4 收口):同目录树内出现旧壳形态字面量即违规。
+    #[test]
+    fn purity_v2_no_directory_exemption() {
+        let root = TempRoot::new("pn");
+        write(&root.0, "apps/web/legacy/app.js", "await fetch(\"/rpc\");\nconst t = startMs + 1;\n");
+        let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
+        assert_eq!(v.len(), 2, "legacy 目录内违规必须照抓(R4 已收口): {v:?}");
+        assert!(v.iter().any(|x| x.rule.contains("R3")), "{v:?}");
+        assert!(v.iter().any(|x| x.rule.contains("R1")), "{v:?}");
     }
 
     /// 注入样例必抓:面板裸 fetch(R3)/ 面板写 timelineStore(R2)/ import 改名逃逸(R2)/ 语义字面量(R1)。
@@ -497,6 +546,52 @@ mod tests {
         assert_eq!(rules.iter().filter(|r| r.contains("R3")).count(), 2, "{v:?}");
         assert_eq!(rules.iter().filter(|r| r.contains("R2")).count(), 2, "{v:?}");
         assert_eq!(rules.iter().filter(|r| r.contains("R1")).count(), 1, "{v:?}");
+    }
+
+    /// R5 色值扫描净树全绿:token 定义点/icons 登记点豁免生效(legacy 整树豁免已随 R4 收口移除)。
+    #[test]
+    fn color_v3_green_on_token_only_tree() {
+        let root = TempRoot::new("cg");
+        write(&root.0, "apps/web/css/tokens.css", ":root { --c: #4da3ff; --m: rgba(0, 0, 0, .5); }\n");
+        write(&root.0, "apps/web/css/components/x.css", ".x { color: var(--c); border: 1px solid var(--m); }\n");
+        write(&root.0, "apps/web/assets/icons.js", "const fill = \"currentColor\";\n");
+        write(
+            &root.0,
+            "apps/web/js/render/theme.js",
+            "export function cssVar(name) {\n  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();\n}\n",
+        );
+        let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
+        assert!(v.is_empty(), "R5 净树必须全绿(豁免登记点生效): {v:?}");
+    }
+
+    /// R5 注入样例必抓:css 裸 hex / js 裸 rgba / html 内联 hex 各计一处;var() 引用不误报。
+    #[test]
+    fn color_v3_catches_injected_color_literals() {
+        let root = TempRoot::new("ci");
+        write(&root.0, "apps/web/css/components/bad.css", ".bad { color: #ff0000; }\n");
+        write(&root.0, "apps/web/js/panels/bad.js", "ctx.fillStyle = \"rgba(0, 0, 0, .5)\";\n");
+        write(&root.0, "apps/web/index.html", "<div style=\"color: #abc\">x</div>\n");
+        write(&root.0, "apps/web/css/components/ok.css", ".ok { color: var(--c); border-color: var(--line); }\n");
+        let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
+        assert_eq!(v.len(), 3, "注入三处必须各计一处: {v:?}");
+        assert!(v.iter().all(|x| x.rule.contains("R5")), "{v:?}");
+    }
+
+    /// R5 判定器单元口径:十六进制段长 3/4/6/8 才算色值;id 选择器/锚点/HTML 实体不误报。
+    #[test]
+    fn color_literal_detector_boundaries() {
+        for hit in ["color: #fff;", "#fffa00", "outline: #abcd;", "rgba(0,0,0,.5)", "url(x) hsl(1)"] {
+            assert!(color_literal_hit(hit), "必须命中: {hit}");
+        }
+        for miss in [
+            "#ruler { color: var(--c); }",
+            "href=\"#tab-notes\"",
+            "&#65; 实体",
+            "#timeline-wrap .clip",
+            "console.log(\"#g\")", // 1 位段不是色值
+        ] {
+            assert!(!color_literal_hit(miss), "不得误报: {miss}");
+        }
     }
 
     /// write-paths v2:socket 流写 / 进程 stdio / tests/ 目录 / #[cfg(test)] 区块全豁免,atomic 计收编。

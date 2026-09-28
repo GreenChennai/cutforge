@@ -1,26 +1,33 @@
 /* 组件:表单三件套(对话框/右键菜单/工具提示)+ toast + 向导 */
-/* ---- toast(E8:顶替单行 footer;aria-live 由容器承担)---- */
+/* ---- toast(E8:顶替单行 footer;aria-live 由容器承担)
+ * T3.2 微交互:滑入(rise-in 160ms)+ 自动淡出(js 在 TTL 前 160ms 挂 .out;transform/opacity)。---- */
 .toast {
   padding: var(--cf-s1) var(--cf-s3); border-radius: var(--cf-r-s);
-  background: #22303c; color: var(--cf-fg); border: 1px solid var(--cf-line);
+  background: var(--cf-toast-bg); color: var(--cf-fg); border: 1px solid var(--cf-line);
   max-width: 80ch; font-size: var(--cf-fs-m);
-  animation: cf-toast-in var(--cf-dur-med) var(--cf-ease);
+  box-shadow: var(--cf-shadow-1);
+  animation: cf-rise-in var(--cf-dur-base) var(--cf-ease-enter);
+  transition: opacity var(--cf-dur-base) var(--cf-ease-exit),
+              transform var(--cf-dur-base) var(--cf-ease-exit);
 }
-.toast.err { background: #3c2222; color: var(--cf-danger-fg); border-color: var(--cf-danger-line); }
-@keyframes cf-toast-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; } }
+.toast.err { background: var(--cf-toast-err-bg); color: var(--cf-danger-fg); border-color: var(--cf-danger-line); }
+.toast.out { opacity: 0; transform: translateY(-4px); }
 
-/* ---- 对话框(W8 修复:role=dialog + 焦点陷阱 + Esc)---- */
+/* ---- 对话框(W8 修复:role=dialog + 焦点陷阱 + Esc)
+ * T3.2 微交互:遮罩渐显(160ms)+ 卡片缩放入场(240ms;transform/opacity)。---- */
 .cf-mask {
-  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  position: fixed; inset: 0; background: var(--cf-mask);
   display: flex; align-items: center; justify-content: center;
   z-index: var(--cf-z-dialog);
+  animation: cf-fade-in var(--cf-dur-base) var(--cf-ease);
 }
 .cf-mask[hidden] { display: none; }
 .cf-dialog {
   background: var(--cf-panel); border: 1px solid var(--cf-line-soft);
   border-radius: var(--cf-r-l); padding: var(--cf-s4) var(--cf-s5);
   width: 440px; max-width: 92vw; max-height: 86vh; overflow: auto;
-  box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  box-shadow: var(--cf-shadow-3);
+  animation: cf-dialog-in var(--cf-dur-slow) var(--cf-ease-enter);
 }
 .cf-dialog h3 { margin: 0 0 var(--cf-s2); font-size: var(--cf-fs-n); color: var(--cf-accent-soft); }
 .cf-dialog label { display: flex; gap: var(--cf-s2); align-items: center; justify-content: space-between; margin: var(--cf-s2) 0; }
@@ -28,25 +35,41 @@
 .cf-dialog .cf-dialog-actions { display: flex; gap: var(--cf-s3); justify-content: flex-end; margin-top: var(--cf-s3); }
 .wizard-actions { display: flex; gap: var(--cf-s3); justify-content: flex-end; margin-top: var(--cf-s3); }
 
-/* ---- 右键菜单 ---- */
+/* ---- 右键菜单(入场:rise-in 160ms)---- */
 .cf-menu {
   position: fixed; z-index: var(--cf-z-menu); min-width: 160px;
-  background: #202838; border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-m);
-  padding: var(--cf-s1); box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  background: var(--cf-menu-bg); border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-m);
+  padding: var(--cf-s1); box-shadow: var(--cf-shadow-2);
+  animation: cf-rise-in var(--cf-dur-base) var(--cf-ease-enter);
 }
 .cf-menu button {
   display: block; width: 100%; text-align: left; border: none; background: transparent;
   padding: var(--cf-s1) var(--cf-s2); border-radius: var(--cf-r-s); color: var(--cf-fg);
+  transition: background var(--cf-dur-fast) var(--cf-ease);
 }
-.cf-menu button:hover { background: #2c3650; }
+.cf-menu button:hover { background: var(--cf-menu-hover); }
 .cf-menu button[disabled] { opacity: .4; }
 .cf-menu .cf-menu-sep { height: 1px; background: var(--cf-line); margin: var(--cf-s1) 0; }
 
-/* ---- 工具提示(单例浮层)---- */
+/* ---- 工具提示(单例浮层;opacity 过渡 80ms)---- */
 .cf-tooltip {
   position: fixed; z-index: var(--cf-z-tooltip); max-width: 320px;
-  background: #0e1118; color: var(--cf-fg); border: 1px solid var(--cf-line);
+  background: var(--cf-tip-bg); color: var(--cf-fg); border: 1px solid var(--cf-line);
   border-radius: var(--cf-r-s); padding: 2px var(--cf-s2); font-size: var(--cf-fs-m);
+  box-shadow: var(--cf-shadow-1);
   pointer-events: none; opacity: 0; transition: opacity var(--cf-dur-fast) var(--cf-ease);
 }
 .cf-tooltip.show { opacity: 1; }
+
+/* ---- 拖拽气泡(trim 实时时长 / 移动时间码 / 标尺悬停;手势层单例复用)---- */
+.cf-bubble {
+  position: absolute; z-index: var(--cf-z-marquee); max-width: var(--cf-bubble-max-w);
+  background: var(--cf-bubble-bg); color: var(--cf-bubble-fg);
+  border: 1px solid var(--cf-bubble-line); border-radius: var(--cf-r-s);
+  padding: 1px var(--cf-s2); font-family: var(--cf-font-mono); font-size: var(--cf-fs-s);
+  pointer-events: none; opacity: 0; white-space: nowrap;
+  box-shadow: var(--cf-shadow-1);
+  transition: opacity var(--cf-dur-fast) var(--cf-ease);
+  will-change: transform;
+}
+.cf-bubble.show { opacity: 1; }

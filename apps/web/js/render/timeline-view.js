@@ -7,15 +7,15 @@
  * - ghost(ephemeral.dragGhost)是临时投影层(ADR-0013):投影到达即清除重画。
  */
 import { $, h } from "../ui/dom.js";
-import { projectStore, timelineStore, selectionStore, ephemeralStore } from "../core/store.js";
+import { projectStore, timelineStore, selectionStore, ephemeralStore, uiStore } from "../core/store.js";
 import { PX_PER_MS, clipKindOf, clipLabelOf, timelineEndMsOf } from "../core/model.js";
 import { createVirtualizer } from "./virtualizer.js";
 import { setRulerContent, drawRuler } from "./ruler.js";
 import { setPlayheadPx, drawOverlay } from "./playhead.js";
 import { drawWaveIfAudio } from "./waveform.js";
 import { svgUse } from "../../assets/icons.js";
-import { onClipMouseDown, onLaneMouseDown, onLaneDragOver, onLaneDragLeave, onLaneDrop } from "./gestures.js";
-import { openClipContextMenu } from "../ui/menu.js";
+import { onClipPointerDown, onLanePointerDown, onLaneDragOver, onLaneDragLeave, onLaneDrop } from "./gestures.js";
+import { openClipContextMenu, openTrackContextMenu, openTimelineContextMenu } from "../ui/menu.js";
 
 /** @type {Map<string, HTMLElement>} */
 const laneEls = new Map();
@@ -29,7 +29,44 @@ let virt = null;
 export function mountTimeline() {
   virt = createVirtualizer($("timeline-wrap"));
   virt.onChange(() => renderTimelineView());
+  mountEmptyState();
+  mountBladeBadge();
   return virt;
+}
+
+/** 空工程下一步提示(T3.7:空面板给明确下一步,不出现空列表框)。
+ * 片段数 0 时显示;插第一个片段即隐(display 切换,常驻节点零增量变更)。 */
+function mountEmptyState() {
+  const wrap = $("timeline-wrap");
+  const el = h("div", {
+    class: "timeline-empty", testid: "timeline-empty", "aria-live": "polite",
+  }, [
+    h("b", null, ["时间线还是空的"]),
+    h("span", null, ["下一步:双击左侧素材卡插入第一个片段(或把素材拖到轨道上)"]),
+  ]);
+  el.id = "timeline-empty";
+  wrap.appendChild(el);  timelineStore.subscribe((patch) => {
+    if (patch.clips !== undefined || patch.__reset__) {
+      el.classList.toggle("show", !(timelineStore.get().clips || []).length);
+    }
+  });
+  el.classList.add("show"); // 装配期投影未到:先按空工程口径显示,clips 到达即收敛
+}
+
+/** 切割模式徽标(T3.4 B 键;文本态,非颜色单线索)。 */
+function mountBladeBadge() {
+  const badge = h("span", {
+    class: "blade-badge", testid: "blade-mode", hidden: true,
+    "aria-live": "polite",
+  }, ["✂ 切割模式:点击片段即分割(B 或 A 退出)"]);
+  const toolbar = $("toolbar");
+  if (toolbar) toolbar.appendChild(badge);
+  uiStore.subscribe((patch, st) => {
+    if (patch.blade !== undefined) {
+      badge.hidden = !st.blade;
+      $("timeline-wrap").classList.toggle("blade-mode", st.blade);
+    }
+  });
 }
 
 export function virtualizerOf() {
@@ -56,16 +93,21 @@ export function renderTimelineView() {
   drawOverlay(ephemeralStore.get().snapMs);
 }
 
-/** 选中态变化只碰两枚 class(keyed 更新的最廉价路径)。 */
+/** 选中态变化只碰 class(keyed 更新的最廉价路径;clipId 主选中 + clipIds 框选集)。
+ * T3.6:键盘 ±1 clip 导航时把主选中卷入视口(nearest:已可见零滚动,点击路径无感)。 */
 export function updateSelectionView() {
   const sel = selectionStore.get().clipId;
+  const ids = new Set(selectionStore.get().clipIds || []);
+  let selEl = null;
   for (const [id, meta] of clipEls) {
-    const want = id === sel;
+    const want = id === sel || ids.has(id);
     if (meta.selected !== want) {
       meta.selected = want;
       meta.el.classList.toggle("selected", want);
     }
+    if (id === sel) selEl = meta.el;
   }
+  if (selEl) selEl.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function playheadMsCache() {
@@ -127,10 +169,17 @@ function createLane(t) {
     class: "track", dataset: { trackId: t.id, kind },
     testid: `track-lane-${t.id}`,
   }, [label]);
-  lane.addEventListener("mousedown", onLaneMouseDown);
+  lane.addEventListener("pointerdown", onLanePointerDown);
   lane.addEventListener("dragover", onLaneDragOver);
   lane.addEventListener("dragleave", onLaneDragLeave);
   lane.addEventListener("drop", onLaneDrop);
+  // 右键上下文(T3.6 四菜单之二/四):轨头 = 轨道菜单;轨道空白 = 时间线空白菜单
+  lane.addEventListener("contextmenu", (e) => {
+    if (e.target.closest(".clip")) return; // 片段菜单由 clip 自己处理
+    e.preventDefault();
+    if (e.target.closest(".lane-label")) openTrackContextMenu(t.id, e.clientX, e.clientY);
+    else openTimelineContextMenu(e.clientX, e.clientY);
+  });
   return lane;
 }
 
@@ -157,11 +206,12 @@ function renderClips(clips, win) {
   }
 
   const sel = selectionStore.get().clipId;
+  const selIds = new Set(selectionStore.get().clipIds || []);
   for (const row of wantRows) {
     const left = Math.round(row.startMs * PX_PER_MS);
     const width = Math.max(6, Math.round((row.endMs - row.startMs) * PX_PER_MS));
     const kind = clipKindOf(row);
-    const selected = row.id === sel;
+    const selected = row.id === sel || selIds.has(row.id);
     const text = clipLabelOf(row);
     const cls = `clip${kind !== "video" ? ` ${kind}` : ""}${selected ? " selected" : ""}`;
     const meta = clipEls.get(row.id);
@@ -213,9 +263,10 @@ function createClipEl(row, cls, text) {
     h("span", { class: "edge edge-l", testid: "clip-edge-l", "data-tip": "拖动裁剪入点" }),
     h("span", { class: "edge edge-r", testid: "clip-edge-r", "data-tip": "拖动裁剪出点" }),
   ]);
-  el.addEventListener("mousedown", onClipMouseDown);
+  el.addEventListener("pointerdown", onClipPointerDown);
   el.addEventListener("contextmenu", (e) => {
     e.preventDefault();
+    e.stopPropagation(); // 轨道/空白菜单不得顶替片段菜单
     // 右键菜单先选中再开(菜单项依赖选中态)
     selectionStore.set({ clipId: row.id });
     openClipContextMenu(e.clientX, e.clientY);
@@ -223,28 +274,34 @@ function createClipEl(row, cls, text) {
   return el;
 }
 
-/* ---------------- ghost(ephemeral.dragGhost,ADR-0013)---------------- */
+/* ---------------- ghost(ephemeral.dragGhost,ADR-0013)----------------
+ * 拖拽零动画:节点跨手势复用(只改几何与 invalid 态),不挂 transition。 */
 
 function renderGhost() {
   const g = ephemeralStore.get().dragGhost;
-  const key = g ? `${g.clipId}@${g.trackId}:${Math.round(g.startMs)}x${Math.round(g.durationMs)}` : "";
-  if (key === ghostKey) return;
-  if (ghostEl && (!g || key !== ghostKey)) {
-    ghostEl.remove();
-    ghostEl = null;
-    ghostKey = "";
+  if (!g) {
+    if (ghostEl) {
+      ghostEl.remove();
+      ghostEl = null;
+      ghostKey = "";
+    }
+    return;
   }
-  if (!g) return;
+  const key = `${g.clipId}@${g.trackId}`;
   const lane = laneEls.get(g.trackId);
   if (!lane) return;
-  ghostEl = h("div", {
-    class: "clip ghost", testid: "drag-ghost",
-    "aria-hidden": "true",
-  }, [h("span", { class: "clip-name" }, [g.label || ""])]);
+  if (!ghostEl || ghostKey !== key) {
+    if (ghostEl) ghostEl.remove();
+    ghostEl = h("div", {
+      class: "clip ghost", testid: "drag-ghost",
+      "aria-hidden": "true",
+    }, [h("span", { class: "clip-name" }, [g.label || ""])]);
+    lane.appendChild(ghostEl);
+    ghostKey = key;
+  }
+  ghostEl.classList.toggle("invalid", Boolean(g.invalid));
   ghostEl.style.left = `${Math.round(g.startMs * PX_PER_MS)}px`;
   ghostEl.style.width = `${Math.max(6, Math.round(g.durationMs * PX_PER_MS))}px`;
-  lane.appendChild(ghostEl);
-  ghostKey = key;
 }
 
 /** 手势层通知:ephemeral.snapMs 变化 → 只重画 overlay(不整棵重渲染)。 */

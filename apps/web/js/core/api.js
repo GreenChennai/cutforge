@@ -35,10 +35,18 @@ const RETRY_BASE_MS = 300;
 const authFailCbs = new Set();
 /** @type {Set<(msg: string) => void>} */
 const netDownCbs = new Set();
+/** @type {Set<() => void>} */
+const netOkCbs = new Set();
+
+/** 未完成请求数(T3.5 性能面板可视;fetch 发出到 settle 计数)。 */
+let inflight = 0;
+export function netInflight() { return inflight; }
 
 export function setToken(t) { token = t || ""; }
 export function onAuthFail(cb) { authFailCbs.add(cb); return () => authFailCbs.delete(cb); }
 export function onNetDown(cb) { netDownCbs.add(cb); return () => netDownCbs.delete(cb); }
+/** 传输层恢复信号(任意请求拿到 HTTP 响应即触发;T3.4 断连横幅自动收起用)。 */
+export function onNetOk(cb) { netOkCbs.add(cb); return () => netOkCbs.delete(cb); }
 
 function authHeaders(extra) {
   const h = { ...(extra || {}) };
@@ -52,6 +60,7 @@ async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT
   const timer = timeoutMs > 0
     ? setTimeout(() => ctrl.abort("timeout"), timeoutMs)
     : null;
+  inflight += 1;
   try {
     const resp = await fetch(path, {
       method,
@@ -59,6 +68,7 @@ async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT
       body: body === null ? undefined : JSON.stringify(body),
       signal: ctrl.signal,
     });
+    for (const cb of netOkCbs) cb(); // 传输层活着(A2 接线:断连横幅恢复信号)
     if (resp.status === 401) {
       for (const cb of authFailCbs) cb();
       return { status: 401, json: null };
@@ -66,6 +76,7 @@ async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT
     const json = await resp.json().catch(() => null);
     return { status: resp.status, json };
   } finally {
+    inflight -= 1;
     if (timer) clearTimeout(timer);
   }
 }

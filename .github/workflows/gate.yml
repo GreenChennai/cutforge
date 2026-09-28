@@ -11,7 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Clone CutFlow (shallow) for cross-repo checks
-        run: git clone --depth 1 https://github.com/GreenChennai/CutFlow.git ../CutFlow
+        run: |
+          git clone --depth 50 https://github.com/GreenChennai/CutFlow.git ../CutFlow
+          # 跨仓门禁快照钉扎:CutFlow v0.21.0(e1745c1)将 docs/adr/0060 先行落地、其 README
+          # 的 ADR 索引未同步,M1 doc-consistency(README 索引须含最新编号)被跨仓连带红。
+          # 钉到已验证截面 faad005;CutFlow README 索引补齐 0060 后删除 checkout 行即回到 main。
+          git -C ../CutFlow checkout faad005
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'

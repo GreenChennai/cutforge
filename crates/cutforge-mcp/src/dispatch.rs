@@ -3,7 +3,7 @@
 //! 参数解析与 5.4 错误映射(T1.1 拆分自 lib.rs,纯移动)。
 
 use crate::orchestrate::orchestrate;
-use crate::progress::{existing_rel, render_cutforge_sync, render_progress, render_run_async};
+use crate::progress::{existing_rel, render_cutforge_sync, render_frame_tool, render_progress, render_run_async};
 use crate::registry::{capability_matrix, envelope, registry, tool_def};
 use crate::tools_nolock::{media_browse_tool, media_probe_tool, project_new_tool, render_probe_tool, stage_status_tool};
 use cutforge_core::anchor::{Anchor, AnchorKind};
@@ -58,6 +58,10 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             return envelope(false, "PRECONDITION_FAILED", "缺 runId", json!({}));
         };
         return render_progress(run_id);
+    }
+    // T2.4 单帧精确预览:同步出帧(帧缓存键含工作区指纹),免开工作区不持锁
+    if name == "render_frame" {
+        return render_frame_tool(&ws_root, args);
     }
 
     // ---- 免开工作区的工具(E6-3/B14:只读/创建类不持排他锁) ----
@@ -538,6 +542,7 @@ pub(crate) fn produces_rev_mutation(name: &str) -> bool {
     !(is_readonly_tool(name)
         || matches!(name,
             "capability_matrix" | "project_new" | "render" | "render_run" | "render_progress"
+            | "render_frame"
             | "media_probe" | "media_browse" | "render_probe" | "stage_status"))
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""T1.1/AC-1.2 门禁:MCP 41 工具黄金响应库(golden 响应对拍)。
+"""T1.1/AC-1.2 门禁:MCP 42 工具黄金响应库(golden 响应对拍)。
 
     python tools/bench/tool_parity.py                  # 对比模式:重跑采集,与 golden 逐字段对拍
     python tools/bench/tool_parity.py --update-golden  # 采集模式:重建 tools/bench/golden/*.json
@@ -20,6 +20,10 @@
     先解析、递归归一字段值、再 sort_keys 重序列化 —— Windows 录制与 ubuntu 实测自此同形;
   - rev / rev-N 串 → <REV>;ts/createdAt 等 RFC3339 → <TS>;runId → <RUN_ID>;
   - 临时目录 / 仓库根 / token → <TMP> / <REPO> / <TOKEN>;残余绝对路径 → <ABS>;
+  - render_frame 的帧缓存路径/键(A2):工作区指纹入键,run 间必变 →
+    `render-cache/frame/<16hex>.<ext>` 文件名整体 → frame/<FRAME><ext>,
+    恰为 16 位十六进制的 "key" 字段值 → <FRAME_KEY>(缓存键正确性由 Rust 单测锁定,
+    对拍只锁协议形状);
   - 媒体探测值(ffprobe 口径):durationMs 就近取整到 100ms、bytes → <BYTES>
     (这两者反映外部工具链产物,不是 cutforge-mcp 行为)。
 
@@ -28,7 +32,7 @@
   - 实际多出的键:仅警告(WARN),不失败;
   - 数组:长度与逐元素(按下标)严格一致。
 
-退出码:0 = 41/41 PASS;2 = 有 DRIFT/FAIL;3 = 环境缺失(ffmpeg)。
+退出码:0 = 42/42 PASS;2 = 有 DRIFT/FAIL;3 = 环境缺失(ffmpeg)。
 依赖:Python 标准库 + 已构建的 cutforge-mcp(+ 同目录 cutforge-render)+ ffmpeg。
 """
 from __future__ import annotations
@@ -79,7 +83,7 @@ class Report:
 
     def summary_line(self, mode: str, n_tools: int) -> str:
         c = self.counts()
-        cover = f"{n_tools}/41" if n_tools != 41 else "41/41"
+        cover = f"{n_tools}/42" if n_tools != 42 else "42/42"
         msg = (f"tool_parity {mode}完成(覆盖 {cover} 工具): "
                f"{c['pass']} PASS / {c['warn']} WARN / {c['drift']} DRIFT / {c['fail']} FAIL")
         bad = [r["tool"] for r in self.rows if r["status"] in ("DRIFT", "FAIL")]
@@ -88,7 +92,7 @@ class Report:
         if self.missing:
             msg += f";调用异常: {self.missing}"
         if not bad and not self.missing:
-            msg += ";41 工具黄金对拍零漂移"
+            msg += ";42 工具黄金对拍零漂移"
         return msg
 
     def envelope(self, mode: str, n_tools: int) -> dict:
@@ -134,6 +138,9 @@ RE_REV = re.compile(r"(?<![A-Za-z0-9-])rev-\d+(?![A-Za-z0-9-])")
 RE_WIN_PATH = re.compile(r"(?i)\b[a-z]:[\\/](?:[^\s\"'\\/:*?<>|]+[\\/])*[^\s\"'<>|]*")
 RE_POSIX_PATH = re.compile(r"(?<![\w\">])/(?:tmp|home|Users|usr|var)/[^\s\"']*" )
 RE_BS_RUN = re.compile(r"\\+")  # 反斜杠串(含 JSON-in-JSON 里 \\ 转义出的连写形态)
+# A2 render_frame:帧缓存文件名内嵌工作区指纹键(run 间必变)→ 占位;扩展名保留
+RE_FRAME_FILE = re.compile(r"render-cache/frame/[0-9a-f]{16}(\.png|\.jpe?g)")
+RE_FRAME_KEY = re.compile(r"[0-9a-f]{16}")
 
 
 def _fwd(p: str) -> str:
@@ -184,6 +191,8 @@ class Normalizer:
         s = RE_REV.sub("<REV>", s)
         s = RE_WIN_PATH.sub("<ABS>", s)
         s = RE_POSIX_PATH.sub("<ABS>", s)
+        # 3) render_frame 帧文件名占位(内嵌工作区指纹键,run 间必变;扩展名保留)
+        s = RE_FRAME_FILE.sub(lambda m: f"render-cache/frame/<FRAME>{m.group(1)}", s)
         return s
 
     def __call__(self, v, probe_mode: bool = False):
@@ -198,6 +207,8 @@ class Normalizer:
                     out[k] = "<TS>"
                 elif k in ELAPSED_KEYS:
                     out[k] = "<ELAPSED>"
+                elif k == "key" and isinstance(val, str) and RE_FRAME_KEY.fullmatch(val):
+                    out[k] = "<FRAME_KEY>"  # render_frame 帧缓存键(工作区指纹入键,run 间必变)
                 elif k == "bytes" and probe_mode:
                     out[k] = "<BYTES>"
                 elif k == "durationMs" and probe_mode and isinstance(val, (int, float)):
@@ -459,6 +470,8 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         ("render_run", {"root": "{MAIN}"}, False),
         ("render_progress", {"root": "{MAIN}", "runId": "@RUN_ID@"}, False),
         ("render", {"root": "{MAIN}", "backend": "cutforge"}, False),
+        # -- 阶段 E2:T2.4 单帧精确预览(整片渲后 video 链全命中,只做抽帧) --
+        ("render_frame", {"root": "{MAIN}", "atMs": 1500}, False),
         # -- 阶段 F:编排(CUTFLOW_REPO 桩;锁派发/参数透传/stdout 透传行为) --
         ("render", {"root": "{MAIN}", "backend": "ffmpeg"}, False),
         ("export_jianying", {"root": "{MAIN}", "name": "parity-成片"}, False),
@@ -655,7 +668,7 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="MCP 41 工具黄金响应库对拍(AC-1.2)")
+    ap = argparse.ArgumentParser(description="MCP 42 工具黄金响应库对拍(AC-1.2)")
     ap.add_argument("--update-golden", action="store_true", help="重建 tools/bench/golden/*.json")
     ap.add_argument("--bin", default=None, help="cutforge-mcp 二进制路径(默认 target/debug)")
     ap.add_argument("--json", action="store_true", help="只输出结果协议 envelope JSON")

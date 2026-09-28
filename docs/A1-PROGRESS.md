@@ -49,7 +49,7 @@
 |---|---|---|
 | L-1 | **契约链断点**(T1.9 梳理七步链时发现):c5b509d 批次新增 9 字段内核模型零承接——`bgm.assetId`、`clip.assetId/fx/font/huazi/matte`、`motion.inFx/outFx`、顶层 `font/effects`,schema 有、内核无,读写一轮即丢;`clip_update.inputSchema.patch` 未声明 transition/motion 而 dispatch 已承接(契约面窄于实现面);`MotionPatch` 缺 inFx/outFx(与 motion 不对称);`check-ui-fields` 判定器未注册进 gate.py | 册四/册五加字段时按 `CONTRACT-WORKFLOW.md` 七步补齐;**先行项:把「字段静默丢弃」加门禁拦截**(roundtrip 后字段蒸发即红),再逐字段承接 |
 | L-2 | mcp 侧跟进:`render_progress` 已有结构化 `StepReport`,但 HTTP 面尚未透传 `steps/cacheHits` 全量字段给壳 | 册三导出进度 UI 消费(StepReport.to_progress 已备好数据源) |
-| L-3 | SSE 遗留:长轮询降级路径按 A1-R2 标注「**册二完成后移除**」;EvHub 在无订阅者时仍保留扫描候选,空闲自动停扫未做 | 移除时同步删 e2e_events 降级断言与 FLOW §5.6 标注;空闲停扫作册二观察项 |
+| L-3 | SSE 遗留:长轮询降级路径按 A1-R2 标注「**册二完成后移除**」;EvHub 在无订阅者时仍保留扫描候选,空闲自动停扫未做。**册二追记(2026-09-29)**:册二新壳以 SSE 为主通道,长轮询**未移除**,转为断线降级路径并实测(AC-2.6③ SSE 毒化→长轮询接管);「移除与否」推迟至册三,与 A2-L5(SSE 断连无 UI 指示)一并定夺 | ~~移除时同步删 e2e_events 降级断言与 FLOW §5.6 标注~~ 册三定夺去留:删则同步清 e2e_events 降级断言 + FLOW §5.6 标注;留则改标注为正式降级面;空闲停扫仍待做 |
 | L-4 | `stage_status` 的 `resp.get("stdout")` 顶层 quirk(stdout 挂在结果对象顶层而非 data 内),golden 已如实锁定 | 保持 golden 锁定;若未来动结果协议须连 golden 一起重建 |
 | L-5 | bench 口径两条:debug 档不可作基线(数值失真,基线只认 release);1k 工程直接塞 render 命令行不可行(命令行长度上限),渲染基准用独立迷你工程的口径已写进 bench.py | 口径不变;后续册收官照跑并落盘新日期 JSON |
 | L-6 | cli(cache.rs)与 render(cache.rs)双侧各有一份缓存治理逻辑,为「依赖方向门禁」所致的契约镜像 | 未来可论证把缓存治理下沉 cutforge-io(需先调 deps-direction 门禁) |
@@ -60,6 +60,7 @@
 ## 四、与册二(前端重写)的交接提示
 
 1. **事件消费**:壳改走 SSE(`/events`),不再 300ms 轮询;长轮询降级面在册二收尾删除(A1-R2/L-3)。
+   *(册二追记:SSE 主通道已落地;长轮询保留为断线降级路径,删除决定推迟至册三——见 L-3 追记与 A2 台账 A2-L5。)*
 2. **静态资源**:前端新增文件放 `apps/web/` 即被 `/assets/*` 托管,**零 Rust 改动**(册二模块化拆 js 的前提已备好)。
 3. **渲染进度 UI**:册三导出进度直接消费 `StepReport.to_progress()`(steps/cacheHits,L-2)。
 4. **临时投影纪律**:壳纯度门禁(check-shell-purity)继续生效;拖拽 ghost 等按总纲 §1.2 第 3 条(不进 IR、不落盘、可重建)。

@@ -1,0 +1,102 @@
+/* CutForge 编辑器壳 · 引导与装配(T2.1;≤100 行纪律)。
+ * 单向流:手势 → commands → api → projector → store → 增量渲染。
+ * 旧 id 兼容红线见 TESTIDS.md;壳纯度:投影只读 + ephemeral.*(ADR-0013)。 */
+import { setToken, setSessionRoot, onAuthFail, dataGet } from "./core/api.js";
+import { projectStore, timelineStore, selectionStore, uiStore, ephemeralStore } from "./core/store.js";
+import { reproject, refreshConflicts, refreshUiFields, applySession, selfTestRebuild, invalidateWorkspace } from "./core/projector.js";
+import * as commands from "./core/commands.js";
+import { startEvents, subscribe } from "./core/event-bus.js";
+import { toast } from "./ui/toast.js";
+import { mountBanner } from "./ui/banner.js";
+import { mountTooltip } from "./ui/tooltip.js";
+import { installEditorShortcuts } from "./ui/keymap.js";
+import { ensureIcons } from "../assets/icons.js";
+import { mountTimeline, renderTimelineView, updateSelectionView } from "./render/timeline-view.js";
+import { mountRuler } from "./render/ruler.js";
+import { mountPlayhead } from "./render/playhead.js";
+import { mountMediaPool } from "./render/media-pool.js";
+import { mountPreviewLoop, wake } from "./render/preview-loop.js";
+import { mountRulerGestures } from "./render/gestures.js";
+import * as preview from "./panels/preview.js";
+import * as mediaPanel from "./panels/media-panel.js";
+import * as inspector from "./panels/inspector.js";
+import * as bgm from "./panels/bgm.js";
+import * as expanel from "./panels/export.js";
+import * as notes from "./panels/notes.js";
+import * as diff from "./panels/diff.js";
+import * as conflicts from "./panels/conflicts.js";
+import { openWizard } from "./panels/wizard.js";
+import { $ } from "./ui/dom.js";
+
+async function boot() {
+  const urlToken = new URLSearchParams(location.search).get("token") || "";
+  setToken(urlToken);
+  ensureIcons(); mountTooltip(); mountBanner();
+  mountRuler(); mountPlayhead(); mountTimeline();
+  mountRulerGestures((ms) => commands.seekTo(ms));
+  preview.mount($("preview")); mediaPanel.mount($("media-panel")); inspector.mount($("inspector"));
+  bgm.mount($("bgm-panel")); expanel.mount($("export"));
+  notes.mount($("tab-notes")); diff.mount($("tab-diff")); conflicts.mount($("tab-conflicts"));
+  mountMediaPool(); // 宿主 #pv-media 由 preview 面板提供,此处只做绑定校验
+  mountPreviewLoop(); // 媒体池对齐 + 预览循环(播放解耦核心)
+  bindChrome(); installEditorShortcuts(); wireEvents();
+
+  // 会话握手(/session 数据面,api 层白名单收口):失败 → token 横幅(旧壳口径,壳停摆)
+  const sess = await dataGet("/session");
+  if (!sess || !sess.root) {
+    uiStore.set({ tokenBanner: "⚠ token 已变更或缺失(服务重启会换新 token):请回到服务窗口复制最新链接重新打开本页。" });
+    toast("token 鉴权失败", false);
+    return;
+  }
+  if (sess.token && sess.token !== urlToken) {
+    uiStore.set({ tokenBanner: "⚠ 本页 token 与服务当前 token 不一致,请改用服务窗口打印的最新链接。" });
+  }
+  setSessionRoot(sess.root);
+  applySession(sess);
+  $("session-info").textContent = `root=${sess.root}`;
+  await refreshUiFields();   // 检查器真相源先行(旧壳顺序)
+  await reproject();         // 投影 → store → 增量渲染(#rev 翻牌,e2e 就绪锚点)
+  await refreshConflicts();
+  await mediaPanel.initialMediaBrowse();
+  startEvents(sess.token);
+  window.__cutforgeSelfTest = selfTestRebuild; // T2.2 重建铁律自测入口(TESTIDS.md §五)
+}
+function wireEvents() {
+  subscribe("workspace.changed", () => { invalidateWorkspace(); wake(); });
+  subscribe("notes.changed", () => { if (uiStore.get().tab === "notes") notes.refresh(); });
+  subscribe("cutlist.changed", () => toast("cutlist.json 已被外部更新"));
+  subscribe("resync", () => invalidateWorkspace());
+  onAuthFail(() => toast("数据面鉴权失败:token 已变更,请用最新链接重开", false));
+  // #rev 翻牌(e2e 就绪锚点:初始 "-",投影到达后与服务端 rev 一致)
+  projectStore.subscribe((patch, st) => {
+    if (patch.rev !== undefined) $("rev").textContent = String(st.rev ?? "-");
+  });
+  timelineStore.subscribe(() => renderTimelineView());
+  selectionStore.subscribe(updateSelectionView);
+  selectionStore.subscribe(() => renderTimelineView());
+  ephemeralStore.subscribe(() => renderTimelineView());
+  uiStore.subscribe((patch) => { if (patch.tab !== undefined) switchTab(patch.tab); });
+}
+
+function bindChrome() {
+  for (const b of document.querySelectorAll("#tabs button")) {
+    b.addEventListener("click", () => uiStore.set({ tab: b.dataset.tab }));
+  }
+  $("btn-project-new").addEventListener("click", openWizard);
+  $("btn-undo").addEventListener("click", () => commands.undo());
+  $("btn-redo").addEventListener("click", () => commands.redo());
+  $("pv-to-start").addEventListener("click", () => commands.toStart());
+  $("pv-to-end").addEventListener("click", () => commands.toEnd());
+  $("pv-play").addEventListener("click", () => commands.togglePlay());
+  $("magnet").addEventListener("change", (e) => uiStore.set({ magnet: e.target.checked }));
+  $("ripple").addEventListener("change", (e) => uiStore.set({ ripple: e.target.checked }));
+}
+
+function switchTab(tab) {
+  document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.id === `tab-${tab}`));
+  if (tab === "notes") notes.refresh();
+  if (tab === "diff") diff.refresh();
+  if (tab === "conflicts") conflicts.refresh();
+}
+boot();

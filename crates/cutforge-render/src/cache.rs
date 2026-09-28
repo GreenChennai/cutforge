@@ -19,8 +19,9 @@ use std::path::{Path, PathBuf};
 
 /// 渲染缓存根(相对工程目录)。
 pub const CACHE_ROOT: &str = ".cutforge/render-cache";
-/// 分层目录:seg(段)/mix(混音)/compose(合成)/overlay(叠加)/sub(字幕合流)。
-pub const LAYERS: [&str; 5] = ["seg", "mix", "compose", "overlay", "sub"];
+/// 分层目录:seg(段)/mix(混音)/compose(合成)/overlay(叠加)/sub(字幕合流)
+/// /frame(单帧,T2.4 精确预览;键含工作区指纹,改一笔即 miss)。
+pub const LAYERS: [&str; 6] = ["seg", "mix", "compose", "overlay", "sub", "frame"];
 /// 临时文件目录(concat 清单、burn 用 ASS 副本;不入索引,gc 按超龄清理)。
 pub const TMP_DIR: &str = "tmp";
 /// 清单文件名(相对缓存根)。
@@ -121,7 +122,13 @@ impl CacheIndex {
     /// 登记新条目(同键覆盖);返回相对缓存根的落盘路径(调用方随后写文件并回填 size)。
     /// 清单内路径统一**正斜杠**约定(跨平台一致;Windows 的 join/rename 均兼容)。
     pub fn record(&mut self, layer: &str, key: &str, input: Value, now: u64) -> PathBuf {
-        let rel = Path::new(layer).join(format!("{key}{}", layer_ext(layer)));
+        self.record_with_ext(layer, key, input, now, layer_ext(layer))
+    }
+
+    /// 同 [`CacheIndex::record`],扩展名显式给定(frame 层单帧格式 png/jpeg 共用一层,
+    /// 扩展名不随 layer 固定;其余层不受影响)。
+    pub fn record_with_ext(&mut self, layer: &str, key: &str, input: Value, now: u64, ext: &str) -> PathBuf {
+        let rel = Path::new(layer).join(format!("{key}{ext}"));
         self.entries.retain(|e| !(e.layer == layer && e.key == key));
         self.entries.push(CacheEntry {
             layer: layer.to_string(),
@@ -271,6 +278,25 @@ pub fn sub_spec(video_key: &str, mix_key: &str, ass_bytes: Option<&[u8]>) -> Val
 
 pub fn sub_key(video_key: &str, mix_key: &str, ass_bytes: Option<&[u8]>) -> String {
     key_hex(&sub_spec(video_key, mix_key, ass_bytes))
+}
+
+/// frame 输入 spec(T2.4 单帧):工作区指纹(fresh.rs,改一笔即 miss 的根基)+
+/// atMs(100ms 量化)+ 画幅 + 渲染版本 + ASS 字节哈希。与管线层(键=渲染输入)
+/// 不同,帧键直接以**工程盘面指纹**为输入:预览语义是"当前工程这一刻的样子",
+/// 任何盘面变化(哪怕不影响画面的 oplog 追加)都宁可重渲一帧,绝不给陈旧帧。
+pub fn frame_spec(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>) -> Value {
+    json!({
+        "v": crate::RENDERER_VERSION,
+        "fp": fp_key,
+        "atMs": at_ms,
+        "canvas": [canvas.0, canvas.1],
+        "fmt": fmt,
+        "ass": ass_bytes.map(|b| format!("{:016x}", hash_text(&String::from_utf8_lossy(b)))),
+    })
+}
+
+pub fn frame_key(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>) -> String {
+    key_hex(&frame_spec(fp_key, at_ms, canvas, fmt, ass_bytes))
 }
 
 /// tmp 文件相对路径(内容寻址命名,避免并发互踩)。
@@ -456,6 +482,27 @@ mod tests {
         let v = |x: u64| json!({"v": "cutforge-render-4.0", "clip": x});
         assert_eq!(key_hex(&v(1)), key_hex(&v(1)), "同输入同键(确定性)");
         assert_ne!(key_hex(&v(1)), key_hex(&v(2)), "输入变 → 键变(零陈旧复用的根基)");
+    }
+
+    #[test]
+    fn frame_key_is_fingerprint_sensitive_and_quantized() {
+        let base = ("fp-aaa", 1500u64, (1080u32, 1920u32), "png");
+        let k = frame_key(base.0, base.1, base.2, base.3, None);
+        // 指纹 / 时间点 / 画幅 / 格式任一变化 → 键变
+        assert_ne!(k, frame_key("fp-bbb", base.1, base.2, base.3, None), "指纹入键");
+        assert_ne!(k, frame_key(base.0, 1600, base.2, base.3, None), "atMs 入键(量化后)");
+        assert_ne!(k, frame_key(base.0, base.1, (1920, 1080), base.3, None), "画幅入键");
+        assert_ne!(k, frame_key(base.0, base.1, base.2, "jpeg", None), "格式入键");
+        assert_ne!(k, frame_key(base.0, base.1, base.2, base.3, Some(b"[Script]")), "ASS 入键");
+        assert_eq!(k, frame_key(base.0, base.1, base.2, base.3, None), "同输入同键(确定性)");
+    }
+
+    #[test]
+    fn record_with_ext_keeps_explicit_extension() {
+        let mut idx = CacheIndex::default();
+        let rel = idx.record_with_ext("frame", "k1", json!(1), 10, ".jpg");
+        assert!(rel.starts_with("frame/") && rel.to_string_lossy().ends_with("k1.jpg"));
+        assert!(idx.touch("frame", "k1", 20).is_some(), "frame 层与其他层同机制命中");
     }
 
     #[test]

@@ -1,0 +1,26 @@
+{
+ "tool": "render_frame",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "atMs": 1500
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "atMs": 1500,
+     "backend": "cutforge",
+     "cached": false,
+     "format": "png",
+     "key": "<FRAME_KEY>",
+     "media": ".cutforge/render-cache/frame/<FRAME>.png",
+     "path": "<TMP>/proot/.cutforge/render-cache/frame/<FRAME>.png"
+    },
+    "message": "帧已渲染",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

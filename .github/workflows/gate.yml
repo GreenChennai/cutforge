@@ -76,6 +76,12 @@ jobs:
         run: python tools/e2e_static.py --bin target/debug/cutforge-mcp
       - name: T1.6/AC-1.5 事件推送 e2e(SSE P95 + 长轮询降级;纯 stdlib)
         run: python tools/e2e_events.py --bin target/debug/cutforge-mcp
+      - name: A2 UI 冒烟 e2e(data-testid 驱动;断言以服务端状态 rev/盘面为准)
+        run: python tools/e2e_ui_smoke.py --bin target/debug/cutforge-mcp
+      - name: A2 播放存活 e2e(播放中改工程不销毁媒体元素/事件不丢/媒体池增量)
+        run: python tools/e2e_playback_survival.py --bin target/debug/cutforge-mcp
+      # A2 e2e_perf_timeline.py 不进 CI:帧率阈值负载敏感(--min-fps 55),共享 runner
+      # 抖动会假红;本地册收官在安静时段跑(python tools/gates/gate.py A2)。
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

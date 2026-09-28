@@ -4,6 +4,10 @@
 
     python tools/e2e_preview.py [--bin target/debug/cutforge-mcp.exe] [--cli target/debug/cutforge-cli.exe]
 
+册二 T2.7 选择器迁移:交互元素一律 data-testid(登记见 apps/web/TESTIDS.md);
+旧 id 两册过渡期仍有效;断言继续以服务端状态与媒体元素为准。
+红线保持:#ruler 点击坐标 ×(1/PX_PER_MS=0.06)=ms 的 seek 路径。
+
 断言链(E2-7 验收判据):
   1. /media 端点:无 token → 401;路径穿越 → 拒绝(非 200);
   2. <video>/<audio> 达到可播放状态(readyState ≥ 2);
@@ -160,26 +164,26 @@ def main() -> int:
             browser = pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
             page = browser.new_page(viewport={"width": 1600, "height": 1000})
             page.goto(f"http://127.0.0.1:{port}/?token={token}")
-            page.wait_for_function("document.getElementById('rev').textContent !== '-'", timeout=20000)
+            page.wait_for_function("document.querySelector('[data-testid=\"rev\"]').textContent !== '-'", timeout=20000)
 
             # 2. 媒体就绪
             page.wait_for_function(
                 """() => {
-                    const m = [...document.querySelectorAll('#pv-media video, #pv-media audio')];
+                    const m = [...document.querySelectorAll('[data-testid="pv-media"] video, [data-testid="pv-media"] audio')];
                     return m.length >= 4 && m.some((e) => e.readyState >= 2);
                 }""", timeout=20000)
             print("E2-3 媒体元素就绪(readyState≥2): PASS")
 
             # 3. 标尺 seek → 媒体 currentTime 对齐(≤1 帧)
-            page.click("#ruler", position={"x": int(SEEK_MS * 0.06), "y": 10})
+            page.click('[data-testid="ruler"]', position={"x": int(SEEK_MS * 0.06), "y": 10})
             page.wait_for_function(
                 f"""() => {{
-                    const hit = [...document.querySelectorAll('#pv-media video, #pv-media audio')]
+                    const hit = [...document.querySelectorAll('[data-testid="pv-media"] video, [data-testid="pv-media"] audio')]
                         .some((e) => Math.abs(e.currentTime - {EXPECT_S}) <= {FRAME_S});
                     return hit;
                 }}""", timeout=8000)
             cur = page.evaluate(
-                """() => [...document.querySelectorAll('#pv-media video, #pv-media audio')]
+                """() => [...document.querySelectorAll('[data-testid="pv-media"] video, [data-testid="pv-media"] audio')]
                     .map((e) => Number(e.currentTime.toFixed(3)))""")
             assert any(abs(c - EXPECT_S) <= FRAME_S for c in cur), f"currentTime 对齐失败: {cur}"
             print(f"E2-3 seek 对齐(t={SEEK_MS}ms → 期望 {EXPECT_S}s,容差 {FRAME_S:.4f}s): PASS {cur}")
@@ -188,7 +192,7 @@ def main() -> int:
             page.wait_for_timeout(400)  # 让 rAF 画一帧
             nonblack = page.evaluate(
                 """() => {
-                    const cv = document.getElementById('pv-canvas');
+                    const cv = document.querySelector('[data-testid="preview-canvas"]');
                     const ctx = cv.getContext('2d');
                     const d = ctx.getImageData(0, 0, cv.width, cv.height).data;
                     let n = 0, total = 0;
@@ -203,10 +207,10 @@ def main() -> int:
             print(f"E2-4 canvas 非全黑(采样 {nonblack['n']}/{nonblack['total']}): PASS")
 
             # 5. 空格播放 → 播放头推进
-            before = float(page.inner_text("#playhead-ms"))
+            before = float(page.inner_text('[data-testid="playhead-ms"]'))
             page.keyboard.press("Space")
             page.wait_for_timeout(800)
-            after = float(page.inner_text("#playhead-ms"))
+            after = float(page.inner_text('[data-testid="playhead-ms"]'))
             assert after > before, f"播放头未推进:{before} → {after}"
             page.keyboard.press("Space")  # 暂停
             print(f"E2-5 空格播放推进播放头({before:.0f} → {after:.0f}ms): PASS")
@@ -218,15 +222,15 @@ def main() -> int:
             browser = pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
             page = browser.new_page(viewport={"width": 1600, "height": 1000})
             page.goto(f"http://127.0.0.1:{port}/?token={token}")
-            page.wait_for_function("document.getElementById('rev').textContent !== '-'", timeout=20000)
-            page.select_option("#exp-backend", "cutforge")
-            page.click("#exp-run")
+            page.wait_for_function("document.querySelector('[data-testid=\"rev\"]').textContent !== '-'", timeout=20000)
+            page.select_option('[data-testid="export-backend"]', "cutforge")
+            page.click('[data-testid="export-run"]')
             page.wait_for_function(
                 """() => {
-                    const t = document.getElementById('exp-progress').textContent;
+                    const t = document.querySelector('[data-testid="export-progress"]').textContent;
                     return t.includes('完成') || t.includes('失败');
                 }""", timeout=300000)
-            prog = page.inner_text("#exp-progress")
+            prog = page.inner_text('[data-testid="export-progress"]')
             assert "完成" in prog and "final_cutforge_" in prog, f"导出失败:{prog}"
             print(f"E5 编辑器内导出(cutforge 后端): PASS {prog.strip()[:90]}")
             browser.close()

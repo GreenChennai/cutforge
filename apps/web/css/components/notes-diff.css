@@ -1,0 +1,11 @@
+/* 组件:标注 / 差异 / 冲突 三页 */
+.tab-page { max-width: 1100px; }
+#notes-open .row input { margin-right: var(--cf-s2); width: 220px; }
+#notes-open .row .op-ids { width: 180px; }
+#notes-open .row button { flex: 0 0 auto; }
+#diff-rows { margin-top: var(--cf-s2); }
+#diff-rows .pick { flex: 0 0 auto; }
+#conflict-rows .row { font-family: var(--cf-font-mono); font-size: var(--cf-fs-m); }
+.filter-row { display: flex; gap: var(--cf-s3); align-items: center; flex-wrap: wrap; }
+.filter-row label { display: flex; gap: var(--cf-s2); align-items: center; }
+.filter-row input[type="number"] { width: 80px; }

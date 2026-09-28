@@ -1,0 +1,52 @@
+/* CutForge 布局层:横幅/顶栏/页签/三栏工作台/页脚(旧壳实测几何迁移,e2e 视口兼容红线) */
+#banner[hidden] { display: none; }
+header {
+  display: flex; align-items: center; gap: var(--cf-s5);
+  padding: var(--cf-s2) var(--cf-s6);
+  background: linear-gradient(180deg, #1b2030, #161a26);
+  border-bottom: 1px solid var(--cf-line-soft);
+}
+header h1 { font-size: var(--cf-fs-l); margin: 0; }
+header .sub { color: var(--cf-dim); }
+header .spacer { flex: 1; }
+.tb-sep { width: 1px; height: 18px; background: var(--cf-line); display: inline-block; }
+#tb-time { color: var(--cf-dim); font-family: var(--cf-font-mono); min-width: 56px; }
+
+#tabs {
+  display: flex; gap: var(--cf-s1); padding: var(--cf-s2) var(--cf-s6) 0;
+  background: var(--cf-panel-deep); border-bottom: 1px solid var(--cf-line-soft);
+}
+#tabs button { border-radius: var(--cf-r-m) var(--cf-r-m) 0 0; }
+#tabs button.active {
+  background: #232a3d; color: #7fb2ff;
+  border: 1px solid var(--cf-line-soft); border-bottom: none;
+}
+
+main { padding: var(--cf-s5) var(--cf-s6); }
+.tab { display: none; }
+.tab.active { display: block; }
+footer {
+  padding: var(--cf-s2) var(--cf-s6); border-top: 1px solid var(--cf-line);
+  color: var(--cf-dim); min-height: 26px;
+}
+#toasts { display: flex; flex-direction: column; gap: var(--cf-s1); }
+
+/* 时间线页:定高纵排(工作台在上、时间线常驻可见;v0.6 实测兼容几何) */
+#tab-timeline.active {
+  display: flex; flex-direction: column;
+  height: calc(100vh - 150px);
+}
+#workbench {
+  display: flex; gap: var(--cf-s2); align-items: stretch;
+  margin-bottom: var(--cf-s2); padding: var(--cf-s2);
+  flex: 0 0 auto; max-height: 52vh; overflow: auto;
+}
+#media-panel { flex: 0 0 210px; display: flex; flex-direction: column; max-height: 60vh; margin-bottom: 0; }
+#pv-col { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+#inspector { margin-top: 0; flex: 0 0 360px; max-height: 60vh; overflow: auto; }
+#timeline-wrap { flex: 1 1 auto; min-height: 220px; overflow: auto; }
+
+@media (max-width: 1100px) {
+  #workbench { flex-wrap: wrap; }
+  #media-panel, #inspector { flex: 1 1 260px; }
+}

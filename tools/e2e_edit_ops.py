@@ -4,6 +4,11 @@
 
     python tools/e2e_edit_ops.py [--bin target/debug/cutforge-mcp.exe]
 
+册二 T2.7 选择器迁移:交互元素一律 data-testid(登记见 apps/web/TESTIDS.md);
+旧 id 两册过渡期仍有效,断言继续以服务端状态为准(M10-R5 纪律)。
+红线保持:#ruler 点击坐标 ×(1/PX_PER_MS=0.06)=ms;/events 拦截用精确正则
+(只命中事件端点,不误伤壳的 event-bus.js 等模块文件)。
+
 M10-1 edit_ops_e2e:导入 CutFlow 真实工程 → 分割 → 移动 → 波纹删 → undo 全还原 → redo,
 每步之后 OpLog 与盘面(rev/片段)一致。
 M10-2 note_loop_ui:3 条标注 创建 → AI 执行(clip_update,caused_by 绑定)→ 回执结案,全链 ≤5s。
@@ -16,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import socket
 import subprocess
@@ -94,13 +100,13 @@ class Driver:
     def goto(self):
         self.page.goto(f"http://127.0.0.1:{self.port}/?token={self.token}")
         self.page.wait_for_function(
-            "document.getElementById('rev').textContent !== '-'", timeout=20000)
+            "document.querySelector('[data-testid=\"rev\"]').textContent !== '-'", timeout=20000)
 
     def get(self) -> dict:
         return rpc(self.port, self.token, "project_get", {"root": self.root})
 
     def rev(self) -> int:
-        return int(self.page.inner_text("#rev"))
+        return int(self.page.inner_text('[data-testid="rev"]'))
 
     def wait_rev(self, prev: int, timeout_s: float = 15.0):
         deadline = time.time() + timeout_s
@@ -109,7 +115,7 @@ class Driver:
                 self.page.wait_for_timeout(250)  # 让 UI refresh 追上
                 return self.get()["data"]["rev"]
             time.sleep(0.15)
-        status = self.page.inner_text("#status")
+        status = self.page.inner_text('[data-testid="status"]')
         oplog = rpc(self.port, self.token, "oplog_tail", {"root": self.root, "limit": 500})
         tail = [(o.get("opId"), o.get("opKind"), o.get("target", {}).get("file"), str(o.get("summary"))[:40]) for o in oplog["data"]["ops"][-8:]]
         raise AssertionError(
@@ -176,8 +182,8 @@ def main() -> int:
                 base_clips = clips_of(d.get(), "V1")
 
                 # 分割:选 V1-001,播放头 2000ms,按 S
-                page.click('.clip[data-id="V1-001"]')
-                page.click("#ruler", position={"x": int(2000 * 0.06), "y": 10})
+                page.click('[data-testid="clip"][data-id="V1-001"]')
+                page.click('[data-testid="ruler"]', position={"x": int(2000 * 0.06), "y": 10})
                 page.keyboard.press("s")
                 d.wait_rev(rev0)
                 rev1 = d.get()["data"]["rev"]
@@ -185,16 +191,16 @@ def main() -> int:
                 assert len(c1) == len(base_clips) + 1 and any(c["id"] == "V1-003" for c in c1), f"分割: {c1}"
 
                 # 移动:检查器 V1-003 → 8400(clip_update)
-                page.click('.clip[data-id="V1-003"]')
-                page.fill("#insp-start", "8400")
-                page.click("#insp-apply")
+                page.click('[data-testid="clip"][data-id="V1-003"]')
+                page.fill('[data-testid="insp-start"]', "8400")
+                page.click('[data-testid="insp-apply"]')
                 d.wait_rev(rev1)
                 rev2 = d.get()["data"]["rev"]
                 moved = next(c for c in clips_of(d.get(), "V1") if c["id"] == "V1-003")
                 assert moved["startMs"] == 8400, f"移动: {moved}"
 
                 # 波纹删:Shift+Delete V1-002 → V1-003 左移 4400
-                page.click('.clip[data-id="V1-002"]')
+                page.click('[data-testid="clip"][data-id="V1-002"]')
                 page.keyboard.press("Shift+Delete")
                 d.wait_rev(rev2)
                 rev3 = d.get()["data"]["rev"]
@@ -209,13 +215,13 @@ def main() -> int:
                     cur = d.get()
                     if clips_of(cur, "V1") == base_clips:
                         break
-                    page.click("#btn-undo")
+                    page.click('[data-testid="undo"]')
                     redos_expected += 1
                     deadline = time.time() + 5
                     while time.time() < deadline:
                         if d.get()["data"]["rev"] > cur["data"]["rev"]:
                             break
-                        page.click("#btn-undo")
+                        page.click('[data-testid="undo"]')
                         time.sleep(0.25)
                         redos_expected += 1
                     assert redos_expected < 20, "undo 深度异常"
@@ -232,7 +238,7 @@ def main() -> int:
                 done = oplog_count(port, token, str(ws))
                 deadline = time.time() + 90
                 while done < target_ops and time.time() < deadline:
-                    page.click("#btn-redo")
+                    page.click('[data-testid="redo"]')
                     tick = time.time() + 10
                     while time.time() < tick:
                         cur = oplog_count(port, token, str(ws))
@@ -258,19 +264,22 @@ def main() -> int:
             with sync_playwright() as pw:
                 browser = pw.chromium.launch()
                 page = browser.new_page()
-                # 阻断 /events 长轮询:防自动刷新与本测试的行操作竞态(事件可见性
-                # 已由 M9-2 门禁单独覆盖)
-                page.route("**/events*", lambda route: route.abort())
+                # 阻断 /events 事件端点(SSE + 长轮询):防自动刷新与本测试的行操作竞态
+                # (事件可见性已由 e2e_events 单独覆盖)。精确正则只命中 /events 路径,
+                # 不误伤壳模块文件(如 /assets/js/core/event-bus.js)。
+                # EventSource 对 abort 走 onerror+CONNECTING(浏览器自带重连),
+                # 不会进入长轮询降级,双通道均静默重试,不阻塞装配。
+                page.route(re.compile(r"/events(\?.*)?$"), lambda route: route.abort())
                 d = Driver(page, port2, token, str(ws2))
                 d.goto()
-                page.click('#tabs button[data-tab="notes"]')
+                page.click('[data-testid="tab-notes"]')
 
                 t0 = time.time()
                 for i in range(3):
-                    page.fill("#note-body", f"第{i+1}处语速偏快")
-                    page.click("#note-create")
+                    page.fill('[data-testid="note-body"]', f"第{i+1}处语速偏快")
+                    page.click('[data-testid="note-create"]')
                     page.wait_for_function(
-                        f"document.querySelectorAll('#notes-open .row').length >= {i+1}", timeout=8000)
+                        f"document.querySelectorAll('[data-testid=\"notes-open\"] [data-testid=\"note-row\"]').length >= {i+1}", timeout=8000)
                 note_ids = [n["id"] for n in rpc(port2, token, "notes_list", {"root": str(ws2)})["data"]["notes"]
                             if n["state"] == "open"]
                 assert len(note_ids) == 3
@@ -290,7 +299,7 @@ def main() -> int:
                 while done < 3:
                     cur_open = [n2["id"] for n2 in rpc(port2, token, "notes_list", {"root": str(ws2)})["data"]["notes"]
                                 if n2["state"] == "open"]
-                    rows = page.query_selector_all("#notes-open .row")
+                    rows = page.query_selector_all('[data-testid="notes-open"] [data-testid="note-row"]')
                     row_ids = []
                     try:
                         for r0 in rows:

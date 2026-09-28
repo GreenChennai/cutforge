@@ -138,7 +138,7 @@ fn media_browse_lists_media_and_rejects_bad_dir() {
 fn mutation_classification() {
     for q in ["project_get", "timeline_get", "oplog_tail", "notes_list", "conflict_list",
               "render_probe", "stage_status", "media_probe", "media_browse", "capability_matrix",
-              "render_run", "render_progress", "project_new"] {
+              "render_run", "render_progress", "render_frame", "project_new"] {
         assert!(!produces_rev_mutation(q), "{q} 不应计入会话变更");
     }
     for w in ["clip_update", "clip_add", "clip_delete", "clip_split", "clip_move",
@@ -146,6 +146,29 @@ fn mutation_classification() {
               "transition_set", "motion_set", "bgm_set"] {
         assert!(produces_rev_mutation(w), "{w} 应计入会话变更");
     }
+}
+
+/// T2.4 门禁:render_frame 参数校验面(缺参/未知格式/无工程;协议完整,
+/// 错误码如实——不依赖 cutforge-render 二进制在位)。
+#[test]
+fn render_frame_param_guards() {
+    // 缺 root → PRECONDITION_FAILED(派发表统一 root 探针)
+    let r = dispatch("render_frame", &json!({}));
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "{r}");
+    // 缺 atMs → PRECONDITION_FAILED
+    let root = cutforge_io::tests_fixture("mcp-frame-guards").unwrap();
+    let root_s = root.to_string_lossy().to_string();
+    let r = dispatch("render_frame", &json!({"root": root_s}));
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "缺 atMs: {r}");
+    // 未知 format → PRECONDITION_FAILED
+    let r = dispatch("render_frame", &json!({"root": root_s, "atMs": 500, "format": "webp"}));
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "未知 format: {r}");
+    // 无工程 → NO_CONFIG
+    let nowhere = cutforge_io::fsutil::temp_dir("mcp-frame-noproject");
+    let r = dispatch("render_frame", &json!({"root": nowhere.to_string_lossy(), "atMs": 500}));
+    assert_eq!(r["code"], json!("NO_CONFIG"), "无工程必须 NO_CONFIG: {r}");
+    cutforge_io::fsutil::cleanup(&root);
+    cutforge_io::fsutil::cleanup(&nowhere);
 }
 
 /// 阶段三门禁:transition_set/motion_set 走 ClipPatch,逐字段落盘;bgm_set 走

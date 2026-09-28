@@ -2,197 +2,77 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CutForge 编辑器</title>
-<link rel="stylesheet" href="./style.css">
+<!-- 册二模块化壳(T2.1,ADR-0011 无构建 ESM):静态托管根别名只保 index.html,
+     全部子资源走 /assets/ 绝对路径;旧壳在 /assets/legacy/index.html(B-R1 回退期)。 -->
+<link rel="stylesheet" href="/assets/css/tokens.css">
+<link rel="stylesheet" href="/assets/css/base.css">
+<link rel="stylesheet" href="/assets/css/layout.css">
+<link rel="stylesheet" href="/assets/css/components.css">
 </head>
 <body>
-<!-- 顶部横幅区:token 变更提示(E6-2)/ 冲突停写(E8) -->
+<!-- 顶部横幅区:token 变更提示(E6-2)/ 冲突停写(E8)/ 契约错误折叠(v0.6) -->
 <div id="banner" hidden>
-  <div id="token-banner" class="banner-row warn" hidden></div>
-  <div id="conflict-banner" class="banner-row danger" hidden></div>
-  <div id="internal-banner" class="banner-row warn" hidden></div>
+  <div id="token-banner" class="banner-row warn" hidden data-testid="banner-token"></div>
+  <div id="conflict-banner" class="banner-row danger" hidden data-testid="banner-conflict"></div>
+  <div id="internal-banner" class="banner-row warn" hidden data-testid="banner-internal"></div>
 </div>
-<header>
+<header data-testid="topbar">
   <h1>CutForge</h1>
-  <span class="sub" id="session-info">连接中…</span>
+  <span class="sub" id="session-info" data-testid="session-info">连接中…</span>
   <span class="spacer"></span>
-  <button id="btn-project-new" title="新建空工程(向导)">＋ 新建工程</button>
+  <button id="btn-project-new" data-testid="project-new" title="新建空工程(向导)">＋ 新建工程</button>
   <span class="tb-sep"></span>
-  <button id="pv-to-start" title="跳到开头(Home)">⏮</button>
-  <button id="pv-play" title="空格">▶ 播放</button>
-  <button id="pv-to-end" title="跳到结尾(End)">⏭</button>
-  <span id="tb-time">0ms</span>
+  <button id="pv-to-start" data-testid="to-start" title="跳到开头(Home)">⏮</button>
+  <button id="pv-play" data-testid="play-toggle" title="空格">▶ 播放</button>
+  <button id="pv-to-end" data-testid="to-end" title="跳到结尾(End)">⏭</button>
+  <span id="tb-time" data-testid="tb-time">0ms</span>
   <span class="tb-sep"></span>
-  <label class="toggle"><input type="checkbox" id="magnet" checked> 磁吸(帧网格)</label>
-  <label class="toggle"><input type="checkbox" id="ripple"> 波纹删除(Shift+Del)</label>
-  <button id="btn-undo" title="Ctrl+Z">↩ 撤销</button>
-  <button id="btn-redo" title="Ctrl+Y">↪ 重做</button>
+  <label class="toggle"><input type="checkbox" id="magnet" checked data-testid="magnet"> 磁吸(帧网格)</label>
+  <label class="toggle"><input type="checkbox" id="ripple" data-testid="ripple-toggle"> 波纹删除(Shift+Del)</label>
+  <button id="btn-undo" data-testid="undo" title="Ctrl+Z">↩ 撤销</button>
+  <button id="btn-redo" data-testid="redo" title="Ctrl+Y">↪ 重做</button>
 </header>
-<nav id="tabs">
-  <button data-tab="timeline" class="active">时间线</button>
-  <button data-tab="notes">标注</button>
-  <button data-tab="diff">差异面板</button>
-  <button data-tab="conflicts">冲突</button>
+<nav id="tabs" data-testid="tabs">
+  <button data-tab="timeline" class="active" data-testid="tab-timeline">时间线</button>
+  <button data-tab="notes" data-testid="tab-notes">标注</button>
+  <button data-tab="diff" data-testid="tab-diff">差异面板</button>
+  <button data-tab="conflicts" data-testid="tab-conflicts">冲突</button>
 </nav>
-
 <main>
-  <!-- ============ 时间线 ============ -->
+  <!-- 面板内部结构由 js/panels/* 在装配期建入(T2.5);此处只留容器与 e2e 兼容锚点 -->
   <div id="tab-timeline" class="tab active">
-    <div id="toolbar">
-      <span id="sel-info">未选中片段:点击下方片段,或从左侧素材面板双击插入(S 分割 / Del 删除)</span>
-      <span>播放头 <b id="playhead-ms">0</b>ms</span>
-      <span>rev <b id="rev">-</b></span>
+    <div id="toolbar" data-testid="toolbar">
+      <span id="sel-info" data-testid="sel-info">未选中片段:点击下方片段,或从左侧素材面板双击插入(S 分割 / Del 删除)</span>
+      <span>播放头 <b id="playhead-ms" data-testid="playhead-ms">0</b>ms</span>
+      <span>rev <b id="rev" data-testid="rev">-</b></span>
     </div>
-    <!-- E8 工作台三栏:素材面板 | 预览+导出 | 分组检查器 -->
-    <div id="workbench">
-      <div id="media-panel" class="panel">
-        <h3>素材面板</h3>
-        <div class="media-dir-row">
-          <input type="text" id="media-dir" value="01_原始素材" title="工程内相对目录">
-          <button id="media-refresh" title="刷新列表">⟳</button>
-        </div>
-        <div id="media-list"><div class="empty-hint">加载中…</div></div>
-        <div class="hint">双击 = 插到匹配轨道的播放头(帧磁吸);或拖到下方轨道任意落点</div>
-      </div>
+    <div id="workbench" data-testid="workbench">
+      <div id="media-panel" class="panel" data-testid="media-panel"></div>
       <div id="pv-col">
-        <div id="preview">
-          <div id="pv-stage"><canvas id="pv-canvas" width="1080" height="1920"></canvas></div>
-          <div class="pv-hint">预览为画质代理:不含转场 / 特效 / 字幕烧录的最终效果;成片请用右侧导出(E2-6 诚实标注)</div>
-          <div id="pv-transport">
-            <button id="pv-frame-prev" title="←">← 一帧</button>
-            <button id="pv-frame-next" title="→">一帧 →</button>
-            <span id="pv-time">0.000s</span>
-          </div>
-          <div id="pv-media" hidden></div>
-        </div>
-        <div id="bgm-panel" class="panel">
-          <h3>背景乐 BGM(bgm_set,可撤销)</h3>
-          <label>音频路径 <input type="text" id="bgm-src" placeholder="01_原始素材/bgm.mp3 或素材面板点 BGM"></label>
-          <div class="bgm-row">
-            <label>音量(dB) <input type="number" id="bgm-gain" value="-18" step="1" max="0"></label>
-            <label class="toggle"><input type="checkbox" id="bgm-duck" checked> 人声闪避</label>
-            <label class="toggle"><input type="checkbox" id="bgm-loop" checked> 循环</label>
-          </div>
-          <div class="bgm-row">
-            <button id="bgm-apply">应用 BGM</button>
-            <button id="bgm-clear">清除</button>
-            <span id="bgm-state" class="dim">(未设置)</span>
-          </div>
-        </div>
-        <div id="export" class="panel">
-          <h3>导出(编辑器内出片,E5)</h3>
-          <label>后端
-            <select id="exp-backend">
-              <option value="cutforge">cutforge 内核(不依赖 CutFlow)</option>
-              <option value="ffmpeg">ffmpeg(CutFlow rs_render)</option>
-            </select>
-          </label>
-          <label>画幅(仅 ffmpeg 后端)
-            <select id="exp-ratio"><option>9x16</option><option>3x4</option><option>16x9</option></select>
-          </label>
-          <button id="exp-run">导出成片</button>
-          <div id="exp-progress" class="exp-progress"></div>
-          <h3>产物(06_成片输出)</h3>
-          <div id="exp-files"></div>
-        </div>
+        <div id="preview" data-testid="preview"></div>
+        <div id="bgm-panel" class="panel" data-testid="bgm-panel"></div>
+        <div id="export" class="panel" data-testid="export-panel"></div>
       </div>
-      <div id="inspector" class="panel">
-        <h3>检查器(分组)</h3>
-        <div id="insp-fields">未选中片段:点击时间线片段,或从左侧素材面板双击插入</div>
-        <div id="insp-groups"></div>
-        <button id="insp-apply" disabled title="改动生成可撤销的 Op(clip_update)">应用(clip_update)</button>
-        <button id="insp-dup" disabled title="复制选中片段到播放头(clip_duplicate)">复制到播放头</button>
-        <div id="insp-readonly" class="insp-readonly" hidden></div>
-        <span class="tb-sep"></span>
-        <button id="track-add-video">+视频轨</button>
-        <button id="track-add-audio">+音频轨</button>
-        <button id="track-add-text">+文本轨</button>
-      </div>
+      <div id="inspector" class="panel" data-testid="inspector"></div>
     </div>
-    <div id="timeline-wrap">
-      <div id="ruler"></div>
-      <div id="playhead"></div>
-      <div id="tracks"></div>
+    <div id="timeline-wrap" data-testid="timeline-wrap">
+      <div id="ruler" data-testid="ruler"></div>
+      <div id="tracks" data-testid="timeline-tracks"></div>
+      <canvas id="tl-overlay" data-testid="tl-overlay"></canvas>
+      <div id="playhead" data-testid="playhead"></div>
     </div>
   </div>
-
-  <!-- ============ 标注 ============ -->
-  <div id="tab-notes" class="tab">
-    <div class="panel">
-      <h3>新建标注(锚定当前选中片段 / 播放头)</h3>
-      <input type="text" id="note-body" placeholder="这里要怎么改?">
-      <button id="note-create">创建(notes_add)</button>
-    </div>
-    <div class="panel">
-      <h3>open 态标注</h3>
-      <div id="notes-open"></div>
-    </div>
-    <div class="panel">
-      <h3>孤儿标注(显式保留,不静默丢弃)</h3>
-      <div id="notes-orphans"></div>
-    </div>
-  </div>
-
-  <!-- ============ 差异面板 ============ -->
-  <div id="tab-diff" class="tab">
-    <div class="panel">
-      <h3>OpLog(AI 改了什么,逐字段可审计)</h3>
-      <label>actor
-        <select id="diff-actor">
-          <option value="">全部</option>
-          <option value="agent">agent(AI)</option>
-          <option value="user">user(人)</option>
-          <option value="script">script(脚本)</option>
-        </select>
-      </label>
-      <label>limit <input type="number" id="diff-limit" value="50" min="1" max="500"></label>
-      <button id="diff-refresh">刷新</button>
-      <button id="diff-undo-batch">一键撤销该批(undo ×N)</button>
-      <div id="diff-rows"></div>
-    </div>
-  </div>
-
-  <!-- ============ 冲突 ============ -->
-  <div id="tab-conflicts" class="tab">
-    <div class="panel">
-      <h3>冲突(存在冲突时停写;裁决后删除 .cutforge/conflicts/*.json)</h3>
-      <div id="conflict-rows"></div>
-    </div>
-  </div>
+  <div id="tab-notes" class="tab" data-testid="panel-notes"></div>
+  <div id="tab-diff" class="tab" data-testid="panel-diff"></div>
+  <div id="tab-conflicts" class="tab" data-testid="panel-conflicts"></div>
 </main>
-
-<!-- B11-2 新建工程向导(模态) -->
-<div id="wizard" class="wizard-mask" hidden>
-  <div class="wizard-card panel">
-    <h3>新建空工程(CutForge 可独立起步,不依赖 CutFlow)</h3>
-    <label>工程名 <input type="text" id="wiz-name" placeholder="my-first-cut"></label>
-    <label>画幅
-      <select id="wiz-ratio">
-        <option value="1080x1920">9:16 竖屏(1080×1920)</option>
-        <option value="1080x1440">3:4(1080×1440)</option>
-        <option value="1920x1080">16:9 横屏(1920×1080)</option>
-      </select>
-    </label>
-    <label>帧率
-      <select id="wiz-fps"><option>24</option><option>25</option><option selected>30</option><option>50</option><option>60</option></select>
-    </label>
-    <label>初始轨道
-      <span class="toggle"><input type="checkbox" id="wiz-tr-v" checked> 视频</span>
-      <span class="toggle"><input type="checkbox" id="wiz-tr-a" checked> 音频</span>
-      <span class="toggle"><input type="checkbox" id="wiz-tr-t"> 文本</span>
-    </label>
-    <div class="hint" id="wiz-hint">将在当前工程旁创建同名目录并生成 05_时间线工程/project.json;创建后用打印的命令打开它。</div>
-    <div class="wizard-actions">
-      <button id="wiz-create">创建</button>
-      <button id="wiz-cancel">取消</button>
-    </div>
-  </div>
-</div>
-
+<div id="wizard" class="wizard-mask" hidden data-testid="wizard"></div>
 <footer>
-  <div id="toasts"></div>
-  <span id="status" class="sr-only"></span>
+  <div id="toasts" data-testid="toasts" aria-live="polite"></div>
+  <span id="status" class="sr-only" data-testid="status" role="status"></span>
 </footer>
-<script src="./app.js"></script>
+<script type="module" src="/assets/js/main.js"></script>
 </body>
 </html>

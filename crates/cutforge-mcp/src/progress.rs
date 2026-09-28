@@ -42,6 +42,11 @@ pub(crate) fn existing_rel<'a>(root: &Path, rel: Option<&'a str>) -> Option<&'a 
 }
 
 fn spawn_render(root: &Path, ass: Option<&str>) -> std::process::Command {
+    spawn_render_extra(root, ass, &[])
+}
+
+/// spawn cutforge-render(共享二进制定位);extra = 附加 CLI 参数(单帧模式用)。
+fn spawn_render_extra(root: &Path, ass: Option<&str>, extra: &[&str]) -> std::process::Command {
     let mut cmd = match resolve_render_bin() {
         Some(p) => std::process::Command::new(p),
         None => std::process::Command::new("cutforge-render"),
@@ -50,6 +55,7 @@ fn spawn_render(root: &Path, ass: Option<&str>) -> std::process::Command {
     if let Some(a) = ass {
         cmd.arg("--ass").arg(a);
     }
+    cmd.args(extra);
     cmd
 }
 
@@ -164,5 +170,88 @@ pub(crate) fn render_progress(run_id: &str) -> Value {
             "error": j.error,
         })),
         None => envelope(false, "PRECONDITION_FAILED", &format!("未知 runId: {run_id}"), json!({})),
+    }
+}
+
+// ---------------- T2.4 单帧精确预览(render_frame) ----------------
+
+/// render_frame(T2.4「精确预览」的服务端支撑):渲染指定时间点的一帧合成画面
+/// (PNG/JPEG),含转场/叠加/字幕烧录的真实结果,消除预览与成片落差(R7)。
+/// 同步执行(单帧耗时可同步);不持工程锁、免开工作区(与 render_run 同口径,
+/// cutforge-render 只读 project.json)。产物落 `.cutforge/render-cache/frame/`
+/// (内容寻址:键 = 工作区指纹 fresh.rs + atMs 100ms 量化 + 画幅 + 渲染版本,
+/// 改一笔即 miss 不出陈旧帧);壳经 /media 以返回的 `media` 相对路径加载
+/// (帧缓存位于工程根内,/media 的 canonicalize 校验天然覆盖,零新增面)。
+pub(crate) fn render_frame_tool(root: &Path, args: &Value) -> Value {
+    let Some(at_ms) = args["atMs"].as_u64() else {
+        return envelope(false, "PRECONDITION_FAILED", "缺 atMs(时间线时间点,毫秒)", json!({}));
+    };
+    let fmt = match args["format"].as_str() {
+        None | Some("png") => "png",
+        Some("jpeg") => "jpeg",
+        Some(other) => {
+            return envelope(false, "PRECONDITION_FAILED", &format!("未知 format: {other}(允许 png/jpeg)"), json!({}))
+        }
+    };
+    if !cutforge_io::paths::has_project(root) {
+        return envelope(false, "NO_CONFIG",
+            "工程不存在(缺 05_时间线工程/project.json,兼容旧 05_ir/)", json!({}));
+    }
+    if resolve_render_bin().is_none() {
+        return render_missing_dep();
+    }
+    // ass 过滤在服务端(与 render/render_run 同口径):路径不存在时不烧录而非失败
+    let ass = existing_rel(root, args["ass"].as_str());
+    let extra: Vec<String> = vec!["--frame".into(), format!("{at_ms}"), "--format".into(), fmt.into()];
+    let extra_refs: Vec<&str> = extra.iter().map(|s| s.as_str()).collect();
+    let mut cmd = spawn_render_extra(root, ass, &extra_refs);
+    match cmd.output() {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            // 末行 JSON 完成事件优先;FRAME_OK 行兜底(接口与整片同风格)
+            let ev = text.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok())
+                .filter(|v| v.get("mode").and_then(|m| m.as_str()) == Some("frame"));
+            let frame_path = ev
+                .as_ref()
+                .and_then(|v| v.get("frame"))
+                .and_then(|f| f.as_str())
+                .map(PathBuf::from)
+                .or_else(|| text.lines().rev().find_map(|l| l.strip_prefix("FRAME_OK ").map(PathBuf::from)));
+            let Some(frame_path) = frame_path else {
+                return envelope(false, "INTERNAL", "cutforge-render 单帧输出不可解析",
+                    json!({"stdout": text.trim()}));
+            };
+            let at_out = ev.as_ref().and_then(|v| v.get("atMs")).and_then(|a| a.as_u64()).unwrap_or(at_ms);
+            let cached = ev.as_ref().and_then(|v| v.get("cached")).and_then(|c| c.as_bool()).unwrap_or(false);
+            let key = ev.as_ref().and_then(|v| v.get("key")).and_then(|k| k.as_str()).unwrap_or_default();
+            // media 相对路径(工程根内;正斜杠约定)→ 壳直接 /media?path=… 加载
+            let media = frame_path
+                .strip_prefix(root)
+                .unwrap_or(&frame_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            envelope(true, "OK", if cached { "帧缓存命中" } else { "帧已渲染" }, json!({
+                "backend": "cutforge",
+                "atMs": at_out,
+                "format": fmt,
+                "cached": cached,
+                "key": key,
+                "path": frame_path.to_string_lossy(),
+                "media": media,
+            }))
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let msg = err.trim().strip_prefix("FRAME_FAIL: ").unwrap_or(err.trim());
+            let code = if msg.starts_with("NO_CONFIG:") {
+                "NO_CONFIG"
+            } else if msg.starts_with("PRECONDITION:") {
+                "PRECONDITION_FAILED"
+            } else {
+                "INTERNAL"
+            };
+            envelope(false, code, &msg.chars().take(300).collect::<String>(), json!({}))
+        }
+        Err(e) => envelope(false, "DEP_MISSING", &format!("cutforge-render 不可用: {e}"), json!({})),
     }
 }

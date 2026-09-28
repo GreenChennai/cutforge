@@ -1,6 +1,15 @@
-/* 组件:时间线(D-B2:标尺 canvas 重绘层 + clip/轨头 DOM 交互层;几何为 e2e 兼容值) */
+/* 组件:时间线(D-B2:标尺 canvas 重绘层 + clip/轨头 DOM 交互层;几何为 e2e 兼容值)
+ * T3.2 微交互:把手浮现/选中光晕/吸附脉冲/拖拽落点反馈;T3.3:框选/气泡/轨高亮。
+ * 拖拽过程零动画(直接跟手):几何变化不挂 transition,只有状态色走 fast 过渡。 */
 #toolbar { display: flex; gap: var(--cf-s8); margin-bottom: var(--cf-s2); color: var(--cf-dim); }
 #toolbar b { color: var(--cf-fg); }
+
+/* rev 落盘脉冲点(保存中→已保存:rev 翻牌时 js 重放 cf-dot-pulse) */
+.rev-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--cf-line-strong); vertical-align: 1px; margin-left: var(--cf-s1);
+}
+.rev-dot.pulse { background: var(--cf-dot-ok); animation: cf-dot-pulse var(--cf-dur-slow) var(--cf-ease); }
 
 #timeline-wrap {
   position: relative;
@@ -11,19 +20,24 @@
 #ruler {
   position: relative; height: var(--cf-ruler-h);
   border-bottom: 1px solid var(--cf-line);
-  cursor: crosshair; background: #141824;
+  cursor: crosshair; background: var(--cf-ruler-bg);
 }
 #ruler canvas {
   position: sticky; left: 0; display: block;
   height: var(--cf-ruler-h);
 }
 
-/* 轨道行 */
+/* 轨道行(偶数轨微差底:表面分层,避免大面积死灰) */
 .track {
   position: relative; height: var(--cf-track-h);
   border-bottom: 1px solid var(--cf-line);
+  transition: background-color var(--cf-dur-fast) var(--cf-ease);
 }
+.track:nth-child(even) { background: var(--cf-lane-alt-bg); }
 .track.drop-hint { outline: 2px dashed var(--cf-accent); outline-offset: -2px; }
+/* 拖拽目标轨高亮(T3.3):兼容落点=强调描边;非法轨型=红态 */
+.track.drop-target { background: var(--cf-lane-bg); box-shadow: inset 0 0 0 2px var(--cf-accent); }
+.track.drop-invalid { box-shadow: inset 0 0 0 2px var(--cf-ghost-invalid-line); }
 .track.hidden-by-user .clip { display: none; }  /* ephemeral.hiddenTracks:仅视图隐藏 */
 
 /* 轨头(sticky:与时间线横向滚动自动同步,零 js)。宽度锁 74px + overflow:hidden:
@@ -32,56 +46,97 @@
   position: sticky; left: 0; z-index: var(--cf-z-lane-label);
   display: inline-flex; align-items: center; gap: var(--cf-s1);
   width: var(--cf-lane-label-w); height: 100%;
-  background: #202636; color: #8fa8d8; font-weight: 600; font-size: var(--cf-fs-s);
+  background: var(--cf-lane-label-bg); color: var(--cf-lane-fg);
+  font-weight: 600; font-size: var(--cf-fs-s);
   padding: var(--cf-s1); vertical-align: top; overflow: hidden; box-sizing: border-box;
 }
 .lane-label .lane-kind { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lane-eye {
   flex: 0 0 auto; border: none; background: transparent; padding: 0;
-  color: #8fa8d8; cursor: pointer; line-height: 1; width: 14px; height: 14px;
+  color: var(--cf-lane-fg); cursor: pointer; line-height: 1; width: 14px; height: 14px;
+  transition: color var(--cf-dur-fast) var(--cf-ease);
 }
+.lane-eye:hover { color: var(--cf-fg); }
 .lane-eye .icon { width: 12px; height: 12px; }
-.lane-eye[aria-pressed="false"] { color: #4a5468; }
+.lane-eye[aria-pressed="false"] { color: var(--cf-lane-fg-off); }
 .lane-label .badge { flex: 0 1 auto; min-width: 0; max-width: 30px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* clip 块(DOM 交互层:命中/选择/trim 热区) */
+/* clip 块(DOM 交互层:命中/选择/trim 热区)
+ * 选中光晕走 outline-color/box-shadow 过渡(绘制,非布局);几何零过渡。 */
 .clip {
   position: absolute; top: var(--cf-s2); height: 32px;
-  border-radius: var(--cf-r-m); border: 1px solid rgba(255,255,255,.12);
+  border-radius: var(--cf-r-m); border: 1px solid var(--cf-clip-border);
   background: linear-gradient(180deg, var(--cf-video-1), var(--cf-video-2));
   color: var(--cf-fg-bright); font-size: var(--cf-fs-s);
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   padding: 2px var(--cf-s2); cursor: grab; user-select: none;
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,.1);
+  box-shadow: inset 0 0 0 1px var(--cf-clip-inset), var(--cf-shadow-1);
+  transition: box-shadow var(--cf-dur-fast) var(--cf-ease),
+              outline-color var(--cf-dur-fast) var(--cf-ease),
+              filter var(--cf-dur-fast) var(--cf-ease);
 }
-.clip.audio { background: linear-gradient(180deg, var(--cf-audio-1), var(--cf-audio-2)); color: #eafff2; }
-.clip.text { background: linear-gradient(180deg, var(--cf-textk-1), var(--cf-textk-2)); }
+.clip:hover { filter: brightness(1.1); }
+.clip.audio { background: linear-gradient(180deg, var(--cf-audio-1), var(--cf-audio-2)); color: var(--cf-clip-fg-audio); }
+.clip.text { background: linear-gradient(180deg, var(--cf-textk-1), var(--cf-textk-2)); color: var(--cf-clip-fg-text); }
 .clip.selected {
   outline: 2px solid var(--cf-select); outline-offset: -1px;
-  box-shadow: 0 0 10px rgba(255,215,106,.45);
+  box-shadow: 0 0 10px var(--cf-select-glow);
 }
 .clip .clip-name { pointer-events: none; }
+/* trim 边缘把手:hover/选中时浮现(160ms,opacity) */
 .clip .edge {
   position: absolute; top: 0; height: 100%; width: var(--cf-edge-w);
-  cursor: ew-resize; background: rgba(255,255,255,.15);
+  cursor: ew-resize; background: var(--cf-clip-edge);
+  opacity: 0; transition: opacity var(--cf-dur-base) var(--cf-ease),
+                          background-color var(--cf-dur-fast) var(--cf-ease);
 }
+.clip:hover .edge, .clip.selected .edge, .clip.trim-preview .edge { opacity: 1; }
+.clip .edge:hover, .clip.trim-preview .edge { background: var(--cf-clip-edge-hover); }
 .clip .edge-l { left: 0; border-radius: var(--cf-r-m) 0 0 var(--cf-r-m); }
 .clip .edge-r { right: 0; border-radius: 0 var(--cf-r-m) var(--cf-r-m) 0; }
 .clip.trim-preview { opacity: .92; }  /* trim 拖拽中的临时变形(ephemeral,松手以投影为准) */
 
-/* 拖拽 ghost(ephemeral.dragGhost:临时投影,不进 IR/不落盘/不参与撤销,ADR-0013) */
+/* 音频波形小画布(装饰纹理;入场淡入一次) */
+.clip canvas.clip-wave { animation: cf-fade-in var(--cf-dur-base) var(--cf-ease-enter); }
+
+/* 拖拽 ghost(ephemeral.dragGhost:临时投影,不进 IR/不落盘/不参与撤销,ADR-0013)
+ * 跟手零动画;落点阴影(--cf-shadow-drop);非法落点红态(.invalid) */
 .clip.ghost {
   pointer-events: none; opacity: .75; z-index: var(--cf-z-playhead);
   background: var(--cf-ghost); outline: 1px dashed var(--cf-accent);
+  box-shadow: var(--cf-shadow-drop);
+}
+.clip.ghost.invalid {
+  background: var(--cf-ghost-invalid-bg);
+  outline: 1px dashed var(--cf-ghost-invalid-line);
+  cursor: not-allowed;
 }
 
-/* 播放头:单 DOM 线,更新走 transform(合成器路径,零重排;ADR-0012 决策 3) */
+/* 框选矩形(T3.3:空白拉框多选;几何由 js 直接设置——跟手,非动画) */
+#marquee-box {
+  position: absolute; top: 0; left: 0; z-index: var(--cf-z-marquee);
+  border: 1px solid var(--cf-accent); background: var(--cf-marquee-bg);
+  pointer-events: none; display: none;
+}
+
+/* 吸附对齐脉冲(T3.2:吸附瞬间 80ms 一次性;定位走 transform) */
+#snap-pulse {
+  position: absolute; top: var(--cf-ruler-h); left: 0;
+  width: 2px; height: calc(100% - var(--cf-ruler-h));
+  background: var(--cf-accent); pointer-events: none; opacity: 0;
+  z-index: var(--cf-z-snap); will-change: transform, opacity;
+}
+#snap-pulse.pulse-on { animation: cf-snap-pulse var(--cf-dur-fast) var(--cf-ease); }
+
+/* 播放头:单 DOM 线,更新走 transform(合成器路径,零重排;ADR-0012 决策 3)
+ * .smooth 仅离散 seek 一次性挂载(120ms 过渡),播放/scrub 路径绝不挂载。 */
 #playhead {
   position: absolute; top: var(--cf-ruler-h); left: 0;
   width: 2px; height: calc(100% - var(--cf-ruler-h));
   background: var(--cf-playhead); pointer-events: none;
   z-index: var(--cf-z-playhead); will-change: transform;
 }
+#playhead.smooth { transition: transform 120ms var(--cf-ease); }
 
 /* overlay canvas:吸附线等瞬时指示。视口宽度画布,横向"伪 sticky":
  * js 按滚动偏移做 translateX + 重画(绝对定位避开流内布局;仅拖拽期重画) */

@@ -1,0 +1,60 @@
+/* 动效基座(T3.2):关键帧库 + 降噪纪律 + reduced-motion 全量降级。
+ *
+ * 纪律(C-R1 / ADR-0014):
+ * - 一律 transform/opacity(filter 亮度仅用于列表 hover;禁 width/left/top/height 动画);
+ * - 同屏并发入场动画 ≤3:全部关键帧都是 ≤240ms 的一次性短动效,无循环动画
+ *   (唯一例外:导出进行中的不确定进度条,单元素);
+ * - 拖拽过程零动画(直接跟手):ghost/trim 变形不挂 transition,见 gestures.js;
+ * - 列表 hover 只做亮度变化(filter: brightness),不做位移。
+ */
+
+/* ---- 通用关键帧 ---- */
+@keyframes cf-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes cf-rise-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cf-dialog-in {
+  from { opacity: 0; transform: scale(.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes cf-slide-down-in {
+  from { opacity: 0; transform: translateY(-100%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes cf-expand-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* 吸附对齐脉冲(80ms 一次性;挂在 #snap-pulse 上,transform/opacity) */
+@keyframes cf-snap-pulse {
+  0% { opacity: .95; transform: translateX(var(--cf-snap-x, 0px)) scaleY(1); }
+  100% { opacity: 0; transform: translateX(var(--cf-snap-x, 0px)) scaleY(.7); }
+}
+/* rev 落盘脉冲点(一次性放大淡出) */
+@keyframes cf-dot-pulse {
+  0% { box-shadow: 0 0 0 0 var(--cf-dot-glow); }
+  100% { box-shadow: 0 0 0 6px transparent; }
+}
+/* 导出进行中:不确定进度(单元素 transform 循环,唯一循环豁免) */
+@keyframes cf-progress-indet {
+  from { transform: translateX(-120%); }
+  to { transform: translateX(380%); }
+}
+
+/* ---- 一次性入场工具类(js 触发重放用:先移除类 → 强制回流 → 再加回)---- */
+.cf-anim-rise { animation: cf-rise-in var(--cf-dur-base) var(--cf-ease-enter) both; }
+.cf-anim-expand { animation: cf-expand-in var(--cf-dur-base) var(--cf-ease-enter) both; }
+
+/* ---- reduced-motion 全量降级(一处总控:关闭全部过渡与动画)---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

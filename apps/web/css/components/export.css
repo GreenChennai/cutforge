@@ -1,4 +1,6 @@
-/* 组件:导出面板(双后端 + 剪映草稿) */
+/* 组件:导出面板(双后端 + 剪映草稿)
+ * T3.2 微交互:进度条平滑——进行中为不确定进度(transform 循环,唯一循环豁免),
+ * 完成即满格淡入、失败转红;无跳变(内核暂无百分比下发,诚实口径见 micro-interactions.md)。 */
 #export { min-width: 280px; flex: 0 0 320px; }
 #export label { display: flex; gap: var(--cf-s2); align-items: center; margin: var(--cf-s2) 0; }
 #export select { flex: 1; }
@@ -7,4 +9,21 @@
   color: var(--cf-dim); font-family: var(--cf-font-mono); font-size: var(--cf-fs-m);
   white-space: pre-wrap; min-height: 18px; margin: var(--cf-s2) 0;
 }
+.exp-bar {
+  position: relative; display: block; height: 4px; border-radius: var(--cf-r-pill);
+  background: var(--cf-panel-deep); overflow: hidden; margin-bottom: var(--cf-s1);
+}
+.exp-bar-fill {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 32%;
+  border-radius: var(--cf-r-pill); background: var(--cf-accent);
+  transform: translateX(-120%); opacity: 0;
+  transition: opacity var(--cf-dur-base) var(--cf-ease);
+}
+.exp-bar.active .exp-bar-fill { opacity: 1; animation: cf-progress-indet 1.2s linear infinite; }
+.exp-bar.ok .exp-bar-fill {
+  width: 100%; background: var(--cf-ok-fg); transform: none; opacity: 1;
+  transition: opacity var(--cf-dur-base) var(--cf-ease);
+}
+.exp-bar.err .exp-bar-fill { width: 100%; background: var(--cf-danger); transform: none; opacity: 1; }
+.exp-bar.idle .exp-bar-fill { opacity: 0; }
 #exp-files { max-height: 160px; overflow-y: auto; color: var(--cf-dim); font-size: var(--cf-fs-m); }

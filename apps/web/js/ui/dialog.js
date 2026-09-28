@@ -14,7 +14,10 @@ export function openDialog(opts) {
     class: "cf-mask wizard-mask", id: opts.id || null, testid: opts.id || "dialog",
     role: "presentation",
   });
-  const card = h("div", { class: "cf-dialog wizard-card panel", role: "dialog", "aria-modal": "true", "aria-label": opts.title });
+  const card = h("div", {
+    class: "cf-dialog wizard-card panel", role: "dialog", "aria-modal": "true",
+    "aria-label": opts.title, tabindex: "-1",
+  });
   card.appendChild(h("h3", null, [opts.title]));
   const body = h("div", { class: "cf-dialog-body" });
   card.appendChild(body);
@@ -49,9 +52,10 @@ export function openDialog(opts) {
   opts.build(body);
   document.body.appendChild(mask);
   openStack.push(api);
-  // 初始焦点:第一个可聚焦元素
+  // 初始焦点:第一个可聚焦元素;一个都没有 → 卡片自身(tabindex=-1 兜底,焦点不出模态)
   const first = card.querySelector("input, select, textarea, button");
   if (first) first.focus();
+  else card.focus();
   return api;
 }
 

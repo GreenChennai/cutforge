@@ -1,32 +1,52 @@
-/* CutForge 设计 token 层(T2.1,册三 T3.1 主题化由本层供数)。
- * 纪律:组件 css 一律引用 var(--cf-*),不得写裸色值/裸间距。 */
+/* CutForge 设计 token 层(册三 T3.1 重写:原始层 → 语义层 → 组件层;ADR-0014 仅深色)。
+ *
+ * 层次纪律:
+ * - 原始层(primitive):灰阶/色相档位、字体、字号、间距、圆角、阴影、动效时长/缓动——
+ *   全仓唯一允许出现裸色值的文件(check-shell-purity R5 强制);
+ * - 语义层(semantic):bg/surface/text/state 等抽象名,组件不得直接引用原始层色板;
+ * - 组件层(component):button/clip/track/input 等专用 token,组件 css 一律引用 var(--cf-*)。
+ * 动效纪律(T3.2):一律 transform/opacity 合成器路径;时长梯度 fast 80 / base 160 / slow 240;
+ * prefers-reduced-motion 在 motion.css 一处总控全量降级。
+ *
+ * == 对比度速查(WCAG 2.1 AA;脚本计算,全表见 docs/design/contrast-table.md)==
+ * 主文本/面板 13.7 · 次级文本/面板 6.3 · 次级文本/浮层 5.6 · accent/面板 6.1
+ * 按钮字/按钮底 11.5 · danger 字/横幅底 7.0 · warn 字/横幅底 8.0 · ok 字/ok 底 8.2
+ * 轨头字/轨头底 7.5 · clip 字/视频面 5.4 · clip 字/音频面 4.8 · clip 字/文本面 5.0
+ * 播放头/标尺底 5.9(图形) · 选中描边/轨面 ≥4.3(图形) · 轨头关/轨头底 3.2(图形)
+ * ——正文全部 ≥4.5:1,大字/图形全部 ≥3:1。
+ */
 :root {
-  /* ---- 色彩:基底 ---- */
-  --cf-bg: #14161a;            /* 全局底色 */
-  --cf-panel: #1a1f2c;         /* 面板底 */
-  --cf-panel-deep: #12151f;    /* 输入/内嵌区底 */
-  --cf-line: #2c313a;          /* 分隔线 */
-  --cf-line-soft: #2a3040;     /* 圆角卡片描边 */
-  --cf-fg: #dfe3ea;            /* 主文本 */
-  --cf-fg-bright: #eaf0ff;     /* clip 上文本 */
-  --cf-dim: #8b93a1;           /* 次级文本 */
-  --cf-accent: #4da3ff;        /* 强调(选中/链接) */
-  --cf-accent-soft: #9fc1ff;   /* 面板标题/次强调 */
-  --cf-danger: #c25b5b;
-  --cf-warn-fg: #e6c35c;
-  --cf-warn-bg: #4a3d1e;
-  --cf-warn-line: #6a5a2e;
-  --cf-danger-fg: #e68a8a;
-  --cf-danger-bg: #4a1e1e;
-  --cf-danger-line: #6a2e2e;
-  --cf-playhead: #ff5c5c;      /* 播放头(不可与选中混淆) */
-  --cf-select: #ffd76a;        /* 选中描边 */
+  /* ================= 一、原始层 ================= */
 
-  /* ---- 色彩:clip 语义轨型 ---- */
-  --cf-video-1: #2f5fa8; --cf-video-2: #24487e;
-  --cf-audio-1: #2c7a4f; --cf-audio-2: #1f5c3a;
-  --cf-textk-1: #a08a2c; --cf-textk-2: #7d6a1f;
-  --cf-ghost: rgba(77, 163, 255, .35);   /* ephemeral 拖拽 ghost */
+  /* ---- 灰阶(类达芬奇蓝灰,950 最深 → 100 最浅)---- */
+  --cf-gray-950: #0b0d12;
+  --cf-gray-900: #11141c;
+  --cf-gray-850: #161a24;
+  --cf-gray-800: #1c2130;
+  --cf-gray-750: #232a3b;
+  --cf-gray-700: #2b3244;
+  --cf-gray-600: #39435c;
+  --cf-gray-500: #4c5878;
+  --cf-gray-400: #687591;
+  --cf-gray-300: #98a2b8;
+  --cf-gray-200: #c4cbda;
+  --cf-gray-100: #e9edf5;
+
+  /* ---- 色相档位(强调/状态/轨型)---- */
+  --cf-blue-500: #4da3ff;  --cf-blue-300: #9cc6ff;  --cf-blue-700: #2c3650;
+  --cf-red-450: #ff8f85;   --cf-red-400: #ff8f8f;   --cf-red-600: #ff5f56;
+  --cf-amber-400: #f0c674; --cf-amber-300: #ffd76a;
+  --cf-green-450: #8ad4a4;
+  --cf-violet-300: #c9a7ff;
+
+  /* ---- 字体/字号/行高(界面系统栈 + 时间码等宽)---- */
+  --cf-font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --cf-font-mono: Consolas, "Cascadia Mono", monospace;
+  --cf-fs-xs: 10px;  --cf-lh-xs: 1.3;
+  --cf-fs-s: 11px;   --cf-lh-s: 1.35;
+  --cf-fs-m: 12px;   --cf-lh-m: 1.45;
+  --cf-fs-n: 13px;   --cf-lh-n: 1.5;
+  --cf-fs-l: 16px;   --cf-lh-l: 1.4;
 
   /* ---- 间距(4 基准)---- */
   --cf-s1: 4px; --cf-s2: 6px; --cf-s3: 8px; --cf-s4: 10px;
@@ -35,21 +55,139 @@
   /* ---- 圆角 ---- */
   --cf-r-s: 4px; --cf-r-m: 6px; --cf-r-l: 10px; --cf-r-pill: 8px;
 
-  /* ---- 字号/字体 ---- */
-  --cf-fs-xs: 10px; --cf-fs-s: 11px; --cf-fs-m: 12px; --cf-fs-n: 13px; --cf-fs-l: 16px;
-  --cf-font-ui: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-  --cf-font-mono: Consolas, monospace;
+  /* ---- 阴影(深色系:纯黑基 + 低透明度)---- */
+  --cf-shadow-1: 0 1px 3px rgba(0, 0, 0, .35);    /* 卡片静置 */
+  --cf-shadow-2: 0 8px 24px rgba(0, 0, 0, .5);    /* 菜单/浮层 */
+  --cf-shadow-3: 0 12px 40px rgba(0, 0, 0, .55);  /* 模态 */
+  --cf-shadow-drop: 0 6px 16px rgba(0, 0, 0, .45); /* 拖拽落点 */
 
-  /* ---- 动效时长(册三动效体系由本层供数)---- */
-  --cf-dur-fast: 80ms;   /* 悬停/按压反馈 */
-  --cf-dur-med: 160ms;   /* 面板开合/toast */
-  --cf-dur-slow: 320ms;  /* 模态/页面级过渡 */
-  --cf-ease: cubic-bezier(.2, .7, .3, 1);
+  /* ---- 动效时长梯度(T3.2;合成器路径 transform/opacity 专用)---- */
+  --cf-dur-fast: 80ms;   /* hover/press/吸附脉冲 */
+  --cf-dur-base: 160ms;  /* 面板展开/toast/把手浮现 */
+  --cf-dur-slow: 240ms;  /* 模态/页面级过渡 */
+  --cf-dur-med: var(--cf-dur-base); /* 兼容别名(册二名),新代码用 base */
+
+  /* ---- 动效缓动 ---- */
+  --cf-ease: cubic-bezier(.2, 0, 0, 1);         /* 标准:状态变化 */
+  --cf-ease-enter: cubic-bezier(.16, 1, .3, 1); /* 入场:快进缓出 */
+  --cf-ease-exit: cubic-bezier(.4, 0, 1, 1);    /* 出场:加速离场 */
+
+  /* ================= 二、语义层 ================= */
+
+  /* ---- 表面(底 → 面板 → 浮层,三层分明)---- */
+  --cf-bg: var(--cf-gray-900);            /* 全局底色 */
+  --cf-panel: var(--cf-gray-800);         /* 面板底 */
+  --cf-panel-deep: var(--cf-gray-850);    /* 输入/内嵌区底 */
+  --cf-elevated: var(--cf-gray-750);      /* 浮层/hover 面 */
+  --cf-sunken: var(--cf-gray-950);        /* 凹陷面(舞台/气泡)*/
+
+  /* ---- 线 ---- */
+  --cf-line: var(--cf-gray-700);          /* 分隔线 */
+  --cf-line-soft: var(--cf-gray-800);     /* 圆角卡片描边 */
+  --cf-line-strong: var(--cf-gray-600);   /* 强描边(输入/按钮)*/
+
+  /* ---- 文本 ---- */
+  --cf-fg: var(--cf-gray-100);            /* 主文本 */
+  --cf-fg-bright: #eef4ff;                /* clip 上文本 */
+  --cf-dim: var(--cf-gray-300);           /* 次级文本 */
+
+  /* ---- 状态色 ---- */
+  --cf-accent: var(--cf-blue-500);        /* 强调(选中/链接/吸附)*/
+  --cf-accent-soft: var(--cf-blue-300);   /* 面板标题/次强调 */
+  --cf-danger: #ef7c74;                   /* 危险(徽标/非法落点)*/
+  --cf-danger-fg: var(--cf-red-400);
+  --cf-danger-bg: #3a1d21;
+  --cf-danger-line: #6b2f35;
+  --cf-warn-fg: var(--cf-amber-400);
+  --cf-warn-bg: #39311d;
+  --cf-warn-line: #6b5a2f;
+  --cf-ok-fg: var(--cf-green-450);
+  --cf-ok-bg: #16301f;
+  --cf-playhead: var(--cf-red-600);       /* 播放头(不可与选中混淆)*/
+  --cf-select: var(--cf-amber-300);       /* 选中描边 */
+
+  /* ---- clip 语义轨型 ---- */
+  --cf-video-1: #38659f; --cf-video-2: #27497c;
+  --cf-audio-1: #2f7d52; --cf-audio-2: #1f5c3c;
+  --cf-textk-1: #82691f; --cf-textk-2: #5f4d16;
+  --cf-clip-fg: var(--cf-fg-bright);       /* 视频片段文本 */
+  --cf-clip-fg-audio: #eafff2;             /* 音频片段文本 */
+  --cf-clip-fg-text: #fff8e0;              /* 文本片段文本 */
+  --cf-ghost: rgba(77, 163, 255, .35);    /* ephemeral 拖拽 ghost */
+
+  /* ---- 瞬时叠加(半透明;canvas 与 css 共用)---- */
+  --cf-mask: rgba(5, 7, 12, .62);              /* 模态遮罩 */
+  --cf-snap-line: rgba(77, 163, 255, .85);     /* 吸附指示线(canvas)*/
+  --cf-marker: var(--cf-amber-300);            /* 会话标记旗标(canvas;T3.4)*/
+  --cf-wave-line: rgba(255, 255, 255, .35);    /* 波形纹理 */
+  --cf-select-glow: rgba(255, 215, 106, .4);   /* 选中光晕 */
+  --cf-marquee-bg: rgba(77, 163, 255, .1);     /* 框选填充 */
+  --cf-stage: #000000;                          /* 预览舞台 */
+
+  /* ================= 三、组件层 ================= */
+
+  /* ---- button ---- */
+  --cf-btn-bg: var(--cf-gray-750);
+  --cf-btn-fg: #dce6ff;
+  --cf-btn-border: var(--cf-gray-600);
+  --cf-btn-hover: var(--cf-blue-700);
+  --cf-btn-active-shade: .88;              /* :active 亮度系数(filter 用)*/
+
+  /* ---- input ---- */
+  --cf-input-fg: #e6ecff;
+  --cf-input-border: var(--cf-gray-600);
+
+  /* ---- 顶栏/页签(chrome)---- */
+  --cf-chrome-grad-a: #1a2030;
+  --cf-chrome-grad-b: #151a26;
+  --cf-tab-active-bg: var(--cf-gray-750);
+  --cf-tab-active-fg: var(--cf-blue-300);
+
+  /* ---- clip/track(时间线)---- */
+  --cf-clip-border: rgba(255, 255, 255, .14);
+  --cf-clip-inset: rgba(255, 255, 255, .1);
+  --cf-clip-edge: rgba(255, 255, 255, .16);
+  --cf-clip-edge-hover: rgba(255, 255, 255, .38);
+  --cf-lane-bg: var(--cf-panel-deep);
+  --cf-lane-alt-bg: #141826;               /* 偶数轨微差底(层次)*/
+  --cf-lane-label-bg: #202636;
+  --cf-lane-fg: #a9b7d6;
+  --cf-lane-fg-off: #66738f;
+  --cf-ghost-invalid-bg: rgba(239, 124, 116, .28);
+  --cf-ghost-invalid-line: var(--cf-danger);
+  --cf-ruler-bg: #131826;
+  --cf-ruler-minor: #262d3f;
+  --cf-ruler-major: #3a4358;
+  --cf-ruler-text: #7a8aa8;
+
+  /* ---- 提示三件套(气泡/菜单/工具提示)---- */
+  --cf-bubble-bg: var(--cf-sunken);
+  --cf-bubble-fg: var(--cf-gray-200);
+  --cf-bubble-line: var(--cf-line-strong);
+  --cf-menu-bg: #202838;
+  --cf-menu-hover: var(--cf-blue-700);
+  --cf-tip-bg: #0e1118;
+
+  /* ---- toast/横幅/徽标 ---- */
+  --cf-toast-bg: #22303c;
+  --cf-toast-err-bg: #3c2222;
+  --cf-badge-bg: var(--cf-gray-700);
+  --cf-badge-video: var(--cf-blue-300);
+  --cf-badge-audio: var(--cf-green-450);
+  --cf-badge-image: var(--cf-violet-300);
+
+  /* ---- 撤销/保存脉冲点(rev 翻牌处)---- */
+  --cf-dot-ok: var(--cf-green-450);
+  --cf-dot-glow: rgba(138, 212, 164, .5);
+
+  /* ================= 结构 token(非视觉)================= */
 
   /* ---- 层级 ---- */
   --cf-z-lane-label: 2;
   --cf-z-playhead: 3;
-  --cf-z-banner: 5;
+  --cf-z-snap: 4;
+  --cf-z-marquee: 5;
+  --cf-z-banner: 6;
   --cf-z-tooltip: 40;
   --cf-z-menu: 45;
   --cf-z-dialog: 50;
@@ -59,4 +197,6 @@
   --cf-ruler-h: 22px;
   --cf-lane-label-w: 74px;
   --cf-edge-w: 7px;          /* clip 左右 trim 热区宽 */
+  --cf-autoscroll-px: 60px;  /* 拖拽自动卷入的视口边缘带宽 */
+  --cf-bubble-max-w: 180px;
 }

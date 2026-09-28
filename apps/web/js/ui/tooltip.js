@@ -5,7 +5,10 @@ let tip = null;
 let timer = null;
 
 export function mountTooltip() {
-  tip = h("div", { class: "cf-tooltip", role: "tooltip", testid: "tooltip" });
+  // 空单例常驻态挂 aria-hidden,免被读屏当作无名字提示原语;show() 解除,hide() 复挂。
+  tip = h("div", {
+    class: "cf-tooltip", role: "tooltip", "aria-hidden": "true", testid: "tooltip",
+  });
   document.body.appendChild(tip);
   document.addEventListener("mouseover", onOver);
   document.addEventListener("mousedown", hide, true);
@@ -26,6 +29,7 @@ function onOver(e) {
 function show(text, anchor) {
   if (!tip) return;
   tip.textContent = text;
+  tip.removeAttribute("aria-hidden");
   tip.classList.add("show");
   const rect = anchor.getBoundingClientRect();
   const w = tip.getBoundingClientRect().width;
@@ -35,5 +39,8 @@ function show(text, anchor) {
 
 function hide() {
   clearTimeout(timer);
-  if (tip) tip.classList.remove("show");
+  if (tip) {
+    tip.classList.remove("show");
+    tip.setAttribute("aria-hidden", "true");
+  }
 }

@@ -104,9 +104,11 @@ export const timelineStore = createStore("timeline", {
   clips: [], rev: null,
 });
 
-/** 选择:选中集/播放头/入出点(纯客户端会话态;播放头不是内核状态)。 */
+/** 选择:选中集/播放头/入出点(纯客户端会话态;播放头不是内核状态)。
+ * clipId 是主选中(锚点,兼容单选语义);clipIds 是框选/加选的扩展集(T3.3),
+ * 两者都只影响视图高亮与作用域命令,不进投影。 */
 export const selectionStore = createStore("selection", {
-  clipId: null, playheadMs: 0, inMs: null, outMs: null,
+  clipId: null, clipIds: [], playheadMs: 0, inMs: null, outMs: null,
 });
 
 /** 播放:播放态/速度(rAF 时钟的权威持有者是 render/preview-loop)。 */
@@ -119,22 +121,32 @@ export const mediaStore = createStore("media", {
   dir: "01_原始素材", files: [], total: 0, truncated: false, error: "",
 });
 
-/** UI:页签/开关/横幅计数/检查器字段真相源(派生面可重建;开关为会话态)。 */
+/** UI:页签/开关/横幅计数/检查器字段真相源(派生面可重建;开关为会话态)。
+ * connBanner:断连/网络错误横幅文本(T3.4 接线:api 层 net 事件写入,恢复自动收起)。
+ * connBadge:事件通道连接态徽标(A2 遗留接线:testid=conn-badge)。
+ * blade:切割模式(B 键;会话开关,光标变刀,点击片段即分割)。
+ * panelsOpen:侧面板开合(Tab 键;视图态)。 */
 export const uiStore = createStore("ui", {
   tab: "timeline",
   magnet: true,
   ripple: false,
   tokenBanner: "",
+  connBanner: "",
+  connBadge: "连接中…",
+  connBadgeState: "init",
+  blade: false,
+  panelsOpen: true,
   conflicts: 0,
   internalErrors: 0,
   uiFields: null,
 });
 
-/** 临时投影(ADR-0013):拖拽 ghost/吸附线/轨头视图隐藏。物理隔离 + 强制前缀。 */
+/** 临时投影(ADR-0013):拖拽 ghost/吸附线/轨头视图隐藏/会话标记。物理隔离 + 强制前缀。 */
 export const ephemeralStore = createStore("ephemeral", {
   dragGhost: null,   // {clipId, trackId, startMs, durationMs, trim:"l"|"r"|null}
   snapMs: null,      // 吸附指示线位置(ms)
   hiddenTracks: [],  // 眼睛开关(视图隐藏;不落盘,刷新即回默认)
+  markers: [],       // 会话标记 ms 列表(T3.4:M 键;ephemeral 不落盘不进 IR)
 }, { ephemeral: true });
 
 /** 调试面:全局 patch 记录(测试断言 ephemeral.* 前缀纪律用)。 */

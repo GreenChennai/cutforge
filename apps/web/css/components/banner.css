@@ -1,5 +1,22 @@
-/* 组件:顶部横幅(E6-2 token / E8 冲突停写 / v0.6 契约错误折叠) */
+/* 组件:顶部横幅(E6-2 token / E8 冲突停写 / v0.6 契约错误折叠 / 断连横幅[T3.2 组件就位,接线候后续波次])
+ * 入场动效:滑入(cf-slide-down-in,240ms;transform/opacity 合成器路径)。 */
 .banner-row { padding: var(--cf-s2) var(--cf-s6); font-size: var(--cf-fs-m); }
-.banner-row.warn { background: var(--cf-warn-bg); color: var(--cf-warn-fg); border-bottom: 1px solid var(--cf-warn-line); }
-.banner-row.danger { background: var(--cf-danger-bg); color: var(--cf-danger-fg); border-bottom: 1px solid var(--cf-danger-line); }
+.banner-row.warn {
+  background: var(--cf-warn-bg); color: var(--cf-warn-fg);
+  border-bottom: 1px solid var(--cf-warn-line);
+}
+.banner-row.danger {
+  background: var(--cf-danger-bg); color: var(--cf-danger-fg);
+  border-bottom: 1px solid var(--cf-danger-line);
+}
+#banner > .banner-row:not([hidden]) {
+  animation: cf-slide-down-in var(--cf-dur-slow) var(--cf-ease-enter);
+}
 #internal-banner { position: sticky; top: 0; z-index: var(--cf-z-banner); }
+/* 断连/网络错误横幅:重试中呼吸点(单元素、低频;组件先行,uiStore.connBanner 接线候后续波次) */
+#conn-banner .conn-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: var(--cf-s2); vertical-align: 1px;
+  background: var(--cf-danger-fg);
+  animation: cf-fade-in 1.2s var(--cf-ease) infinite alternate;
+}

@@ -28,6 +28,9 @@ export function h(tag, attrs = null, children = null) {
       else if (v === true) el.setAttribute(k, "");
       else el.setAttribute(k, String(v));
     }
+    // T3.6:有 data-tip 而无 title 的元素补原生 title(读屏/悬停兜底,提示双通道)
+    const tip = el.getAttribute("data-tip");
+    if (tip && !el.getAttribute("title")) el.setAttribute("title", tip);
   }
   if (children !== null && children !== undefined) {
     appendChildren(el, children);

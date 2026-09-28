@@ -1,30 +1,37 @@
-/* CutForge 基础层:reset + 排版 + 滚动条(旧壳可判定样式口径迁移) */
+/* CutForge 基础层:reset + 排版 + 控件基态(旧壳可判定样式口径迁移;色值全走 token) */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
   margin: 0;
   background: var(--cf-bg);
   color: var(--cf-fg);
-  font: var(--cf-fs-n)/1.5 var(--cf-font-ui);
+  font: var(--cf-fs-n)/var(--cf-lh-n) var(--cf-font-ui);
 }
 h1, h2, h3 { font-weight: 600; }
 a { color: var(--cf-accent); }
 
+/* 按钮 hover/press 双态(T3.2):hover 换面 + press 位移(transform 合成器路径) */
 button {
-  background: #232a3d; color: #dce6ff;
-  border: 1px solid #33405e; border-radius: var(--cf-r-m);
+  background: var(--cf-btn-bg); color: var(--cf-btn-fg);
+  border: 1px solid var(--cf-btn-border); border-radius: var(--cf-r-m);
   padding: var(--cf-s1) var(--cf-s4); cursor: pointer;
-  transition: background var(--cf-dur-fast) var(--cf-ease), border-color var(--cf-dur-fast) var(--cf-ease);
+  transition: background var(--cf-dur-fast) var(--cf-ease),
+              border-color var(--cf-dur-fast) var(--cf-ease),
+              transform var(--cf-dur-fast) var(--cf-ease);
 }
-button:hover { background: #2c3650; }
+button:hover { background: var(--cf-btn-hover); border-color: var(--cf-accent); }
+button:active { transform: translateY(1px); }
 button:disabled { opacity: .45; cursor: not-allowed; }
-button:disabled:hover { background: #232a3d; }
+button:disabled:hover { background: var(--cf-btn-bg); border-color: var(--cf-btn-border); }
+button:disabled:active { transform: none; }
 
 input, select, textarea {
-  background: var(--cf-panel-deep); color: #e6ecff;
-  border: 1px solid #33405e; border-radius: var(--cf-r-m);
+  background: var(--cf-panel-deep); color: var(--cf-input-fg);
+  border: 1px solid var(--cf-input-border); border-radius: var(--cf-r-m);
   padding: 3px var(--cf-s2);
+  transition: border-color var(--cf-dur-fast) var(--cf-ease);
 }
+input:hover, select:hover, textarea:hover { border-color: var(--cf-accent); }
 input:focus-visible, select:focus-visible, button:focus-visible {
   outline: 2px solid var(--cf-accent); outline-offset: 1px;
 }

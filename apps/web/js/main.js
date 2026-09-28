@@ -16,7 +16,7 @@ import { mountRuler } from "./render/ruler.js";
 import { mountPlayhead } from "./render/playhead.js";
 import { mountMediaPool } from "./render/media-pool.js";
 import { mountPreviewLoop, wake } from "./render/preview-loop.js";
-import { mountRulerGestures } from "./render/gestures.js";
+import { mountRulerGestures, mountTimelineZoom } from "./render/gestures.js";
 import * as preview from "./panels/preview.js";
 import * as mediaPanel from "./panels/media-panel.js";
 import * as inspector from "./panels/inspector.js";
@@ -26,20 +26,27 @@ import * as notes from "./panels/notes.js";
 import * as diff from "./panels/diff.js";
 import * as conflicts from "./panels/conflicts.js";
 import { openWizard } from "./panels/wizard.js";
+import { mountOnboarding } from "./ui/onboarding.js";
+import { mountWave3Wiring, measuredSwitchTab } from "./ui/wire-wave3.js";
+import { recordBoot } from "./ui/perf.js";
 import { $ } from "./ui/dom.js";
 
 async function boot() {
+  const tBoot = performance.now();
   const urlToken = new URLSearchParams(location.search).get("token") || "";
   setToken(urlToken);
   ensureIcons(); mountTooltip(); mountBanner();
   mountRuler(); mountPlayhead(); mountTimeline();
   mountRulerGestures((ms) => commands.seekTo(ms));
+  mountTimelineZoom();
   preview.mount($("preview")); mediaPanel.mount($("media-panel")); inspector.mount($("inspector"));
   bgm.mount($("bgm-panel")); expanel.mount($("export"));
   notes.mount($("tab-notes")); diff.mount($("tab-diff")); conflicts.mount($("tab-conflicts"));
   mountMediaPool(); // 宿主 #pv-media 由 preview 面板提供,此处只做绑定校验
   mountPreviewLoop(); // 媒体池对齐 + 预览循环(播放解耦核心)
   bindChrome(); installEditorShortcuts(); wireEvents();
+  mountWave3Wiring(); // A2 遗留接线(net 横幅/conn-badge)+ 面板开合订阅
+  mountOnboarding();  // 首启引导条(T3.7;localStorage 记忆)
 
   // 会话握手(/session 数据面,api 层白名单收口):失败 → token 横幅(旧壳口径,壳停摆)
   const sess = await dataGet("/session");
@@ -60,6 +67,7 @@ async function boot() {
   await mediaPanel.initialMediaBrowse();
   startEvents(sess.token);
   window.__cutforgeSelfTest = selfTestRebuild; // T2.2 重建铁律自测入口(TESTIDS.md §五)
+  recordBoot(performance.now() - tBoot); // T3.5 首屏可交互预算(投影+素材首览完成)
 }
 function wireEvents() {
   subscribe("workspace.changed", () => { invalidateWorkspace(); wake(); });
@@ -67,9 +75,20 @@ function wireEvents() {
   subscribe("cutlist.changed", () => toast("cutlist.json 已被外部更新"));
   subscribe("resync", () => invalidateWorkspace());
   onAuthFail(() => toast("数据面鉴权失败:token 已变更,请用最新链接重开", false));
-  // #rev 翻牌(e2e 就绪锚点:初始 "-",投影到达后与服务端 rev 一致)
+  // #rev 翻牌(e2e 就绪锚点:初始 "-",投影到达后与服务端 rev 一致)+ 落盘脉冲点
+  let revPulseTimer = 0;
   projectStore.subscribe((patch, st) => {
-    if (patch.rev !== undefined) $("rev").textContent = String(st.rev ?? "-");
+    if (patch.rev !== undefined) {
+      $("rev").textContent = String(st.rev ?? "-");
+      const dot = $("rev-dot"); // 保存脉冲(T3.2):绿点一次性放大淡出 = 已保存
+      if (dot) {
+        dot.classList.remove("pulse");
+        void dot.offsetWidth;
+        dot.classList.add("pulse");
+        clearTimeout(revPulseTimer);
+        revPulseTimer = setTimeout(() => dot.classList.remove("pulse"), 300);
+      }
+    }
   });
   timelineStore.subscribe(() => renderTimelineView());
   selectionStore.subscribe(updateSelectionView);
@@ -92,7 +111,10 @@ function bindChrome() {
   $("ripple").addEventListener("change", (e) => uiStore.set({ ripple: e.target.checked }));
 }
 
-function switchTab(tab) {
+/** 页签切换(T3.5:计时进性能面板;T3.2 既有入场动效不变)。 */
+const switchTab = measuredSwitchTab(switchTabNow);
+
+function switchTabNow(tab) {
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.id === `tab-${tab}`));
   if (tab === "notes") notes.refresh();

@@ -64,12 +64,18 @@ function report(env, name, okMsg) {
   return env;
 }
 
+/** 破坏性操作反馈(T3.7):5s 内可点「撤销」真撤销(调既有 undo 队列)。 */
+function toastUndoable(msg) {
+  toast(`${msg}(可撤销)`, true, { action: { label: "撤销", fn: () => undo() } });
+}
+
 /* ---------------- 选择 / 播放头(纯会话态) ---------------- */
 
 export function selectClip(id) {
   const clips = timelineStore.get().clips;
   if (id && !clips.some((c) => c.id === id)) id = null;
-  selectionStore.set({ clipId: id });
+  // 单选即清框选集(clipIds 只在框选手势中维护;T3.3)
+  selectionStore.set({ clipId: id, clipIds: [] });
 }
 
 export function playheadMs() {
@@ -123,11 +129,24 @@ export function insertMedia(src, trackId, startMs, durationMs) {
   });
 }
 
-/** 素材面板双击:自动挑目标轨 + 磁吸到播放头。 */
+/** 素材面板双击:自动挑目标轨 + 磁吸到播放头;播放头位置被占时自动接到该轨
+ * 最尾空位(T3.7 盲测卡点修复:新手「双击 N 个素材依次排开」预期,不报重叠错)。 */
 export function insertMediaAuto(item) {
   const tracks = projectStore.get().project?.tracks || [];
   const trackId = targetTrackForKind(tracks, trackKindForMedia(item.kind));
-  return insertMedia(item.path, trackId, snapAt(playheadMs()), item.durationMs);
+  const want = snapAt(playheadMs());
+  return insertMedia(item.path, trackId, freeStartAt(trackId, want, item.durationMs), item.durationMs);
+}
+
+/** want 位置可容纳时长 dur → 原样;被占 → 该轨最尾端(追加语义)。 */
+function freeStartAt(trackId, want, durationMs) {
+  const dur = durationMs || 1;
+  const hit = timelineStore.get().clips.some((c) => c.track === trackId && want < c.endMs && want + dur > c.startMs);
+  if (!hit) return want;
+  const end = timelineStore.get().clips
+    .filter((c) => c.track === trackId)
+    .reduce((acc, c) => Math.max(acc, c.endMs), 0);
+  return snapAt(end);
 }
 
 /** clip_move(拖拽落点;幂等键防重)。 */
@@ -167,10 +186,25 @@ export function splitSelected() {
       toast("播放头不在选中片段内部", false);
       return;
     }
-    const env = await call("clip_split", { clipId: id, tMs: snapAt(t) });
-    if (env.ok) await reproject();
-    report(env, "clip_split");
+    await splitNow(id, snapAt(t));
   });
+}
+
+/** 切割模式(B 键)点击分割:分割点 = 点击位置(帧磁吸),不要求播放头在片段内。 */
+export function splitAt(clipId, ms) {
+  return enqueue(async () => {
+    await splitNow(clipId, ms);
+  });
+}
+
+async function splitNow(clipId, tMs) {
+  const env = await call("clip_split", { clipId, tMs });
+  if (env.ok) {
+    await reproject();
+    toast(`已在 ${(tMs / 1000).toFixed(2)}s 分割(可撤销)`);
+  }
+  report(env, "clip_split");
+  return env;
 }
 
 export function deleteSelected(ripple) {
@@ -183,7 +217,7 @@ export function deleteSelected(ripple) {
     if (env.ok) {
       selectClip(null);
       await reproject();
-      toast("已删除(可撤销)");
+      toastUndoable("已删除");
     }
     report(env, "clip_delete");
   });
@@ -214,7 +248,9 @@ function rippleDeleteNow(clipId) {
     }
     selectClip(null);
     await reproject();
-    toast("已波纹删除(可撤销)");
+    toastUndoable(followers.length
+      ? `已波纹删除(后移 ${followers.length} 个片段)`
+      : "已波纹删除");
   })();
 }
 
@@ -231,6 +267,9 @@ export function duplicateSelectedToPlayhead() {
   if (!id) return Promise.resolve();
   return duplicateClip(id, snapAt(playheadMs()));
 }
+
+/* 键盘可达命令(选择/微调/跨轨/切割模式开关)在 core/nav.js(T3.6;
+ * 本文件行数红线 ≤400,该簇为纯会话态导航,独立成模块便于键位 e2e 驱动)。 */
 
 export function addTrack(kind) {
   return enqueue(async () => {

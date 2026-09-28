@@ -16,6 +16,9 @@ import { messageOf } from "./errors.js";
 
 let inFlight = false;
 let dirtyAgain = false;
+/** 最近一次全量重投影耗时(ms;T3.5 性能面板可视「交互响应」预算的实测口)。 */
+let lastProjectionMs = 0;
+export function lastProjectionTime() { return lastProjectionMs; }
 
 /** 合并式重投影:并发调用合并为「跑完后若又脏则再跑一轮」,不排队堆积。 */
 export async function reproject() {
@@ -27,7 +30,9 @@ export async function reproject() {
   try {
     do {
       dirtyAgain = false;
+      const t0 = performance.now();
       await reprojectOnce();
+      lastProjectionMs = performance.now() - t0;
     } while (dirtyAgain);
   } finally {
     inFlight = false;

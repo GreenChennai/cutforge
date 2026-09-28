@@ -3,7 +3,7 @@
 header {
   display: flex; align-items: center; gap: var(--cf-s5);
   padding: var(--cf-s2) var(--cf-s6);
-  background: linear-gradient(180deg, #1b2030, #161a26);
+  background: linear-gradient(180deg, var(--cf-chrome-grad-a), var(--cf-chrome-grad-b));
   border-bottom: 1px solid var(--cf-line-soft);
 }
 header h1 { font-size: var(--cf-fs-l); margin: 0; }
@@ -18,13 +18,14 @@ header .spacer { flex: 1; }
 }
 #tabs button { border-radius: var(--cf-r-m) var(--cf-r-m) 0 0; }
 #tabs button.active {
-  background: #232a3d; color: #7fb2ff;
+  background: var(--cf-tab-active-bg); color: var(--cf-tab-active-fg);
   border: 1px solid var(--cf-line-soft); border-bottom: none;
 }
 
 main { padding: var(--cf-s5) var(--cf-s6); }
 .tab { display: none; }
-.tab.active { display: block; }
+/* 页签切换:入场面板 160ms 交叉淡入(仅 opacity/transform;离场即时) */
+.tab.active { display: block; animation: cf-fade-in var(--cf-dur-base) var(--cf-ease-enter); }
 footer {
   padding: var(--cf-s2) var(--cf-s6); border-top: 1px solid var(--cf-line);
   color: var(--cf-dim); min-height: 26px;

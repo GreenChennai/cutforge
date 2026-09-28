@@ -1,6 +1,7 @@
 /* 导出面板(T2.5,E5 对拍 + 新增):双后端(cutforge 异步 / ffmpeg 经 CutFlow)
  * + 剪映草稿(export_jianying)+ 产物清单(render_probe)。
- * 进度面:轮询为主(确定性),render.progress SSE 事件作为提速信号触发即查。 */
+ * 进度面:轮询为主(确定性),render.progress SSE 事件作为提速信号触发即查。
+ * T3.5:进度回调 Hz 记录(perf.recordExportTick;预算「导出进度 ≥2Hz」面板可视)。 */
 import { h, clear } from "../ui/dom.js";
 import { projectStore } from "../core/store.js";
 import { runExportCutforge, runExportFfmpeg, exportJianying, refreshRenderOutputs } from "../core/render-commands.js";
@@ -8,10 +9,13 @@ import { selectField } from "../ui/controls.js";
 import { openDialog } from "../ui/dialog.js";
 import { toast } from "../ui/toast.js";
 import { subscribe } from "../core/event-bus.js";
+import { recordExportTick } from "../ui/perf.js";
 
 let backendSel = null;
 let ratioSel = null;
 let progressEl = null;
+let progressBar = null;
+let progressText = null;
 let filesEl = null;
 
 export function mount(container) {
@@ -27,10 +31,15 @@ export function mount(container) {
   });
   container.appendChild(h("label", null, ["画幅(仅 ffmpeg 后端) ", ratioSel.root]));
   container.appendChild(h("div", { class: "exp-actions" }, [
-    h("button", { id: "exp-run", testid: "export-run", onclick: () => runExport() }, ["导出成片"]),
-    h("button", { id: "exp-jy", testid: "export-jianying", "data-tip": "生成剪映草稿(export_jianying;不落盘成片)", onclick: () => runJianying() }, ["导出剪映草稿"]),
+    h("button", { id: "exp-run", testid: "export-run", title: "按当前后端导出成片(Ctrl+S 回到这里)", onclick: () => runExport() }, ["导出成片"]),
+    h("button", { id: "exp-jy", testid: "export-jianying", title: "生成剪映草稿(export_jianying;不落盘成片)", "data-tip": "生成剪映草稿(export_jianying;不落盘成片)", onclick: () => runJianying() }, ["导出剪映草稿"]),
   ]));
-  progressEl = h("div", { id: "exp-progress", class: "exp-progress", testid: "export-progress" });
+  progressEl = h("div", { id: "exp-progress", class: "exp-progress", testid: "export-progress" }, [
+    progressBar = h("span", { class: "exp-bar idle", "aria-hidden": "true" }, [
+      h("span", { class: "exp-bar-fill" }),
+    ]),
+    progressText = h("span", { class: "exp-text" }),
+  ]);
   container.appendChild(progressEl);
   container.appendChild(h("h3", null, ["产物(06_成片输出)"]));
   filesEl = h("div", { id: "exp-files", testid: "export-files" });
@@ -43,13 +52,23 @@ export function mount(container) {
   refreshFiles();
 }
 
-function setProgress(text) {
-  progressEl.textContent = text;
+/**
+ * 进度呈现(T3.2 平滑不跳变):文本走 .exp-text;状态条走 .exp-bar 状态类
+ * (running=不确定进度循环/ok=满格/err=红满格;内核暂无百分比下发,诚实口径)。
+ * 文本节点整体替换会扫掉进度条,故 #exp-progress 固定含 bar+text 两子节点(e2e 文本兼容)。
+ */
+function setProgress(state, text) {
+  progressText.textContent = text;
+  const mode = state === "done" ? "ok"
+    : state === "fail" ? "err"
+      : (state === "running" || state === "submit") ? "active" : "idle";
+  progressBar.className = `exp-bar ${mode}`;
 }
 
-/** render-commands 的 onProgress(state, text) → 面板只展示人话文本。 */
-function onProgress(_state, text) {
-  setProgress(text);
+/** render-commands 的 onProgress(state, text) → 面板只展示人话文本 + Hz 记录(T3.5)。 */
+function onProgress(state, text) {
+  recordExportTick(state);
+  setProgress(state, text);
 }
 
 function runExport() {

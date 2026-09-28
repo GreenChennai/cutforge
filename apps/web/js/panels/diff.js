@@ -1,9 +1,12 @@
-/* 差异面板(T2.5):OpLog 逐字段审计(actor 过滤/limit/勾选批量撤销 undo ×N)。 */
+/* 差异面板(T2.5):OpLog 逐字段审计(actor 过滤/limit/勾选批量撤销 undo ×N)。
+ * T3.7:批量撤销前确认弹窗(设置可关;prefs.confirmBatch)。 */
 import { h, clear } from "../ui/dom.js";
 import { selectField, textField } from "../ui/controls.js";
 import { undoBatch } from "../core/commands.js";
 import { call } from "../core/api.js";
 import { reproject } from "../core/projector.js";
+import { openDialog } from "../ui/dialog.js";
+import { confirmBatch } from "../ui/prefs.js";
 import { toast } from "../ui/toast.js";
 
 let actorSel = null;
@@ -58,7 +61,33 @@ async function batchUndo() {
     toast("先勾选要撤销的 Op 行", false);
     return;
   }
+  if (confirmBatch()) {
+    const yes = await confirmBatchDialog(n);
+    if (!yes) return;
+  }
   await undoBatch(n);
   await refresh();
   await reproject();
+}
+
+/** 批量确认弹窗(T3.7;testid=confirm-dialog;批量影响 N 笔 Op,先问一句)。 */
+function confirmBatchDialog(n) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    const dlg = openDialog({
+      id: "confirm-dialog",
+      title: `确认撤销 ${n} 笔操作?`,
+      onClose: () => done(false), // Esc/遮罩关闭 = 取消
+      build: (body) => {
+        body.appendChild(h("p", null, [`将按 OpLog 顺序批量撤销 ${n} 笔(可重做)。`]));
+        const ok = h("button", { testid: "confirm-ok" }, ["撤销这批"]);
+        const cancel = h("button", { testid: "confirm-cancel" }, ["取消"]);
+        ok.addEventListener("click", () => { done(true); dlg.close(); });
+        cancel.addEventListener("click", () => { done(false); dlg.close(); });
+        body.appendChild(h("div", { class: "wizard-actions" }, [ok, cancel]));
+        ok.focus();
+      },
+    });
+  });
 }

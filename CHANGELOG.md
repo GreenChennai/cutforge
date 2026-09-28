@@ -5,9 +5,11 @@
 ## 未发行(Unreleased)
 
 > 册一「内核重构与架构加固」批次(128856c / 3ce2884 / 7157178)+ 册二「前端壳重写」
-> 批次(7f02955 之后的未提交工作面);版本号待发行时定(沿用仓库惯例:发行时才把本段
-> 改为版本号。此前的 v0.6 批次——编辑器 NLE 化、schema v2 M14 双仓同步——发行时一并补记)。
-> 册二台账见 [docs/A2-PROGRESS.md](docs/A2-PROGRESS.md)。
+> 批次(7f02955 之后的未提交工作面)+ 册三「UX 动效/键位/可访问性」批次;版本号待发行时定
+> (沿用仓库惯例:发行时才把本段改为版本号。此前的 v0.6 批次——编辑器 NLE 化、
+> schema v2 M14 双仓同步——发行时一并补记)。
+> 册二台账见 [docs/A2-PROGRESS.md](docs/A2-PROGRESS.md);册三台账见
+> [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md)。
 
 ### 新增
 
@@ -55,6 +57,47 @@
 - **壳纯度门禁升级 v2**(`check-shell-purity`):R1 持久化语义禁令 / R2 投影只读
   (timelineStore 只准 projector 写)/ R3 禁裸 fetch(白名单 api.js)/ R4 legacy 豁免
   (删 legacy/ 时同步收口);`gate.py A2` 册级门禁注册(11 阻断 + 1 观察 legacy-reminder)。
+- **设计系统与主题策略(册三,ADR-0014)**:主题本册仅深色(类达芬奇蓝灰 13 档 +
+  单强调色);tokens 三层(原始/语义/组件),**唯一色值定义点 `css/tokens.css`**;
+  对比度 19 组正文 + 4 组图形/大字全 AA(`docs/design/contrast-table.md`);壳纯度门禁
+  升级 **v3 新增 R5 零硬编码色值**(css+js+html 三面扫描,注释不豁免,注入样例必抓;
+  豁免登记仅 tokens.css + assets/icons.js);canvas 取色收口 `js/render/theme.js`,
+  与 DOM 面同源。
+- **动效与微交互(册三)**:时长梯度 80/160/240ms + 三条缓动 token;一律
+  transform/opacity 合成器路径;**27 项微交互清单全实现**(`docs/design/micro-interactions.md`);
+  **19 条录屏存档 `docs/design/recordings/`(≈4.7MB,`record-captures.py` 可重录)**;
+  `prefers-reduced-motion` 一处总控;降噪纪律(同屏并发 ≤3 / hover 无位移 / 拖拽零动画)。
+- **精确拖拽手势(册三)**:pointer capture 管线(gesture-kit + gestures):ghost 跟手
+  ≤1 帧、3px 阈值、**Esc/失焦取消零 Op**;trim 碰撞夹取 + 实时时长气泡;框选多选;
+  边缘 60px 自动卷入;Ctrl/⌘+滚轮视口中心缩放;拖拽全程零 Op、松手单命令
+  (e2e_drag_perf:拖拽 P95 60.2fps)。
+- **快捷键体系(册三)**:**45 条数据化注册**(`window.__cfKeymap.table()` 可导出全表),
+  全部可重绑定 + 冲突检测(强制 = 停用被占)+ 恢复默认,localStorage 偏好;J/K/L 倍速链、
+  I/O 入出点、M 会话级标记、B 切割模式;输入态屏蔽(data-gate 可断言);「?」帮助面板
+  全表 + 搜索(e2e_hotkeys:遍历 45 条 + 实按 26 条 + 重绑定闭环)。
+- **dev 性能面板(册三,Shift+D 默认关)**:帧率 / rAF 分布 / DOM 数 / 未完成请求 /
+  投影耗时 / 媒体池占用 + 预算表逐行可视(`data-pass` 非颜色线索);媒体池
+  **POOL_MAX=24 LRU + 播放头窗口锚定**;预算口径真相源 `docs/design/perf-budget.md`;
+  `e2e_perf_budget` 结果落盘 `docs/bench/perf-a3.json`(boot 245ms<1s / 页签 44.9ms<100ms /
+  池 200 轮导航有界)。
+- **可访问性(册三)**:键盘编辑闭环(选择→移动→删除→撤销,toast 撤销按钮,全程
+  rev/OpLog 断言);模态 aria-modal + 焦点归还;右键菜单带快捷键提示与禁用原因;
+  交互元素全 title;状态线索非颜色单依赖;**axe-core 4 全页扫描 0 critical/serious**
+  (`tools/vendor/axe.min.js` 入库存档;e2e_a11y)。
+- **新手路径(册三)**:脚本盲测三流程(导入→剪切→导出 / 加转场 / 加 BGM)零卡点
+  (`docs/design/novice-blind-test.py`);卡点修复对照表 `docs/design/novice-audit.md`:
+  素材落点被占自动顺接 / 分割菜单自适应 / 首启引导条(可关)/ 时间线空态下一步 /
+  删除 toast 5s 真撤销 / 批量撤销确认(可关)。
+- **错误面收口(册三,A2 遗留)**:net 错误横幅(`banner-conn`,恢复自动收起,A2-L1);
+  SSE 连接态徽标(`conn-badge`:已连 / 降级轮询 / 重连中,A2-L5);长轮询降级定夺为
+  **正式降级面**(A1-L3 了断)。
+- **`apps/web/legacy/` 整树删除(册三收尾)**:回退期结束;purity R4 豁免收口、
+  gate A2 legacy-reminder 观察项移除、全仓引用清理(A2-L2 了断)。
+- **e2e 体系扩容(册三,×8→×12)**:新增 `e2e_drag_perf`(拖拽手感:帧率/跟手/取消零 Op)、
+  `e2e_hotkeys`(键位注册表遍历 + 实按 + 重绑定)、`e2e_a11y`(键盘链 + axe 扫描)、
+  `e2e_perf_budget`(首屏/页签/导出节奏/池有界,结果落 `docs/bench/perf-a3.json`);
+  CI web-e2e 增 hotkeys/a11y 两步(drag/perf/budget 负载敏感不进 CI);
+  `gate.py A3` 册级门禁注册(**15 项全阻断**)。
 
 ### 变更
 
@@ -73,6 +116,10 @@
   ffmpeg filtergraph 转义规则吞掉,导致 Windows 上字幕烧录路径必然失败;滤镜参数内路径
   统一正斜杠(`crates/cutforge-render/src/frame.rs`),并新增「烧录前后帧字节必不同」
   实渲测试防回归。
+- **trim/Esc 取消后几何残留(册三修复)**:Esc/失焦取消 trim 后,trim 期间写入的
+  内联几何(宽度/位移)残留在 DOM——重投影按 meta 比对不会重写同值节点;取消路径
+  统一把内联几何复位回投影值(`apps/web/js/render/gestures.js`),e2e_drag_perf
+  断言取消后盘面几何与投影一致。
 
 ## 0.5.0(2026-09-25)
 

@@ -12,6 +12,8 @@
 .insp-group legend { color: var(--cf-accent-soft); font-size: var(--cf-fs-s); padding: 0 var(--cf-s2); cursor: pointer; }
 .insp-group.collapsed > .insp-fields-wrap { display: none; }
 .insp-group .insp-fields-wrap { display: flex; flex-wrap: wrap; gap: var(--cf-s2) var(--cf-s5); }
+/* 分组展开入场(T3.2:160ms 淡入+微下沉;折叠即时,不演 layout 动画) */
+.insp-group > .insp-fields-wrap.cf-anim-expand { animation: cf-expand-in var(--cf-dur-base) var(--cf-ease-enter); }
 #inspector label { display: flex; gap: var(--cf-s2); align-items: center; }
 #inspector > .insp-actions { display: flex; gap: var(--cf-s2); flex-wrap: wrap; margin-top: var(--cf-s2); }
 #inspector > .insp-tracks { display: flex; gap: var(--cf-s2); margin-top: var(--cf-s2); }

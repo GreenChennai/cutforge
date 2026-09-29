@@ -1,165 +1,23 @@
-/* 手势层(修 W7,册三 T3.3):具体手势——clip 移动/trim、框选、素材拖放、标尺 scrub、缩放。
- * 通用管线/气泡/卷入/吸附在 gesture-kit.js。纪律:
+/* 手势层(册三 T3.3;T4.2 片段四件套分册至 clip-gestures.js):
+ * 本文件持有 轨道行手势(点空白取消/框选多选)、素材拖放(HTML5 DnD)、
+ * 标尺 scrub、时间轴缩放。通用管线/气泡/卷入/吸附在 gesture-kit.js。纪律:
  * - 拖拽零动画(直接跟手):几何每帧直写,不挂 transition(C-R1);
  * - 拖拽过程不产 Op:候选值只写 ephemeral.dragGhost / ephemeral.snapMs(ADR-0013),
  *   松手一次手势一个命令,提交后以重投影收敛;Esc/失焦取消不提交。
  */
 import { $, h } from "../ui/dom.js";
-import { ephemeralStore, timelineStore, mediaStore, selectionStore, uiStore } from "../core/store.js";
-import { PX_PER_MS, msAdd, clipKindOf, clipLabelOf, setPxPerMs } from "../core/model.js";
-import { selectClip, moveClip, updateClip, insertMedia, splitAt } from "../core/commands.js";
+import { ephemeralStore, mediaStore, selectionStore } from "../core/store.js";
+import { PX_PER_MS, msAdd, setPxPerMs } from "../core/model.js";
+import { selectClip, insertMedia } from "../core/commands.js";
 import { toast } from "../ui/toast.js";
-import { renderTimelineView, redrawOverlayOnly } from "./timeline-view.js";
-import {
-  runGesture, snapAt, fmtSec, showBubble, hideBubble,
-  highlightLane, clearLaneHighlight, edgeScroll, snapCandidate, makePulser,
-} from "./gesture-kit.js";
-
-const DRAG_MEDIA_MIME = "text/cutforge-media"; // 素材拖放 MIME(旧壳契约,兼容红线)
-
-/** Esc/失焦取消后把 trim 期间的内联几何复位回投影值(renderClips 按 meta 比对不会重写)。 */
-function resetClipGeometry(el, clipId) {
-  const row = timelineStore.get().clips.find((c) => c.id === clipId);
-  el.classList.remove("trim-preview");
-  if (!row) return;
-  el.style.left = `${Math.round(row.startMs * PX_PER_MS)}px`;
-  el.style.width = `${Math.max(6, Math.round((row.endMs - row.startMs) * PX_PER_MS))}px`;
-}
-
-/* ---------------- clip 拖拽(移动/trim) ---------------- */
-
-/**
- * clip pointerdown 入口(时间线视图在创建节点时挂接)。
- * 主体 = 移动;edge-l/edge-r = 左/右 trim(相邻片段碰撞约束)。
- */
-export function onClipPointerDown(e) {
-  const el = /** @type {HTMLElement} */ (e.currentTarget);
-  const clipId = el.dataset.id;
-  const row = timelineStore.get().clips.find((c) => c.id === clipId);
-  if (!row || e.button !== 0) return;
-  e.stopPropagation();
-  selectClip(clipId);
-  // 切割模式(T3.4 B 键):点击即分割,分割点 = 点击位置(帧磁吸),零拖拽
-  if (uiStore.get().blade) {
-    const wrap = $("timeline-wrap");
-    const ms = Math.max(0, (e.clientX - wrap.getBoundingClientRect().left + wrap.scrollLeft) / PX_PER_MS);
-    if (ms > row.startMs && ms < row.endMs) splitAt(clipId, Math.round(ms));
-    else toast("点击位置不在片段内部,未分割", false);
-    return;
-  }
-  const edge = e.target.classList.contains("edge-l") ? "l"
-    : e.target.classList.contains("edge-r") ? "r" : null;
-  const x0 = e.clientX;
-  const orig = { startMs: row.startMs, durationMs: row.endMs - row.startMs, srcIn: row.sourceInMs || 0, track: row.track };
-  const kind = clipKindOf(row);
-  const label = clipLabelOf(row);
-  let changed = false;
-  let scroller = null;
-  const pulse = makePulser();
-
-  // 相邻片段碰撞边界(trim 约束;移动允许重叠,沿旧口径)
-  const neighbors = timelineStore.get().clips.filter((c) => c.track === orig.track && c.id !== clipId);
-  const prevEnd = Math.max(0, ...neighbors.filter((c) => c.endMs <= orig.startMs).map((c) => c.endMs));
-  const nextStarts = neighbors.filter((c) => c.startMs >= msAdd(orig.startMs, orig.durationMs)).map((c) => c.startMs);
-  const nextStart = nextStarts.length ? Math.min(...nextStarts) : Infinity;
-
-  const clearTransient = () => {
-    if (scroller) { scroller.stop(); scroller = null; }
-    el.classList.remove("drag-source");
-    clearLaneHighlight();
-    hideBubble();
-    ephemeralStore.set({ dragGhost: null, snapMs: null });
-    redrawOverlayOnly();
-  };
-
-  runGesture(el, e, {
-    start: () => {
-      el.classList.add("drag-source");
-      scroller = edgeScroll($("timeline-wrap"));
-    },
-    move: (ev) => {
-      if (scroller) scroller.move(ev.clientX);
-      const dMs = (ev.clientX - x0) / PX_PER_MS; // px→ms:显示映射
-      if (edge === null) {
-        // 移动:跨轨跟随(同 kind 才可落),ghost 逐帧跟手
-        const laneEl = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".track");
-        const targetTrack = laneEl ? laneEl.dataset.trackId : orig.track;
-        const trackKind = laneEl ? laneEl.dataset.kind : kind;
-        const invalid = Boolean(laneEl) && trackKind !== kind;
-        const ghostTrack = invalid ? orig.track : targetTrack;
-        const cand = snapCandidate(msAdd(orig.startMs, dMs));
-        changed = changed || cand.ms !== orig.startMs || (!invalid && targetTrack !== orig.track);
-        ephemeralStore.set({
-          dragGhost: { clipId, trackId: ghostTrack, startMs: cand.ms, durationMs: orig.durationMs, label, invalid },
-          snapMs: invalid ? null : cand.ms,
-        });
-        pulse(cand);
-        highlightLane(laneEl, !invalid);
-        showBubble(ev.clientX, ev.clientY, invalid ? "无法落此轨(轨型不符)" : fmtSec(cand.ms));
-      } else if (edge === "l") {
-        // 左 trim:入点位移 → 时长增减、sourceIn 同步;不越过左邻
-        let ns = snapCandidate(msAdd(orig.startMs, dMs)).ms;
-        ns = Math.min(Math.max(ns, prevEnd), msAdd(orig.startMs, orig.durationMs) - 1);
-        if (ns !== orig.startMs) {
-          changed = true;
-          el.classList.add("trim-preview");
-          el.style.left = `${Math.round(ns * PX_PER_MS)}px`;
-          const dur = msAdd(orig.durationMs, orig.startMs - ns);
-          el.style.width = `${Math.max(6, Math.round(dur * PX_PER_MS))}px`;
-          ephemeralStore.set({ snapMs: ns, dragGhost: null });
-          pulse({ ms: ns });
-          showBubble(ev.clientX, ev.clientY, fmtSec(dur));
-        }
-      } else {
-        // 右 trim:仅出点;不越过右邻
-        let nd = snapCandidate(msAdd(orig.durationMs, dMs)).ms;
-        nd = Math.min(nd, Math.round(nextStart - orig.startMs));
-        if (nd !== orig.durationMs && nd >= 1) {
-          changed = true;
-          el.classList.add("trim-preview");
-          el.style.width = `${Math.max(6, Math.round(nd * PX_PER_MS))}px`;
-          ephemeralStore.set({ snapMs: null, dragGhost: null });
-          showBubble(ev.clientX, ev.clientY, fmtSec(nd));
-        }
-      }
-      redrawOverlayOnly();
-    },
-    end: (ev) => {
-      clearTransient();
-      if (!changed) return; // 纯点击:只有选中,零命令
-      const dMs = (ev.clientX - x0) / PX_PER_MS;
-      if (edge === null) {
-        const cand = snapCandidate(msAdd(orig.startMs, dMs));
-        const laneEl = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.(".track");
-        const toTrack = laneEl && laneEl.dataset.trackId !== orig.track
-          && laneEl.dataset.kind === kind ? laneEl.dataset.trackId : undefined;
-        if (cand.ms !== orig.startMs || toTrack) moveClip(clipId, cand.ms, toTrack);
-      } else if (edge === "l") {
-        const ns = Math.max(0, snapAt(msAdd(orig.startMs, dMs)));
-        if (ns !== orig.startMs && ns < msAdd(orig.startMs, orig.durationMs)) {
-          updateClip(clipId, {
-            startMs: ns,
-            durationMs: msAdd(orig.durationMs, orig.startMs - ns),
-            sourceInMs: msAdd(orig.srcIn, ns - orig.startMs),
-          });
-        }
-      } else {
-        const nd = Math.max(1, snapAt(msAdd(orig.durationMs, dMs)));
-        if (nd !== orig.durationMs) updateClip(clipId, { durationMs: nd });
-      }
-      renderTimelineView(); // 投影回来前先按 store 态复位 ghost/trim 视图
-    },
-    cancel: () => {
-      clearTransient();
-      if (edge !== null) resetClipGeometry(el, clipId);
-      renderTimelineView(); // 取消:不提交任何命令,投影态原样恢复
-    },
-  });
-}
+import { renderTimelineView } from "./timeline-view.js";
+import { trackLockedOf, onClipPointerDown } from "./clip-gestures.js";
+import { runGesture, snapAt, fmtSec, showBubble, hideBubble, edgeScroll } from "./gesture-kit.js";
 
 /* ---------------- 轨道行手势(点空白取消选中 / 空白拉框多选) ---------------- */
 
-/** 轨道空白 pointerdown:未过阈值 = 取消选中(旧壳口径);过阈值 = 框选多选。 */
+/** 轨道空白 pointerdown:未过阈值 = 取消选中(旧壳口径);过阈值 = 框选多选。
+ * 锁定轨的空白仍可框选(锁定只拦片段编辑,不拦视图选择)。 */
 export function onLanePointerDown(e) {
   if (e.target !== e.currentTarget || e.button !== 0) return;
   const laneEl = /** @type {HTMLElement} */ (e.currentTarget);
@@ -232,16 +90,21 @@ export function onLaneDragLeave(e) {
   /** @type {HTMLElement} */ (e.currentTarget).classList.remove("drop-hint");
 }
 
-/** 素材拖放到轨道落点(px→ms 显示映射 + 磁吸;插入由 clip_add 命令提交)。 */
+/** 素材拖放到轨道落点(px→ms 显示映射 + 统一吸附;插入由 clip_add 命令提交)。
+ * 锁定轨拒绝落点(诚实提示,不产 Op)。 */
 export function onLaneDrop(e) {
   e.preventDefault();
   const lane = /** @type {HTMLElement} */ (e.currentTarget);
   lane.classList.remove("drop-hint");
-  const src = e.dataTransfer.getData(DRAG_MEDIA_MIME);
+  const src = e.dataTransfer.getData("text/cutforge-media");
   if (!src) return;
+  const trackId = lane.dataset.trackId;
+  if (trackLockedOf(trackId)) {
+    toast(`轨道 ${trackId} 已锁定,拒绝插入(轨头解锁后再拖)`, false);
+    return;
+  }
   const rect = lane.getBoundingClientRect();
   const at = snapAt(Math.max(0, (e.clientX - rect.left) / PX_PER_MS));
-  const trackId = lane.dataset.trackId;
   // durationMs 优先用素材面板浏览元信息(避免无谓的二次探测)
   const item = mediaStore.get().files.find((f) => f.path === src);
   insertMedia(src, trackId, at, item && item.durationMs);
@@ -297,6 +160,6 @@ export function mountTimelineZoom() {
     if (!setPxPerMs(oldPx * factor)) return;
     const centerMs = (wrap.scrollLeft + wrap.clientWidth / 2) / oldPx;
     renderTimelineView();
-    wrap.scrollLeft = Math.max(0, centerMs * PX_PER_MS - wrap.clientWidth / 2);
+    wrap.scrollLeft = Math.max(0, msAdd(centerMs * PX_PER_MS, -wrap.clientWidth / 2));
   }, { passive: false });
 }

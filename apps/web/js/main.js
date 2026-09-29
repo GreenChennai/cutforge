@@ -22,6 +22,7 @@ import * as mediaPanel from "./panels/media-panel.js";
 import * as inspector from "./panels/inspector.js";
 import * as bgm from "./panels/bgm.js";
 import * as expanel from "./panels/export.js";
+import * as history from "./panels/history.js";
 import * as notes from "./panels/notes.js";
 import * as diff from "./panels/diff.js";
 import * as conflicts from "./panels/conflicts.js";
@@ -41,7 +42,7 @@ async function boot() {
   mountTimelineZoom();
   preview.mount($("preview")); mediaPanel.mount($("media-panel")); inspector.mount($("inspector"));
   bgm.mount($("bgm-panel")); expanel.mount($("export"));
-  notes.mount($("tab-notes")); diff.mount($("tab-diff")); conflicts.mount($("tab-conflicts"));
+  history.mount($("tab-history")); notes.mount($("tab-notes")); diff.mount($("tab-diff")); conflicts.mount($("tab-conflicts"));
   mountMediaPool(); // 宿主 #pv-media 由 preview 面板提供,此处只做绑定校验
   mountPreviewLoop(); // 媒体池对齐 + 预览循环(播放解耦核心)
   bindChrome(); installEditorShortcuts(); wireEvents();
@@ -117,6 +118,7 @@ const switchTab = measuredSwitchTab(switchTabNow);
 function switchTabNow(tab) {
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.id === `tab-${tab}`));
+  if (tab === "history") history.refresh();
   if (tab === "notes") notes.refresh();
   if (tab === "diff") diff.refresh();
   if (tab === "conflicts") conflicts.refresh();

@@ -25,8 +25,10 @@ const READONLY = new Set([
   "capability_matrix", "wordline_get", "cutlist_get", "sync_check",
 ]);
 
-/** 数据面 GET 白名单(壳内 fetch 只允许这些路径 + /rpc)。 */
-const DATA_GET_WHITELIST = new Set(["/session", "/ui-fields", "/events"]);
+/** 数据面 GET 白名单(壳内 fetch 只允许这些路径 + /rpc)。
+ * /media(T4.1):缩略图 PNG / peaks JSON 等缓存产物的加载通道(后端同一端点,
+ * 媒体元素 src 亦走它;壳侧仍经本文件唯一收口)。 */
+const DATA_GET_WHITELIST = new Set(["/session", "/ui-fields", "/events", "/media"]);
 
 const RETRY_MAX = 3;
 const RETRY_BASE_MS = 300;
@@ -116,8 +118,33 @@ export async function dataGet(path, params = {}) {
   }
 }
 
-/** 事件长轮询单次调用(events.js 降级路径专用;长轮询自身挂 2s 上限)。 */
-export async function pollOnce(since) {
+/**
+ * /media 数据面 GET(T4.1:peaks JSON 等结构化缓存产物;与媒体元素 src 同端点)。
+ * @param {string} relPath 工程内相对路径(media_peaks/media_thumbnail 返回的 file)
+ * @returns {Promise<*|Envelope>}
+ */
+export async function mediaGet(relPath) {
+  const url = `/media?path=${encodeURIComponent(relPath)}&token=${encodeURIComponent(token)}`;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const { status, json } = await rawFetch(url, { timeoutMs: DEFAULT_TIMEOUT_MS });
+      if (status === 401) return netFail("UNAUTHORIZED", "token 鉴权失败(数据面)");
+      if (status >= 500 && attempt < RETRY_MAX - 1) {
+        await sleep(RETRY_BASE_MS * 2 ** attempt);
+        continue;
+      }
+      if (status !== 200) return netFail(`HTTP_${status}`, `/media ${status}`);
+      return json;
+    } catch (e) {
+      if (attempt >= RETRY_MAX - 1) {
+        return netFail("NETWORK", `/media 网络失败:${String(e && e.message || e)}`);
+      }
+      await sleep(RETRY_BASE_MS * 2 ** attempt);
+    }
+  }
+}
+
+/** 事件长轮询单次调用(events.js 降级路径专用;长轮询自身挂 2s 上限)。 */export async function pollOnce(since) {
   const params = since > 0 ? { since } : {};
   const qs = Object.entries(params).map(([k, v]) => `${k}=${v}`).join("&");
   const url = qs ? `/events?${qs}` : "/events";

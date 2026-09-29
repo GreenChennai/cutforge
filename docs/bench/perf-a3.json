@@ -1,33 +1,33 @@
 {
-  "capturedAt": "2026-09-29T07:10:41+08:00",
+  "capturedAt": "2026-09-30T07:09:13+08:00",
   "env": {
     "cpu": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
     "os": "Windows-11-10.0.26200-SP0",
     "profile": "debug(local e2e)"
   },
-  "bootMs": 219,
-  "tabMs": 43.1,
+  "bootMs": 231,
+  "tabMs": 36.3,
   "tabPanelRow": {
     "pass": "na",
     "text": "—页签切换—(切换后测)<100ms"
   },
   "export": {
     "updates": 5,
-    "steadyP95GapS": 1.042,
+    "steadyP95GapS": 0.988,
     "barPreserved": true,
     "barAnimated": true,
     "panelRow": {
       "pass": "1",
-      "text": "✓导出进度回调2.4Hz≥2Hz"
+      "text": "✓导出进度回调2.5Hz≥2Hz"
     },
     "measuredHz": 0.0,
     "budgetHz": 2,
-    "note": "面板行如实呈现实测;壳进度轮询 800ms(render-commands.js)→ ≈1.25Hz,与预算 ≥2Hz 的差距为壳侧遗留(render-commands 轮询间隔 800→≤500ms 一行收口),本 e2e 只断言节奏有界+平滑+恒在,不冒充达标"
+    "note": "轮询已收口 500ms(render-commands.js),≈2Hz 达标 ≥2Hz 预算(A3-L3 已于 A3 期闭合);本 e2e 断言节奏有界+平滑+恒在"
   },
   "pool": {
     "cap": 24,
     "maxObserved": 24,
-    "evicted": 6768,
+    "evicted": 6754,
     "rounds": 200,
     "note": "4 小时长跑内存曲线为人工项(登记),以 200 轮导航模拟+池有界替代"
   }

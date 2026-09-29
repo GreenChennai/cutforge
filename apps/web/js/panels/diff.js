@@ -43,7 +43,7 @@ export async function refresh() {
     const pick = h("input", { type: "checkbox", class: "pick", testid: "diff-pick" });
     rowsEl.appendChild(h("div", { class: "row", testid: "diff-row" }, [
       pick,
-      h("span", { class: "oid" }, [op.opId]),
+      h("span", { class: "oid" }, [op.op_id ?? op.opId ?? ""]),
       h("span", { class: `badge ${op.actor.kind}` }, [op.actor.kind]),
       h("span", { class: "bd" }, [
         String(op.summary ?? ""),

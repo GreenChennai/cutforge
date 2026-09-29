@@ -45,6 +45,14 @@
   to { transform: translateX(380%); }
 }
 
+/* 锁定轨拒绝编辑:水平抖动一次(T4.2 状态反馈;transform 一次性短动效) */
+@keyframes cf-shake {
+  0% { transform: translateX(0); }
+  30% { transform: translateX(-3px); }
+  60% { transform: translateX(3px); }
+  100% { transform: translateX(0); }
+}
+
 /* ---- 一次性入场工具类(js 触发重放用:先移除类 → 强制回流 → 再加回)---- */
 .cf-anim-rise { animation: cf-rise-in var(--cf-dur-base) var(--cf-ease-enter) both; }
 .cf-anim-expand { animation: cf-expand-in var(--cf-dur-base) var(--cf-ease-enter) both; }

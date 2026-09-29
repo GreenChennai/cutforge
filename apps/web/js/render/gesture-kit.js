@@ -2,8 +2,8 @@
  * 与具体手势解耦:clip 移动/trim/框选/标尺 scrub 在 gestures.js,素材拖放走 HTML5 DnD。 */
 
 import { h } from "../ui/dom.js";
-import { PX_PER_MS, snapMs, frameMsOf } from "../core/model.js";
-import { projectStore, uiStore, selectionStore } from "../core/store.js";
+import { PX_PER_MS, snapMs, frameMsOf, msAdd } from "../core/model.js";
+import { projectStore, timelineStore, uiStore, selectionStore, ephemeralStore } from "../core/store.js";
 import { pulseSnap } from "./playhead.js";
 
 export const THRESHOLD_PX = 3;     // 点击/拖拽判定阈值
@@ -138,14 +138,64 @@ export function edgeScroll(wrap) {
   };
 }
 
-/* ---------------- 吸附候选(播放头半径优先,否则帧磁吸)+ 对齐脉冲 ---------------- */
+/* ---------------- 吸附体系(T4.2 统一候选源)----------------
+ * 候选源:帧网格(既有)/ 片段边缘 / 播放头 / 会话标记;主开关 = 磁吸 checkbox;
+ * 强度档(prefs snapStrength):loose=仅帧网格,standard=+播放头/片段边缘(8px),
+ * strong=+标记(12px)。优先级:播放头 > 标记 > 片段边缘 > 帧网格。 */
+import { pref } from "../ui/prefs.js";
 
-export function snapCandidate(ms) {
+export const SNAP_RADIUS_PX = 8;      // standard 档吸附半径
+export const SNAP_RADIUS_STRONG_PX = 12;
+
+/** 当前吸附半径(px;强度档)。 */
+export function snapRadiusPx() {
+  return pref("snapStrength", "standard") === "strong" ? SNAP_RADIUS_STRONG_PX : SNAP_RADIUS_PX;
+}
+
+/**
+ * 统一吸附候选(T4.2):@param excludeIds 排除自身片段(拖拽中的 clip 边缘不作候选)。
+ * @returns {{ ms: number, playhead: boolean, source: string }} source ∈ frame|edge|playhead|marker
+ */
+export function snapCandidateEx(ms, excludeIds = []) {
+  if (!uiStore.get().magnet) return { ms: Math.max(0, Math.round(ms)), playhead: false, source: "frame" };
+  const radius = snapRadiusPx() / PX_PER_MS;
+  const strength = pref("snapStrength", "standard");
+  // 1) 播放头(半径优先,旧口径)
   const ph = selectionStore.get().playheadMs || 0;
-  if (ph > 0 && Math.abs(ms - ph) <= PLAYHEAD_SNAP_PX / PX_PER_MS) {
-    return { ms: Math.max(0, Math.round(ph)), playhead: true };
+  if (strength !== "loose" && ph > 0 && Math.abs(msAdd(ms, -ph)) <= radius) {
+    return { ms: Math.max(0, Math.round(ph)), playhead: true, source: "playhead" };
   }
-  return { ms: Math.max(0, snapAt(ms)), playhead: false };
+  // 2) 会话标记(strong 档)
+  if (strength === "strong") {
+    for (const m of ephemeralStore.get().markers || []) {
+      if (Math.abs(msAdd(ms, -m)) <= radius) {
+        return { ms: Math.max(0, Math.round(m)), playhead: false, source: "marker" };
+      }
+    }
+  }
+  // 3) 片段边缘(全部投影行的 start/end;排除拖拽自身与隐藏轨)
+  if (strength !== "loose") {
+    const hidden = new Set(ephemeralStore.get().hiddenTracks || []);
+    const rows = timelineStore.get().clips || [];
+    let best = null;
+    let bestDist = radius;
+    for (const c of rows) {
+      if (excludeIds.includes(c.id) || hidden.has(c.track)) continue;
+      for (const edge of [c.startMs, c.endMs]) {
+        const d = Math.abs(msAdd(ms, -edge));
+        if (d <= bestDist) { bestDist = d; best = edge; }
+      }
+    }
+    if (best !== null) return { ms: Math.max(0, Math.round(best)), playhead: false, source: "edge" };
+  }
+  // 4) 帧网格(旧缺省)
+  return { ms: Math.max(0, snapAt(ms)), playhead: false, source: "frame" };
+}
+
+/** 旧签名兼容:单参版本(拖拽移动/标尺 scrub 沿用;无排除集)。 */
+export function snapCandidate(ms) {
+  const c = snapCandidateEx(ms, []);
+  return { ms: c.ms, playhead: c.source === "playhead" };
 }
 
 /** 对齐脉冲(磁性提示):吸附值变化时 80ms 一次;限频防频闪。 */

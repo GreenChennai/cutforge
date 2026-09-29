@@ -130,9 +130,7 @@ const r = await window.__cutforgeSelfTest();
 T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeCount()` /
 `keyOf(e)` / `comboOf(id)`;下波键位 e2e 遍历口)。
 
-## 六、册三波二新增 testid(T3.4~T3.7 / A2 遗留)
-
-### 静态骨架(index.html)
+## 六、册三波二新增 testid(T3.4~T3.7 / A2 遗留)### 静态骨架(index.html)
 | testid | 元素 | 说明 |
 |---|---|---|
 | `conn-badge` | span(topbar) | 事件通道连接态徽标(A2 遗留②):`data-state` = ok/reconnecting/polling/retry,文本即状态 |
@@ -165,3 +163,49 @@ T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeC
 | `confirm-dialog` / `confirm-ok` / `confirm-cancel` | div/button | 批量撤销前确认(设置 `setting-confirm-batch` 可关) |
 | `setting-confirm-batch` | input[checkbox] | 设置面板「批量操作前确认」开关(localStorage) |
 
+
+## 七、册四 A4 新增 testid(FE1:T4.1 媒体池 / T4.2 时间线全工具 / T4.3 历史面板)
+
+### 静态骨架(index.html)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `tab-history` / `panel-history` | button/div | 新页签「历史」(T4.3;点开即 refresh) |
+
+### 素材面板(T4.1;js/panels/media-panel.js + media-card.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `media-filters` / `.chip` | div/button | 类型过滤组(全部/视频/音频/图片/最近);`.chip.on` + aria-pressed |
+| `media-search` | input | 名称搜索(会话态) |
+| `media-item` | div(保留) | 缩略卡:dataset.path/kind;dblclick 插入;内部缩略位 `thumb`(懒加载) |
+| `media-proxy` | button(视频卡内) | 代理状态/生成(media_proxy);`.ready` = 已就绪 |
+| `set-bgm` | button(音频卡内,保留) | 一键设 BGM |
+
+### 时间线(T4.2;js/render/track-head.js + clip-gestures.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `lane-label-<id>`(保留) | span | 轨头容器:含下方功能钮 |
+| `track-name-<id>` | span | 轨名(双击重命名 → 内联 input.lane-rename) |
+| `.lane-lock` / `.lane-mute` / `.lane-solo` | button | 锁定/静音/独奏(mute/solo 仅音频轨;aria-pressed;track_update 七字段) |
+| `track-visibility-<id>`(保留) | button | 眼睛(ephemeral 视图隐藏,语义不变) |
+| `track-lane-<id>`(保留) | div | 新增状态类:`.lane-locked`(拒绝编辑)/`.lane-muted`(波形灰化)/`.lane-soloed` |
+| `.lane-grip` | span | 轨道高度拖拽把手(松手一笔 track_update.heightPx,[28,160]px) |
+| `trim-mode` | span(toolbar) | 裁剪模式徽标(T 键;hidden 切换;wrap 挂 .trim-mode) |
+| `clip`(保留) | div.clip | 新增:`.overlay` 画中画视觉(虚线边 + `.clip-pip` 角标);T 模式 wrap.classList=`trim-mode` |
+
+### 导出面板(T4.1 代理)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `export-proxy` | input[checkbox] | 「用代理预览(缺省原片导出)」;ffmpeg 后端禁用(useProxy 仅 cutforge 内核) |
+
+### 历史面板(T4.3;js/panels/history.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `history-head` | div | 摘要行:当前 rev / 撤销栈深 / 载入笔数 |
+| `history-truncated` | div | 截断提示(count > limit 时;更早历史不参与回跳) |
+| `history-rows` / `history-row` | div | 行:`data-opId`/`data-rev`/`data-state`(live\|undone\|record);`.current` = 当前指针;`.undone` = 已撤销(点击重做);`.record` = 撤销/重做记录行(不可回跳,中性呈现) |
+| `history-mark` | div(role=separator) | 快照标记分隔线(导出前/批量前自动 + 手动;ephemeral 不落盘) |
+
+### 设置面板(T4.2 吸附)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `setting-snap-strength` | select | 吸附强度档:loose(仅帧)/standard(+边缘+播放头,8px)/strong(+标记,12px);主开关仍为顶栏「磁吸」 |

@@ -10,9 +10,11 @@ import { openDialog } from "../ui/dialog.js";
 import { toast } from "../ui/toast.js";
 import { subscribe } from "../core/event-bus.js";
 import { recordExportTick } from "../ui/perf.js";
+import { markHistory } from "../core/edit-commands.js";
 
 let backendSel = null;
 let ratioSel = null;
+let proxyToggle = null;
 let progressEl = null;
 let progressBar = null;
 let progressText = null;
@@ -23,6 +25,7 @@ export function mount(container) {
   backendSel = selectField({
     id: "exp-backend", testid: "export-backend",
     options: [["cutforge", "cutforge 内核(不依赖 CutFlow)"], ["ffmpeg", "ffmpeg(CutFlow rs_render)"]],
+    onChange: () => syncProxyEnabled(),
   });
   container.appendChild(h("label", null, ["后端 ", backendSel.root]));
   ratioSel = selectField({
@@ -30,6 +33,16 @@ export function mount(container) {
     options: [["9x16", "9x16"], ["3x4", "3x4"], ["16x9", "16x9"]],
   });
   container.appendChild(h("label", null, ["画幅(仅 ffmpeg 后端) ", ratioSel.root]));
+  // T4.1 代理预览:明示「预览走代理 / 导出默认原片」;显式 opt-in 不悄悄降质
+  proxyToggle = h("input", {
+    type: "checkbox", id: "exp-proxy", testid: "export-proxy",
+    title: "用代理渲染(cutforge 内核;缺失代理的片段回落原片)。缺省不勾 = 原片导出",
+    "data-tip": "用代理预览(1/2 分辨率,快);不勾 = 原片导出(默认)",
+  });
+  proxyToggle.addEventListener("change", syncProxyEnabled);
+  container.appendChild(h("label", { class: "toggle", title: "用代理渲染(cutforge 内核)" }, [
+    proxyToggle, " 用代理预览(缺省原片导出)",
+  ]));
   container.appendChild(h("div", { class: "exp-actions" }, [
     h("button", { id: "exp-run", testid: "export-run", title: "按当前后端导出成片(Ctrl+S 回到这里)", onclick: () => runExport() }, ["导出成片"]),
     h("button", { id: "exp-jy", testid: "export-jianying", title: "生成剪映草稿(export_jianying;不落盘成片)", "data-tip": "生成剪映草稿(export_jianying;不落盘成片)", onclick: () => runJianying() }, ["导出剪映草稿"]),
@@ -71,9 +84,21 @@ function onProgress(state, text) {
   setProgress(state, text);
 }
 
+/** ffmpeg 后端(CutFlow rs_render)不消费 useProxy:切换后端时同步开关可用态。 */
+function syncProxyEnabled() {
+  const isCutforge = backendSel.get() === "cutforge";
+  proxyToggle.disabled = !isCutforge;
+  if (!isCutforge) proxyToggle.checked = false;
+  proxyToggle.title = isCutforge
+    ? "用代理渲染(缺失代理的片段回落原片)。缺省不勾 = 原片导出"
+    : "ffmpeg 后端不支持代理(useProxy 仅 cutforge 内核)";
+}
+
 function runExport() {
+  // 导出前自动打历史快照标记(T4.3;会话态,不落盘)
+  markHistory("导出前");
   if (backendSel.get() === "cutforge") {
-    runExportCutforge(onProgress);
+    runExportCutforge(onProgress, proxyToggle.checked);
   } else {
     runExportFfmpeg(ratioSel.get(), onProgress);
   }

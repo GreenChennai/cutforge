@@ -195,8 +195,9 @@
   /* ---- 尺寸 ---- */
   --cf-track-h: 56px;        /* 时间线轨高(旧壳实测兼容值) */
   --cf-ruler-h: 22px;
-  --cf-lane-label-w: 74px;
+  --cf-lane-label-w: 104px;  /* T4.2 轨头全功能扩宽(锁定/静音/独奏/眼睛/名;粘滞覆盖区,不影响 e2e 元素中心点击) */
   --cf-edge-w: 7px;          /* clip 左右 trim 热区宽 */
+  --cf-edge-w-trim-tool: 14px; /* T 裁剪工具:边缘热区加宽(T4.2) */
   --cf-autoscroll-px: 60px;  /* 拖拽自动卷入的视口边缘带宽 */
   --cf-bubble-max-w: 180px;
 }

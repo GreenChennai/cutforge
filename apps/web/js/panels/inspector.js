@@ -7,6 +7,7 @@ import { $, h, clear } from "../ui/dom.js";
 import { projectStore, timelineStore, selectionStore, uiStore } from "../core/store.js";
 import { nestedGet } from "../core/model.js";
 import { updateClip, duplicateSelectedToPlayhead, addTrack, selectClip } from "../core/commands.js";
+import { batchUpdateClips } from "../core/edit-commands.js";
 import { numberField, textField, selectField, collapseGroup } from "../ui/controls.js";
 import { toast } from "../ui/toast.js";
 
@@ -153,7 +154,10 @@ function fillFromSelection() {
     return;
   }
   const track = (projectStore.get().project?.tracks || []).find((t) => t.id === row.track);
-  fieldsInfo.textContent = `id=${row.id} track=${row.track} src=${row.src ?? "-"}`;
+  const multi = (selectionStore.get().clipIds || []).length;
+  fieldsInfo.textContent = multi > 1
+    ? `已多选 ${multi} 段(主选中 ${row.id}):点「应用」将批量修改所有选中片段(逐笔 Op)`
+    : `id=${row.id} track=${row.track} src=${row.src ?? "-"}`;
   const selInfo = $("sel-info");
   if (selInfo) selInfo.textContent = `选中 ${row.id}(${track ? track.kind : "?"})`;
   for (const [f, control] of fields) {
@@ -182,16 +186,46 @@ function renderReadonly(row) {
   readonlyBox.textContent = "只读(内核 ClipPatch 暂未承接,E4-3):" + vals.join("  ");
 }
 
-/** 应用:草稿 → patch(只含变更字段;带点字段收拢为嵌套对象)→ clip_update。 */
+/** 应用:草稿 → patch(只含变更字段;带点字段收拢为嵌套对象)→ clip_update。
+ * T4.2 批量口径:框选多选(clipIds>1)时,只取「与锚点行(主选中)现值不同的字段」
+ * = 用户明确改动的字段,逐片段按本行现值过滤后提交(已等于目标值的行跳过,免无谓 Op)。
+ * 后端无批量工具(已登记遗留),每片段一笔 Op,toast 明示「撤销需逐笔」;
+ * 操作前自动打历史快照标记(batchUpdateClips 内)。 */
 async function applyInspector() {
   const row = selectedRow();
   if (!row) return;
+  const selIds = selectionStore.get().clipIds || [];
+  if (selIds.length > 1) {
+    const done = await batchUpdateClips(selIds, (r) => computePatch(r, row));
+    if (!done) toast("选中片段已等于目标值,无改动");
+    return;
+  }
+  const patch = computePatch(row, null);
+  if (!Object.keys(patch).length) {
+    toast("无改动");
+    return;
+  }
+  await updateClip(row.id, patch, `已应用 ${Object.keys(patch).join("/")}(可撤销)`);
+}
+
+/** 草稿字段 → patch。anchor=null(单选):与本行现值比对,只提交变更;
+ * anchor=锚点行(批量):只提交「与锚点不同」的字段(用户意图),再按本行现值过滤。 */
+function computePatch(row, anchor = null) {
   const patch = {};
   const flat = [];
   for (const [f, control] of fields) {
     const v = control.get();
     if (f.indexOf(".") >= 0 || v !== "") flat.push([f, control, v]);
   }
+  /** 该字段是否为「用户意图改动」:批量时相对锚点行判定;单选恒真。 */
+  const isIntent = (f, raw, meta) => {
+    if (!anchor) return true;
+    const cur = nestedGet(anchor, f);
+    const curN = (cur === undefined || cur === null) ? null : cur;
+    return meta.type === "number"
+      ? Number(raw) !== Number(curN ?? NaN)
+      : String(raw) !== String(curN ?? "");
+  };
   // 带点字段收拢:patch.transition / patch.motion(空串/无效 → 显式 null 清空)
   for (const [f, control, raw] of flat) {
     const dot = f.indexOf(".");
@@ -206,17 +240,19 @@ async function applyInspector() {
       v = Number(raw);
       if (Number.isNaN(v)) v = null;
     }
+    if (!isIntent(f, raw, meta)) continue;
     patch[obj] = patch[obj] || {};
     patch[obj][key] = v;
   }
   for (const obj of Object.keys(patch)) {
     if (!Object.keys(patch[obj]).length) delete patch[obj];
   }
-  // 平字段:与投影现值比对,只提交变更
+  // 平字段:与本行现值比对,只提交变更(批量时还需先过 isIntent)
   for (const [f, control, raw] of flat) {
     if (f.indexOf(".") >= 0) continue;
     const meta = control.meta || {};
     if (raw === "") continue;
+    if (!isIntent(f, raw, meta)) continue;
     const v = meta.type === "number" ? Number(raw) : raw;
     if (Number.isNaN(v)) continue;
     const cur = row[f];
@@ -226,11 +262,7 @@ async function applyInspector() {
       : String(v) !== String(curN ?? "");
     if (differs) patch[f] = v;
   }
-  if (!Object.keys(patch).length) {
-    toast("无改动");
-    return;
-  }
-  await updateClip(row.id, patch, `已应用 ${Object.keys(patch).map((k) => (typeof patch[k] === "object" ? k : k)).join("/")}(可撤销)`);
+  return patch;
 }
 
 /** 供 main 装配:取消选中走这里(保持旧壳「点空白即取消」文案一致性)。 */

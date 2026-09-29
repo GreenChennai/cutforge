@@ -4,9 +4,11 @@
  * - J/K/L 倒放/正放按倍速链(J×2=2x 倒放);I/O 入出点接 selectionStore 既有字段;
  *   M 标记为会话级 ephemeral(不落盘不进 IR;持久化判定见 ui/markers.js 头注);
  * - 输入态/模态屏蔽在 shortcuts.js 调度器;每个按键的裁决可经 testid=shortcut-gate 断言。 */
-import { selectionStore, uiStore, playbackStore } from "../core/store.js";
+import { selectionStore, timelineStore, projectStore, uiStore, playbackStore } from "../core/store.js";
+import { clipKindOf, targetTrackForKind } from "../core/model.js";
 import * as commands from "../core/commands.js";
 import * as nav from "../core/nav.js";
+import * as edit from "../core/edit-commands.js";
 import { playback } from "../render/preview-loop.js";
 import { registerShortcut, clearRoutes, routeCount, keyOf } from "./shortcuts.js";
 import { defineBinding, comboOf, exportTable, onOverridesChange } from "./keymap-registry.js";
@@ -58,6 +60,28 @@ function openClipMenuKeyboard() {
   openClipContextMenu(r.left + 8, r.bottom + 4);
 }
 
+/** 服务端剪贴板(T4.2):Ctrl+C = clip_copy(不产 Op);观察面 __cfClipboard 兼容保留。 */
+function serverCopy() {
+  const id = selectionStore.get().clipId;
+  if (!id) return;
+  window.__cfClipboard = id;
+  edit.copyClip(id);
+}
+
+/** Ctrl+V = clip_paste_at(带属性;单 Op)。源片段行用于定位轨型(被删后如实提示)。 */
+function serverPaste() {
+  const id = window.__cfClipboard;
+  if (!id) return;
+  const row = timelineStore.get().clips.find((c) => c.id === id);
+  if (!row) {
+    import("../ui/toast.js").then((m) => m.toast("剪贴板来源已不在时间线,请重新复制", false));
+    return;
+  }
+  const tracks = projectStore.get().project?.tracks || [];
+  const trackId = targetTrackForKind(tracks, clipKindOf(row));
+  edit.pasteClipAt(trackId, Math.round(commands.playheadMs()));
+}
+
 /** RUN 表:id → 执行(重绑定只改组合,不改语义)。 */
 const RUN = {
   "play.toggle": () => commands.togglePlay(),
@@ -75,15 +99,17 @@ const RUN = {
   "mark.marker": () => toggleMarker(),
   "mark.prev": () => prevMarker(),
   "mark.next": () => nextMarker(),
-  "mode.select": () => nav.setBlade(false),
-  "mode.blade": () => nav.setBlade(!uiStore.get().blade),
+  "mode.select": () => nav.setTool("select"),
+  "mode.blade": () => nav.setTool(uiStore.get().tool === "blade" ? "select" : "blade"),
+  "mode.trim": () => nav.setTool(uiStore.get().tool === "trim" ? "select" : "trim"),
   "clip.split": () => commands.splitSelected(),
+  "clip.splitAll": () => edit.splitAllAt(commands.playheadMs()),
   "edit.delete": () => commands.deleteSelected(uiStore.get().ripple),
   "edit.deleteBksp": () => commands.deleteSelected(uiStore.get().ripple),
   "edit.rippleDelete": () => commands.deleteSelected(true),
-  "edit.copy": () => { window.__cfClipboard = selectionStore.get().clipId; },
-  "edit.cut": () => { window.__cfClipboard = selectionStore.get().clipId; commands.deleteSelected(false); },
-  "edit.paste": () => { const id = window.__cfClipboard; if (id) commands.duplicateClip(id, commands.playheadMs()); },
+  "edit.copy": () => serverCopy(),
+  "edit.cut": () => { serverCopy(); commands.deleteSelected(false); },
+  "edit.paste": () => serverPaste(),
   "edit.undo": () => commands.undo(),
   "edit.redo": () => commands.redo(),
   "edit.selectAll": () => nav.selectAllClips(),
@@ -130,7 +156,9 @@ function defineAll() {
   // ---- 编辑(23)----
   d("mode.select", "编辑", "选择模式(A)", "a");
   d("mode.blade", "编辑", "切割模式(B;点击片段即分割)", "b");
+  d("mode.trim", "编辑", "裁剪模式(T;点片段边缘拖动修剪)", "t");
   d("clip.split", "编辑", "分割(播放头处)", "s");
+  d("clip.splitAll", "编辑", "全轨分割(播放头处所有轨,单 Op)", "shift+s");
   d("edit.delete", "编辑", "删除选中片段", "delete");
   d("edit.deleteBksp", "编辑", "删除选中片段(退格)", "backspace");
   d("edit.rippleDelete", "编辑", "波纹删除", "shift+delete");

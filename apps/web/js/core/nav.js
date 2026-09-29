@@ -7,9 +7,16 @@ import { frameMsOf, clipKindOf, msAdd } from "./model.js";
 import { selectClip, moveClip } from "./commands.js";
 import { toast } from "../ui/toast.js";
 
-/** 切割模式开关(B/A;会话开关,光标变刀,点击片段即分割,不进 IR)。 */
+/** 工具模式开关(T4.2:A 选择 / B 刀 / T 裁剪;会话开关,不进 IR)。
+ * blade 字段为旧读点兼容(=tool==="blade");光标/命中区/徽标随 tool 切换。 */
+export function setTool(tool) {
+  const t = tool === "blade" || tool === "trim" ? tool : "select";
+  uiStore.set({ tool: t, blade: t === "blade" });
+}
+
+/** 兼容旧读点(T3.4 e2e 口径):B/A 开关走统一 setTool。 */
 export function setBlade(on) {
-  uiStore.set({ blade: Boolean(on) });
+  setTool(on ? "blade" : "select");
 }
 
 /** 按「轨序 + startMs」给全片段排序(键盘 ±1 clip 导航的稳定序)。 */

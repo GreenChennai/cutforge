@@ -21,8 +21,9 @@ import { playback } from "../render/preview-loop.js";
 let queue = [];
 let draining = false;
 
-/** 串行执行:命令排队,逐个 drain(避免 undo/redo 连点交错);透传 fn 返回值。 */
-function enqueue(fn) {
+/** 串行执行:命令排队,逐个 drain(避免 undo/redo 连点交错);透传 fn 返回值。
+ * T4.2 起对 edit-commands.js 开放(命令扩展簇共用同一队列,全壳一个时序)。 */
+export function enqueue(fn) {
   return new Promise((resolve) => {
     queue.push(async () => {
       try {
@@ -124,6 +125,8 @@ export function insertMedia(src, trackId, startMs, durationMs) {
       // 选中刚插入的片段(同轨末尾:旧壳口径)
       const mine = timelineStore.get().clips.filter((c) => c.track === trackId).pop();
       if (mine) selectClip(mine.id);
+      // 最近使用(T4.1):动态引避免 commands↔edit-commands 装配环
+      import("./edit-commands.js").then((m) => m.noteRecentMedia(src));
     }
     report(env, "clip_add");
   });

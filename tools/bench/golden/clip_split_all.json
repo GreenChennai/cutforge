@@ -1,0 +1,24 @@
+{
+ "tool": "clip_split_all",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "tMs": 5000
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-29"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

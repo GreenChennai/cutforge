@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。42 工具 = 13 查询 + 21 写 + 8 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42,编排 7→8)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。48 工具 = 13 查询 + 27 写 + 8 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42,编排 7→8;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48,轨道属性字段 locked/mute/solo/hidden/heightPx/color 同批进 IR/TrackPatch/ui-fields)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。",
  "channels": [
   "stdio",
   "embedded-http"
@@ -1570,6 +1570,255 @@
     },
     "required": [
      "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_trim",
+   "kind": "write",
+   "idempotent": true,
+   "description": "片段修剪四模式(册四 T4.2):trim=单边伸缩(edge 必给,startMs/durationMs/sourceInMs 联动);roll=相邻边界双边联动(总时长不变,无贴合邻居 GUARD_FAILED);slip=内容平移(sourceInMs 平移,时间线占位不变,越素材末尾 GUARD_FAILED,需 ffprobe);slide=位置平移(贴合邻居让位/压缩)。硬约束(时长>0/不越 0/无重叠)违反 GUARD_FAILED",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string"
+     },
+     "mode": {
+      "type": "string",
+      "enum": [
+       "trim",
+       "roll",
+       "slip",
+       "slide"
+      ]
+     },
+     "edge": {
+      "type": "string",
+      "enum": [
+       "in",
+       "out"
+      ],
+      "description": "作用边;trim/roll 必给,slip/slide 无需"
+     },
+     "deltaMs": {
+      "type": "integer",
+      "description": "有符号变化量(毫秒);0 拒绝"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "clipId",
+     "mode",
+     "deltaMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_split_all",
+   "kind": "write",
+   "idempotent": true,
+   "description": "播放头处所有轨命中的片段一次全分割(单 Op,undo 一刀还原);切点在片段内部才切,无命中幂等回执",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "tMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "播放头时间(毫秒)"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "tMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "track_update",
+   "kind": "write",
+   "idempotent": true,
+   "description": "轨道属性 patch(按字段合并,None=不改):name/locked/mute/solo/hidden/heightPx/color;静音/独奏的渲染混音联动候 BE3(字段与命令链本册就位);heightPx 低于 schema 允许集 SCHEMA_INVALID",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "trackId": {
+      "type": "string",
+      "description": "轨道 id(如 V1)"
+     },
+     "patch": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string"
+       },
+       "locked": {
+        "type": "boolean"
+       },
+       "mute": {
+        "type": "boolean"
+       },
+       "solo": {
+        "type": "boolean"
+       },
+       "hidden": {
+        "type": "boolean"
+       },
+       "heightPx": {
+        "type": "integer",
+        "minimum": 16
+       },
+       "color": {
+        "type": "string"
+       }
+      }
+     },
+     "summary": {
+      "type": "string"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "trackId",
+     "patch"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_gap_delete",
+   "kind": "write",
+   "idempotent": true,
+   "description": "删除指定轨上包含 tMs 的间隙,后继片段整体左移闭合(单 Op 原子);首段前空档亦视作间隙;tMs 位于片段内部或全部片段之后 GUARD_FAILED",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "trackId": {
+      "type": "string",
+      "description": "轨道 id(如 V1)"
+     },
+     "tMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "定位间隙的时间点(毫秒)"
+     },
+     "causedBy": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      }
+     }
+    },
+    "required": [
+     "root",
+     "trackId",
+     "tMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_copy",
+   "kind": "write",
+   "idempotent": true,
+   "description": "复制片段到服务端会话态剪贴板(不产 Op、不升 rev、不可撤销;重开工作区即清空);配合 clip_paste_at 使用",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "root",
+     "clipId"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "clip_paste_at",
+   "kind": "write",
+   "idempotent": false,
+   "description": "带属性粘贴剪贴板内容到指定轨+时间点(volume/speed/transition 等原样携带,id 在目标轨重分配);跨 kind GUARD_FAILED;落点重叠 GUARD_FAILED;剪贴板为空 PRECONDITION_FAILED;非幂等写,需 requestId 去重",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "requestId": {
+      "type": "string",
+      "description": "非幂等写操作去重键"
+     },
+     "trackId": {
+      "type": "string",
+      "description": "目标轨道 id(须与剪贴板来源同 kind)"
+     },
+     "startMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "粘贴落点(毫秒)"
+     }
+    },
+    "required": [
+     "root",
+     "trackId",
+     "startMs"
     ]
    },
    "outputSchema": {

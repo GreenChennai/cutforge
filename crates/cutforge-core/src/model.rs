@@ -212,6 +212,8 @@ fn default_factor() -> f64 {
 }
 
 /// 轨道:同类型元素的容器;`id`(如 V1)首次生成后写回并不再变。
+/// 轨道级属性字段(册四 A4 T4.2):Option + skip_serializing_if,旧工程缺省即
+/// 不落盘(零迁移);静音/独奏/隐藏的渲染混音联动候 BE3,此处先保证读写不丢。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
@@ -219,6 +221,18 @@ pub struct Track {
     pub kind: TrackKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mute: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_px: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     #[serde(default)]
     pub clips: Vec<Clip>,
 }
@@ -448,5 +462,42 @@ mod tests {
         assert_eq!(Project::next_clip_id(&p.tracks[0]), "V1-003");
         assert_eq!(p.next_track_id(TrackKind::Video), "V2");
         assert_eq!(p.next_track_id(TrackKind::Text), "T1");
+    }
+
+    /// 册四 A4 T4.2:轨道新字段(locked/mute/solo/hidden/heightPx/color)必须被内核
+    /// 模型承接——"不加载 = 必丢"教训(册一 worked example:bgm.assetId 静默丢弃),
+    /// 每个新字段都要 roundtrip 测试证明读写不丢。
+    #[test]
+    fn track_fields_roundtrip_no_loss() {
+        let mut v = sample();
+        v["tracks"][0]["locked"] = json!(true);
+        v["tracks"][0]["mute"] = json!(false);
+        v["tracks"][0]["solo"] = json!(true);
+        v["tracks"][0]["hidden"] = json!(false);
+        v["tracks"][0]["heightPx"] = json!(220);
+        v["tracks"][0]["color"] = json!("#3D7EAF");
+        v["tracks"][0]["name"] = json!("主画面");
+        let p = Project::from_value(&v).expect("带轨道属性字段的工程必须通过 v2 校验");
+        let t = &p.tracks[0];
+        assert_eq!(t.locked, Some(true));
+        assert_eq!(t.mute, Some(false));
+        assert_eq!(t.solo, Some(true));
+        assert_eq!(t.hidden, Some(false));
+        assert_eq!(t.height_px, Some(220));
+        assert_eq!(t.color.as_deref(), Some("#3D7EAF"));
+        assert_eq!(t.name.as_deref(), Some("主画面"));
+        // 序列化回 Value:七个字段逐键在位(写不丢)
+        let back = p.to_validated_value().unwrap();
+        assert_eq!(back["tracks"][0]["locked"], json!(true));
+        assert_eq!(back["tracks"][0]["heightPx"], json!(220));
+        assert_eq!(back["tracks"][0]["color"], json!("#3D7EAF"));
+        // 再读入:语义相等(serde 往返无静默丢弃)
+        let p2 = Project::from_value(&back).unwrap();
+        assert_eq!(p, p2);
+        // 旧工程(无这些字段)照常读写:缺省 None,不臆造落盘
+        let old = Project::from_value(&sample()).unwrap();
+        assert_eq!(old.tracks[0].locked, None);
+        let back_old = old.to_validated_value().unwrap();
+        assert!(back_old["tracks"][0].get("locked").is_none(), "缺省字段不得臆造");
     }
 }

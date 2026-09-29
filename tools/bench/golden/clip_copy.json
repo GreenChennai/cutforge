@@ -1,0 +1,25 @@
+{
+ "tool": "clip_copy",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipId": "V1-003"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "clipId": "V1-003",
+     "clipboard": {
+      "clips": 1,
+      "kind": "video"
+     },
+     "copied": 1
+    },
+    "message": "已复制到会话剪贴板",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

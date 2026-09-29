@@ -22,7 +22,8 @@ impl Rng {
     }
 }
 
-/// 生成小型工程片段:标量字段 + 带 id 的 clips 数组。
+/// 生成小型工程片段:标量字段 + 带 id 的 clips 数组 + 带 id 的 tracks 数组
+/// (册四 A4:轨道含 locked/mute/solo/hidden/heightPx/color 新字段,合并属性表必须逐字段承接)。
 fn gen_doc(rng: &mut Rng) -> Value {
     let mut obj = Map::new();
     obj.insert("slug".into(), json!("属性测试工程"));
@@ -40,13 +41,27 @@ fn gen_doc(rng: &mut Rng) -> Value {
         })
         .collect();
     obj.insert("clips".into(), Value::Array(clips));
+    // 轨道数组(带 id):新 Track 字段全部入池参与随机变异
+    let track: Value = json!({
+        "id": "V1",
+        "kind": "video",
+        "name": "主画面",
+        "locked": rng.below(2) == 0,
+        "mute": rng.below(2) == 0,
+        "solo": rng.below(2) == 0,
+        "hidden": rng.below(2) == 0,
+        "heightPx": 80 + rng.below(200),
+        "color": if rng.below(2) == 0 { "#3D7EAF" } else { "#22CC88" },
+        "clips": [],
+    });
+    obj.insert("tracks".into(), Value::Array(vec![track]));
     Value::Object(obj)
 }
 
-/// 随机变异:改标量 / 改 clip 字段 / 删 clip / 增 clip。
+/// 随机变异:改标量 / 改 clip 字段 / 删 clip / 增 clip / 改轨道新字段。
 fn mutate(rng: &mut Rng, doc: &Value) -> Value {
     let mut v = doc.clone();
-    let kind = rng.below(4);
+    let kind = rng.below(5);
     match kind {
         0 => {
             let vals = [json!(1), json!(2), json!(99), json!(150), json!(true)];
@@ -66,7 +81,7 @@ fn mutate(rng: &mut Rng, doc: &Value) -> Value {
                 target["volume"] = json!(rng.below(3)); // 0/1/2
             }
         }
-        _ => {
+        3 => {
             let arr = v["clips"].as_array_mut().unwrap();
             if rng.below(2) == 0 && !arr.is_empty() {
                 let idx = rng.below(arr.len() as u64) as usize;
@@ -75,6 +90,20 @@ fn mutate(rng: &mut Rng, doc: &Value) -> Value {
                 let new_id = format!("N{}", rng.below(4));
                 let pushed = json!({"id": new_id, "startMs": rng.below(300), "durationMs": 100, "volume": 1});
                 arr.push(pushed);
+            }
+        }
+        _ => {
+            // 轨道属性字段变异:七个可编辑字段随机改值(布尔翻转/数值/字符串三选一)
+            let t = &mut v["tracks"][0];
+            match rng.below(7) {
+                0 => t["name"] = json!(if rng.below(2) == 0 { "主画面" } else { "备选轨" }),
+                1..=4 => {
+                    let key = ["locked", "mute", "solo", "hidden"][rng.below(4) as usize];
+                    let cur = t[key].as_bool().unwrap_or(false);
+                    t[key] = json!(!cur);
+                }
+                5 => t["heightPx"] = json!(80 + rng.below(200)),
+                _ => t["color"] = json!(if rng.below(2) == 0 { "#3D7EAF" } else { "#FF8800" }),
             }
         }
     }

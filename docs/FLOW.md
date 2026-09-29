@@ -55,7 +55,7 @@ cutforge/
 ├── tools/
 │   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1/A2/A3 已注册,决策 D-A2)
 │   ├── bench/bench.py          性能基准(T1.8;--check 阈值判定,基线 docs/bench/baseline.json)
-│   ├── bench/tool_parity.py    42 工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame)
+│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;数量以 schemas/mcp-tools.json 为准)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
 │   ├── schema_gen.py           生成 tools/_generated/cf_validate.py(Python 校验器)
 │   └── validate_regression.py  回归集校验入口(16/16)
@@ -242,11 +242,11 @@ cargo 测试与 e2e 脚本形式存在,由 `cargo test --workspace` 与 CI 的 w
 非测试源文件 ≤800 行 / tool_parity 黄金对拍 / e2e_static / e2e_events / bench --check
 (末项为观察项)。已注册 **`gate.py A2`**(册二,前端壳重写),**12 项 = 11 阻断 + 1 观察**:
 cargo 全绿 / clippy / js 行数红线(js 单文件 ≤400、index.html ≤120)/ shell-purity-v2
-(R1 持久化禁令/R2 投影只读/R3 禁裸 fetch/R5 色值;R4 legacy 豁免已随 legacy/ 删除收口)/ tool_parity(42)/
+(R1 持久化禁令/R2 投影只读/R3 禁裸 fetch/R5 色值;R4 legacy 豁免已随 legacy/ 删除收口)/ tool_parity(42,时点口径)/
 e2e_events / e2e_static / e2e_ui_smoke / e2e_playback_survival / e2e_perf_timeline
 (`--min-fps` 参数化)/ pytest-suite。legacy-reminder 观察项已随 legacy/ 删除移除
 (册三收尾,A2-L2 了断)。已注册 **`gate.py A3`**(册三,UX 动效/键位/可访问性),15 项全阻断:
-cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/ pytest / tool_parity(42)/
+cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/ pytest / tool_parity(42,时点口径)/
 e2e_static / e2e_events / e2e_ui_smoke / e2e_playback_survival / e2e_drag_perf(`--min-fps 55`,
 安静时段复跑口径)/ e2e_hotkeys / e2e_a11y(axe 扫描,登记违规见脚本)/ e2e_perf_budget /
 e2e_perf_timeline(负载敏感项均不进 CI);载体 tools/e2e_{drag_perf,hotkeys,a11y,perf_budget}.py。CI 只跑 M0/M1 + web-e2e(含册二 ui_smoke/playback_survival + 册三 hotkeys/a11y 四步;perf/拖拽帧率负载敏感不进 CI),A<n> 本机册收官跑;台账见 [A1-PROGRESS.md](A1-PROGRESS.md) /

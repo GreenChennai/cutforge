@@ -138,12 +138,15 @@ fn media_browse_lists_media_and_rejects_bad_dir() {
 fn mutation_classification() {
     for q in ["project_get", "timeline_get", "oplog_tail", "notes_list", "conflict_list",
               "render_probe", "stage_status", "media_probe", "media_browse", "capability_matrix",
-              "render_run", "render_progress", "render_frame", "project_new"] {
+              "render_run", "render_progress", "render_frame", "project_new",
+              "clip_copy"] {
         assert!(!produces_rev_mutation(q), "{q} 不应计入会话变更");
     }
     for w in ["clip_update", "clip_add", "clip_delete", "clip_split", "clip_move",
               "track_add", "undo", "redo", "cut_apply", "notes_add",
-              "transition_set", "motion_set", "bgm_set"] {
+              "transition_set", "motion_set", "bgm_set",
+              "clip_trim", "clip_split_all", "track_update", "clip_gap_delete",
+              "clip_paste_at"] {
         assert!(produces_rev_mutation(w), "{w} 应计入会话变更");
     }
 }

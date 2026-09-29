@@ -38,6 +38,35 @@ struct Resident {
     fp: DiskFingerprint,
 }
 
+/// 服务端会话态剪贴板(册四 A4 T4.2 clip_copy/clip_paste_at)。
+/// 按 root 键控、进程内存态:**不落盘、不入 OpLog、不参与撤销**,serve 进程退出即清空。
+/// 独立于工作区缓存的理由:写失败的 RPC 会保守丢弃 Workspace 缓存(引擎已回滚),
+/// 但剪贴板是纯会话态(类似 NLE 的系统剪贴板),必须跨失败调用与工作区重开存活。
+/// 形态:clips 深拷贝数组(当前 clip_copy 单片段入板,数组为多片段批量粘贴预留)
+/// + 来源轨类型(粘贴跨 kind 由派发层拒绝)。
+#[derive(Debug, Clone)]
+pub(crate) struct SessionClipboard {
+    pub clips: Vec<cutforge_core::model::Clip>,
+    pub kind: cutforge_core::model::TrackKind,
+}
+
+fn clipboards() -> &'static Mutex<BTreeMap<String, SessionClipboard>> {
+    static CLIPBOARDS: OnceLock<Mutex<BTreeMap<String, SessionClipboard>>> = OnceLock::new();
+    CLIPBOARDS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// 剪贴板覆盖式写入(clip_copy;root_key 与工作区缓存同键)。
+pub(crate) fn clipboard_set(root_key: &str, clips: Vec<cutforge_core::model::Clip>, kind: cutforge_core::model::TrackKind) {
+    if let Ok(mut m) = clipboards().lock() {
+        m.insert(root_key.to_string(), SessionClipboard { clips, kind });
+    }
+}
+
+/// 剪贴板只读视图(clip_paste_at 读取;None = 空板)。
+pub(crate) fn clipboard_get(root_key: &str) -> Option<SessionClipboard> {
+    clipboards().lock().ok().and_then(|m| m.get(root_key).cloned())
+}
+
 fn cache() -> &'static Mutex<BTreeMap<String, Resident>> {
     static CACHE: OnceLock<Mutex<BTreeMap<String, Resident>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -120,6 +149,9 @@ pub fn with_resident(
 pub fn _clear_for_tests() {
     if let Ok(mut cache) = cache().lock() {
         cache.clear();
+    }
+    if let Ok(mut cb) = clipboards().lock() {
+        cb.clear();
     }
 }
 

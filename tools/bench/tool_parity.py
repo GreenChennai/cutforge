@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""T1.1/AC-1.2 门禁:MCP 42 工具黄金响应库(golden 响应对拍)。
+"""T1.1/AC-1.2 门禁:MCP 工具黄金响应库(golden 响应对拍;册一建 41,册二 A2 增
+render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,数量口径以 schemas/mcp-tools.json 为准)。
 
     python tools/bench/tool_parity.py                  # 对比模式:重跑采集,与 golden 逐字段对拍
     python tools/bench/tool_parity.py --update-golden  # 采集模式:重建 tools/bench/golden/*.json
@@ -83,8 +84,7 @@ class Report:
 
     def summary_line(self, mode: str, n_tools: int) -> str:
         c = self.counts()
-        cover = f"{n_tools}/42" if n_tools != 42 else "42/42"
-        msg = (f"tool_parity {mode}完成(覆盖 {cover} 工具): "
+        msg = (f"tool_parity {mode}完成(覆盖 {n_tools} 工具): "
                f"{c['pass']} PASS / {c['warn']} WARN / {c['drift']} DRIFT / {c['fail']} FAIL")
         bad = [r["tool"] for r in self.rows if r["status"] in ("DRIFT", "FAIL")]
         if bad:
@@ -92,7 +92,7 @@ class Report:
         if self.missing:
             msg += f";调用异常: {self.missing}"
         if not bad and not self.missing:
-            msg += ";42 工具黄金对拍零漂移"
+            msg += f";{n_tools} 工具黄金对拍零漂移"
         return msg
 
     def envelope(self, mode: str, n_tools: int) -> dict:
@@ -386,7 +386,8 @@ def write_truth_fixtures(ws: Path) -> None:
 
 
 def build_sequence() -> list[tuple[str, dict, bool]]:
-    """固定调用序列:(工具名, 参数, probe_mode)。41 个工具全覆盖、21 写工具全真实调用。
+    """固定调用序列:(工具名, 参数, probe_mode)。全部工具覆盖、全部写工具真实调用
+    (册四 A4 起 27 写工具;数量以 schemas/mcp-tools.json 为准)。
 
     参数里的 {MAIN}/{NEW} 在发 rpc 前替换为真实临时路径;@...@ 为动态接线占位
     (notes_resolve 的 opIds 取自 clip_update(causedBy) 回执;render_progress 的
@@ -459,6 +460,26 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         ("notes_add", {"root": "{MAIN}", "anchor": {"kind": "time", "tMs": 500},
                        "body": "开头音效偏响", "author": "user"}, False),
         ("notes_reject", {"root": "{MAIN}", "noteId": "n-0002", "reason": "风格即如此"}, False),
+        # -- 阶段 C2:时间线编辑全工具(册四 A4 T4.2;27 写工具收口) --
+        # 此时 V1:V1-001[0,1800) V1-002[4000,10000) V1-003[12000,14000)
+        # (V1-004 已被 redo 二次删除,不复存在;roll 一例落点无贴合邻居,
+        #  记录 GUARD_FAILED 守护拒绝面——正向语义由引擎单测与协议测试覆盖)
+        # gap_delete 闭的是 [1800,4000) 共 2200ms 间隙:后继整体左移 2200。
+        ("track_update", {"root": "{MAIN}", "trackId": "T1",
+                          "patch": {"name": "字幕轨", "color": "#22CC88", "heightPx": 120}}, False),
+        ("track_update", {"root": "{MAIN}", "trackId": "A1",
+                          "patch": {"mute": True, "solo": False}}, False),
+        ("clip_trim", {"root": "{MAIN}", "clipId": "V1-002", "mode": "trim",
+                       "edge": "out", "deltaMs": -1000}, False),
+        ("clip_gap_delete", {"root": "{MAIN}", "trackId": "V1", "tMs": 1900}, False),
+        ("clip_trim", {"root": "{MAIN}", "clipId": "V1-003", "mode": "roll",
+                       "edge": "out", "deltaMs": 400}, False),
+        ("clip_trim", {"root": "{MAIN}", "clipId": "V1-003", "mode": "slip", "deltaMs": 250}, False),
+        ("clip_trim", {"root": "{MAIN}", "clipId": "V1-003", "mode": "slide", "deltaMs": 600}, False),
+        ("clip_split_all", {"root": "{MAIN}", "tMs": 5000}, False),
+        ("clip_copy", {"root": "{MAIN}", "clipId": "V1-003"}, False),
+        ("clip_paste_at", {"root": "{MAIN}", "trackId": "V1", "startMs": 15000,
+                           "requestId": "parity-paste-1"}, False),
         # -- 阶段 D:写后查询(投影面) --
         ("project_get", {"root": "{MAIN}"}, False),
         ("timeline_get", {"root": "{MAIN}"}, False),
@@ -668,7 +689,7 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="MCP 42 工具黄金响应库对拍(AC-1.2)")
+    ap = argparse.ArgumentParser(description="MCP 工具黄金响应库对拍(AC-1.2;工具数以 schemas/mcp-tools.json 为准)")
     ap.add_argument("--update-golden", action="store_true", help="重建 tools/bench/golden/*.json")
     ap.add_argument("--bin", default=None, help="cutforge-mcp 二进制路径(默认 target/debug)")
     ap.add_argument("--json", action="store_true", help="只输出结果协议 envelope JSON")

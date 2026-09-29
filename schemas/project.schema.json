@@ -103,7 +103,37 @@
             ]
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "轨道显示名(track_update 重命名;册四 A4 T4.2)"
+          },
+          "locked": {
+            "type": "boolean",
+            "default": false,
+            "description": "轨道锁定(防误编辑标记;track_update 设置。本册仅承载 IR 字段与命令链,编辑拦截策略候后续册)"
+          },
+          "mute": {
+            "type": "boolean",
+            "default": false,
+            "description": "轨道静音(渲染混音链消费;track_update 设置,字段与语义链册四 A4 T4.2 就位,渲染联动候 BE3)"
+          },
+          "solo": {
+            "type": "boolean",
+            "default": false,
+            "description": "轨道独奏(渲染混音链:solo 生效时仅独奏轨出声;track_update 设置,渲染联动候 BE3)"
+          },
+          "hidden": {
+            "type": "boolean",
+            "default": false,
+            "description": "轨道隐藏(视频轨不参与合成/壳不显示其片段;track_update 设置,渲染联动候 BE3)"
+          },
+          "heightPx": {
+            "type": "integer",
+            "minimum": 16,
+            "description": "轨道在时间线面板的显示高度(像素;壳消费,纯 UI 偏好,不影响渲染)"
+          },
+          "color": {
+            "type": "string",
+            "description": "轨道标识色(壳时间线轨道条着色;建议 #RRGGBB 形态,契约层不锁格式)"
           },
           "clips": {
             "type": "array",

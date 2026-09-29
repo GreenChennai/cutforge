@@ -96,6 +96,90 @@ impl MotionPatch {
     }
 }
 
+/// 轨道属性 patch(对应 MCP `track_update`;册四 A4 T4.2):只改出现的字段
+/// (None = 不改),字段级 Op 的 before/after 由此派生。静音/独奏/隐藏的
+/// 渲染混音联动候 BE3,本册只保证 IR 字段 + 命令 + 契约链就位。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mute: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_px: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+impl TrackPatch {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// 应用到 track 并返回字段级变更(指针相对 track 对象,即 /tracks/{i}/…)。
+    pub fn apply_to(self, track: &mut crate::model::Track) -> Vec<FieldChange> {
+        let mut changes: Vec<FieldChange> = Vec::new();
+        let mut record = |name: &str, old: Value, new: Value| {
+            if old != new {
+                changes.push((format!("/{name}"), old, new));
+            }
+        };
+        if let Some(v) = self.name {
+            let old = track.name.replace(v.clone());
+            record("name", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
+        if let Some(v) = self.locked {
+            let old = track.locked.replace(v);
+            record("locked", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.mute {
+            let old = track.mute.replace(v);
+            record("mute", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.solo {
+            let old = track.solo.replace(v);
+            record("solo", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.hidden {
+            let old = track.hidden.replace(v);
+            record("hidden", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.height_px {
+            let old = track.height_px.replace(v);
+            record("heightPx", opt_json_num(old), json_num(v));
+        }
+        if let Some(v) = self.color {
+            let old = track.color.replace(v.clone());
+            record("color", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
+        changes
+    }
+}
+
+/// `clip_trim` 模式(册四 A4 T4.2):trim 单边伸缩 / roll 边界双边联动 /
+/// slip 内容平移 / slide 位置平移。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimMode {
+    Trim,
+    Roll,
+    Slip,
+    Slide,
+}
+
+/// `clip_trim` 的作用边(边缘;trim/roll 必给,slip/slide 不适用)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimEdge {
+    In,
+    Out,
+}
+
 impl BgmPatch {
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
@@ -165,6 +249,17 @@ pub enum Command {
     BgmSet { patch: BgmPatch },
     /// 清除工程级背景乐(已无 bgm 时幂等)。
     BgmClear,
+    /// 片段修剪(册四 A4 T4.2 四模式):trim 单边伸缩(edge 必给)/
+    /// roll 相邻边界双边联动(总时长不变)/ slip 内容平移(sourceInMs 平移,
+    /// 时间线占位不变)/ slide 位置平移(贴合邻居让位/压缩)。
+    /// 硬约束(时长>0、不越 0、无重叠)违反返回既有 InvariantViolation/NotAdjacent。
+    ClipTrim { clip_id: String, mode: TrimMode, edge: TrimEdge, delta_ms: i64 },
+    /// 播放头处**所有轨**命中的片段一次全分割(单 Op;切点在片段内部才切)。
+    ClipSplitAll { t_ms: u64 },
+    /// 轨道属性 patch(幂等;None 字段不改)。
+    TrackUpdate { track_id: String, patch: TrackPatch },
+    /// 删除片段间间隙:定位轨上包含 t_ms 的间隙,后继片段整体左移闭合(单 Op 原子)。
+    ClipGapDelete { track_id: String, t_ms: u64 },
 }
 
 /// 从 patch 派生的字段级变更(指针片段 → before/after),用于生成叶级 Op。
@@ -273,6 +368,10 @@ fn json_num(v: u64) -> Value {
 
 fn opt_json_num(v: Option<u64>) -> Value {
     v.map(json_num).unwrap_or(Value::Null)
+}
+
+fn opt_json_bool(v: Option<bool>) -> Value {
+    v.map(Value::from).unwrap_or(Value::Null)
 }
 
 fn json_f64(v: f64) -> Value {
@@ -438,5 +537,40 @@ mod tests {
 
         assert!(BgmPatch::default().is_empty());
         assert!(!BgmPatch { src: Some("x".into()), ..Default::default() }.is_empty());
+    }
+
+    /// TrackPatch(track_update 的合并语义):None=不改;同值不产变更;
+    /// 指针相对 track 对象;缺省字段不臆造。
+    #[test]
+    fn track_patch_merges_by_field() {
+        let mut t: crate::model::Track = serde_json::from_value(serde_json::json!({
+            "id": "V1", "kind": "video", "clips": []
+        }))
+        .unwrap();
+        // 全字段 patch:7 项变更,指针逐一对应
+        let changes = TrackPatch {
+            name: Some("主画面".into()), locked: Some(true), mute: Some(false),
+            solo: Some(true), hidden: Some(false), height_px: Some(240),
+            color: Some("#3D7EAF".into()),
+        }
+        .apply_to(&mut t);
+        assert_eq!(changes.len(), 7);
+        let m: std::collections::BTreeMap<String, (Value, Value)> =
+            changes.into_iter().map(|(p, o, n)| (p, (o, n))).collect();
+        assert_eq!(m["/name"].1, serde_json::json!("主画面"));
+        assert_eq!(m["/heightPx"].1, serde_json::json!(240));
+        assert_eq!(m["/color"].1, serde_json::json!("#3D7EAF"));
+        assert_eq!(t.height_px, Some(240));
+        // 部分合并:只改 mute,name/heightPx 保持
+        let changes = TrackPatch { mute: Some(true), ..Default::default() }.apply_to(&mut t);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, "/mute");
+        assert_eq!(t.name.as_deref(), Some("主画面"), "未给出的字段不得被清掉");
+        assert_eq!(t.mute, Some(true));
+        // 同值 patch 不产变更
+        let changes = TrackPatch { mute: Some(true), ..Default::default() }.apply_to(&mut t);
+        assert!(changes.is_empty(), "同值 track 字段不得计入变更");
+        assert!(TrackPatch::default().is_empty());
+        assert!(!TrackPatch { color: Some("#111111".into()), ..Default::default() }.is_empty());
     }
 }

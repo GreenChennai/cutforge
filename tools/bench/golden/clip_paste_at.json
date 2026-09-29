@@ -1,0 +1,26 @@
+{
+ "tool": "clip_paste_at",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "trackId": "V1",
+    "startMs": 15000,
+    "requestId": "parity-paste-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-30"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

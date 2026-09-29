@@ -1101,7 +1101,8 @@ def check_rust_line_limit() -> CheckResult:
 
 
 def check_tool_parity() -> CheckResult:
-    """A1-4(AC-1.2): MCP 42 工具黄金响应库对拍(册一建 41;册二 A2 增 render_frame)。
+    """A1-4(AC-1.2): MCP 工具黄金响应库对拍(册一建 41;册二 A2 增 render_frame 后 42;
+    册四 A4 增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 48)。
     加法容忍:实际多出的键仅警告;值变化/键缺失 = DRIFT 阻断。
     重建快照:python tools/bench/tool_parity.py --update-golden(须随有计划的行为变更同步重建)。"""
     script = REPO_ROOT / "tools" / "bench" / "tool_parity.py"

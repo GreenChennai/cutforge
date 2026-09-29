@@ -268,7 +268,7 @@
    "name": "clip_update",
    "kind": "write",
    "idempotent": true,
-   "description": "改片段属性(同 patch 重复应用结果一致)",
+   "description": "改片段属性(同 patch 重复应用结果一致);册四 T4.6 起 patch.fx 承接片段特效(整对象替换:combo 叠加栈上限 3 顺序即应用顺序 + in/out 槽位;目录 GET /catalogs)",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -427,6 +427,26 @@
          }
         },
         "description": "动效子 patch(按字段合并,None 不改);独立工具 motion_set 的同参通道"
+       },
+       "fx": {
+        "type": "object",
+        "description": "片段特效(整对象替换):combo=[{fx,params}…] 上限 3 顺序即应用顺序;in/out 槽位登记待渲染(册五);未注册 fxId 渲染端逐项降级 WARN(fxDegraded)",
+        "properties": {
+         "in": {
+          "$ref": "#/$defs/fxEntry"
+         },
+         "out": {
+          "$ref": "#/$defs/fxEntry"
+         },
+         "combo": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+           "$ref": "#/$defs/fxEntry"
+          }
+         }
+        },
+        "additionalProperties": false
        }
       }
      },
@@ -1511,7 +1531,7 @@
    "name": "transition_set",
    "kind": "write",
    "idempotent": true,
-   "description": "设置片段转场(clip.transition):type 必给(fade/wipeleft/wipeup/slideleft/circleopen/cut/none;cut/none=显式硬切或关闭);durMs/fx/reason 可选,按字段合并不覆盖未给字段;枚举外值由 schema 层拒绝(SCHEMA_INVALID)",
+   "description": "设置片段转场(clip.transition):type 必给(基础枚举 fade/wipeleft/wipeup/slideleft/circleopen/cut/none;cut/none=显式硬切或关闭);durMs/fx/reason 可选,按字段合并不覆盖未给字段;全量转场目录(ffmpeg xfade 58 项实测)走 fx=\"tr.<id>\"(目录 GET /catalogs),未注册 fxId 渲染端降级 type 并 WARN;枚举外 type 由 schema 层拒绝(SCHEMA_INVALID)",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -1577,7 +1597,7 @@
    "name": "motion_set",
    "kind": "write",
    "idempotent": true,
-   "description": "设置片段入场/出场动效(clip.motion):in/inMs/out/outMs 至少给一,按字段合并不覆盖未给字段;枚举外值由 schema 层拒绝(SCHEMA_INVALID)",
+   "description": "设置片段入场/出场动效(clip.motion):in/inMs/out/outMs/inFx/outFx 至少给一,按字段合并不覆盖未给字段;册四 T4.6 枚举扩至真实渲染目录(schemas/fx-catalog.json motion.*);inFx/outFx=mo.<id> 直通别名优先于枚举;枚举外值由 schema 层拒绝(SCHEMA_INVALID)",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -1595,8 +1615,13 @@
        "fadeIn",
        "slideInLeft",
        "slideInRight",
+       "slideInUp",
+       "slideInDown",
        "scaleIn",
-       "zoomIn"
+       "zoomIn",
+       "popIn",
+       "bounceIn",
+       "spinIn"
       ],
       "description": "入场动效类型"
      },
@@ -1609,7 +1634,13 @@
        "none",
        "fadeOut",
        "slideOutLeft",
-       "slideOutRight"
+       "slideOutRight",
+       "slideOutUp",
+       "slideOutDown",
+       "zoomOut",
+       "popOut",
+       "bounceOut",
+       "spinOut"
       ],
       "description": "出场动效类型"
      },
@@ -1628,6 +1659,14 @@
      },
      "expectRev": {
       "type": "integer"
+     },
+     "inFx": {
+      "type": "string",
+      "description": "入场直通别名 mo.<id>(目录 GET /catalogs → fx.motion.in);优先于 in 枚举"
+     },
+     "outFx": {
+      "type": "string",
+      "description": "出场直通别名 mo.<id>(目录 GET /catalogs → fx.motion.out);优先于 out 枚举"
      }
     },
     "required": [
@@ -1940,5 +1979,23 @@
     "$ref": "#/definitions/envelope"
    }
   }
- ]
+ ],
+ "$defs": {
+  "fxEntry": {
+   "type": "object",
+   "required": [
+    "fx"
+   ],
+   "properties": {
+    "fx": {
+     "type": "string",
+     "description": "fxId(目录 GET /catalogs → fx.*)"
+    },
+    "params": {
+     "type": "object",
+     "description": "透传注册表;未声明键按默认值裁决"
+    }
+   }
+  }
+ }
 }

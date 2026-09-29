@@ -11,6 +11,11 @@ pub const CAPABILITY_MATRIX_JSON: &str = include_str!("../../../docs/capability-
 /// E4-2 单一真相源:壳允许编辑的字段集(机械校验 = cutforge-cli check-ui-fields;
 /// 壳经由 GET /ui-fields 取本文件渲染检查器分组,壳不读文件系统)。
 pub const UI_FIELDS_JSON: &str = include_str!("../../../schemas/ui-fields.json");
+/// 转场目录(册四 T4.5;ffmpeg xfade 全集 58 项实测)——渲染端 catalog 模块与
+/// 壳 GET /catalogs 同源;不经 MCP 工具(工具数口径不变,四则 48)。
+pub const TRANSITION_CATALOG_JSON: &str = include_str!("../../../schemas/transition-catalog.json");
+/// 特效 + 动效目录(册四 T4.6;fx 首批 11 项 + motion 真实渲染目录)。
+pub const FX_CATALOG_JSON: &str = include_str!("../../../schemas/fx-catalog.json");
 
 /// 工具注册表(契约来自 schemas/mcp-tools.json;派发处理器同在本 crate)。
 pub fn registry() -> &'static Vec<Value> {

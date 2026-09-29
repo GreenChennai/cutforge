@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "_doc": "特效与动效目录(T4.6;册四 A4-BE3a)。fx 段 = 挂在 clip.fx.combo(数组上限 3,顺序即应用顺序)的整段特效;每项 fxId + 参数 schema + ffmpeg 滤镜映射模板(占位符:参数名直取,上下文 {W}/{H}/{FPS} = 画布宽高帧率,{D} = 时窗秒,{ST} = 时窗起点秒,{N} = 时窗帧数,{L} = 叠加实例标签前缀——注册表渲染时逐实例唯一化)。未注册 fxId 渲染降级 + WARN(fxDegraded 留痕),combo 内逐项独立降级不整链回退。motion 段 = clip.motion 入场/出场动画目录:**只收真实渲染项**(诚实纪律;既有 6+4 枚举首次全部落地,新增加 slideInUp/Down、slideOutUp/Down、popIn/Out、bounceIn/Out、spinIn/Out;缩放类走 zoompan、滑动/弹跳类走 split+overlay 表达式、旋转走 rotate、淡变走 fade——全部经 parity 夹具实渲)。尚不能真实渲染的动效(如 3D 翻转、文字逐字动画)不进目录,列遗留册五。壳经 GET /catalogs 获取本表。",
+  "fxCategories": ["模糊", "锐化", "光影", "风格", "干扰"],
+  "fx": [
+    {
+      "id": "fx.blur", "name": "模糊", "category": "模糊",
+      "desc": "盒式模糊(luma_power=2 双程,近似高斯)",
+      "params": [{ "name": "radius", "type": "number", "min": 1, "max": 40, "default": 8, "desc": "模糊半径(像素)" }],
+      "filter": "boxblur=luma_radius={radius}:luma_power=2:chroma_radius={radius}"
+    },
+    {
+      "id": "fx.gaussian", "name": "高斯模糊", "category": "模糊",
+      "desc": "真高斯(gblur sigma)",
+      "params": [{ "name": "sigma", "type": "number", "min": 0.1, "max": 50, "default": 8, "desc": "标准差(像素)" }],
+      "filter": "gblur=sigma={sigma}"
+    },
+    {
+      "id": "fx.mosaic", "name": "马赛克", "category": "模糊",
+      "desc": "邻近重采样降/升采样(版本无关实现,不依赖 pixelize 滤镜)",
+      "params": [{ "name": "block", "type": "number", "min": 2, "max": 64, "default": 16, "desc": "马赛克块边长(像素)" }],
+      "filter": "scale=iw/{block}:ih/{block}:flags=neighbor,scale={W}:{H}:flags=neighbor"
+    },
+    {
+      "id": "fx.sharpen", "name": "锐化", "category": "锐化",
+      "desc": "unsharp 锐化(5x5 luma 矩阵)",
+      "params": [{ "name": "amount", "type": "number", "min": 0, "max": 3, "default": 1.2, "desc": "锐化强度" }],
+      "filter": "unsharp=5:5:{amount}:5:5:0"
+    },
+    {
+      "id": "fx.glow", "name": "发光", "category": "光影",
+      "desc": "高斯层 screen 混合(泛光)",
+      "params": [
+        { "name": "sigma", "type": "number", "min": 1, "max": 30, "default": 8, "desc": "泛光半径" },
+        { "name": "opacity", "type": "number", "min": 0, "max": 1, "default": 0.6, "desc": "混合不透明度" }
+      ],
+      "filter": "split[{L}a][{L}b];[{L}b]gblur=sigma={sigma}[{L}bl];[{L}a][{L}bl]blend=all_mode=screen:all_opacity={opacity}"
+    },
+    {
+      "id": "fx.shake", "name": "抖动", "category": "干扰",
+      "desc": "正弦双轴抖镜(crop 边距内平移后回填画布)",
+      "params": [
+        { "name": "amplitude", "type": "number", "min": 1, "max": 40, "default": 6, "desc": "抖幅(像素)" },
+        { "name": "hz", "type": "number", "min": 0.5, "max": 20, "default": 8, "desc": "抖频(Hz)" }
+      ],
+      "filter": "crop=w=iw-2*{amp}:h=ih-2*{amp}:x='{amp}+{amp}*sin(2*PI*t*{hz})':y='{amp}+{amp}*cos(2*PI*t*{hz}*1.3)',scale={W}:{H}"
+    },
+    {
+      "id": "fx.glitch", "name": "故障", "category": "干扰",
+      "desc": "RGB 通道错位(色差毛刺)",
+      "params": [{ "name": "shift", "type": "number", "min": 0, "max": 32, "default": 6, "desc": "通道位移(像素)" }],
+      "filter": "rgbashift=rh={shift}:bh=-{shift}"
+    },
+    {
+      "id": "fx.grain", "name": "胶片颗粒", "category": "风格",
+      "desc": "时变均匀噪声",
+      "params": [{ "name": "strength", "type": "number", "min": 0, "max": 100, "default": 18, "desc": "噪声强度" }],
+      "filter": "noise=alls={strength}:allf=t+u"
+    },
+    {
+      "id": "fx.vignette", "name": "暗角", "category": "光影",
+      "desc": "镜头暗角",
+      "params": [{ "name": "angle", "type": "number", "min": 0, "max": 1.57, "default": 0.628, "desc": "暗角角强度(弧度,PI/5≈0.628)" }],
+      "filter": "vignette=angle={angle}"
+    },
+    {
+      "id": "fx.mono", "name": "黑白", "category": "风格",
+      "desc": "全去色",
+      "params": [],
+      "filter": "hue=s=0"
+    },
+    {
+      "id": "fx.vintage", "name": "复古", "category": "风格",
+      "desc": "curves vintage 曲线 + 降饱和",
+      "params": [{ "name": "sat", "type": "number", "min": 0, "max": 1, "default": 0.75, "desc": "残余饱和度" }],
+      "filter": "curves=preset=vintage,hue=s={sat}"
+    }
+  ],
+  "motion": {
+    "_doc": "motion 目录:dir=in(入场)/out(出场);时长取 motion.inMs/outMs(schema 缺省 400)。模板上下文:{D}=时窗秒、{ST}=出场时窗起点秒((durMs-outMs)/1000)、{N}=时窗帧数、{W}/{H}/{FPS}=画布。kind 标注实现族:fade(时间线淡变)/slide(黑底 overlay 平移)/zoom(zoompan 缩放)/spin(rotate 旋转,黑底)/bounce(阻尼余弦 overlay)。",
+    "in": [
+      { "id": "fadeIn",      "name": "淡入",     "kind": "fade",   "filter": "fade=t=in:st=0:d={D}" },
+      { "id": "slideInLeft", "name": "左滑入场", "kind": "slide",  "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x='-{W}*(1-min(t/{D},1))':y=0" },
+      { "id": "slideInRight","name": "右滑入场", "kind": "slide",  "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x='{W}*(1-min(t/{D},1))':y=0" },
+      { "id": "slideInUp",   "name": "上滑入场", "kind": "slide",  "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x=0:y='{H}*(1-min(t/{D},1))'" },
+      { "id": "slideInDown", "name": "下滑入场", "kind": "slide",  "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x=0:y='-{H}*(1-min(t/{D},1))'" },
+      { "id": "scaleIn",     "name": "缩放入场", "kind": "zoom",   "filter": "zoompan=z='0.4+0.6*min(in/{N},1)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={FPS}" },
+      { "id": "zoomIn",      "name": "推进入场", "kind": "zoom",   "filter": "zoompan=z='1.5-0.5*min(in/{N},1)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={FPS}" },
+      { "id": "popIn",       "name": "弹入",     "kind": "zoom",   "filter": "zoompan=z='0.4+0.6*(1+2.70158*pow(min(in/{N},1)-1,3)+1.70158*pow(min(in/{N},1)-1,2))':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={FPS}" },
+      { "id": "bounceIn",    "name": "弹跳入场", "kind": "bounce", "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x='-{W}*pow(2,-8*min(t/{D},1))*cos(10*min(t/{D},1))':y=0" },
+      { "id": "spinIn",      "name": "旋入",     "kind": "spin",   "filter": "rotate=a='-2*PI*(1-min(t/{D},1))':c=black" }
+    ],
+    "out": [
+      { "id": "fadeOut",      "name": "淡出",     "kind": "fade",   "filter": "fade=t=out:st={ST}:d={D}" },
+      { "id": "slideOutLeft", "name": "左滑出场", "kind": "slide",  "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x='-{W}*min(max(0,(t-{ST})/{D}),1)':y=0" },
+      { "id": "slideOutRight","name": "右滑出场", "kind": "slide",  "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x='{W}*min(max(0,(t-{ST})/{D}),1)':y=0" },
+      { "id": "slideOutUp",   "name": "上滑出场", "kind": "slide",  "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x=0:y='-{H}*min(max(0,(t-{ST})/{D}),1)'" },
+      { "id": "slideOutDown", "name": "下滑出场", "kind": "slide",  "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x=0:y='{H}*min(max(0,(t-{ST})/{D}),1)'" },
+      { "id": "zoomOut",      "name": "拉远出场", "kind": "zoom",   "filter": "zoompan=z='1+0.5*min(max(0,(in/{FPS}-{ST})/{D}),1)':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={FPS}" },
+      { "id": "popOut",       "name": "弹出",     "kind": "zoom",   "filter": "zoompan=z='1-0.6*(2.70158*pow(min(max(0,(in/{FPS}-{ST})/{D}),1),3)-1.70158*pow(min(max(0,(in/{FPS}-{ST})/{D}),1),2))':d=1:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={W}x{H}:fps={FPS}" },
+      { "id": "bounceOut",    "name": "弹跳出场", "kind": "bounce", "filter": "split[{L}s][{L}m];[{L}s]drawbox=c=black:t=fill[{L}g];[{L}g][{L}m]overlay=x='{W}*pow(2,-8*min(max(0,(t-{ST})/{D}),1))*cos(10*min(max(0,(t-{ST})/{D}),1))':y=0" },
+      { "id": "spinOut",      "name": "旋出",     "kind": "spin",   "filter": "rotate=a='2*PI*min(max(0,(t-{ST})/{D}),1)':c=black" }
+    ],
+    "legacyCompat": "既有 in 枚举 none/fadeIn/slideInLeft/slideInRight/scaleIn/zoomIn 与 out 枚举 none/fadeOut/slideOutLeft/slideOutRight 逐字保留且首次真实渲染;none 恒为无动画(不入模板,直接零滤镜)。",
+    "deferred": "3D 翻转/文字逐字/陀螺仪抖动等暂无真实渲染路径,不进目录(诚实纪律),列遗留册五。"
+  }
+}

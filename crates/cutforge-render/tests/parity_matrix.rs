@@ -56,6 +56,37 @@ fn probe_duration_sec(p: &Path) -> f64 {
     v["format"]["duration"].as_str().unwrap().parse().unwrap()
 }
 
+/// **视频流**时长(册四 BE3a:容器时长 = max(音,画),会被音频 mux 撑大而说谎——
+/// 转场截断虫曾借此逃过夹具①;零漂移断言一律以视频流为准)。
+fn video_stream_duration_sec(p: &Path) -> f64 {
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-print_format", "json",
+               "-show_entries", "stream=duration"])
+        .arg(p).output().expect("ffprobe 必须存在");
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["streams"][0]["duration"].as_str().unwrap().parse().unwrap()
+}
+
+/// **音频流**时长(acrossfade 链零漂移断言用)。
+fn audio_stream_duration_sec(p: &Path) -> f64 {
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a:0", "-print_format", "json",
+               "-show_entries", "stream=duration"])
+        .arg(p).output().expect("ffprobe 必须存在");
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["streams"][0]["duration"].as_str().unwrap().parse().unwrap()
+}
+
+/// 视频流帧数。
+fn video_frame_count(p: &Path) -> u64 {
+    let out = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-print_format", "json",
+               "-show_entries", "stream=nb_frames"])
+        .arg(p).output().expect("ffprobe 必须存在");
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    v["streams"][0]["nb_frames"].as_str().unwrap().parse().unwrap()
+}
+
 /// 整帧原始字节(rawvideo rgb24;帧级差异断言用)
 fn frame_bytes(p: &Path, at_sec: f64) -> Vec<u8> {
     let out = Command::new("ffmpeg").args([
@@ -179,7 +210,12 @@ fn parity_matrix_full() {
         let dur = probe_duration_sec(&out.output);
         // 整链总时长必须保持 sum(dur)=4.0s(转场不吞时长,尾帧扩展找平)
         assert!((dur - 4.0).abs() <= FRAME, "转场吞时长: {dur}");
-        achieved.push("5 转场:xfade 链 + 尾帧扩展零漂移(时长 4.000s vs 期望 4.000s)");
+        // 视频流时长与帧数(册四 BE3a 修复的锁:offset=名义时长;旧实现 offset 含
+        // 尾帧 → 后段整段被截,容器时长被音频撑大而假绿)
+        let vdur = video_stream_duration_sec(&out.output);
+        assert!((vdur - 4.0).abs() <= FRAME, "视频流时长漂移: {vdur}");
+        assert_eq!(video_frame_count(&out.output), 120, "视频流帧数 = Σdur×fps");
+        achieved.push("5 转场:xfade 链 + 尾帧扩展零漂移(容器与视频流双 4.000s,120 帧)");
     }
 
     // ---- ② 变速 setpts/atempo:2x 速度 → 段输出减半,音画同步 ----
@@ -490,10 +526,182 @@ fn parity_matrix_full() {
         achieved.push("20 翻转 flip:水平镜像(hflip,左右色块对调)");
     }
 
+    // ---- ⑮ 转场目录每类 ≥2 实渲(册四 T4.5 / AC-4.3):目录直通 + 视频流零漂移 ----
+    {
+        let dir = workspace("cats");
+        make_media(&dir);
+        // 小画幅夹具(时长断言与画幅无关;渲染量收敛)
+        let small = |slug: &str, tr: &str| {
+            let v = json!({
+                "version": 1, "schemaVersion": "2.0.0", "slug": slug, "fps": 30,
+                "canvas": {"width": 320, "height": 240},
+                "tracks": [{"id": "V1", "kind": "video", "clips": [
+                    {"id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 2000,
+                     "sourceInMs": 0, "role": "voice", "volume": 1.0},
+                    {"id": "V1-002", "src": "voice.mp4", "startMs": 2000, "durationMs": 2000,
+                     "sourceInMs": 0, "role": "voice", "volume": 1.0,
+                     "transition": {"type": "fade", "fx": tr, "durMs": 400}}
+                ]}]
+            });
+            write_project(&dir, slug, &v);
+            parse_project(v)
+        };
+        // 每分类 2 项,全部经 fx=tr.<id> 直通(目录路径而非旧枚举)
+        let sweep: Vec<(&str, &str)> = vec![
+            ("基础", "tr.fade"), ("基础", "tr.dissolve"),
+            ("滑动", "tr.slideleft"), ("滑动", "tr.coverright"),
+            ("擦除", "tr.wipeleft"), ("擦除", "tr.wiperight"),
+            ("图形", "tr.circleopen"), ("图形", "tr.zoomin"),
+            ("模糊", "tr.hblur"), ("模糊", "tr.pixelize"),
+        ];
+        for (cat, tr) in sweep {
+            let id = tr.trim_start_matches("tr.");
+            let p = small(&format!("m11-cat-{id}"), tr);
+            let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
+            let vdur = video_stream_duration_sec(&out.output);
+            assert!((vdur - 4.0).abs() <= FRAME, "[{cat}/{id}] 视频流零漂移: {vdur}");
+            assert_eq!(video_frame_count(&out.output), 120, "[{cat}/{id}] 帧数 = Σdur×fps");
+            // 转场窗中间帧存在(渲染非空且可 seek)
+            let _ = frame_bytes(&out.output, 2.0);
+        }
+        achieved.push("21 转场库 50+(AC-4.3):五分类各 2 项经 tr.* 目录直通实渲,视频流零漂移(120 帧/4s)");
+    }
+
+    // ---- ⑯ acrossfade 音频链(册四 T4.5 / M11-R1):声画同窗 + 音频流零漂移 ----
+    {
+        let dir = workspace("across");
+        make_media(&dir);
+        let mut v = base_project("m11-across");
+        v["tracks"][0]["clips"][1]["transition"] =
+            json!({"type": "fade", "durMs": 500, "reason": "topic"});
+        write_project(&dir, "m11-across", &v);
+        let p = parse_project(v);
+        let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
+        // 音频流时长 = Σdur(acrossfade 链总长 = Σ(dur+tail)−ΣD,构造性零漂移)
+        let adur = audio_stream_duration_sec(&out.output);
+        assert!((adur - 4.0).abs() <= FRAME, "acrossfade 音频流漂移: {adur}");
+        let vdur = video_stream_duration_sec(&out.output);
+        assert!((vdur - 4.0).abs() <= FRAME, "acrossfade 视频流漂移: {vdur}");
+        // 边界声画同窗:转场窗 [2.0,2.5] 处音频有交叉淡变凹陷(tri 曲线),
+        // 稳态区间能量显著更高
+        let rms_boundary = rms_of_window(&out.output, 2.05, 2.45);
+        let rms_steady = rms_of_window(&out.output, 0.5, 1.5);
+        assert!(
+            rms_boundary < rms_steady - 3.0,
+            "转场窗音频应有交叉淡变凹陷(≥3dB): boundary={rms_boundary} steady={rms_steady}"
+        );
+        achieved.push("22 acrossfade 音频链(M11-R1):音/视频流双零漂移 + 转场窗交叉淡变凹陷可测");
+    }
+
+    // ---- ⑰ 特效库 ≥4 实渲(册四 T4.6):像素级断言 ----
+    {
+        let dir = workspace("fx");
+        make_media(&dir);
+        let mk = |slug: &str, fx: Value| {
+            let v = json!({
+                "version": 1, "schemaVersion": "2.0.0", "slug": slug, "fps": 30,
+                "canvas": {"width": 320, "height": 240},
+                "tracks": [{"id": "V1", "kind": "video", "clips": [
+                    {"id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 2000,
+                     "sourceInMs": 0, "role": "voice", "volume": 1.0, "fx": fx}
+                ]}]
+            });
+            write_project(&dir, slug, &v);
+            parse_project(v)
+        };
+        let w = 320usize;
+        // 基准(无 fx)
+        let base = cutforge_render::render(&mk("m11-fx-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let f_base = frame_bytes(&base.output, 1.0);
+        // ① fx.mono 黑白:全帧去色(R≈G≈B)
+        let mono = cutforge_render::render(&mk("m11-fx-mono", json!({"combo": [{"fx": "fx.mono"}]})), &dir, None, &mut |_| {}).unwrap();
+        let f_mono = frame_bytes(&mono.output, 1.0);
+        let mut max_channel_gap = 0u32;
+        for px_idx in (0..(w * 240 * 3)).step_by(3 * 7) {
+            let (r, g, b) = (f_mono[px_idx] as u32, f_mono[px_idx + 1] as u32, f_mono[px_idx + 2] as u32);
+            max_channel_gap = max_channel_gap.max(r.max(g).max(b) - r.min(g).min(b));
+        }
+        assert!(max_channel_gap <= 8, "黑白滤镜后通道差应≤8(去色),实得 {max_channel_gap}");
+        assert_ne!(f_mono, f_base, "黑白滤镜必须真实改变像素");
+        // ② fx.vignette 暗角:白场源(画布 320x240)角部显著暗于中心
+        ff(&[
+            "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=white:size=320x240:rate=30:duration=2",
+            "-c:v", "libx264", "-preset", "veryfast", "white.mp4",
+        ], &dir);
+        let v = json!({
+            "version": 1, "schemaVersion": "2.0.0", "slug": "m11-fx-vig", "fps": 30,
+            "canvas": {"width": 320, "height": 240},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "src": "white.mp4", "startMs": 0, "durationMs": 2000,
+                 "sourceInMs": 0, "volume": 0, "fx": {"combo": [{"fx": "fx.vignette"}]}}
+            ]}]
+        });
+        write_project(&dir, "m11-fx-vig", &v);
+        let vig = cutforge_render::render(&parse_project(v), &dir, None, &mut |_| {}).unwrap();
+        let f_vig = frame_bytes(&vig.output, 1.0);
+        let corner = f_vig[(10 * w + 10) * 3] as u32;
+        let center = f_vig[(120 * w + 160) * 3] as u32;
+        assert!(corner + 20 < center, "暗角:角部({corner})应显著暗于中心({center})");
+        // ③ fx.grain 胶片颗粒:与基准逐帧不同(时变噪声)
+        let grain = cutforge_render::render(&mk("m11-fx-grain", json!({"combo": [{"fx": "fx.grain", "params": {"strength": 40}}]})), &dir, None, &mut |_| {}).unwrap();
+        let f_grain = frame_bytes(&grain.output, 1.0);
+        assert_ne!(f_grain, f_base, "颗粒噪声必须真实改变像素");
+        // ④ fx.mosaic 马赛克:同块内像素归并(testsrc2 渐变域内相邻像素差消失)
+        let mos = cutforge_render::render(&mk("m11-fx-mos", json!({"combo": [{"fx": "fx.mosaic", "params": {"block": 16}}]})), &dir, None, &mut |_| {}).unwrap();
+        let f_mos = frame_bytes(&mos.output, 1.0);
+        // 画布 320x240 → 归一后整帧铺满;取 (16,16) 块内两点(避开块边界)
+        let px = |f: &[u8], x: usize, y: usize| -> (u8, u8, u8) {
+            let i = (y * w + x) * 3;
+            (f[i], f[i + 1], f[i + 2])
+        };
+        let (a, b) = (px(&f_mos, 20, 20), px(&f_mos, 27, 27));
+        assert_eq!(a, b, "马赛克:同块内像素应归并,实得 {a:?} vs {b:?}");
+        assert_ne!(f_mos, f_base, "马赛克必须真实改变像素");
+        achieved.push("23 特效库(册四 T4.6):mono 去色/vignette 角部衰减/grain 时变噪声/mosaic 块归并,像素级实渲断言");
+    }
+
+    // ---- ⑱ motion 动画实渲(册四 T4.6):入场淡入 + 滑入,首帧像素断言 ----
+    {
+        let dir = workspace("motion");
+        make_media(&dir);
+        let mk = |slug: &str, motion: Value| {
+            let v = json!({
+                "version": 1, "schemaVersion": "2.0.0", "slug": slug, "fps": 30,
+                "canvas": {"width": 320, "height": 240},
+                "tracks": [{"id": "V1", "kind": "video", "clips": [
+                    {"id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 2000,
+                     "sourceInMs": 0, "role": "voice", "volume": 1.0, "motion": motion}
+                ]}]
+            });
+            write_project(&dir, slug, &v);
+            parse_project(v)
+        };
+        let w = 320usize;
+        // ① fadeIn:开头帧亮度显著低于稳态(黑场淡入)
+        let fin = cutforge_render::render(&mk("m11-mo-fin", json!({"in": "fadeIn", "inMs": 600})), &dir, None, &mut |_| {}).unwrap();
+        let f_head = frame_bytes(&fin.output, 0.05);
+        let f_mid = frame_bytes(&fin.output, 1.5);
+        let luma = |f: &[u8]| -> u32 {
+            (0..f.len()).step_by(3 * 11).map(|i| f[i] as u32).sum::<u32>()
+        };
+        assert!(luma(&f_head) * 3 < luma(&f_mid), "fadeIn 首帧应显著暗于稳态");
+        // ② slideInLeft:内容自左缘滑入(x:-W→0)——未完成时右侧尚为黑底,稳态后铺满
+        let sli = cutforge_render::render(&mk("m11-mo-sli", json!({"in": "slideInLeft", "inMs": 600})), &dir, None, &mut |_| {}).unwrap();
+        let f_slide = frame_bytes(&sli.output, 0.1);
+        let right_dark = f_slide[(120 * w + 290) * 3] < 40;
+        assert!(right_dark, "slideInLeft 未完成时右侧应为黑(内容自左滑入),实得 {:?}", &f_slide[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3]);
+        let f_settled = frame_bytes(&sli.output, 1.5);
+        assert_ne!(&f_slide[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3], &f_settled[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3],
+            "滑入完成后右缘应被内容填充");
+        // 动画不改时长
+        assert!((video_stream_duration_sec(&sli.output) - 2.0).abs() <= FRAME, "motion 不改时长");
+        achieved.push("24 动效库 motion(册四 T4.6):fadeIn 首帧亮度断言 + slideInLeft 黑底平移断言,时长不变");
+    }
+
     // 汇总证据(供矩阵回填)
     println!("M11-1 achieved {} 项:", achieved.len());
     for a in &achieved {
         println!("  ✅ {a}");
     }
-    assert!(achieved.len() >= 14, "九项既有 + 五项 A4 新增(曲线/倒放/旋转/裁剪/翻转)");
+    assert!(achieved.len() >= 18, "九项既有 + 五项 A4-BE2 + 四项 A4-BE3a(目录转场/acrossfade/特效/动效)");
 }

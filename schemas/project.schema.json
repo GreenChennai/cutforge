@@ -429,9 +429,15 @@
                 "fadeIn",
                 "slideInLeft",
                 "slideInRight",
+                "slideInUp",
+                "slideInDown",
                 "scaleIn",
-                "zoomIn"
-              ]
+                "zoomIn",
+                "popIn",
+                "bounceIn",
+                "spinIn"
+              ],
+              "description": "入场动画(册四 T4.6 扩充;只收真实渲染项,目录 = schemas/fx-catalog.json motion.in;既有 6 值语义逐字兼容且自本册起真实渲染)"
             },
             "inFx": {
               "type": "string",
@@ -446,8 +452,15 @@
                 "none",
                 "fadeOut",
                 "slideOutLeft",
-                "slideOutRight"
-              ]
+                "slideOutRight",
+                "slideOutUp",
+                "slideOutDown",
+                "zoomOut",
+                "popOut",
+                "bounceOut",
+                "spinOut"
+              ],
+              "description": "出场动画(册四 T4.6 扩充;时窗 = 末尾 outMs;目录 = schemas/fx-catalog.json motion.out)"
             },
             "outFx": {
               "type": "string",
@@ -481,7 +494,7 @@
             },
             "fx": {
               "type": "string",
-              "description": "转场 fxId(CutFlow 分册04 §3.3 扩展);与 type 并存,两者同时给出以 fx 为准并 WARN。既有 5 种转场有 tr.* 别名直通;未注册 fxId 回退 type(缺省 fade)并留痕 fxDegraded"
+              "description": "转场 fxId 直通(册四 T4.5 目录化):tr.<id> 或裸 id,目录 = schemas/transition-catalog.json(ffmpeg xfade 全集 58 项实测);与 type 并存两者同给以 fx 为准并 WARN。未注册 fxId 回退 type(缺省 fade)并留痕 fxDegraded(compose 步进度事件 warnings 数组)"
             },
             "reason": {
               "enum": [
@@ -587,7 +600,12 @@
               "$ref": "#/$defs/fxEntry"
             },
             "combo": {
-              "$ref": "#/$defs/fxEntry"
+              "type": "array",
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/$defs/fxEntry"
+              },
+              "description": "整段特效叠加栈(册四 T4.6):上限 3 条,数组顺序即应用顺序;整组替换(clip_update patch.fx.combo 原子)。未注册 fxId 逐项降级 WARN,不整链回退"
             }
           }
         },

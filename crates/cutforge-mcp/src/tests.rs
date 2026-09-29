@@ -8,8 +8,9 @@ fn capability_matrix_single_source() {
     let m = capability_matrix();
     assert_eq!(m["version"], json!(2));
     let items = m["items"].as_array().unwrap();
-    // M11 时点 15 项;册四 A4-BE2(T4.4/T4.9)增曲线变速/倒放/画布范围 → 18 项
-    assert_eq!(items.len(), 18, "A4 后 18 项口径(M11 15 项 + A4 新增 3 项)");
+    // M11 时点 15 项;A4-BE2(T4.4/T4.9)增曲线变速/倒放/画布范围 → 18 项;
+    // A4-BE3a(T4.5/T4.6)增转场库目录化/特效库/动效库 → 21 项
+    assert_eq!(items.len(), 21, "A4-BE3a 后 21 项口径(M11 15 项 + A4 新增 6 项)");
     let mut achieved = 0;
     for it in items {
         let status = it["status"].as_str().unwrap();
@@ -26,7 +27,7 @@ fn capability_matrix_single_source() {
             assert!(it["target"].is_string(), "未达成项必须写明 M11 目标: {}", it["item"]);
         }
     }
-    assert_eq!(achieved, 16, "M11 必达 13 项 + A4-BE2 新增 3 项(曲线/倒放/画布范围;证据=parity_matrix)");
+    assert_eq!(achieved, 19, "M11 必达 13 项 + A4 新增 6 项(曲线/倒放/画布范围/转场库/特效库/动效库;证据=parity_matrix)");
 }
 
 /// M8-5:python 启动器探测——本机/CI 至少一个可用,且返回的命令可执行。

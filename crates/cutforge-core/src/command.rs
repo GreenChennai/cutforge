@@ -2,7 +2,7 @@
 //! 命令定义(计划书 2.6):命令是唯一的写入口,任何状态变更都表达为一条 Command,
 //! 由 Engine::apply 翻译为 Op。不存在"直接赋值"的旁路。
 
-use crate::model::{Clip, Crop, SpeedPoint};
+use crate::model::{Clip, Crop, FxSpec, SpeedPoint};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,6 +32,12 @@ pub struct MotionPatch {
     pub out: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub out_ms: Option<f64>,
+    /// 入场直通别名 mo.<id>(册四 T4.6;声明时优先于 in 枚举)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_fx: Option<String>,
+    /// 出场直通别名 mo.<id>(册四 T4.6)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out_fx: Option<String>,
 }
 
 /// 工程级背景乐 patch(对应 doc.bgm;项目级字段,不经 ClipPatch)。
@@ -91,6 +97,10 @@ pub struct ClipPatch {
     pub transition: Option<TransitionPatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion: Option<MotionPatch>,
+    /// 片段特效(册四 A4 T4.6):整对象替换(与 crop 同为原子构图/风格操作;
+    /// combo 数组上限 3 在 schema 层界,数组顺序即应用顺序)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx: Option<FxSpec>,
 }
 
 impl ClipPatch {
@@ -397,6 +407,23 @@ impl ClipPatch {
                 let old = m.out_ms.replace(v);
                 record("motion/outMs", opt_json_f64(old), json_f64(v));
             }
+            if let Some(v) = mp.in_fx {
+                let old = m.in_fx.replace(v.clone());
+                record("motion/inFx", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+            if let Some(v) = mp.out_fx {
+                let old = m.out_fx.replace(v.clone());
+                record("motion/outFx", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+        }
+        if let Some(fx) = self.fx {
+            // 整对象替换(册四 T4.6;与 crop 同口径原子操作)
+            let old = clip.fx.replace(fx.clone());
+            record(
+                "fx",
+                old.map(|f| serde_json::to_value(f).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                serde_json::to_value(fx).unwrap_or(Value::Null),
+            );
         }
         changes
     }
@@ -430,6 +457,7 @@ fn json_points(v: &[SpeedPoint]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::FxEntry;
 
     fn clip() -> Clip {
         serde_json::from_value(serde_json::json!({
@@ -459,6 +487,7 @@ mod tests {
             freeze_ms: Some(300),
             transition: Some(TransitionPatch { type_: Some("fade".into()), dur_ms: Some(300.0), ..Default::default() }),
             motion: Some(MotionPatch { in_: Some("fadeIn".into()), ..Default::default() }),
+            fx: None,
         }
         .apply_to(&mut c);
         assert_eq!(changes.len(), 17);
@@ -612,6 +641,52 @@ mod tests {
         }
         .apply_to(&mut c);
         assert!(changes.is_empty(), "同值嵌套字段不得计入变更: {changes:?}");
+    }
+
+    /// fx patch(册四 T4.6):整对象替换;先建后换;指针恒为 /fx;
+    /// combo 数组顺序即应用顺序;同值不产变更。
+    #[test]
+    fn fx_patch_replaces_whole_object() {
+        let mut c = clip();
+        assert!(c.fx.is_none());
+        // 首次:新建 + 一条变更
+        let changes = ClipPatch {
+            fx: Some(FxSpec {
+                combo: Some(vec![
+                    FxEntry { fx: "fx.mono".into(), params: None },
+                    FxEntry {
+                        fx: "fx.grain".into(),
+                        params: Some(serde_json::from_str(r#"{"strength":24}"#).unwrap()),
+                    },
+                ]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, "/fx");
+        let fx = c.fx.as_ref().unwrap();
+        assert_eq!(fx.combo.as_ref().unwrap()[0].fx, "fx.mono");
+        assert_eq!(fx.combo.as_ref().unwrap()[1].fx, "fx.grain");
+        // 覆盖:整对象替换(不逐项合并),combo 被换掉、in 槽位出现
+        let changes = ClipPatch {
+            fx: Some(FxSpec { in_: Some(FxEntry { fx: "mo.fadeIn".into(), params: None }), ..Default::default() }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, "/fx");
+        let fx = c.fx.as_ref().unwrap();
+        assert!(fx.combo.is_none(), "整对象替换:旧 combo 不得残留");
+        assert_eq!(fx.in_.as_ref().unwrap().fx, "mo.fadeIn");
+        // 同值不产变更
+        let changes = ClipPatch {
+            fx: Some(FxSpec { in_: Some(FxEntry { fx: "mo.fadeIn".into(), params: None }), ..Default::default() }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert!(changes.is_empty(), "同值 fx 不得计入变更: {changes:?}");
     }
 
     /// BgmPatch:合并语义 + 无 bgm 时按 schema 默认新建;is_empty 口径。

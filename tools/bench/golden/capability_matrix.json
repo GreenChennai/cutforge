@@ -41,7 +41,7 @@
         "target": null
        },
        {
-        "evidence": "M11 parity_matrix xfade 链夹具(尾帧扩展零漂移,总时长 4.000s 无吞切)",
+        "evidence": "A4-BE3a(T4.5):转场目录 58 项(ffmpeg xfade 全集实测,schemas/transition-catalog.json)tr.* 直通;xfade offset 修复为名义时长口径(ADR-0023,截断虫修复);五分类各 2 项实渲视频流零漂移(120 帧/4s);音频 acrossfade 链同窗声画同步(M11-R1)",
         "ffmpeg": "支持",
         "item": "转场(三级语法)",
         "jianying": "支持",
@@ -151,10 +151,34 @@
         "jianying": "支持",
         "status": "achieved",
         "target": null
+       },
+       {
+        "evidence": "A4-BE3a(T4.5):58 项目录(基础/滑动/擦除/图形/模糊五分类)编译期嵌入;GET /catalogs 下发;缩略帧生成器 69 张(docs/design/transitions/);未注册 id 诚实降级 fade + WARN",
+        "ffmpeg": "支持",
+        "item": "转场库 50+(目录化)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "A4-BE3a(T4.6):fx 注册表 11 项(模糊/高斯/马赛克/锐化/发光/抖动/故障/颗粒/暗角/黑白/复古)+ combo 叠加栈上限 3;mono 去色/vignette 角部衰减/grain 时变噪声/mosaic 块归并像素级实渲夹具;未注册 fxId 逐项降级 WARN",
+        "ffmpeg": "支持",
+        "item": "特效库(combo 叠加)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "A4-BE3a(T4.6):motion 目录 19 项(既有 6+4 首次全部真实渲染 + slideUp/Down/pop/bounce/spin);fadeIn 首帧亮度 + slideInLeft 黑底平移实渲夹具;不能真实渲染的动效不进目录(诚实纪律,3D 翻转等列遗留)",
+        "ffmpeg": "支持",
+        "item": "动效库(入场/出场)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
        }
       ],
       "rule": "诚实口径:status 只认实码 + 对拍夹具(M8-5)。achieved=有专属夹具证据;partial=字段被契约接受但渲染端不完整消费;missing=契约字段存在、渲染零消费;optional=规划可选未启动。本文件是唯一真相源:docs/capability-matrix.md 与 MCP capability_matrix 工具均由它生成(M11-1 起 evidence 由 parity_matrix 夹具实测回填,ADR-0003)。",
-      "updated": "2026-09-30(A4-BE2:T4.4 速度与时间 + T4.9 画布与变换)",
+      "updated": "2026-09-30(A4-BE3a:T4.5 转场库 7→58 目录直通 + acrossfade + T4.6 特效/动效库)",
       "version": 2
      }
     },

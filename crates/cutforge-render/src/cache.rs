@@ -247,7 +247,8 @@ pub fn overlay_key(base_key: &str, overlays: &[OverlaySeg]) -> String {
     key_hex(&overlay_spec(base_key, overlays))
 }
 
-/// mix 输入 spec:音频段清单 + BGM + 总长。**画幅无关** → 多画幅变体共享一份
+/// mix 输入 spec:音频段清单 + BGM + 总长 + 边界转场时长(册四 T4.5:acrossfade
+/// 链由边界决定,改转场时长必须换键)。**画幅无关** → 多画幅变体共享一份
 /// (真分叉判据,与拆分前同构)。册四 T4.4:段元组并入 reverse(倒放改变混音产物)。
 pub fn mix_spec(plan: &RenderPlan) -> Value {
     json!({
@@ -257,6 +258,7 @@ pub fn mix_spec(plan: &RenderPlan) -> Value {
         )).collect::<Vec<_>>(),
         "bgm": plan.bgm,
         "total": plan.total_ms,
+        "trn": plan.boundary_durs_ms.iter().map(|d| crate::steps::fmt_f64(*d)).collect::<Vec<_>>(),
         "v": crate::RENDERER_VERSION,
     })
 }

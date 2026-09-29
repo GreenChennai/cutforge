@@ -7,7 +7,9 @@
 //! 单帧(T2.4):render_frame 对指定时间点出一帧合成画面(frame 层缓存键含
 //! 工作区指纹),供壳「精确预览」;见 frame.rs。
 
+pub mod across;
 pub mod cache;
+pub mod catalog;
 pub mod frame;
 pub mod plan;
 pub mod segment;
@@ -27,7 +29,9 @@ use std::process::Command;
 
 /// 渲染器语义版本:任何渲染行为变更都必须 +1(缓存失效的正确来源)。
 /// 4.0:T1.4 render() 分解 + T1.5 缓存全量内容寻址(分层目录 + cache-index.json)。
-pub const RENDERER_VERSION: &str = "cutforge-render-4.0";
+/// 5.0(册四 A4-BE3a):T4.5 转场目录直通 + xfade offset 修复为名义时长口径
+/// (旧键渲染产物错误,必须整体失效)+ T4.6 fx/motion 段链 + acrossfade 音频链。
+pub const RENDERER_VERSION: &str = "cutforge-render-5.0";
 
 pub struct RenderOutcome {
     pub output: PathBuf,
@@ -129,12 +133,12 @@ pub fn render(
     steps.push((rep.name, rep.ok));
 
     // ---- 步 2 segment(内容寻址:键含 clip JSON + 尾帧 + 画幅 + fps) ----
-    let (rep, seg_files, seg_durs, seg_keys, cache_hits, cache_misses) = exec_segment(&plan, &mut idx)?;
+    let (rep, seg_files, seg_keys, cache_hits, cache_misses) = exec_segment(&plan, &mut idx)?;
     progress(rep.to_progress());
     steps.push((rep.name, rep.ok));
 
     // ---- 步 3 compose(xfade 链 / concat 退化) ----
-    let (rep, composed, compose_key) = exec_compose(&plan, &mut idx, &seg_files, &seg_durs, &seg_keys)?;
+    let (rep, composed, compose_key) = exec_compose(&plan, &mut idx, &seg_files, &seg_keys)?;
     progress(rep.to_progress());
     steps.push((rep.name, rep.ok));
 
@@ -170,20 +174,21 @@ fn exec_probe(plan: &RenderPlan) -> StepReport {
     StepReport::new("probe", json!({}))
 }
 
-type SegOutputs = (StepReport, Vec<PathBuf>, Vec<u64>, Vec<String>, usize, usize);
+type SegOutputs = (StepReport, Vec<PathBuf>, Vec<String>, usize, usize);
 
-/// 步 2:逐段提取(缓存命中即跳过 ffmpeg)。
+/// 步 2:逐段提取(缓存命中即跳过;fx/motion 降级 WARN 并入进度事件)。
 fn exec_segment(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<SegOutputs, String> {
     let now = cache::now_secs();
     let mut seg_files: Vec<PathBuf> = Vec::new();
-    let mut seg_durs_ms: Vec<u64> = Vec::new(); // 实际输出时长(含尾帧扩展)
     let mut seg_keys: Vec<String> = Vec::new();
     let mut hits = 0usize;
     let mut misses = 0usize;
+    let mut degradations: Vec<String> = Vec::new();
     for (i, clip) in plan.video_clips.iter().enumerate() {
         let tail = steps::segment_tail_ms(&plan.video_clips, i);
         let spec = cache::seg_spec(plan, clip, tail);
         let key = cache::seg_key(plan, clip, tail);
+        degradations.extend(crate::catalog::clip_degradations(clip, plan.canvas_w, plan.canvas_h, plan.fps));
         let seg = match idx.touch("seg", &key, now) {
             Some(rel) => {
                 hits += 1;
@@ -200,31 +205,36 @@ fn exec_segment(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<SegOutputs, S
             }
         };
         seg_files.push(seg);
-        seg_durs_ms.push(clip.duration_ms + tail as u64);
         seg_keys.push(key);
     }
     idx.save(&plan.cache_dir)?;
-    let rep = StepReport::new("segment", json!({"cacheHits": hits, "segments": seg_files.len()}));
-    Ok((rep, seg_files, seg_durs_ms, seg_keys, hits, misses))
+    let mut detail = json!({"cacheHits": hits, "segments": seg_files.len()});
+    if !degradations.is_empty() {
+        detail["warnings"] = json!(degradations);
+    }
+    let rep = StepReport::new("segment", detail);
+    Ok((rep, seg_files, seg_keys, hits, misses))
 }
 
-/// 步 3:xfade 链 / concat 合成(缓存命中即跳过)。
+/// 步 3:xfade 链 / concat 合成(缓存命中即跳过;转场降级 WARN 并入进度事件)。
 fn exec_compose(
     plan: &RenderPlan,
     idx: &mut CacheIndex,
     seg_files: &[PathBuf],
-    seg_durs_ms: &[u64],
     seg_keys: &[String],
 ) -> Result<(StepReport, PathBuf, String), String> {
     let now = cache::now_secs();
     let key = cache::compose_key(seg_keys);
+    let mut tr_warns: Vec<String> = Vec::new();
     let composed = match idx.touch("compose", &key, now) {
         Some(rel) => plan.cache_dir.join(rel),
         None => {
             let rel = idx.record("compose", &key, cache::compose_spec(seg_keys), now);
             let composed = plan.cache_dir.join(rel);
             if steps::is_xfade_chain(&plan.video_clips) {
-                let args = steps::compose_xfade_args(&plan.video_clips, seg_files, seg_durs_ms, &composed);
+                let (args, warns) =
+                    steps::compose_xfade_args(&plan.video_clips, seg_files, &composed);
+                tr_warns = warns;
                 run_ff("ffmpeg", &strs(&args))?;
             } else {
                 // concat 清单写 tmp(内容寻址命名);用完即清。
@@ -252,7 +262,11 @@ fn exec_compose(
         }
     };
     idx.save(&plan.cache_dir)?;
-    Ok((StepReport::new("compose-video", json!({})), composed, key))
+    let mut detail = json!({});
+    if !tr_warns.is_empty() {
+        detail["warnings"] = json!(tr_warns);
+    }
+    Ok((StepReport::new("compose-video", detail), composed, key))
 }
 
 /// 步 4:overlay 合成(无叠加层直接透传基片;键 = compose 键 + 叠加清单)。

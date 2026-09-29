@@ -147,6 +147,10 @@ pub struct Clip {
     pub punch_in: Option<PunchIn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freeze_ms: Option<u64>,
+    /// 片段特效(册四 A4 T4.6):combo 叠加栈(上限 3,顺序即应用顺序)+ in/out 槽位;
+    /// 渲染端按 fx 目录(schemas/fx-catalog.json)解析为段滤镜链,未注册降级 WARN。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx: Option<FxSpec>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -192,6 +196,13 @@ pub struct Motion {
     pub out: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub out_ms: Option<f64>,
+    /// 入场直通别名(册四 T4.6):mo.<id>(fx-catalog motion.in 目录);与 in 枚举
+    /// 并存,声明时优先于枚举;未注册渲染端降级枚举并 WARN。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_fx: Option<String>,
+    /// 出场直通别名(册四 T4.6):mo.<id>(fx-catalog motion.out 目录)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out_fx: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -204,8 +215,32 @@ pub struct Transition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// 转场 fxId(CutFlow 分册04 §3.3;与 type 并存,同给以 fx 为准)。
+    /// 册四 T4.5:tr.<id>/裸 id 经转场目录(schemas/transition-catalog.json,
+    /// ffmpeg xfade 全集)直通;未注册渲染端降级 type(缺省 fade)并 WARN。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx: Option<String>,
+}
+
+/// 单条特效声明(册四 T4.6):fxId + 透传参数(未声明的键由渲染端注册表按默认值裁决)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FxEntry {
+    pub fx: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Map<String, Value>>,
+}
+
+/// 片段特效(册四 T4.6,对应 schema clip.fx):`in`/`out` 为入场/出场槽位
+/// (暂登记不渲染,渲染端 WARN 留痕);`combo` 为整段特效叠加栈——数组上限 3
+/// (schema maxItems),数组顺序即应用顺序,整组替换。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FxSpec {
+    #[serde(rename = "in", default, skip_serializing_if = "Option::is_none")]
+    pub in_: Option<FxEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out: Option<FxEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combo: Option<Vec<FxEntry>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -645,6 +680,49 @@ mod tests {
         let mut bad = sample();
         bad["tracks"][0]["clips"][0]["speedCurve"] = json!([{"atMs": 0, "speed": 8.0}]);
         assert!(Project::from_value(&bad).is_err(), "曲线速度越界必须 SCHEMA_INVALID");
+    }
+
+    /// 册四 A4 T4.6:片段特效字段(fx.combo 叠加栈 + in/out 槽位)必须被内核模型
+    /// 承接——"不加载 = 必丢"教训,roundtrip 证明读写不丢(参数键序确定性)。
+    #[test]
+    fn clip_fx_field_roundtrip_no_loss() {
+        let mut v = sample();
+        v["tracks"][0]["clips"][0]["fx"] = json!({
+            "in": {"fx": "mo.fadeIn"},
+            "combo": [
+                {"fx": "fx.mono"},
+                {"fx": "fx.grain", "params": {"strength": 24}}
+            ]
+        });
+        let p = Project::from_value(&v).expect("带 fx 字段的工程必须通过 v2 校验");
+        let c = &p.tracks[0].clips[0];
+        let fx = c.fx.as_ref().unwrap();
+        assert_eq!(fx.in_.as_ref().unwrap().fx, "mo.fadeIn");
+        assert_eq!(fx.combo.as_ref().unwrap().len(), 2);
+        assert_eq!(fx.combo.as_ref().unwrap()[0].fx, "fx.mono");
+        assert_eq!(
+            fx.combo.as_ref().unwrap()[1].params.as_ref().unwrap()["strength"],
+            json!(24)
+        );
+        // 序列化回 Value:逐键在位(写不丢)
+        let back = p.to_validated_value().unwrap();
+        let f0 = &back["tracks"][0]["clips"][0]["fx"];
+        assert_eq!(f0["combo"][1]["params"]["strength"], json!(24));
+        assert_eq!(f0["in"]["fx"], json!("mo.fadeIn"));
+        // 再读入:语义相等(serde 往返无静默丢弃)
+        let p2 = Project::from_value(&back).unwrap();
+        assert_eq!(p, p2);
+        // 旧工程(无 fx 字段)照常读写:缺省 None,不臆造落盘
+        let old = Project::from_value(&sample()).unwrap();
+        assert!(old.tracks[0].clips[0].fx.is_none());
+        let back_old = old.to_validated_value().unwrap();
+        assert!(back_old["tracks"][0]["clips"][0].get("fx").is_none(), "缺省字段不得臆造");
+        // 契约边界:combo 上限 3,第 4 条在 schema 层拒
+        let mut bad = sample();
+        bad["tracks"][0]["clips"][0]["fx"] = json!({"combo": [
+            {"fx": "fx.mono"}, {"fx": "fx.blur"}, {"fx": "fx.grain"}, {"fx": "fx.vignette"}
+        ]});
+        assert!(Project::from_value(&bad).is_err(), "combo 超 3 条必须 SCHEMA_INVALID");
     }
 
     /// speed_segments:投影与渲染共用的段划分单一真相源(T4.4 红线的根基)。

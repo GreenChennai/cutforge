@@ -24,6 +24,9 @@ pub struct AudioSeg {
     pub reverse: bool,
     pub fade_in_ms: f64,
     pub fade_out_ms: f64,
+    /// 所属视频片段下标(册四 T4.5 acrossfade 链的分组键;None = 音频轨事件,
+    /// 恒走绝对落点 adelay,不经链)。
+    pub clip_idx: Option<usize>,
 }
 
 /// 叠加段:品牌/花字位图,绝对像素 + opacity + 时间窗。
@@ -100,6 +103,9 @@ pub struct RenderPlan {
     /// 进入混音总线的音频事件(人声段 + 音效;volume=0 不进)。
     pub audio_segs: Vec<AudioSeg>,
     pub overlay_segs: Vec<OverlaySeg>,
+    /// 主时间线相邻视频片段边界的有效转场时长(册四 T4.5;len = video_clips-1,
+    /// 硬切边界 = 0)。非空即 acrossfade 音频链模式;与 mix 缓存键绑定。
+    pub boundary_durs_ms: Vec<f64>,
     /// 全片时长上界(ms)= max(startMs+durationMs),混音总长与 -t 的来源。
     pub total_ms: u64,
 }
@@ -125,6 +131,7 @@ impl RenderPlan {
             video_clips: Vec::new(),
             audio_segs: Vec::new(),
             overlay_segs: Vec::new(),
+            boundary_durs_ms: Vec::new(),
             total_ms: 0,
         };
         for t in &project.tracks {
@@ -145,9 +152,14 @@ impl RenderPlan {
                             }
                             continue;
                         }
+                        let idx = plan.video_clips.len();
                         plan.video_clips.push(c.clone());
                         if clip_gain(c) > 0.0 {
-                            plan.audio_segs.extend(audio_segs_of(project_dir, c));
+                            plan.audio_segs
+                                .extend(audio_segs_of(project_dir, c).into_iter().map(|mut s| {
+                                    s.clip_idx = Some(idx);
+                                    s
+                                }));
                         }
                     }
                     TrackKind::Audio => {
@@ -160,6 +172,10 @@ impl RenderPlan {
                 }
             }
         }
+        // 边界有效转场时长(册四 T4.5 acrossfade 口径;与 segment 尾帧同一钳制函数)
+        plan.boundary_durs_ms = (1..plan.video_clips.len())
+            .map(|i| crate::catalog::effective_transition_ms(&plan.video_clips, i))
+            .collect();
         plan
     }
 }
@@ -212,6 +228,7 @@ fn audio_segs_of(project_dir: &Path, c: &Clip) -> Vec<AudioSeg> {
             reverse: c.reverse.unwrap_or(false),
             fade_in_ms: if first { fade_in } else { 0.0 },
             fade_out_ms: if end >= play_end { fade_out } else { 0.0 },
+            clip_idx: None, // 归属由 RenderPlan::build 按轨道回填
         });
         x += span * s;
     }

@@ -10,7 +10,7 @@
 | 2 | 变速 0.25–4x | 支持 | 支持 | ✅ achieved(setpts/atempo;A4 起分段恒速链) | 必达 | M11:setpts/atempo;A4-BE2:曲线分段(filter_complex 分支 trim/setpts/fps/concat),时长=分段积分对拍 |
 | 3 | 音量/淡入淡出 | 支持 | 支持 | ⚠️ partial(volume M8 起生效;fade 不消费) | 必达 | render_matrix_fixture / M11:afade |
 | 4 | 位置/缩放/旋转 | 支持 | 支持 | ✅ achieved(overlay;A4 起 rotation/crop/flip 契约字段+渲染链) | 必达 | M11:overlay;A4-BE2(T4.9):变换链 裁剪→翻转→旋转→画幅归一,90° transpose 实渲夹具 |
-| 5 | 转场(三级语法) | 支持 | 支持 | ✅ achieved(xfade 链+尾帧扩展) | 必达 | M11:零漂移夹具(总时长 4.000s 无吞切) |
+| 5 | 转场(三级语法) | 支持 | 支持 | ✅ achieved(xfade 链+尾帧扩展;A4-BE3a:offset 修复为名义时长口径,截断虫修复) | 必达 | M11:零漂移夹具;A4-BE3a:容器与视频流双 4.000s + 120 帧锁 |
 | 6 | 关键词 | 支持 | 不支持 | ⬜ optional | 可选 | — |
 | 7 | 花字/描边/底衬 | 支持 | 支持 | ✅ achieved(ASS styles) | 必达 | 字幕样式表 + 烧录链 |
 | 8 | 音效落点 | 支持 | 支持 | ✅ achieved(M8 修复:adelay 落点) | 必达 | **修复前实现即 Bug(全部 0 秒炸响)**;render_matrix_fixture 起播断言 |
@@ -24,14 +24,18 @@
 | 16 | 曲线变速 speedCurve | 支持 | 支持 | ✅ achieved(A4-BE2:分段积分源消耗+恒速段拼接) | 必达 | parity_matrix 曲线夹具(时长对拍=分段积分,两段曲线实渲) |
 | 17 | 倒放 reverse | 支持 | 支持 | ✅ achieved(A4-BE2:视频 reverse+PTS 重盖/音频 areverse,先于变速) | 必达 | 短片夹具首末帧对调断言;整段缓冲内存风险已在契约与渲染链注释声明(长素材先切短再倒) |
 | 18 | 画布范围约束 64–7680 偶数 | 支持 | 支持 | ✅ achieved(A4-BE2/ADR-0015:schema+mcp-tools+scaffold 三面闸) | 必达 | 双端引擎 multipleOf 对拍边界样本(64/66/7678/7680 过,63/65/7681 拒);canvasAllowed 降格预设推荐集 |
+| 19 | 转场库 50+(目录化) | 支持 | 支持 | ✅ achieved(A4-BE3a/T4.5:58 项目录 tr.* 直通 + acrossfade) | 必达 | 五分类各 2 项实渲视频流零漂移;acrossfade 音频流零漂移 + 转场窗交叉淡变凹陷;GET /catalogs 下发;缩略帧生成器(docs/design/transitions/) |
+| 20 | 特效库(combo 叠加) | 支持 | 支持 | ✅ achieved(A4-BE3a/T4.6:fx 注册表 11 项 + combo 上限 3) | 必达 | mono 去色/vignette 角部衰减/grain 时变噪声/mosaic 块归并像素级夹具;未注册 fxId 逐项降级 WARN |
+| 21 | 动效库(入场/出场) | 支持 | 支持 | ✅ achieved(A4-BE3a/T4.6:motion 目录 19 项,既有 6+4 首次全部真实渲染) | 必达 | fadeIn 首帧亮度 + slideInLeft 黑底平移夹具;不能真实渲染的动效不进目录(诚实纪律) |
 
 ## 结论(M11-1 追平后口径)
 
 - 必达 13 项:**实码达成 13/13**(M8 止血后 7 项 → M11 补齐 变速/转场/ducking/punch-in/afade/overlay)
+- 册四 A4-BE3a 新增 3 项(#19/#20/#21)全部 achieved:转场库 58 项目录直通 + acrossfade 声画同步 / fx 注册表 11 项 combo 叠加 / motion 19 项真实渲染
 - 可选 2 项:0 项实现(关键词 6、蒙版 10)
-- **整体 = 13/15 ≈ 87%**(M8 止血时 47%;V1 虚报 93.3% 的差值 = 可选两项)
+- **整体 = 16/18 ≈ 89%**(M8 止血时 47%;V1 虚报 93.3% 的差值 = 可选两项;基线 15 项口径 87%,A4-BE3a 新增 3 项全达成分母加 3)
 - ~~旋转:契约无字段~~ 册四 A4(T4.9)起 rotation/crop/flip 入契约并渲染落地(#4/#16/#18,ADR-0015 画布范围同批)
-- 证据:crates/cutforge-render/tests/parity_matrix.rs 九项 ffmpeg 实测(转场零漂移/变速时长语义/punch-in 帧差/overlay 时间窗/ducking 能量差/afade RMS/文件名消毒/文本轨口径/mix 真分叉);册四 A4-BE2 增五项(曲线变速时长对拍/倒放首末帧对调/90° 旋转朝向/crop 象限/flip 镜像)
+- 证据:crates/cutforge-render/tests/parity_matrix.rs 九项 ffmpeg 实测(转场零漂移/变速时长语义/punch-in 帧差/overlay 时间窗/ducking 能量差/afade RMS/文件名消毒/文本轨口径/mix 真分叉);册四 A4-BE2 增五项(曲线变速时长对拍/倒放首末帧对调/90° 旋转朝向/crop 象限/flip 镜像);册四 A4-BE3a 增四项(转场五分类各 2 项目录直通零漂移/acrossfade 音频链/特效四项像素级断言/motion 淡入滑入)——夹具 achieved 总数 18
 
 ## 与 V1 版本的差异说明
 

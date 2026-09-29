@@ -253,6 +253,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                     in_ms: t["inMs"].as_f64(),
                     out: t["out"].as_str().map(String::from),
                     out_ms: t["outMs"].as_f64(),
+                    in_fx: t["inFx"].as_str().map(String::from),
+                    out_fx: t["outFx"].as_str().map(String::from),
+                }),
+                // 片段特效(册四 T4.6):整对象替换(combo 上限 3 由 schema 层界)
+                fx: p.get("fx").filter(|t| t.is_object()).and_then(|f| {
+                    serde_json::from_value::<cutforge_core::model::FxSpec>(f.clone())
+                        .map_err(|_| ())
+                        .ok()
                 }),
             };
             finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
@@ -260,11 +268,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "transition_set" => {
             // 设置片段转场(clip.transition):type 必给(durMs/fx/reason 可选,按字段合并);
             // 显式硬切/关闭用 type="cut"/"none"(schema 语义),枚举外值由 schema 层拒。
+            // 册四 T4.5:全量转场目录经 fx="tr.<id>"(或裸 id)直通,目录经 GET /catalogs;
+            // 未注册 fxId 渲染端降级 type(缺省 fade)并 WARN。
             let Some(clip_id) = args["clipId"].as_str() else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
             let Some(t) = args["type"].as_str() else {
-                return envelope(false, "PRECONDITION_FAILED", "缺 type(fade/wipeleft/wipeup/slideleft/circleopen/cut/none)", json!({}));
+                return envelope(false, "PRECONDITION_FAILED",
+                    "缺 type(基础枚举 fade/wipeleft/wipeup/slideleft/circleopen/cut/none;全量 58 项目录走 fx=tr.<id>,GET /catalogs)", json!({}));
             };
             let patch = ClipPatch {
                 transition: Some(TransitionPatch {
@@ -278,7 +289,9 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
         }
         "motion_set" => {
-            // 设置片段入场/出场动效(clip.motion):至少给 in/inMs/out/outMs 之一,按字段合并
+            // 设置片段入场/出场动效(clip.motion):至少给 in/inMs/out/outMs/inFx/outFx 之一,
+            // 按字段合并;册四 T4.6 枚举扩至真实渲染目录(fx-catalog motion.*),
+            // inFx/outFx = mo.<id> 直通别名(优先于枚举,未注册降级并 WARN)。
             let Some(clip_id) = args["clipId"].as_str() else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
@@ -287,9 +300,11 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 in_ms: args["inMs"].as_f64(),
                 out: args["out"].as_str().map(String::from),
                 out_ms: args["outMs"].as_f64(),
+                in_fx: args["inFx"].as_str().map(String::from),
+                out_fx: args["outFx"].as_str().map(String::from),
             };
             if motion.is_empty() {
-                return envelope(false, "PRECONDITION_FAILED", "motion_set 至少给 in/inMs/out/outMs 之一", json!({}));
+                return envelope(false, "PRECONDITION_FAILED", "motion_set 至少给 in/inMs/out/outMs/inFx/outFx 之一", json!({}));
             }
             let patch = ClipPatch { motion: Some(motion), ..Default::default() };
             finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))

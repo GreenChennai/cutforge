@@ -210,3 +210,53 @@ fn kind_str(k: TrackKind) -> &'static str {
         TrackKind::Text => "text",
     }
 }
+
+/// E2-2:时间线投影的逐 clip 全字段(endMs 在服务端算好;壳零时间线语义)。
+pub(crate) fn timeline_projection(project: &cutforge_core::model::Project) -> Vec<Value> {
+    let mut rows = Vec::new();
+    for t in &project.tracks {
+        for c in &t.clips {
+            rows.push(json!({
+                "id": c.id, "track": t.id,
+                "trackKind": match t.kind {
+                    cutforge_core::model::TrackKind::Video => "video",
+                    cutforge_core::model::TrackKind::Audio => "audio",
+                    cutforge_core::model::TrackKind::Text => "text",
+                },
+                "src": c.src, "startMs": c.start_ms, "endMs": c.start_ms + c.duration_ms,
+                "durationMs": c.duration_ms, "sourceInMs": c.source_in_ms,
+                "speed": c.speed, "volume": c.volume, "opacity": c.opacity,
+                "scale": c.scale, "position": c.position, "overlay": c.overlay,
+                "motion": c.motion, "text": c.text, "freezeMs": c.freeze_ms,
+                "transition": c.transition,
+                // 册四 A4 T4.4/T4.9:速度/时间与变换字段随投影下放(壳检查器/轨道展示消费;
+                // 时长语义单一真相源 = cutforge_core::model::speed_segments,渲染同源)
+                "speedCurve": c.speed_curve, "reverse": c.reverse,
+                "rotation": c.rotation, "crop": c.crop, "flip": c.flip,
+                // 册四 A4 T4.7/T4.8:文本样式/花字/降噪/变调随投影下放(壳检查器消费;
+                // textStyle/huazi/denoise/pitch 均已入 ClipPatch,可编辑非只读)
+                "textStyle": c.text_style, "huazi": c.huazi, "font": c.font,
+                "denoise": c.denoise, "pitch": c.pitch,
+                // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
+                // (transition/motion 已于 ClipPatch 扩展后承接,不再列只读)
+                "fade": c.fade,
+                "punchIn": c.punch_in, "role": c.role,
+            }));
+        }
+    }
+    rows
+}
+
+pub(crate) fn count_sfx_near(project: &cutforge_core::model::Project, t_ms: u64, window: u64) -> usize {
+    project
+        .tracks
+        .iter()
+        .flat_map(|t| t.clips.iter())
+        .filter(|c| c.role == Some(cutforge_core::model::Role::Sfx))
+        .filter(|c| {
+            let end = c.start_ms + c.duration_ms;
+            c.start_ms <= t_ms + window && t_ms <= end + window
+        })
+        .count()
+}
+

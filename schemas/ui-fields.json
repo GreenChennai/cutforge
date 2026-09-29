@@ -1,6 +1,6 @@
 {
- "version": 5,
- "_doc": "E4-2 单一真相源:壳(Web 编辑器检查器/轨道头)允许编辑的字段集。机械校验 = `cutforge-cli check-ui-fields`(editable ⊆ crates/cutforge-core/src/command.rs 的 ClipPatch 字段集;trackEditable ⊆ 同文件 TrackPatch 字段集,防'内核支持 N、壳只给 3'的漂移复发)。壳不读本文件——服务端经 GET /ui-fields 下发(壳纯度),分组由此渲染。v2:transition/motion 经 ClipPatch 扩展(TransitionPatch/MotionPatch,按字段合并)自 readonly 移入 editable(转场/动效两组)。v3(册四 A4 T4.2):新增 trackEditable 分组(轨道头可编辑字段,经 track_update/TrackPatch 承接);readonly 列 = 渲染已支持但 ClipPatch 尚未承接的投影字段:检查器只读展示(E4-3),数值编辑待内核 ClipPatch 扩展后再移入 editable。v4(册四 A4 T4.4/T4.9):变速组入 speedCurve(整组替换)与 reverse(倒放开关);画面组入 rotation/crop/flip(变换链:裁剪→翻转→旋转→画幅归一→punchIn→reverse→变速)。 v5(册四 A4 T4.5/T4.6):新增特效组 fx(clip.fx 整对象替换:combo 叠加栈上限 3 + in/out 槽位);转场全量目录经 GET /catalogs 下发(transition.fx=tr.<id>),动效枚举扩至真实渲染目录(motion.*)。",
+ "version": 6,
+ "_doc": "E4-2 单一真相源:壳(Web 编辑器检查器/轨道头)允许编辑的字段集。机械校验 = `cutforge-cli check-ui-fields`(editable ⊆ crates/cutforge-core/src/command.rs 的 ClipPatch 字段集;trackEditable ⊆ 同文件 TrackPatch 字段集,防'内核支持 N、壳只给 3'的漂移复发)。壳不读本文件——服务端经 GET /ui-fields 下发(壳纯度),分组由此渲染。v2:transition/motion 经 ClipPatch 扩展(TransitionPatch/MotionPatch,按字段合并)自 readonly 移入 editable(转场/动效两组)。v3(册四 A4 T4.2):新增 trackEditable 分组(轨道头可编辑字段,经 track_update/TrackPatch 承接);readonly 列 = 渲染已支持但 ClipPatch 尚未承接的投影字段:检查器只读展示(E4-3),数值编辑待内核 ClipPatch 扩展后再移入 editable。v4(册四 A4 T4.4/T4.9):变速组入 speedCurve(整组替换)与 reverse(倒放开关);画面组入 rotation/crop/flip(变换链:裁剪→翻转→旋转→画幅归一→punchIn→reverse→变速)。v5(册四 A4 T4.5/T4.6):新增特效组 fx(clip.fx 整对象替换:combo 叠加栈上限 3 + in/out 槽位);转场全量目录经 GET /catalogs 下发(transition.fx=tr.<id>),动效枚举扩至真实渲染目录(motion.*)。v6(册四 A4 T4.7/T4.8,BE3b):文本组入 textStyle(检查器文本组:字体/字号/颜色/描边/底衬/阴影/对齐/行距/透明度/位置 x,y/卡拉OK,整对象替换;花字目录 GET /catalogs 的 huazi.* 经 huazi 字段挂载)与 huazi;音频组入 denoise(降噪档 off/low/mid/high)与 pitch(保速变调半音 ±12)。",
  "editable": {
   "基础": [
    "startMs",
@@ -15,7 +15,9 @@
    "flip"
   ],
   "音频": [
-   "volume"
+   "volume",
+   "denoise",
+   "pitch"
   ],
   "变速": [
    "speed",
@@ -24,6 +26,8 @@
   ],
   "文本": [
    "text",
+   "textStyle",
+   "huazi",
    "freezeMs"
   ],
   "转场": [

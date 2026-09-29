@@ -24,6 +24,7 @@ pub mod backup;
 pub mod fresh;
 pub mod fsutil;
 pub mod lock;
+pub mod mediacache;
 pub mod paths;
 pub mod probe;
 pub mod scaffold;

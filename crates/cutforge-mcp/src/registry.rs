@@ -16,6 +16,9 @@ pub const UI_FIELDS_JSON: &str = include_str!("../../../schemas/ui-fields.json")
 pub const TRANSITION_CATALOG_JSON: &str = include_str!("../../../schemas/transition-catalog.json");
 /// 特效 + 动效目录(册四 T4.6;fx 首批 11 项 + motion 真实渲染目录)。
 pub const FX_CATALOG_JSON: &str = include_str!("../../../schemas/fx-catalog.json");
+/// 花字目录(册四 A4 T4.7;12 模板,渲染端 textass 同源;不经 MCP 工具——
+/// 工具数四则口径不变,经 GET /catalogs 下发)。
+pub const HUAZI_CATALOG_JSON: &str = include_str!("../../../schemas/huazi-catalog.json");
 
 /// 工具注册表(契约来自 schemas/mcp-tools.json;派发处理器同在本 crate)。
 pub fn registry() -> &'static Vec<Value> {

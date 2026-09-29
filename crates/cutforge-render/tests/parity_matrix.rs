@@ -358,7 +358,7 @@ fn parity_matrix_full() {
         assert!(out.output.is_file(), "消毒后文件名必须可用: {}", out.output.display());
         assert!(!out.output.to_string_lossy().contains('*'), "文件名不得含敌对字符");
         achieved.push("14 多画幅/文件名消毒:敌对字符替换为 _");
-        achieved.push("13 文本轨:结构性锚点不直接渲染(字幕走 ASS 链,与 CutFlow 同口径)");
+        achieved.push("13 文本轨:文本片段经 textass 生成 ASS 烧录可见(册四 BE3b;像素证据见 parity_text_audio ①)");
     }
 
     // ---- ⑨ 多画幅真分叉(T1.10):画幅无关层(mix)全部仅一份;video/encode 层按画幅分叉 ----

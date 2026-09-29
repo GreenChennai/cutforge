@@ -172,8 +172,12 @@ impl Engine {
     }
 
     /// 命令 → (路径, before, after, 摘要)。变更就地生效;失败时调用方回滚快照。
+    /// 批量命令(ClipsInsert/ClipsPatch,册四 T4.7)委托 engine::batch(行数红线)。
     #[allow(clippy::type_complexity)]
     fn mutate(&mut self, cmd: Command) -> Result<(String, Value, Value, String, OpKind), Reject> {
+        if let Some(outcome) = self.mutate_dispatch_batch(&cmd) {
+            return outcome;
+        }
         let p = &mut self.project;
         match cmd {
             Command::ClipUpdate { clip_id, patch } => {
@@ -566,6 +570,10 @@ impl Engine {
                 let after = serde_json::to_value(&p.tracks[ti].clips).unwrap();
                 Ok((clips_pointer(ti), before, after,
                     format!("clip_gap_delete {track_id}@{t_ms} 闭合 {shift}ms"), OpKind::Move))
+            }
+            // 批量命令(册四 T4.7):mutate 入口已委托 engine::batch,此臂仅穷尽性
+            Command::ClipsInsert { .. } | Command::ClipsPatch { .. } => {
+                unreachable!("批量命令已在 mutate 入口分派(engine::batch)")
             }
         }
     }

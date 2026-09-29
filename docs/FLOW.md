@@ -55,7 +55,7 @@ cutforge/
 ├── tools/
 │   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1/A2/A3 已注册,决策 D-A2)
 │   ├── bench/bench.py          性能基准(T1.8;--check 阈值判定,基线 docs/bench/baseline.json)
-│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;数量以 schemas/mcp-tools.json 为准)
+│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;数量以 schemas/mcp-tools.json 为准)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
 │   ├── schema_gen.py           生成 tools/_generated/cf_validate.py(Python 校验器)
 │   └── validate_regression.py  回归集校验入口(16/16)

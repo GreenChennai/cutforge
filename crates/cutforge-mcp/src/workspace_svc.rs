@@ -4,7 +4,7 @@
 
 use crate::dispatch::{handle_rpc_as, produces_rev_mutation, resolve_within_root};
 use crate::progress::resolve_render_bin;
-use crate::registry::{FX_CATALOG_JSON, TRANSITION_CATALOG_JSON, UI_FIELDS_JSON};
+use crate::registry::{FX_CATALOG_JSON, HUAZI_CATALOG_JSON, TRANSITION_CATALOG_JSON, UI_FIELDS_JSON};
 use crate::session::{session_journal_begin, session_journal_note, session_summary_path};
 use crate::tools_nolock::media_browse_payload;
 use crate::transport::events;
@@ -327,6 +327,8 @@ fn handle_workspace_conn(
                 .expect("schemas/transition-catalog.json 必须合法"),
             "fx": serde_json::from_str::<Value>(FX_CATALOG_JSON)
                 .expect("schemas/fx-catalog.json 必须合法"),
+            "huazi": serde_json::from_str::<Value>(HUAZI_CATALOG_JSON)
+                .expect("schemas/huazi-catalog.json 必须合法"),
         });
         HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() }
     } else if is_get_session {

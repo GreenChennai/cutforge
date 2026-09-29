@@ -15,6 +15,7 @@
 //! - `projection`:查询投影与状态语义 hash。
 
 mod apply;
+mod batch;
 mod invariants;
 mod projection;
 mod replay;

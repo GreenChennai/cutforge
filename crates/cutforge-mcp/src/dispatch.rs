@@ -3,6 +3,7 @@
 //! 参数解析与 5.4 错误映射(T1.1 拆分自 lib.rs,纯移动)。
 
 use crate::edit_ops;
+use crate::subtitle_ops;
 use crate::orchestrate::orchestrate;
 use crate::progress::{existing_rel, render_cutforge_sync, render_frame_tool, render_progress, render_run_async};
 use crate::registry::{capability_matrix, envelope, registry, tool_def};
@@ -48,11 +49,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     // 全程不打开工作区(渲染不持排他锁);ffmpeg 后端(默认)走 CutFlow 编排,维持原路径。
     // render_run / render_progress 同理不持锁(E5-3 异步渲染 + 轮询进度)。
     // ass 过滤在服务端:壳无文件系统能力(壳纯度),ass 路径不存在时不烧录而非整单失败。
+    // 册四 T4.1 代理预览:useProxy 显式 opt-in(默认 false,不悄悄降质),
+    // 透传给 cutforge-render --use-proxy(缺失代理的片段回落原片)。
+    let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
     if name == "render" && args["backend"].as_str() == Some("cutforge") {
-        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()));
+        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy);
     }
     if name == "render_run" {
-        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()));
+        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy);
     }
     if name == "render_progress" {
         let Some(run_id) = args["runId"].as_str() else {
@@ -72,6 +76,11 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "media_browse" => return media_browse_tool(&ws_root, args),
         "render_probe" => return render_probe_tool(&ws_root),
         "stage_status" => return stage_status_tool(&ws_root),
+        // 册四 T4.1/T4.8 媒体池/音频工具(派生物缓存与纯计算,不改工程 IR 不持锁)
+        "media_peaks" => return crate::media_tools::media_peaks_tool(&ws_root, args),
+        "media_thumbnail" => return crate::media_tools::media_thumbnail_tool(&ws_root, args),
+        "media_proxy" => return crate::media_tools::media_proxy_tool(&ws_root, args),
+        "audio_beats" => return crate::media_tools::audio_beats_tool(&ws_root, args),
         _ => {}
     }
 
@@ -153,7 +162,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             // E2-2:扩投影——预览/检查器所需的逐 clip 字段全部由内核算好下放
             // (endMs = start+duration 在服务端完成;壳只消费,不做时间线运算)。
             envelope(true, "OK", "时间线投影", json!({
-                "clips": timeline_projection(ws.project()),
+                "clips": crate::edit_ops::timeline_projection(ws.project()),
                 "rev": ws.rev(),
             }))
         }
@@ -237,6 +246,8 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 crop,
                 flip: p["flip"].as_str().map(String::from),
                 volume: p["volume"].as_f64(),
+                denoise: p["denoise"].as_str().map(String::from),
+                pitch: p["pitch"].as_f64(),
                 opacity: p["opacity"].as_f64(),
                 scale: p["scale"].as_f64(),
                 text: p["text"].as_str().map(String::from),
@@ -262,6 +273,30 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                         .map_err(|_| ())
                         .ok()
                 }),
+                // 文本样式/花字(册四 T4.7):整对象替换;结构非法 → None 由
+                // SCHEMA_INVALID 面?不——此处静默丢弃是幻觉面,非法结构显式拒绝。
+                text_style: match p.get("textStyle") {
+                    None | Some(Value::Null) => None,
+                    Some(v) if v.is_object() => match serde_json::from_value(v.clone()) {
+                        Ok(ts) => Some(ts),
+                        Err(e) => {
+                            return envelope(false, "SCHEMA_INVALID", &format!("patch.textStyle 非法: {e}"), json!({}))
+                        }
+                    },
+                    Some(_) => {
+                        return envelope(false, "SCHEMA_INVALID", "patch.textStyle 必须是对象", json!({}))
+                    }
+                },
+                huazi: match p.get("huazi") {
+                    None | Some(Value::Null) => None,
+                    Some(v) if v.is_object() => match serde_json::from_value(v.clone()) {
+                        Ok(h) => Some(h),
+                        Err(e) => {
+                            return envelope(false, "SCHEMA_INVALID", &format!("patch.huazi 非法: {e}"), json!({}))
+                        }
+                    },
+                    Some(_) => return envelope(false, "SCHEMA_INVALID", "patch.huazi 必须是对象", json!({})),
+                },
             };
             finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
         }
@@ -423,7 +458,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 return envelope(false, "PRECONDITION_FAILED", "缺 tMs/src", json!({}));
             };
             // 密度护栏:±15s 内已有 ≥2 个 sfx → GUARD_FAILED(计划书 5.2)
-            let sfx_nearby = count_sfx_near(ws.project(), t_ms, 15_000);
+            let sfx_nearby = crate::edit_ops::count_sfx_near(ws.project(), t_ms, 15_000);
             if sfx_nearby >= 2 {
                 return envelope(false, "GUARD_FAILED", &format!("音效密度超限:{t_ms}ms ±15s 内已有 {sfx_nearby} 个"), json!({}));
             }
@@ -522,6 +557,13 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "clip_copy" => edit_ops::clip_copy_tool(ws, root_str, args),
         "clip_paste_at" => edit_ops::clip_paste_at_tool(ws, root_str, args, &actor, opts),
 
+        // ---------- 文本/字幕(册四 A4 T4.7;实现集中在 subtitle_ops) ----------
+        "text_add" => subtitle_ops::text_add_tool(ws, args, &actor, opts),
+        "subtitle_import" => subtitle_ops::subtitle_import_tool(ws, &ws_root, args, &actor, opts),
+        "subtitle_export" => subtitle_ops::subtitle_export_tool(ws, &ws_root, args),
+        "subtitle_replace" => subtitle_ops::subtitle_replace_tool(ws, args, &actor, opts),
+
+
         // ---------- 编排(封装 CutFlow 脚本,不重实现) ----------
         "stage_run" | "stage_rebuild" | "verify_run" | "sync_check" | "render" | "export_jianying" => {
             let script = match name {
@@ -580,7 +622,9 @@ fn read_truth(p: &Path, label: &str) -> Value {
 fn is_readonly_tool(name: &str) -> bool {
     matches!(name,
         "project_get" | "wordline_get" | "cutlist_get" | "notes_list"
-        | "oplog_tail" | "conflict_list" | "timeline_get")
+        | "oplog_tail" | "conflict_list" | "timeline_get"
+        // 册四 T4.7:字幕导出只读工程(产物落 06_成片输出,不产 Op 不改 IR)
+        | "subtitle_export")
 }
 
 /// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。
@@ -592,7 +636,10 @@ pub(crate) fn produces_rev_mutation(name: &str) -> bool {
             "capability_matrix" | "project_new" | "render" | "render_run" | "render_progress"
             | "render_frame"
             | "media_probe" | "media_browse" | "render_probe" | "stage_status"
-            | "clip_copy"))
+            | "clip_copy"
+            // 册四 A4 T4.1/T4.8:派生物缓存与纯计算工具(产物非 IR,不升 rev)
+            | "media_peaks" | "media_thumbnail" | "media_proxy" | "audio_beats"
+            | "subtitle_export"))
 }
 
 /// E2-1 的 canonicalize 校验函数化:/media、/media/browse、clip_add、media_probe、
@@ -622,51 +669,6 @@ fn next_clip_id_for(project: &cutforge_core::model::Project, track_id: &str) -> 
         .find_track(track_id)
         .map(|ti| cutforge_core::model::Project::next_clip_id(&project.tracks[ti]))
         .unwrap_or_else(|| format!("{track_id}-999"))
-}
-
-/// E2-2:时间线投影的逐 clip 全字段(endMs 在服务端算好;壳零时间线语义)。
-fn timeline_projection(project: &cutforge_core::model::Project) -> Vec<Value> {
-    let mut rows = Vec::new();
-    for t in &project.tracks {
-        for c in &t.clips {
-            rows.push(json!({
-                "id": c.id, "track": t.id,
-                "trackKind": match t.kind {
-                    cutforge_core::model::TrackKind::Video => "video",
-                    cutforge_core::model::TrackKind::Audio => "audio",
-                    cutforge_core::model::TrackKind::Text => "text",
-                },
-                "src": c.src, "startMs": c.start_ms, "endMs": c.start_ms + c.duration_ms,
-                "durationMs": c.duration_ms, "sourceInMs": c.source_in_ms,
-                "speed": c.speed, "volume": c.volume, "opacity": c.opacity,
-                "scale": c.scale, "position": c.position, "overlay": c.overlay,
-                "motion": c.motion, "text": c.text, "freezeMs": c.freeze_ms,
-                "transition": c.transition,
-                // 册四 A4 T4.4/T4.9:速度/时间与变换字段随投影下放(壳检查器/轨道展示消费;
-                // 时长语义单一真相源 = cutforge_core::model::speed_segments,渲染同源)
-                "speedCurve": c.speed_curve, "reverse": c.reverse,
-                "rotation": c.rotation, "crop": c.crop, "flip": c.flip,
-                // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
-                // (transition/motion 已于 ClipPatch 扩展后承接,不再列只读)
-                "fade": c.fade,
-                "punchIn": c.punch_in, "role": c.role,
-            }));
-        }
-    }
-    rows
-}
-
-fn count_sfx_near(project: &cutforge_core::model::Project, t_ms: u64, window: u64) -> usize {
-    project
-        .tracks
-        .iter()
-        .flat_map(|t| t.clips.iter())
-        .filter(|c| c.role == Some(cutforge_core::model::Role::Sfx))
-        .filter(|c| {
-            let end = c.start_ms + c.duration_ms;
-            c.start_ms <= t_ms + window && t_ms <= end + window
-        })
-        .count()
 }
 
 /// RFC7386 merge-patch 应用到 cutlist.json,schema 校验后走 record_change 审计。

@@ -73,8 +73,9 @@ pub struct FrameOutcome {
 
 /// 抽帧命令行(纯函数,可离线单测):`-ss` 输入侧精确 seek(解码丢弃到目标帧)+
 /// `-frames:v 1`。带 ASS 时先 setpts 把输入侧 seek 归零的 PTS 平移回时间线时刻,
-/// 再喂 subtitles 滤镜(ass_rel 相对缓存根,规避盘符冒号转义;与 exec_subtitle 同技巧)。
-pub fn frame_extract_args(base: &Path, at_ms: u64, fmt: FrameFormat, ass_rel: Option<&str>, out: &Path) -> Vec<String> {
+/// 再喂链式 subtitles 滤镜(ass_rels 相对缓存根,规避盘符冒号转义;与 exec_subtitle
+/// 同技巧;册四 T4.7 起支持外部 + 文本轨生成 ASS 串联,单条时参数与既有逐字一致)。
+pub fn frame_extract_args(base: &Path, at_ms: u64, fmt: FrameFormat, ass_rels: &[String], out: &Path) -> Vec<String> {
     let sec = at_ms as f64 / 1000.0;
     let mut args: Vec<String> = vec![
         "-y".into(), "-v".into(), "error".into(),
@@ -85,7 +86,7 @@ pub fn frame_extract_args(base: &Path, at_ms: u64, fmt: FrameFormat, ass_rel: Op
     if at_ms > 0 {
         vf.push_str(&format!("setpts=PTS+{sec:.3}/TB"));
     }
-    if let Some(rel) = ass_rel {
+    for rel in ass_rels {
         if !vf.is_empty() {
             vf.push(',');
         }
@@ -112,6 +113,19 @@ pub fn render_frame(
     at_ms: u64,
     fmt: FrameFormat,
 ) -> Result<FrameOutcome, String> {
+    render_frame_opts(project, project_dir, ass_path, at_ms, fmt, false)
+}
+
+/// 同 [`render_frame`],代理预览开关显式给定(册四 T4.1;开关入帧缓存键——
+/// 代理帧与原片帧不共享条目)。文本轨文本片段经 textass 生成 ASS 一并烧录。
+pub fn render_frame_opts(
+    project: &Project,
+    project_dir: &Path,
+    ass_path: Option<&Path>,
+    at_ms: u64,
+    fmt: FrameFormat,
+    use_proxy: bool,
+) -> Result<FrameOutcome, String> {
     let at_q = quantize_ms(at_ms);
     // 工作区指纹:project/notes/wordline/cutlist/rev/oplog 的字节级摘要(fresh.rs 单一实现)
     let fp = cutforge_io::fresh::disk_fingerprint(project_dir)
@@ -120,8 +134,18 @@ pub fn render_frame(
         Some(p) => Some(std::fs::read(p).map_err(|e| format!("NO_CONFIG: ass 不可读: {e}"))?),
         None => None,
     };
+    let text_bytes = crate::textass::generate(project).map(|s| s.into_bytes());
+    let combined: Option<Vec<u8>> = match (&ass_bytes, &text_bytes) {
+        (None, None) => None,
+        (a, b) => {
+            let mut v = Vec::new();
+            v.extend(a.iter().flatten().copied());
+            v.extend(b.iter().flatten().copied());
+            Some(v)
+        }
+    };
     let canvas = (project.canvas.width, project.canvas.height);
-    let key = cache::frame_key(&fp.cache_key(), at_q, canvas, fmt.as_str(), ass_bytes.as_deref());
+    let key = cache::frame_key_proxy(&fp.cache_key(), at_q, canvas, fmt.as_str(), combined.as_deref(), use_proxy);
     let cache_root = project_dir.join(cache::CACHE_ROOT);
     cache::ensure_dirs(&cache_root)?;
     let mut idx = cache::CacheIndex::load(&cache_root);
@@ -133,7 +157,7 @@ pub fn render_frame(
     }
 
     // 未命中:video 链(复用 RenderPlan 步骤函数与段缓存)→ 抽帧
-    let plan = RenderPlan::build(project, project_dir, None);
+    let plan = RenderPlan::build_opts(project, project_dir, None, use_proxy);
     if plan.video_clips.is_empty() {
         return Err("PRECONDITION: 时间线无视频片段,无帧可渲染".into());
     }
@@ -148,27 +172,28 @@ pub fn render_frame(
     let rel = idx.record_with_ext(
         "frame",
         &key,
-        cache::frame_spec(&fp.cache_key(), at_q, canvas, fmt.as_str(), ass_bytes.as_deref()),
+        cache::frame_spec_proxy(&fp.cache_key(), at_q, canvas, fmt.as_str(), combined.as_deref(), use_proxy),
         now,
         fmt.ext(),
     );
     let out = cache_root.join(&rel);
     // ASS 副本写 tmp(cwd = 缓存根,相对路径喂滤镜);用完即清。
     // 滤镜参数内路径必须正斜杠(Windows 反斜杠会被 filtergraph 转义规则吞掉)
-    let ass_rel = ass_bytes
-        .as_deref()
-        .map(|payload| -> Result<PathBuf, String> {
-            let rel = cache::tmp_rel(&format!("ass-frame-{key}.ass"));
-            cutforge_io::atomic::atomic_write(&cache_root.join(&rel), payload).map_err(|e| e.to_string())?;
-            Ok(rel)
-        })
-        .transpose()?;
-    let ass_rel_str = ass_rel
-        .as_ref()
-        .map(|p| p.to_string_lossy().replace('\\', "/"));
-    let args = frame_extract_args(&base_video, at_q, fmt, ass_rel_str.as_deref(), &out);
+    let write_ass = |tag: &str, payload: &[u8]| -> Result<String, String> {
+        let rel = cache::tmp_rel(&format!("ass-{tag}-{key}.ass"));
+        cutforge_io::atomic::atomic_write(&cache_root.join(&rel), payload).map_err(|e| e.to_string())?;
+        Ok(rel.to_string_lossy().replace('\\', "/"))
+    };
+    let mut ass_rels: Vec<String> = Vec::new();
+    if let Some(user) = &ass_bytes {
+        ass_rels.push(write_ass("user-frame", user)?);
+    }
+    if let Some(text) = &text_bytes {
+        ass_rels.push(write_ass("text-frame", text)?);
+    }
+    let args = frame_extract_args(&base_video, at_q, fmt, &ass_rels, &out);
     let r = crate::run_ff_in(&cache_root, "ffmpeg", &crate::strs(&args));
-    if let Some(local) = &ass_rel {
+    for local in &ass_rels {
         let _ = cutforge_io::atomic::remove(&cache_root.join(local));
     }
     r?;
@@ -223,7 +248,8 @@ mod tests {
         let base = Path::new("/c/compose/x.mp4");
         let out = Path::new("/c/frame/k.png");
         // at=0:无 setpts;无 ass:无 -vf;png:无 -q:v
-        let a0 = frame_extract_args(base, 0, FrameFormat::Png, None, out);
+        let none: Vec<String> = Vec::new();
+        let a0 = frame_extract_args(base, 0, FrameFormat::Png, &none, out);
         assert_eq!(
             a0,
             ["-y", "-v", "error", "-ss", "0.000", "-i", "/c/compose/x.mp4",
@@ -231,15 +257,15 @@ mod tests {
                 .iter().map(|s| s.to_string()).collect::<Vec<_>>(),
         );
         // at=1500:输入侧 -ss 1.5 + setpts 平移回时间线时刻
-        let a1 = frame_extract_args(base, 1500, FrameFormat::Png, None, out);
+        let a1 = frame_extract_args(base, 1500, FrameFormat::Png, &none, out);
         assert_eq!(&a1[3..5], ["-ss", "1.500"]);
         assert_eq!(a1[8], "setpts=PTS+1.500/TB", "-vf 位于 -i 与输入路径之后");
         // ass:subtitles 追加在 setpts 之后(滤镜按序消费平移后的 PTS);jpeg 附带 -q:v 2
-        let a2 = frame_extract_args(base, 1500, FrameFormat::Jpeg, Some("tmp/ass-frame-k.ass"), out);
+        let a2 = frame_extract_args(base, 1500, FrameFormat::Jpeg, &["tmp/ass-frame-k.ass".into()], out);
         assert_eq!(a2[8], "setpts=PTS+1.500/TB,subtitles=tmp/ass-frame-k.ass");
         assert!(a2.windows(2).any(|w| w[0] == "-q:v" && w[1] == "2"), "jpeg 必须带质量档");
         // ass 且 at=0:只烧字幕,无 setpts
-        let a3 = frame_extract_args(base, 0, FrameFormat::Png, Some("tmp/a.ass"), out);
+        let a3 = frame_extract_args(base, 0, FrameFormat::Png, &["tmp/a.ass".into()], out);
         assert_eq!(a3[8], "subtitles=tmp/a.ass");
         assert!(a3.last().unwrap().ends_with("k.png"), "输出路径恒为末参");
     }

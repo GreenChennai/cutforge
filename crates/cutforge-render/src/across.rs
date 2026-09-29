@@ -27,18 +27,56 @@ pub fn chain_active(plan: &RenderPlan) -> bool {
     plan.video_clips.len() >= 2 && plan.boundary_durs_ms.iter().any(|d| *d > 0.0)
 }
 
-/// 单事件音频链体(aformat 归一 → 倒放 → 变速 → 音量 → 淡入淡出;
+/// 降噪档 → afftdn 滤镜(册四 T4.8):nr=降噪量(dB),nf=噪声底(dB),tn=频带跟踪。
+/// off/未知值 → None(不降噪;诚实降级,不臆造档位)。
+pub fn denoise_filter(d: &str) -> Option<&'static str> {
+    match d {
+        "low" => Some("afftdn=nr=8:nf=-25:tn=1"),
+        "mid" => Some("afftdn=nr=15:nf=-35:tn=1"),
+        "high" => Some("afftdn=nr=25:nf=-45:tn=1"),
+        _ => None,
+    }
+}
+
+/// 保速变调系数(册四 T4.8):半音数 → 速率倍率 2^(n/12);非有限/0 → 1.0(不变调)。
+pub fn pitch_factor(semitones: f64) -> f64 {
+    if !semitones.is_finite() || semitones == 0.0 {
+        return 1.0;
+    }
+    2f64.powf(semitones / 12.0)
+}
+
+/// 单事件音频链体(aformat 归一 → 降噪 → 倒放 → 变调 → 变速 → 音量 → 淡入淡出;
 /// 不含 adelay 与标签——落点语义两路径各异:链模式相对片段起点、
 /// 音频轨事件绝对时间线)。steps.rs 旧路径同样消费本函数(单源实现)。
+///
+/// **链序定义**(册四 T4.8):降噪最先(频域去噪应在任何时域变换前,对倒放/
+/// 变速不敏感);倒放次之(先于一切变速,PTS 重盖);随后**变调**(asetrate 升降
+/// 采样率 + aresample 回 48k,同时改变时长 ×1/k)再**变速**(atempo 补偿链,
+/// 因子 = speed/pitch——两者合并为单一 atempo 链,总时长恒 = durationMs);
+/// 音量与淡变最后(播放域电平整形)。无新字段时与既有链逐字一致(parity 红线)。
 pub fn event_body(seg: &AudioSeg) -> String {
     let mut body = String::from("aformat=sample_rates=48000:channel_layouts=stereo");
+    if let Some(d) = &seg.denoise
+        && let Some(f) = denoise_filter(d)
+    {
+        body.push_str(&format!(",{f}"));
+    }
     if seg.reverse {
         // 倒放(册四 T4.4):areverse 先于 atempo;PTS 重盖单调时间戳
         body.push_str(",areverse,asetpts=N/SR/TB");
     }
-    if seg.speed != 1.0 {
-        for tempo in crate::steps::atempo_chain(seg.speed) {
-            body.push_str(&format!(",{tempo}"));
+    let k = seg.pitch;
+    if k != 1.0 {
+        // 变调(保速语义的变调半步):asetrate 整数值在生成端预算(表达式依赖
+        // ffmpeg 版本,确定性红线);aresample 拉回 48k 保持链内采样率单一
+        let rate = (48_000.0 * k).round() as u64;
+        body.push_str(&format!(",asetrate={rate},aresample=48000,asetpts=N/SR/TB"));
+    }
+    let tempo = seg.speed / k;
+    if tempo != 1.0 {
+        for t in crate::steps::atempo_chain(tempo) {
+            body.push_str(&format!(",{t}"));
         }
     }
     body.push_str(&format!(",volume={:.4}", seg.volume));
@@ -297,16 +335,84 @@ mod tests {
     }
 
     /// 事件链体与旧路径单源:变速/倒放/淡变的拼装顺序逐字一致。
+    /// 无 denoise/pitch 字段时链与既有逐字一致(parity 红线)。
     #[test]
     fn event_body_matches_legacy_shape() {
         let seg = AudioSeg {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
-            volume: 0.8, speed: 2.0, reverse: true, fade_in_ms: 100.0, fade_out_ms: 200.0,
+            volume: 0.8, speed: 2.0, reverse: true, denoise: None, pitch: 1.0,
+            fade_in_ms: 100.0, fade_out_ms: 200.0,
             clip_idx: None,
         };
         assert_eq!(
             event_body(&seg),
             "aformat=sample_rates=48000:channel_layouts=stereo,areverse,asetpts=N/SR/TB,atempo=2.000000,volume=0.8000,afade=t=in:st=0:d=0.100,afade=t=out:st=0.800:d=0.200"
         );
+    }
+
+    // ---- 册四 T4.8:降噪 + 变调链 ----
+
+    /// 降噪档映射:low/mid/high → afftdn 参数;off/未知 → 不降噪。
+    #[test]
+    fn denoise_levels_map_to_afftdn() {
+        assert_eq!(denoise_filter("low"), Some("afftdn=nr=8:nf=-25:tn=1"));
+        assert_eq!(denoise_filter("mid"), Some("afftdn=nr=15:nf=-35:tn=1"));
+        assert_eq!(denoise_filter("high"), Some("afftdn=nr=25:nf=-45:tn=1"));
+        assert_eq!(denoise_filter("off"), None, "off 不降噪");
+        assert_eq!(denoise_filter("爆裂"), None, "未知档诚实降级");
+    }
+
+    /// 变调系数:半音 → 2^(n/12)(+12 恰为 2 倍;0/非有限恒 1)。
+    #[test]
+    fn pitch_factor_semantics() {
+        assert!((pitch_factor(12.0) - 2.0).abs() < 1e-9, "+12 半音 = 倍频");
+        assert!((pitch_factor(-12.0) - 0.5).abs() < 1e-9, "-12 半音 = 半频");
+        assert!((pitch_factor(0.0) - 1.0).abs() < 1e-9);
+        assert!((pitch_factor(f64::NAN) - 1.0).abs() < 1e-9, "非有限诚实回落");
+    }
+
+    /// 链序红线(册四 T4.8):aformat → **denoise** → areverse → **变调(asetrate
+    /// +aresample)** → volume。asetrate 用生成端预算的整数值(96000 = 48000×2),
+    /// 不依赖 ffmpeg 表达式(确定性红线)。
+    #[test]
+    fn denoise_pitch_chain_order_is_fixed() {
+        let seg = AudioSeg {
+            src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
+            volume: 1.0, speed: 1.0, reverse: true, denoise: Some("mid".into()), pitch: 2.0,
+            fade_in_ms: 0.0, fade_out_ms: 0.0,
+            clip_idx: None,
+        };
+        assert_eq!(
+            event_body(&seg),
+            "aformat=sample_rates=48000:channel_layouts=stereo,afftdn=nr=15:nf=-35:tn=1,\
+             areverse,asetpts=N/SR/TB,asetrate=96000,aresample=48000,asetpts=N/SR/TB,atempo=0.500000,volume=1.0000"
+                .replace("             ", "")
+        );
+    }
+
+    /// 保速组合语义:atempo 因子 = speed/k 合并为单一链(总时长恒 durationMs);
+    /// k=2 且 speed=0.5 → 0.25(链分解);k=0.5(-12 半音)且 speed=2 → 4(链分解)。
+    #[test]
+    fn pitch_tempo_compensation_combines_with_speed() {
+        let seg = AudioSeg {
+            src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
+            volume: 1.0, speed: 0.5, reverse: false, denoise: None, pitch: 2.0,
+            fade_in_ms: 0.0, fade_out_ms: 0.0,
+            clip_idx: None,
+        };
+        let body = event_body(&seg);
+        assert!(body.contains("asetrate=96000"), "{body}");
+        assert!(body.contains("atempo=0.5,atempo=0.500000"), "atempo 链 = 0.25 分解: {body}");
+        // -12 半音(k=0.5)+ 2x 速度 → atempo = 4(链分解 2×2);降噪先于倒放
+        let seg = AudioSeg {
+            src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
+            volume: 1.0, speed: 2.0, reverse: false, denoise: Some("high".into()), pitch: 0.5,
+            fade_in_ms: 0.0, fade_out_ms: 0.0,
+            clip_idx: None,
+        };
+        let body = event_body(&seg);
+        assert!(body.contains("asetrate=24000"), "{body}");
+        assert!(body.contains("afftdn=nr=25:nf=-45:tn=1,asetrate=24000"), "降噪在变调前(此例无倒放): {body}");
+        assert!(body.contains("atempo=2.0,atempo=2.000000"), "atempo 链 = 4 分解: {body}");
     }
 }

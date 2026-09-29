@@ -125,6 +125,24 @@ pub struct Clip {
     pub role: Option<Role>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// 文本样式(册四 A4 T4.7):字体/字号/颜色/描边/底衬/阴影/对齐/行距/
+    /// 透明度/画布内位置 x,y/卡拉OK;渲染端按 ADR-0016 生成临时 ASS 消费。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<crate::text_style::TextStyle>,
+    /// 花字挂载(册四 T4.7):hz.<id> 引用 huazi-catalog.json;模型层承接防丢。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub huazi: Option<crate::text_style::Huazi>,
+    /// 片段级字体覆盖(CutFlow S7 兼容字段;模型层承接防丢,渲染以
+    /// textStyle.fontFamily 优先,无 textStyle 时本字段兜底)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<crate::text_style::FontSpec>,
+    /// 降噪档(册四 A4 T4.8):off/low/mid/high → afftdn 参数映射(混音链)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denoise: Option<String>,
+    /// 保速变调半音档(册四 A4 T4.8):±12;asetrate+aresample 补偿 atempo,
+    /// 与 speed 组合的链序见 across::event_body(降噪→倒放→变调→变速)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<Position>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,0 +1,27 @@
+{
+ "tool": "media_thumbnail",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/take1.mp4",
+    "atMs": 500
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "atMs": 500,
+     "cached": false,
+     "file": ".cutforge/thumb-cache/<MEDIA_CACHE>.png",
+     "format": "png",
+     "media": ".cutforge/thumb-cache/<MEDIA_CACHE>.png",
+     "src": "01_原始素材/take1.mp4",
+     "width": 320
+    },
+    "message": "缩略图已生成",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

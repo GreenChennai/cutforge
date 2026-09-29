@@ -250,11 +250,12 @@ pub fn overlay_key(base_key: &str, overlays: &[OverlaySeg]) -> String {
 /// mix 输入 spec:音频段清单 + BGM + 总长 + 边界转场时长(册四 T4.5:acrossfade
 /// 链由边界决定,改转场时长必须换键)。**画幅无关** → 多画幅变体共享一份
 /// (真分叉判据,与拆分前同构)。册四 T4.4:段元组并入 reverse(倒放改变混音产物)。
+/// 册四 T4.8:段元组并入 denoise/pitch(降噪/变调改变混音产物)。
 pub fn mix_spec(plan: &RenderPlan) -> Value {
     json!({
         "segs": plan.audio_segs.iter().map(|s| (
             s.src.to_string_lossy(), s.start_ms, s.duration_ms, s.source_in_ms,
-            s.volume, s.speed, s.reverse, s.fade_in_ms, s.fade_out_ms
+            s.volume, s.speed, s.reverse, s.denoise.clone(), s.pitch, s.fade_in_ms, s.fade_out_ms
         )).collect::<Vec<_>>(),
         "bgm": plan.bgm,
         "total": plan.total_ms,
@@ -283,10 +284,16 @@ pub fn sub_key(video_key: &str, mix_key: &str, ass_bytes: Option<&[u8]>) -> Stri
 }
 
 /// frame 输入 spec(T2.4 单帧):工作区指纹(fresh.rs,改一笔即 miss 的根基)+
-/// atMs(100ms 量化)+ 画幅 + 渲染版本 + ASS 字节哈希。与管线层(键=渲染输入)
-/// 不同,帧键直接以**工程盘面指纹**为输入:预览语义是"当前工程这一刻的样子",
-/// 任何盘面变化(哪怕不影响画面的 oplog 追加)都宁可重渲一帧,绝不给陈旧帧。
+/// atMs(100ms 量化)+ 画幅 + 渲染版本 + ASS 字节哈希 + 代理开关(册四 T4.1,
+/// 代理帧与原片帧不共享条目)。与管线层(键=渲染输入)不同,帧键直接以
+/// **工程盘面指纹**为输入:预览语义是"当前工程这一刻的样子",任何盘面变化
+/// (哪怕不影响画面的 oplog 追加)都宁可重渲一帧,绝不给陈旧帧。
 pub fn frame_spec(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>) -> Value {
+    frame_spec_proxy(fp_key, at_ms, canvas, fmt, ass_bytes, false)
+}
+
+/// 同 [`frame_spec`],代理开关显式给定(册四 T4.1)。
+pub fn frame_spec_proxy(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>, use_proxy: bool) -> Value {
     json!({
         "v": crate::RENDERER_VERSION,
         "fp": fp_key,
@@ -294,11 +301,16 @@ pub fn frame_spec(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_b
         "canvas": [canvas.0, canvas.1],
         "fmt": fmt,
         "ass": ass_bytes.map(|b| format!("{:016x}", hash_text(&String::from_utf8_lossy(b)))),
+        "px": use_proxy,
     })
 }
 
 pub fn frame_key(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>) -> String {
     key_hex(&frame_spec(fp_key, at_ms, canvas, fmt, ass_bytes))
+}
+
+pub fn frame_key_proxy(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>, use_proxy: bool) -> String {
+    key_hex(&frame_spec_proxy(fp_key, at_ms, canvas, fmt, ass_bytes, use_proxy))
 }
 
 /// tmp 文件相对路径(内容寻址命名,避免并发互踩)。

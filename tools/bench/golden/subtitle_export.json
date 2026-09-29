@@ -1,0 +1,46 @@
+{
+ "tool": "subtitle_export",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "format": "srt",
+    "trackId": "T1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "bytes": 141,
+     "count": 3,
+     "format": "srt",
+     "media": "06_成片输出/subtitles_T1.srt",
+     "out": "06_成片输出/subtitles_T1.srt",
+     "trackId": "T1"
+    },
+    "message": "字幕已导出",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "format": "ass"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "bytes": 1036,
+     "count": 3,
+     "format": "ass",
+     "media": "06_成片输出/subtitles_T1.ass",
+     "out": "06_成片输出/subtitles_T1.ass",
+     "trackId": "T1"
+    },
+    "message": "字幕已导出",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

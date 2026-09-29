@@ -14,11 +14,13 @@ pub mod frame;
 pub mod plan;
 pub mod segment;
 pub mod steps;
+pub mod subtitle;
+pub mod textass;
 
 pub use cache::{
     cache_gc, cache_info, CacheEntry, CacheIndex, GcReport, DEFAULT_CAPACITY_BYTES,
 };
-pub use frame::{frame_done_event, frame_extract_args, quantize_ms, render_frame, FrameFormat, FrameOutcome};
+pub use frame::{frame_done_event, frame_extract_args, quantize_ms, render_frame, render_frame_opts, FrameFormat, FrameOutcome};
 pub use plan::{RenderPlan, StepReport, STEP_NAMES};
 
 use cutforge_core::model::Project;
@@ -31,7 +33,10 @@ use std::process::Command;
 /// 4.0:T1.4 render() 分解 + T1.5 缓存全量内容寻址(分层目录 + cache-index.json)。
 /// 5.0(册四 A4-BE3a):T4.5 转场目录直通 + xfade offset 修复为名义时长口径
 /// (旧键渲染产物错误,必须整体失效)+ T4.6 fx/motion 段链 + acrossfade 音频链。
-pub const RENDERER_VERSION: &str = "cutforge-render-5.0";
+/// 6.0(册四 A4-BE3b):T4.7 文本片段 → 临时 ASS 烧录落地(ADR-0016;文本从
+/// 不可见变可见,旧缓存产物缺文本层,必须整体失效)+ T4.8 denoise/pitch 混音链 +
+/// track mute/solo/hidden 渲染联动收口 + T4.1 代理预览(useProxy)。
+pub const RENDERER_VERSION: &str = "cutforge-render-6.0";
 
 pub struct RenderOutcome {
     pub output: PathBuf,
@@ -121,7 +126,19 @@ pub fn render(
     ass_path: Option<&Path>,
     progress: &mut dyn FnMut(Value),
 ) -> Result<RenderOutcome, String> {
-    let plan = RenderPlan::build(project, project_dir, ass_path);
+    render_with(project, project_dir, ass_path, false, progress)
+}
+
+/// 同 [`render`],代理预览开关显式给定(册四 T4.1 useProxy;显式 opt-in,
+/// 不悄悄降质——代理缺失的片段回落原片)。
+pub fn render_with(
+    project: &Project,
+    project_dir: &Path,
+    ass_path: Option<&Path>,
+    use_proxy: bool,
+    progress: &mut dyn FnMut(Value),
+) -> Result<RenderOutcome, String> {
+    let plan = RenderPlan::build_opts(project, project_dir, ass_path, use_proxy);
     std::fs::create_dir_all(&plan.out_dir).map_err(|e| e.to_string())?;
     cache::ensure_dirs(&plan.cache_dir)?;
     let mut idx = CacheIndex::load(&plan.cache_dir);
@@ -152,8 +169,9 @@ pub fn render(
     progress(rep.to_progress());
     steps.push((rep.name, rep.ok));
 
-    // ---- 步 6 subtitle(最后叠;有 ass 才烧,否则零重编码合流) ----
-    let (rep, video_input) = exec_subtitle(&plan, &mut idx, &base_video, &mixed, &video_key, &mix_key_str)?;
+    // ---- 步 6 subtitle(最后叠;外部 ASS / 文本轨生成 ASS 烧录,否则零重编码合流) ----
+    let (rep, video_input) =
+        exec_subtitle(&plan, &mut idx, &base_video, &mixed, &video_key, &mix_key_str, project)?;
     progress(rep.to_progress());
     steps.push((rep.name, rep.ok));
 
@@ -336,7 +354,10 @@ fn exec_mix(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<MixOutputs, Strin
     Ok((rep, mixed, key, false))
 }
 
-/// 步 6:字幕(有 ASS 烧录,否则零重编码合流;键含 video 键 + mix 键 + ASS 字节哈希)。
+/// 步 6:字幕(外部 ASS + 文本轨生成 ASS 烧录,否则零重编码合流;键含 video 键 +
+/// mix 键 + 全部 ASS 字节哈希)。文本轨文本片段经 textass(ADR-0016)确定性生成
+/// 临时 ASS,与外部字幕以**链式 subtitles 滤镜**先后应用——免解析合并外部文件,
+/// 烧录通道与既有字幕完全同源。
 fn exec_subtitle(
     plan: &RenderPlan,
     idx: &mut CacheIndex,
@@ -344,45 +365,70 @@ fn exec_subtitle(
     mixed: &Path,
     video_key: &str,
     mix_key_str: &str,
+    project: &Project,
 ) -> Result<(StepReport, PathBuf), String> {
     let now = cache::now_secs();
-    let burned = plan.ass_path.is_some();
-    let ass_bytes = match &plan.ass_path {
+    let user_bytes = match &plan.ass_path {
         Some(ass) => Some(std::fs::read(ass).map_err(|e| e.to_string())?),
         None => None,
     };
-    let spec = cache::sub_spec(video_key, mix_key_str, ass_bytes.as_deref());
-    let key = cache::sub_key(video_key, mix_key_str, ass_bytes.as_deref());
+    let text_bytes = textass::generate(project).map(|s| s.into_bytes());
+    // 合流哈希 = 两份 ASS 字节顺序拼接(次序 = 烧录次序;None 全无 → 不烧录)
+    let combined: Option<Vec<u8>> = match (&user_bytes, &text_bytes) {
+        (None, None) => None,
+        (a, b) => {
+            let mut v = Vec::new();
+            v.extend(a.iter().flatten().copied());
+            v.extend(b.iter().flatten().copied());
+            Some(v)
+        }
+    };
+    let burned = combined.is_some();
+    let spec = cache::sub_spec(video_key, mix_key_str, combined.as_deref());
+    let key = cache::sub_key(video_key, mix_key_str, combined.as_deref());
     let subbed = match idx.touch("sub", &key, now) {
         Some(rel) => plan.cache_dir.join(rel),
         None => {
             let rel = idx.record("sub", &key, spec, now);
             let subbed = plan.cache_dir.join(rel);
-            match &ass_bytes {
-                Some(payload) => {
-                    // ASS 副本写 tmp(cwd = 缓存根,相对路径喂滤镜,规避盘符冒号转义)
-                    let ass_rel = cache::tmp_rel(&format!("ass-{key}.ass"));
-                    let ass_local = plan.cache_dir.join(&ass_rel);
-                    cutforge_io::atomic::atomic_write(&ass_local, payload).map_err(|e| e.to_string())?;
-                    // 滤镜参数内路径必须正斜杠:Windows 的 to_string_lossy 产反斜杠,
-                    // 会被 filtergraph 转义规则吞掉("tmp\ass-k.ass"→"tmpass-k.ass",烧录必炸)
-                    let ass_arg = ass_rel.to_string_lossy().replace('\\', "/");
-                    let args = steps::subtitle_burn_args(base_video, mixed, &ass_arg, &subbed);
-                    let r = run_ff_in(&plan.cache_dir, "ffmpeg", &strs(&args));
-                    let _ = cutforge_io::atomic::remove(&ass_local);
-                    r?;
+            if combined.is_some() {
+                // 各 ASS 副本写 tmp(cwd = 缓存根,相对路径喂滤镜,规避盘符冒号转义)
+                let write_ass = |tag: &str, bytes: &[u8]| -> Result<String, String> {
+                    let rel = cache::tmp_rel(&format!("ass-{tag}-{key}.ass"));
+                    cutforge_io::atomic::atomic_write(&plan.cache_dir.join(&rel), bytes)
+                        .map_err(|e| e.to_string())?;
+                    Ok(rel.to_string_lossy().replace('\\', "/"))
+                };
+                let mut ass_rels: Vec<String> = Vec::new();
+                if let Some(user) = &user_bytes {
+                    ass_rels.push(write_ass("user", user)?);
                 }
-                None => {
-                    let args = steps::subtitle_mux_args(base_video, mixed, &subbed);
-                    run_ff("ffmpeg", &strs(&args))?;
+                if let Some(text) = &text_bytes {
+                    ass_rels.push(write_ass("text", text)?);
                 }
+                // 滤镜参数内路径必须正斜杠:Windows 的 to_string_lossy 产反斜杠,
+                // 会被 filtergraph 转义规则吞掉("tmp\ass-k.ass"→"tmpass-k.ass",烧录必炸)
+                let args = steps::subtitle_burn_args(base_video, mixed, &ass_rels, &subbed);
+                let r = run_ff_in(&plan.cache_dir, "ffmpeg", &strs(&args));
+                for rel in &ass_rels {
+                    let _ = cutforge_io::atomic::remove(&plan.cache_dir.join(rel));
+                }
+                r?;
+            } else {
+                let args = steps::subtitle_mux_args(base_video, mixed, &subbed);
+                run_ff("ffmpeg", &strs(&args))?;
             }
             idx.set_size("sub", &key, file_size(&subbed));
             subbed
         }
     };
     idx.save(&plan.cache_dir)?;
-    Ok((StepReport::new("subtitle", json!({"burned": burned})), subbed))
+    let mut detail = json!({"burned": burned, "textClips": text_bytes.is_some()});
+    let warns = textass::generation_warnings(project);
+    if !warns.is_empty() {
+        detail["warnings"] = json!(warns);
+    }
+    Ok((StepReport::new("subtitle", detail), subbed))
 }
 
 /// 步 7:encode(原子拷贝到成片输出;不缓存,输出路径与格式不变)。

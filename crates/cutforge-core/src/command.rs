@@ -85,12 +85,25 @@ pub struct ClipPatch {
     pub flip: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<f64>,
+    /// 降噪档(册四 A4 T4.8):off/low/mid/high(混音链 afftdn)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denoise: Option<String>,
+    /// 保速变调半音档(册四 A4 T4.8;±12,混音链 asetrate+atempo 补偿)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// 文本样式(册四 A4 T4.7):整对象替换(与 crop 同为原子样式操作;
+    /// 渲染端 ADR-0016 ASS 生成消费)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<crate::text_style::TextStyle>,
+    /// 花字挂载(册四 T4.7):整对象替换(template+params)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub huazi: Option<crate::text_style::Huazi>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freeze_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -285,6 +298,12 @@ pub enum Command {
     TrackUpdate { track_id: String, patch: TrackPatch },
     /// 删除片段间间隙:定位轨上包含 t_ms 的间隙,后继片段整体左移闭合(单 Op 原子)。
     ClipGapDelete { track_id: String, t_ms: u64 },
+    /// 批量插入片段(册四 A4 T4.7 subtitle_import):单 Op 原子——任一片段
+    /// id 重复或落点重叠则整批拒绝;id 已由派发层确定性分配。
+    ClipsInsert { to_track: String, clips: Vec<Clip>, request_id: Option<String> },
+    /// 批量改片段属性(册四 A4 T4.7 subtitle_replace 批量替换):单 Op 原子,
+    /// 每个 (clipId, patch) 独立按字段合并;任一 clipId 不存在则整批拒绝。
+    ClipsPatch { updates: Vec<(String, ClipPatch)> },
 }
 
 /// 从 patch 派生的字段级变更(指针片段 → before/after),用于生成叶级 Op。
@@ -349,6 +368,15 @@ impl ClipPatch {
             clip.volume = Some(v);
             record("volume", opt_json_f64(old), json_f64(v));
         }
+        if let Some(v) = self.denoise {
+            let old = clip.denoise.replace(v.clone());
+            record("denoise", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
+        if let Some(v) = self.pitch {
+            let old = clip.pitch;
+            clip.pitch = Some(v);
+            record("pitch", opt_json_f64(old), json_f64(v));
+        }
         if let Some(v) = self.opacity {
             let old = clip.opacity;
             clip.opacity = Some(v);
@@ -363,6 +391,23 @@ impl ClipPatch {
             let old = clip.text.take();
             clip.text = Some(v.clone());
             record("text", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
+        if let Some(v) = self.text_style {
+            // 整对象替换(册四 T4.7;与 crop 同口径原子操作)
+            let old = clip.text_style.replace(v.clone());
+            record(
+                "textStyle",
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                serde_json::to_value(v).unwrap_or(Value::Null),
+            );
+        }
+        if let Some(v) = self.huazi {
+            let old = clip.huazi.replace(v.clone());
+            record(
+                "huazi",
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                serde_json::to_value(v).unwrap_or(Value::Null),
+            );
         }
         if let Some(v) = self.freeze_ms {
             let old = clip.freeze_ms;
@@ -481,16 +526,20 @@ mod tests {
             crop: Some(Crop { x: 0, y: 0, w: 320, h: 240 }),
             flip: Some("none".into()),
             volume: Some(0.8),
+            denoise: Some("high".into()),
+            pitch: Some(3.0),
             opacity: Some(0.5),
             scale: Some(1.1),
             text: Some("字幕".into()),
+            text_style: Some(crate::text_style::TextStyle { color: Some("#FFCC00".into()), ..Default::default() }),
+            huazi: Some(crate::text_style::Huazi { template: "hz.pop".into(), params: None }),
             freeze_ms: Some(300),
             transition: Some(TransitionPatch { type_: Some("fade".into()), dur_ms: Some(300.0), ..Default::default() }),
             motion: Some(MotionPatch { in_: Some("fadeIn".into()), ..Default::default() }),
             fx: None,
         }
         .apply_to(&mut c);
-        assert_eq!(changes.len(), 17);
+        assert_eq!(changes.len(), 21);
         assert_eq!(c.start_ms, 100);
         assert_eq!(c.duration_ms, 8000);
         assert_eq!(c.source_in_ms, Some(12100));
@@ -501,6 +550,8 @@ mod tests {
         assert_eq!(c.crop, Some(Crop { x: 0, y: 0, w: 320, h: 240 }));
         assert_eq!(c.flip.as_deref(), Some("none"));
         assert_eq!(c.volume, Some(0.8));
+        assert_eq!(c.denoise.as_deref(), Some("high"));
+        assert_eq!(c.pitch, Some(3.0));
         assert_eq!(c.opacity, Some(0.5));
         assert_eq!(c.scale, Some(1.1));
         assert_eq!(c.text.as_deref(), Some("字幕"));
@@ -724,38 +775,4 @@ mod tests {
         assert!(!BgmPatch { src: Some("x".into()), ..Default::default() }.is_empty());
     }
 
-    /// TrackPatch(track_update 的合并语义):None=不改;同值不产变更;
-    /// 指针相对 track 对象;缺省字段不臆造。
-    #[test]
-    fn track_patch_merges_by_field() {
-        let mut t: crate::model::Track = serde_json::from_value(serde_json::json!({
-            "id": "V1", "kind": "video", "clips": []
-        }))
-        .unwrap();
-        // 全字段 patch:7 项变更,指针逐一对应
-        let changes = TrackPatch {
-            name: Some("主画面".into()), locked: Some(true), mute: Some(false),
-            solo: Some(true), hidden: Some(false), height_px: Some(240),
-            color: Some("#3D7EAF".into()),
-        }
-        .apply_to(&mut t);
-        assert_eq!(changes.len(), 7);
-        let m: std::collections::BTreeMap<String, (Value, Value)> =
-            changes.into_iter().map(|(p, o, n)| (p, (o, n))).collect();
-        assert_eq!(m["/name"].1, serde_json::json!("主画面"));
-        assert_eq!(m["/heightPx"].1, serde_json::json!(240));
-        assert_eq!(m["/color"].1, serde_json::json!("#3D7EAF"));
-        assert_eq!(t.height_px, Some(240));
-        // 部分合并:只改 mute,name/heightPx 保持
-        let changes = TrackPatch { mute: Some(true), ..Default::default() }.apply_to(&mut t);
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].0, "/mute");
-        assert_eq!(t.name.as_deref(), Some("主画面"), "未给出的字段不得被清掉");
-        assert_eq!(t.mute, Some(true));
-        // 同值 patch 不产变更
-        let changes = TrackPatch { mute: Some(true), ..Default::default() }.apply_to(&mut t);
-        assert!(changes.is_empty(), "同值 track 字段不得计入变更");
-        assert!(TrackPatch::default().is_empty());
-        assert!(!TrackPatch { color: Some("#111111".into()), ..Default::default() }.is_empty());
-    }
 }

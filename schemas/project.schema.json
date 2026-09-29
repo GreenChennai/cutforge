@@ -702,6 +702,115 @@
               "type": "string"
             }
           }
+        },
+        "textStyle": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "文本样式(册四 A4 T4.7):字体/字号/颜色/描边/底衬/阴影/对齐/行距/透明度/画布内位置/卡拉OK;渲染端按 ADR-0016 生成临时 ASS 消费(确定性纯函数)。位置 x,y 为画布像素坐标(PlayRes=画布,与 ASS \\pos 同域;锚点由 align 决定),x/y 均缺省 = 按 align 边距网格排版。颜色 #RRGGBB[AA]。整对象替换(clip_update patch.textStyle)",
+          "properties": {
+            "fontFamily": {
+              "type": "string",
+              "description": "字体族名;渲染时经 libass/fontconfig 探测系统字体,缺失降级默认字体(ADR-0016 契约行为,非缺陷)"
+            },
+            "fontSize": {
+              "type": "number",
+              "minimum": 8,
+              "maximum": 500,
+              "description": "字号(PlayRes 像素)"
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+              "description": "主色 #RRGGBB[AA];AA=不透明度(CSS 风,FF=不透明),渲染端确定性转 ASS alpha(取反)"
+            },
+            "outlineColor": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+              "description": "描边色 #RRGGBB[AA](AA=不透明度)"
+            },
+            "outlineWidth": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20,
+              "description": "描边宽(BorderStyle=3 时为底衬外边距)"
+            },
+            "borderStyle": {
+              "type": "integer",
+              "enum": [
+                1,
+                3
+              ],
+              "description": "ASS BorderStyle:1=描边+阴影,3=底衬色块"
+            },
+            "backColor": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+              "description": "底衬色 #RRGGBB[AA](AA=不透明度;注意 libass BorderStyle=3 的色块填充走 outlineColor)"
+            },
+            "shadow": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20,
+              "description": "阴影深度"
+            },
+            "align": {
+              "type": "string",
+              "enum": [
+                "topLeft",
+                "topCenter",
+                "topRight",
+                "middleLeft",
+                "center",
+                "middleRight",
+                "bottomLeft",
+                "bottomCenter",
+                "bottomRight"
+              ],
+              "description": "九宫格对齐(缺省 bottomCenter)"
+            },
+            "lineSpacing": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 200,
+              "description": "行距(像素;0=字体默认)"
+            },
+            "opacity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "整体不透明度(1=不透明)"
+            },
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "description": "画布内位置 x(像素)"
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "description": "画布内位置 y(像素,自顶部)"
+            },
+            "karaoke": {
+              "type": "boolean",
+              "description": "卡拉OK(册四 T4.7):true 时按片段时长逐字均分生成 \\kf 高亮序列"
+            }
+          }
+        },
+        "denoise": {
+          "type": "string",
+          "enum": [
+            "off",
+            "low",
+            "mid",
+            "high"
+          ],
+          "description": "降噪档(册四 A4 T4.8):afftdn 滤镜参数映射 low/mid/high;混音链位置 = aformat 之后、倒放/变速之前;off/缺省 = 不降噪"
+        },
+        "pitch": {
+          "type": "number",
+          "minimum": -12,
+          "maximum": 12,
+          "description": "保速变调半音档(册四 A4 T4.8):asetrate+aresample 升降采样率 ×2^(n/12),atempo 补偿保速;与 speed 组合链序 = 降噪→倒放→变调→变速(总时长恒 durationMs)"
         }
       }
     }

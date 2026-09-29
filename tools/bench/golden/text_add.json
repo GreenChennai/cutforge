@@ -1,0 +1,32 @@
+{
+ "tool": "text_add",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "text": "新文本",
+    "atMs": 0,
+    "durationMs": 900,
+    "textStyle": {
+     "fontSize": 64,
+     "color": "#FFFFFF"
+    },
+    "requestId": "parity-text-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "clipId": "T1-002",
+     "idempotent": false,
+     "opIds": [
+      "op-32"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

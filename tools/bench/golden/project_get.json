@@ -72,7 +72,11 @@
        {
         "clips": [
          {
+          "denoise": "mid",
           "durationMs": 1800,
+          "huazi": {
+           "template": "hz.pop"
+          },
           "id": "V1-001",
           "motion": {
            "in": "zoomIn",
@@ -80,10 +84,16 @@
            "out": "fadeOut",
            "outMs": 260.0
           },
+          "pitch": -4.0,
           "sourceInMs": 0,
           "src": "01_原始素材/take1.mp4",
           "startMs": 0,
           "text": "第一句字幕",
+          "textStyle": {
+           "align": "topCenter",
+           "color": "#FFCC00",
+           "fontSize": 72.0
+          },
           "volume": 0.85
          },
          {
@@ -161,6 +171,28 @@
           "src": "01_原始素材/take1.mp4",
           "startMs": 1000,
           "volume": 0.0
+         },
+         {
+          "durationMs": 900,
+          "id": "T1-002",
+          "startMs": 0,
+          "text": "新文本",
+          "textStyle": {
+           "color": "#FFFFFF",
+           "fontSize": 64.0
+          }
+         },
+         {
+          "durationMs": 1000,
+          "id": "T1-003",
+          "startMs": 4000,
+          "text": "导入改一句"
+         },
+         {
+          "durationMs": 1000,
+          "id": "T1-004",
+          "startMs": 5000,
+          "text": "导入第二句"
          }
         ],
         "color": "#22CC88",

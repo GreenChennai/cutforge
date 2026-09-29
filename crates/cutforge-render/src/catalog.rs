@@ -22,6 +22,8 @@ use std::sync::OnceLock;
 pub const TRANSITION_CATALOG_JSON: &str = include_str!("../../../schemas/transition-catalog.json");
 /// 特效 + 动效目录(编译期嵌入)。
 pub const FX_CATALOG_JSON: &str = include_str!("../../../schemas/fx-catalog.json");
+/// 花字目录(册四 A4 T4.7;12 模板,吸收旧版 rs_subtitle/assets/huazi 标签语法)。
+pub const HUAZI_CATALOG_JSON: &str = include_str!("../../../schemas/huazi-catalog.json");
 
 fn catalog_doc() -> &'static Value {
     static DOC: OnceLock<Value> = OnceLock::new();
@@ -117,6 +119,106 @@ pub fn effective_transition_ms(clips: &[Clip], boundary: usize) -> f64 {
         return 0.0;
     }
     raw.min(clips[boundary - 1].duration_ms as f64).min(clips[boundary].duration_ms as f64)
+}
+
+// ---------------- 花字目录(T4.7;ADR-0016 ASS 路线的模板面) ----------------
+
+/// 花字目录单条:参数 schema + 样式级覆写 + override 标签模板(或逐字动画 kind)。
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuaziDef {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    /// 参数定义(min/max/default;type: number|color——color 值为 ASS 字面量直取)。
+    pub params: Vec<HuaziParamDef>,
+    /// 样式级覆写(borderStyle/backColor/outlineWidth/primaryColor/secondaryColor/
+    /// outlineColor;BorderStyle 无法用 override 表达,由逐片段 Style 行承载)。
+    pub style: serde_json::Map<String, Value>,
+    /// override 模板({TEXT}=转义正文,参数名直取,{DUR}=片段时长毫秒)。
+    pub body: Option<String>,
+    /// 逐字动画生成器实现名(perchar-pop/perchar-typewriter/perchar-wave)。
+    pub body_kind: Option<String>,
+    /// 卡拉OK模板:生成器按片段时长逐字均分 \kf。
+    pub karaoke: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HuaziParamDef {
+    pub name: String,
+    pub kind: String,
+    pub min: f64,
+    pub max: f64,
+    pub default: Value,
+}
+
+pub fn huazi_list() -> &'static [HuaziDef] {
+    static LIST: OnceLock<Vec<HuaziDef>> = OnceLock::new();
+    LIST.get_or_init(|| {
+        serde_json::from_str::<Value>(HUAZI_CATALOG_JSON)
+            .expect("huazi-catalog.json 必须合法")["huazi"]
+            .as_array()
+            .expect("huazi 数组必须存在")
+            .iter()
+            .map(|h| HuaziDef {
+                id: h["id"].as_str().unwrap_or_default().to_string(),
+                name: h["name"].as_str().unwrap_or_default().to_string(),
+                category: h["category"].as_str().unwrap_or_default().to_string(),
+                params: h["params"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .map(|p| HuaziParamDef {
+                                name: p["name"].as_str().unwrap_or_default().to_string(),
+                                kind: p["type"].as_str().unwrap_or("number").to_string(),
+                                min: p["min"].as_f64().unwrap_or(0.0),
+                                max: p["max"].as_f64().unwrap_or(1.0),
+                                default: p["default"].clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                style: h["style"].as_object().cloned().unwrap_or_default(),
+                body: h["body"].as_str().map(String::from),
+                body_kind: h["bodyKind"].as_str().map(String::from),
+                karaoke: h["karaoke"].as_bool().unwrap_or(false),
+            })
+            .collect()
+    })
+}
+
+/// 花字模板解析:`hz.<id>` 或裸 id;未注册 → None(调用方诚实降级纯文本)。
+pub fn find_huazi(id: &str) -> Option<&'static HuaziDef> {
+    let id = id.strip_prefix("hz.").unwrap_or(id);
+    huazi_list().iter().find(|h| h.id.strip_prefix("hz.").unwrap_or(&h.id) == id)
+}
+
+/// 花字单参数取值:clip 覆写 → 目录默认;数值钳到 [min,max];未知键按默认裁决。
+/// 返回 (字符串化取值, 越界/未知告警)。
+pub fn huazi_param_value(
+    clip_params: Option<&serde_json::Map<String, Value>>,
+    p: &HuaziParamDef,
+) -> (String, Vec<String>) {
+    let mut warns = Vec::new();
+    let raw = clip_params.and_then(|m| m.get(&p.name));
+    let v: Value = match raw {
+        Some(Value::Number(n)) => {
+            let f = n.as_f64().unwrap_or(0.0).clamp(p.min, p.max);
+            Value::from(f)
+        }
+        Some(Value::String(s)) if p.kind == "color" => Value::String(s.clone()),
+        Some(_) => {
+            warns.push(format!("huazi 参数 {} 非法,按默认值裁决;", p.name));
+            p.default.clone()
+        }
+        None => p.default.clone(),
+    };
+    // 字符串化:color 直取字面量;number 走 fmt_f64(去尾零,确定性)
+    let s = match &v {
+        Value::String(s) => s.clone(),
+        Value::Number(n) => crate::steps::fmt_f64(n.as_f64().unwrap_or(0.0)),
+        _ => String::new(),
+    };
+    (s, warns)
 }
 
 // ---------------- fx 目录(T4.6) ----------------
@@ -431,6 +533,58 @@ mod tests {
         );
         assert_eq!(effective_transition_ms(&mk(vec![2000, 2000], 0), 1), 0.0, "durMs=0 硬切");
         assert_eq!(effective_transition_ms(&mk(vec![2000, 2000], 500), 0), 0.0, "边界 0 无效");
+    }
+
+    // ---- 花字目录(册四 T4.7) ----
+
+    /// AC-4.4:花字目录 ≥10 模板;分类覆盖描边/发光/立体/底衬/渐变/动画/卡拉OK。
+    #[test]
+    fn huazi_catalog_has_12_templates_across_categories() {
+        assert!(huazi_list().len() >= 10, "花字 ≥10(AC-4.4),实得 {}", huazi_list().len());
+        let ids: Vec<&str> = huazi_list().iter().map(|h| h.id.as_str()).collect();
+        for must in [
+            "hz.outline", "hz.neon", "hz.glow", "hz.emboss", "hz.extrude", "hz.box",
+            "hz.brush", "hz.gradient", "hz.pop", "hz.typewriter", "hz.wave", "hz.karaoke",
+        ] {
+            assert!(ids.contains(&must), "花字模板缺 {must}");
+        }
+        for cat in ["描边", "发光", "立体", "底衬", "渐变", "动画", "卡拉OK"] {
+            assert!(huazi_list().iter().any(|h| h.category == cat), "分类 {cat} 空");
+        }
+        // 每个模板:body 与 bodyKind 至少其一;karaoké 模板必须声明 karaoke
+        for h in huazi_list() {
+            assert!(h.body.is_some() || h.body_kind.is_some(), "{} 无产物模板", h.id);
+            assert_eq!(h.karaoke, h.id == "hz.karaoke");
+        }
+    }
+
+    #[test]
+    fn find_huazi_resolves_prefix_and_degrades_none() {
+        assert_eq!(find_huazi("hz.pop").unwrap().id, "hz.pop");
+        assert_eq!(find_huazi("pop").unwrap().id, "hz.pop", "裸 id 直通");
+        assert!(find_huazi("hz.不存在").is_none(), "未注册 → 调用方诚实降级");
+    }
+
+    #[test]
+    fn huazi_param_override_clamps_and_defaults() {
+        let def = find_huazi("hz.pop").unwrap();
+        let step = def.params.iter().find(|p| p.name == "stepMs").unwrap();
+        let mut clip_params = serde_json::Map::new();
+        clip_params.insert("stepMs".into(), json!(999));
+        let (v, warns) = huazi_param_value(Some(&clip_params), step);
+        assert_eq!(v, "200", "越界钳到 max");
+        assert!(warns.is_empty(), "钳制不算告警(与 fx 同口径)");
+        // 未知键不进这里(逐参数查询);缺省走默认
+        let (v, _) = huazi_param_value(None, step);
+        assert_eq!(v, "70");
+        // color 参数:字面量直取(确定性)
+        let ndef = find_huazi("hz.karaoke").unwrap();
+        let hl = ndef.params.iter().find(|p| p.name == "highlight").unwrap();
+        let (v, _) = huazi_param_value(None, hl);
+        assert_eq!(v, "&H0040FF");
+        // 样式级覆写在位(box:borderStyle=3)
+        let box_def = find_huazi("hz.box").unwrap();
+        assert_eq!(box_def.style["borderStyle"], json!(3));
     }
 
     // ---- fx 目录 ----

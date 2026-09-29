@@ -12,6 +12,7 @@ pub mod merge;
 pub mod model;
 pub mod notes;
 pub mod oplog;
+pub mod text_style;
 pub mod timeutil;
 
 pub use command::Command;
@@ -19,6 +20,7 @@ pub use engine::{Answer, ApplyOpts, Engine, OpReceipt, Query, Reject};
 pub use model::{Backend, Canvas, Clip, Motion, Project, Ratio, Role, Track, TrackKind};
 pub use notes::{Note, NotesStore};
 pub use oplog::{Actor, ActorKind, Op, OpLog};
+pub use text_style::{FontSpec, Huazi, TextStyle};
 
 /// 生成 opId:op-<序号>(全工程唯一,单调分配)。
 pub fn format_op_id(n: u64) -> String {

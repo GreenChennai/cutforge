@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """T1.1/AC-1.2 门禁:MCP 工具黄金响应库(golden 响应对拍;册一建 41,册二 A2 增
-render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,数量口径以 schemas/mcp-tools.json 为准)。
+render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,册四 A4-BE3b 增文本/字幕/媒体
+八工具后 56,数量口径以 schemas/mcp-tools.json 为准)。
 
     python tools/bench/tool_parity.py                  # 对比模式:重跑采集,与 golden 逐字段对拍
     python tools/bench/tool_parity.py --update-golden  # 采集模式:重建 tools/bench/golden/*.json
@@ -141,6 +142,9 @@ RE_BS_RUN = re.compile(r"\\+")  # 反斜杠串(含 JSON-in-JSON 里 \\ 转义出
 # A2 render_frame:帧缓存文件名内嵌工作区指纹键(run 间必变)→ 占位;扩展名保留
 RE_FRAME_FILE = re.compile(r"render-cache/frame/[0-9a-f]{16}(\.png|\.jpe?g)")
 RE_FRAME_KEY = re.compile(r"[0-9a-f]{16}")
+# A4-BE3b:媒体派生物缓存文件名内嵌内容键(mtime 入键,run 间必变)→ 占位
+RE_MEDIA_CACHE_FILE = re.compile(
+    r"\.cutforge/((?:peaks-cache|thumb-cache|proxy)/)[0-9a-f]{16}\.(json|png|mp4)")
 
 
 def _fwd(p: str) -> str:
@@ -193,6 +197,8 @@ class Normalizer:
         s = RE_POSIX_PATH.sub("<ABS>", s)
         # 3) render_frame 帧文件名占位(内嵌工作区指纹键,run 间必变;扩展名保留)
         s = RE_FRAME_FILE.sub(lambda m: f"render-cache/frame/<FRAME>{m.group(1)}", s)
+        # 4) 媒体派生物缓存文件名占位(peaks/thumb/proxy 内容键含 mtime,run 间必变;目录与扩展名保留)
+        s = RE_MEDIA_CACHE_FILE.sub(lambda m: f".cutforge/{m.group(1)}<MEDIA_CACHE>.{m.group(2)}", s)
         return s
 
     def __call__(self, v, probe_mode: bool = False):
@@ -356,6 +362,12 @@ def make_media(ws: Path) -> None:
             raise ParityError(f"FAIL: ffmpeg 生成夹具失败({out.name}): {r.stderr[-200:]}", 2)
 
 
+def write_subtitle_fixture(ws: Path) -> None:
+    """SRT 导入夹具(规范形;导入→导出 byte 级对拍的种子)。"""
+    srt = "1\n00:00:04,000 --> 00:00:05,000\n导入第一句\n\n2\n00:00:05,000 --> 00:00:06,000\n导入第二句\n\n"
+    (ws / "05_时间线工程" / "subs.srt").write_text(srt, encoding="utf-8")
+
+
 def write_truth_fixtures(ws: Path) -> None:
     """wordline.json / cutlist.json 最小合法夹具(过各自 schema;cutlist 另过 finalize 重算)。"""
     (ws / "05_时间线工程" / "wordline.json").write_text(json.dumps({
@@ -480,6 +492,25 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         ("clip_copy", {"root": "{MAIN}", "clipId": "V1-003"}, False),
         ("clip_paste_at", {"root": "{MAIN}", "trackId": "V1", "startMs": 15000,
                            "requestId": "parity-paste-1"}, False),
+        # -- 阶段 C3:文本/字幕/媒体工具(册四 A4-BE3b;56 写/编排/查询面) --
+        ("clip_update", {"root": "{MAIN}", "clipId": "V1-001",
+                         "patch": {"textStyle": {"fontSize": 72, "color": "#FFCC00", "align": "topCenter"},
+                                    "huazi": {"template": "hz.pop"},
+                                    "denoise": "mid", "pitch": -4}}, False),
+        ("text_add", {"root": "{MAIN}", "text": "新文本", "atMs": 0, "durationMs": 900,
+                      "textStyle": {"fontSize": 64, "color": "#FFFFFF"},
+                      "requestId": "parity-text-1"}, False),
+        ("subtitle_import", {"root": "{MAIN}", "src": "05_时间线工程/subs.srt",
+                             "requestId": "parity-imp-1"}, False),
+        ("subtitle_replace", {"root": "{MAIN}", "find": "第一句", "replace": "改一句"}, False),
+        ("subtitle_export", {"root": "{MAIN}", "format": "srt", "trackId": "T1"}, False),
+        ("subtitle_export", {"root": "{MAIN}", "format": "ass"}, False),
+        ("media_peaks", {"root": "{MAIN}", "src": "01_原始素材/bgm.mp3", "level": "coarse"}, True),
+        ("media_peaks", {"root": "{MAIN}", "src": "01_原始素材/bgm.mp3", "level": "coarse"}, True),
+        ("media_thumbnail", {"root": "{MAIN}", "src": "01_原始素材/take1.mp4", "atMs": 500}, True),
+        ("media_proxy", {"root": "{MAIN}", "src": "01_原始素材/take1.mp4"}, True),
+        ("media_proxy", {"root": "{MAIN}", "src": "01_原始素材/take1.mp4", "generate": False}, True),
+        ("audio_beats", {"root": "{MAIN}", "src": "01_原始素材/bgm.mp3", "sensitivity": 0.5}, True),
         # -- 阶段 D:写后查询(投影面) --
         ("project_get", {"root": "{MAIN}"}, False),
         ("timeline_get", {"root": "{MAIN}"}, False),
@@ -614,6 +645,7 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
         stub = write_cutflow_stub(tmp, main_ws)
         make_media(main_ws)
         write_truth_fixtures(main_ws)
+        write_subtitle_fixture(main_ws)
 
         serve, port = spawn_serve(bin_path, main_ws, tmp, stub)
         norm = Normalizer(tmp, TOKEN)

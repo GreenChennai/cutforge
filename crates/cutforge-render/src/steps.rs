@@ -312,13 +312,16 @@ pub fn mix_measured_is_loud(measured: &Value) -> bool {
 // ---------------- 步 6 subtitle(最后叠) ----------------
 
 /// 字幕烧录命令行(cwd = 缓存根;ASS 以相对路径喂给 subtitles 滤镜,规避
-/// Windows 盘符冒号在滤镜参数里的转义问题)。ass_rel 形如 "tmp/ass-<key>.ass"。
-pub fn subtitle_burn_args(video_in: &Path, mixed_in: &Path, ass_rel: &str, subbed_out: &Path) -> Vec<String> {
+/// Windows 盘符冒号在滤镜参数里的转义问题)。ass_rels = 烧录序列(册四 T4.7:
+/// 外部字幕 + 文本轨生成 ASS 串联——多条 subtitles 滤镜链式应用,免解析合并
+/// 外部文件;单条时参数与拆分前逐字一致,parity 红线)。
+pub fn subtitle_burn_args(video_in: &Path, mixed_in: &Path, ass_rels: &[String], subbed_out: &Path) -> Vec<String> {
+    let vf = ass_rels.iter().map(|r| format!("subtitles={r}")).collect::<Vec<_>>().join(",");
     [
         "-y", "-v", "error",
         "-i", &video_in.to_string_lossy(),
         "-i", &mixed_in.to_string_lossy(),
-        "-vf", &format!("subtitles={ass_rel}"),
+        "-vf", &vf,
         "-map", "0:v", "-map", "1:a",
         "-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy",
         &subbed_out.to_string_lossy(),
@@ -701,7 +704,7 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
     #[test]
     fn subtitle_burn_and_mux_args_are_backward_compatible() {
         let burn = subtitle_burn_args(
-            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"), "tmp/ass-k.ass", Path::new("/c/sub/o.mp4"),
+            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"), &["tmp/ass-k.ass".into()], Path::new("/c/sub/o.mp4"),
         );
         assert_eq!(
             strv(&burn),
@@ -709,6 +712,12 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
              "-vf", "subtitles=tmp/ass-k.ass", "-map", "0:v", "-map", "1:a",
              "-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy", "/c/sub/o.mp4"]
         );
+        // 册四 T4.7:外部字幕 + 文本轨生成 ASS 串联(链式 subtitles 滤镜)
+        let both = subtitle_burn_args(
+            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"),
+            &["tmp/ass-user.ass".into(), "tmp/ass-text.ass".into()], Path::new("/c/sub/o.mp4"),
+        );
+        assert_eq!(both[8], "subtitles=tmp/ass-user.ass,subtitles=tmp/ass-text.ass", "{:?}", both[8]);
         let mux = subtitle_mux_args(
             Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"), Path::new("/c/sub/o.mp4"),
         );

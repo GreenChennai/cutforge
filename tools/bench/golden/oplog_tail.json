@@ -26,7 +26,7 @@
    "response": {
     "code": "OK",
     "data": {
-     "count": 31,
+     "count": 35,
      "ops": [
       {
        "actor": {
@@ -34,29 +34,53 @@
         "kind": "user"
        },
        "after": {
-        "durationMs": 2000,
-        "id": "V1-003",
-        "sourceInMs": 2250,
+        "denoise": "mid",
+        "durationMs": 1800,
+        "huazi": {
+         "template": "hz.pop"
+        },
+        "id": "V1-001",
+        "motion": {
+         "in": "zoomIn",
+         "inMs": 280.0,
+         "out": "fadeOut",
+         "outMs": 260.0
+        },
+        "pitch": -4.0,
+        "sourceInMs": 0,
         "src": "01_原始素材/take1.mp4",
-        "startMs": 9800,
-        "volume": 1.0
+        "startMs": 0,
+        "text": "第一句字幕",
+        "textStyle": {
+         "align": "topCenter",
+         "color": "#FFCC00",
+         "fontSize": 72.0
+        },
+        "volume": 0.85
        },
        "base_rev": "<REV>",
        "before": {
-        "durationMs": 2000,
-        "id": "V1-003",
-        "sourceInMs": 2000,
+        "durationMs": 1800,
+        "id": "V1-001",
+        "motion": {
+         "in": "zoomIn",
+         "inMs": 280.0,
+         "out": "fadeOut",
+         "outMs": 260.0
+        },
+        "sourceInMs": 0,
         "src": "01_原始素材/take1.mp4",
-        "startMs": 9800,
-        "volume": 1.0
+        "startMs": 0,
+        "text": "第一句字幕",
+        "volume": 0.85
        },
-       "op_id": "op-27",
+       "op_id": "op-31",
        "op_kind": "set",
        "rev": "<REV>",
-       "summary": "clip_trim slip V1-003 +250ms(内容平移)",
+       "summary": "clip_update V1-001: /denoise: null→\"mid\", /pitch: null→-4.0, /textStyle: null→{\"align\":\"topCenter\",\"color\":\"#FFCC00\",\"fontSize\":72.0}, /huazi: null→{\"template\":\"hz.pop\"}",
        "target": {
         "file": "project.json",
-        "path": "/tracks/0/clips/1"
+        "path": "/tracks/0/clips/0"
        },
        "ts": "<TS>"
       },
@@ -67,401 +91,228 @@
        },
        "after": [
         {
-         "durationMs": 1800,
-         "id": "V1-001",
-         "motion": {
-          "in": "zoomIn",
-          "inMs": 280.0,
-          "out": "fadeOut",
-          "outMs": 260.0
-         },
-         "sourceInMs": 0,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 0,
-         "text": "第一句字幕",
-         "volume": 0.85
-        },
-        {
          "durationMs": 2000,
-         "id": "V1-003",
-         "sourceInMs": 2250,
+         "id": "T1-001",
+         "overlay": {
+          "h": 200,
+          "opacity": 0.5,
+          "w": 400,
+          "x": 84,
+          "y": 240
+         },
          "src": "01_原始素材/take1.mp4",
-         "startMs": 10400,
-         "volume": 1.0
+         "startMs": 1000,
+         "volume": 0.0
         },
         {
-         "durationMs": 5000,
-         "id": "V1-002",
-         "sourceInMs": 1000,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 1800,
-         "transition": {
-          "durMs": 300.0,
-          "reason": "topic",
-          "type": "fade"
+         "durationMs": 900,
+         "id": "T1-002",
+         "startMs": 0,
+         "text": "新文本",
+         "textStyle": {
+          "color": "#FFFFFF",
+          "fontSize": 64.0
          }
         }
        ],
        "base_rev": "<REV>",
        "before": [
         {
-         "durationMs": 1800,
-         "id": "V1-001",
-         "motion": {
-          "in": "zoomIn",
-          "inMs": 280.0,
-          "out": "fadeOut",
-          "outMs": 260.0
+         "durationMs": 2000,
+         "id": "T1-001",
+         "overlay": {
+          "h": 200,
+          "opacity": 0.5,
+          "w": 400,
+          "x": 84,
+          "y": 240
          },
-         "sourceInMs": 0,
          "src": "01_原始素材/take1.mp4",
-         "startMs": 0,
-         "text": "第一句字幕",
-         "volume": 0.85
-        },
-        {
-         "durationMs": 2000,
-         "id": "V1-003",
-         "sourceInMs": 2250,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 9800,
-         "volume": 1.0
-        },
-        {
-         "durationMs": 5000,
-         "id": "V1-002",
-         "sourceInMs": 1000,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 1800,
-         "transition": {
-          "durMs": 300.0,
-          "reason": "topic",
-          "type": "fade"
-         }
+         "startMs": 1000,
+         "volume": 0.0
         }
        ],
-       "op_id": "op-28",
-       "op_kind": "move",
-       "rev": "<REV>",
-       "summary": "clip_trim slide V1-003 +600ms(位置平移)",
-       "target": {
-        "file": "project.json",
-        "path": "/tracks/0/clips"
-       },
-       "ts": "<TS>"
-      },
-      {
-       "actor": {
-        "id": "editor",
-        "kind": "user"
-       },
-       "after": [
-        {
-         "clips": [
-          {
-           "durationMs": 1800,
-           "id": "V1-001",
-           "motion": {
-            "in": "zoomIn",
-            "inMs": 280.0,
-            "out": "fadeOut",
-            "outMs": 260.0
-           },
-           "sourceInMs": 0,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 0,
-           "text": "第一句字幕",
-           "volume": 0.85
-          },
-          {
-           "durationMs": 2000,
-           "id": "V1-003",
-           "sourceInMs": 2250,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 10400,
-           "volume": 1.0
-          },
-          {
-           "durationMs": 3200,
-           "id": "V1-002",
-           "sourceInMs": 1000,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 1800,
-           "transition": {
-            "durMs": 300.0,
-            "reason": "topic",
-            "type": "fade"
-           }
-          },
-          {
-           "durationMs": 1800,
-           "id": "V1-004",
-           "sourceInMs": 4200,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 5000,
-           "transition": {
-            "durMs": 300.0,
-            "reason": "topic",
-            "type": "fade"
-           }
-          }
-         ],
-         "id": "V1",
-         "kind": "video"
-        },
-        {
-         "clips": [
-          {
-           "durationMs": 400,
-           "id": "A1-001",
-           "role": "sfx",
-           "src": "01_原始素材/sfx.mp3",
-           "startMs": 500,
-           "volume": 0.8
-          }
-         ],
-         "id": "A1",
-         "kind": "audio",
-         "mute": true,
-         "solo": false
-        },
-        {
-         "clips": [
-          {
-           "durationMs": 2000,
-           "id": "T1-001",
-           "overlay": {
-            "h": 200,
-            "opacity": 0.5,
-            "w": 400,
-            "x": 84,
-            "y": 240
-           },
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 1000,
-           "volume": 0.0
-          }
-         ],
-         "color": "#22CC88",
-         "heightPx": 120,
-         "id": "T1",
-         "kind": "text",
-         "name": "字幕轨"
-        }
-       ],
-       "base_rev": "<REV>",
-       "before": [
-        {
-         "clips": [
-          {
-           "durationMs": 1800,
-           "id": "V1-001",
-           "motion": {
-            "in": "zoomIn",
-            "inMs": 280.0,
-            "out": "fadeOut",
-            "outMs": 260.0
-           },
-           "sourceInMs": 0,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 0,
-           "text": "第一句字幕",
-           "volume": 0.85
-          },
-          {
-           "durationMs": 2000,
-           "id": "V1-003",
-           "sourceInMs": 2250,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 10400,
-           "volume": 1.0
-          },
-          {
-           "durationMs": 5000,
-           "id": "V1-002",
-           "sourceInMs": 1000,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 1800,
-           "transition": {
-            "durMs": 300.0,
-            "reason": "topic",
-            "type": "fade"
-           }
-          }
-         ],
-         "id": "V1",
-         "kind": "video"
-        },
-        {
-         "clips": [
-          {
-           "durationMs": 400,
-           "id": "A1-001",
-           "role": "sfx",
-           "src": "01_原始素材/sfx.mp3",
-           "startMs": 500,
-           "volume": 0.8
-          }
-         ],
-         "id": "A1",
-         "kind": "audio",
-         "mute": true,
-         "solo": false
-        },
-        {
-         "clips": [
-          {
-           "durationMs": 2000,
-           "id": "T1-001",
-           "overlay": {
-            "h": 200,
-            "opacity": 0.5,
-            "w": 400,
-            "x": 84,
-            "y": 240
-           },
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 1000,
-           "volume": 0.0
-          }
-         ],
-         "color": "#22CC88",
-         "heightPx": 120,
-         "id": "T1",
-         "kind": "text",
-         "name": "字幕轨"
-        }
-       ],
-       "op_id": "op-29",
-       "op_kind": "split",
-       "rev": "<REV>",
-       "summary": "clip_split_all @5000(1 段)",
-       "target": {
-        "file": "project.json",
-        "path": "/tracks"
-       },
-       "ts": "<TS>"
-      },
-      {
-       "actor": {
-        "id": "editor",
-        "kind": "user"
-       },
-       "after": [
-        {
-         "durationMs": 1800,
-         "id": "V1-001",
-         "motion": {
-          "in": "zoomIn",
-          "inMs": 280.0,
-          "out": "fadeOut",
-          "outMs": 260.0
-         },
-         "sourceInMs": 0,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 0,
-         "text": "第一句字幕",
-         "volume": 0.85
-        },
-        {
-         "durationMs": 2000,
-         "id": "V1-003",
-         "sourceInMs": 2250,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 10400,
-         "volume": 1.0
-        },
-        {
-         "durationMs": 3200,
-         "id": "V1-002",
-         "sourceInMs": 1000,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 1800,
-         "transition": {
-          "durMs": 300.0,
-          "reason": "topic",
-          "type": "fade"
-         }
-        },
-        {
-         "durationMs": 1800,
-         "id": "V1-004",
-         "sourceInMs": 4200,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 5000,
-         "transition": {
-          "durMs": 300.0,
-          "reason": "topic",
-          "type": "fade"
-         }
-        },
-        {
-         "durationMs": 2000,
-         "id": "V1-005",
-         "sourceInMs": 2250,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 15000,
-         "volume": 1.0
-        }
-       ],
-       "base_rev": "<REV>",
-       "before": [
-        {
-         "durationMs": 1800,
-         "id": "V1-001",
-         "motion": {
-          "in": "zoomIn",
-          "inMs": 280.0,
-          "out": "fadeOut",
-          "outMs": 260.0
-         },
-         "sourceInMs": 0,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 0,
-         "text": "第一句字幕",
-         "volume": 0.85
-        },
-        {
-         "durationMs": 2000,
-         "id": "V1-003",
-         "sourceInMs": 2250,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 10400,
-         "volume": 1.0
-        },
-        {
-         "durationMs": 3200,
-         "id": "V1-002",
-         "sourceInMs": 1000,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 1800,
-         "transition": {
-          "durMs": 300.0,
-          "reason": "topic",
-          "type": "fade"
-         }
-        },
-        {
-         "durationMs": 1800,
-         "id": "V1-004",
-         "sourceInMs": 4200,
-         "src": "01_原始素材/take1.mp4",
-         "startMs": 5000,
-         "transition": {
-          "durMs": 300.0,
-          "reason": "topic",
-          "type": "fade"
-         }
-        }
-       ],
-       "op_id": "op-30",
+       "op_id": "op-32",
        "op_kind": "insert",
-       "request_id": "parity-paste-1",
+       "request_id": "parity-text-1",
        "rev": "<REV>",
-       "summary": "clip_insert V1-005→V1",
+       "summary": "clips_insert T1-002→T1(1 段)",
        "target": {
         "file": "project.json",
-        "path": "/tracks/0/clips"
+        "path": "/tracks/2/clips"
+       },
+       "ts": "<TS>"
+      },
+      {
+       "actor": {
+        "id": "editor",
+        "kind": "user"
+       },
+       "after": [
+        {
+         "durationMs": 2000,
+         "id": "T1-001",
+         "overlay": {
+          "h": 200,
+          "opacity": 0.5,
+          "w": 400,
+          "x": 84,
+          "y": 240
+         },
+         "src": "01_原始素材/take1.mp4",
+         "startMs": 1000,
+         "volume": 0.0
+        },
+        {
+         "durationMs": 900,
+         "id": "T1-002",
+         "startMs": 0,
+         "text": "新文本",
+         "textStyle": {
+          "color": "#FFFFFF",
+          "fontSize": 64.0
+         }
+        },
+        {
+         "durationMs": 1000,
+         "id": "T1-003",
+         "startMs": 4000,
+         "text": "导入第一句"
+        },
+        {
+         "durationMs": 1000,
+         "id": "T1-004",
+         "startMs": 5000,
+         "text": "导入第二句"
+        }
+       ],
+       "base_rev": "<REV>",
+       "before": [
+        {
+         "durationMs": 2000,
+         "id": "T1-001",
+         "overlay": {
+          "h": 200,
+          "opacity": 0.5,
+          "w": 400,
+          "x": 84,
+          "y": 240
+         },
+         "src": "01_原始素材/take1.mp4",
+         "startMs": 1000,
+         "volume": 0.0
+        },
+        {
+         "durationMs": 900,
+         "id": "T1-002",
+         "startMs": 0,
+         "text": "新文本",
+         "textStyle": {
+          "color": "#FFFFFF",
+          "fontSize": 64.0
+         }
+        }
+       ],
+       "op_id": "op-33",
+       "op_kind": "insert",
+       "request_id": "parity-imp-1",
+       "rev": "<REV>",
+       "summary": "clips_insert T1-003→T1(2 段)",
+       "target": {
+        "file": "project.json",
+        "path": "/tracks/2/clips"
+       },
+       "ts": "<TS>"
+      },
+      {
+       "actor": {
+        "id": "editor",
+        "kind": "user"
+       },
+       "after": [
+        {
+         "durationMs": 2000,
+         "id": "T1-001",
+         "overlay": {
+          "h": 200,
+          "opacity": 0.5,
+          "w": 400,
+          "x": 84,
+          "y": 240
+         },
+         "src": "01_原始素材/take1.mp4",
+         "startMs": 1000,
+         "volume": 0.0
+        },
+        {
+         "durationMs": 900,
+         "id": "T1-002",
+         "startMs": 0,
+         "text": "新文本",
+         "textStyle": {
+          "color": "#FFFFFF",
+          "fontSize": 64.0
+         }
+        },
+        {
+         "durationMs": 1000,
+         "id": "T1-003",
+         "startMs": 4000,
+         "text": "导入改一句"
+        },
+        {
+         "durationMs": 1000,
+         "id": "T1-004",
+         "startMs": 5000,
+         "text": "导入第二句"
+        }
+       ],
+       "base_rev": "<REV>",
+       "before": [
+        {
+         "durationMs": 2000,
+         "id": "T1-001",
+         "overlay": {
+          "h": 200,
+          "opacity": 0.5,
+          "w": 400,
+          "x": 84,
+          "y": 240
+         },
+         "src": "01_原始素材/take1.mp4",
+         "startMs": 1000,
+         "volume": 0.0
+        },
+        {
+         "durationMs": 900,
+         "id": "T1-002",
+         "startMs": 0,
+         "text": "新文本",
+         "textStyle": {
+          "color": "#FFFFFF",
+          "fontSize": 64.0
+         }
+        },
+        {
+         "durationMs": 1000,
+         "id": "T1-003",
+         "startMs": 4000,
+         "text": "导入第一句"
+        },
+        {
+         "durationMs": 1000,
+         "id": "T1-004",
+         "startMs": 5000,
+         "text": "导入第二句"
+        }
+       ],
+       "op_id": "op-34",
+       "op_kind": "set",
+       "rev": "<REV>",
+       "summary": "clips_patch(1 clip,1 字段)",
+       "target": {
+        "file": "project.json",
+        "path": "/tracks/2/clips"
        },
        "ts": "<TS>"
       }

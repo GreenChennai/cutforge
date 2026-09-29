@@ -2,7 +2,7 @@
 //! 命令定义(计划书 2.6):命令是唯一的写入口,任何状态变更都表达为一条 Command,
 //! 由 Engine::apply 翻译为 Op。不存在"直接赋值"的旁路。
 
-use crate::model::Clip;
+use crate::model::{Clip, Crop, SpeedPoint};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -62,6 +62,21 @@ pub struct ClipPatch {
     pub source_in_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed: Option<f64>,
+    /// 分段速度曲线(册四 A4 T4.4):整组替换(数组在三路合并中整体为一个值,语义一致)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_curve: Option<Vec<SpeedPoint>>,
+    /// 倒放开关(册四 A4 T4.4)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse: Option<bool>,
+    /// 旋转角度(度;册四 A4 T4.9)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<f64>,
+    /// 源域裁剪矩形(册四 A4 T4.9):整对象替换(原子构图操作)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<Crop>,
+    /// 翻转(none/h/v;册四 A4 T4.9)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flip: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -294,6 +309,31 @@ impl ClipPatch {
             clip.speed = Some(v);
             record("speed", opt_json_f64(old), json_f64(v));
         }
+        if let Some(v) = self.speed_curve {
+            let old = clip.speed_curve.replace(v.clone());
+            record("speedCurve",
+                   old.map(|ps| json_points(&ps)).unwrap_or(Value::Null),
+                   json_points(&v));
+        }
+        if let Some(v) = self.reverse {
+            let old = clip.reverse;
+            clip.reverse = Some(v);
+            record("reverse", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.rotation {
+            let old = clip.rotation;
+            clip.rotation = Some(v);
+            record("rotation", opt_json_f64(old), json_f64(v));
+        }
+        if let Some(v) = self.crop {
+            let old = clip.crop.replace(v);
+            record("crop", old.map(|c| serde_json::to_value(c).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                   serde_json::to_value(v).unwrap_or(Value::Null));
+        }
+        if let Some(v) = self.flip {
+            let old = clip.flip.replace(v.clone());
+            record("flip", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
         if let Some(v) = self.volume {
             let old = clip.volume;
             clip.volume = Some(v);
@@ -382,6 +422,11 @@ fn opt_json_f64(v: Option<f64>) -> Value {
     v.map(json_f64).unwrap_or(Value::Null)
 }
 
+/// 速度曲线点集 → JSON 数组([{atMs, speed}, …];serde 形态与 Clip 落盘逐字一致)。
+fn json_points(v: &[SpeedPoint]) -> Value {
+    Value::Array(v.iter().map(|p| serde_json::to_value(p).unwrap_or(Value::Null)).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,6 +447,11 @@ mod tests {
             duration_ms: Some(8000),
             source_in_ms: Some(12100),
             speed: Some(1.25),
+            speed_curve: Some(vec![SpeedPoint { at_ms: 0, speed: 1.25 }]),
+            reverse: Some(false),
+            rotation: Some(0.0),
+            crop: Some(Crop { x: 0, y: 0, w: 320, h: 240 }),
+            flip: Some("none".into()),
             volume: Some(0.8),
             opacity: Some(0.5),
             scale: Some(1.1),
@@ -411,11 +461,16 @@ mod tests {
             motion: Some(MotionPatch { in_: Some("fadeIn".into()), ..Default::default() }),
         }
         .apply_to(&mut c);
-        assert_eq!(changes.len(), 12);
+        assert_eq!(changes.len(), 17);
         assert_eq!(c.start_ms, 100);
         assert_eq!(c.duration_ms, 8000);
         assert_eq!(c.source_in_ms, Some(12100));
         assert_eq!(c.speed, Some(1.25));
+        assert_eq!(c.speed_curve.as_ref().unwrap().len(), 1);
+        assert_eq!(c.reverse, Some(false));
+        assert_eq!(c.rotation, Some(0.0));
+        assert_eq!(c.crop, Some(Crop { x: 0, y: 0, w: 320, h: 240 }));
+        assert_eq!(c.flip.as_deref(), Some("none"));
         assert_eq!(c.volume, Some(0.8));
         assert_eq!(c.opacity, Some(0.5));
         assert_eq!(c.scale, Some(1.1));
@@ -441,6 +496,61 @@ mod tests {
         let mut c = clip();
         let changes = ClipPatch { volume: Some(1.0), ..Default::default() }.apply_to(&mut c);
         assert!(changes.is_empty(), "同值字段不得计入变更");
+    }
+
+    /// 册四 A4 T4.4/T4.9:速度/时间与变换五字段(speedCurve/reverse/rotation/crop/flip)
+    /// 的 patch 合并语义:整组替换、同值不产变更、None 不改、undo 用的 before/after 成对。
+    #[test]
+    fn time_transform_patch_replaces_whole_value() {
+        let mut c = clip(); // volume=1.0,无新字段
+        let changes = ClipPatch {
+            speed_curve: Some(vec![
+                SpeedPoint { at_ms: 0, speed: 0.5 },
+                SpeedPoint { at_ms: 1000, speed: 2.0 },
+            ]),
+            reverse: Some(true),
+            rotation: Some(-90.0),
+            crop: Some(Crop { x: 10, y: 0, w: 160, h: 120 }),
+            flip: Some("h".into()),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(changes.len(), 5);
+        let m: std::collections::BTreeMap<String, (Value, Value)> =
+            changes.into_iter().map(|(p, o, n)| (p, (o, n))).collect();
+        // before 均为 Null(字段此前缺席);after 与落盘形态逐字一致
+        let (o, n) = m.get("/speedCurve").unwrap();
+        assert_eq!(*o, Value::Null);
+        assert_eq!(n[0]["atMs"], serde_json::json!(0));
+        assert_eq!(n[1]["speed"], serde_json::json!(2.0));
+        assert_eq!(m.get("/reverse").unwrap().1, serde_json::json!(true));
+        assert_eq!(m.get("/rotation").unwrap().1, serde_json::json!(-90.0));
+        let (_, cn) = m.get("/crop").unwrap();
+        assert_eq!(cn["w"], serde_json::json!(160));
+        assert_eq!(m.get("/flip").unwrap().1, serde_json::json!("h"));
+        assert_eq!(c.speed_curve.as_ref().unwrap().len(), 2);
+        assert_eq!(c.crop, Some(Crop { x: 10, y: 0, w: 160, h: 120 }));
+
+        // 同值重复应用:零变更(幂等)
+        let changes = ClipPatch {
+            speed_curve: Some(vec![
+                SpeedPoint { at_ms: 0, speed: 0.5 },
+                SpeedPoint { at_ms: 1000, speed: 2.0 },
+            ]),
+            reverse: Some(true),
+            rotation: Some(-90.0),
+            crop: Some(Crop { x: 10, y: 0, w: 160, h: 120 }),
+            flip: Some("h".into()),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert!(changes.is_empty(), "同值整组替换不得计入变更: {changes:?}");
+
+        // 部分合并:只改 rotation,其余保持(None 不改)
+        let changes = ClipPatch { rotation: Some(45.0), ..Default::default() }.apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(c.rotation, Some(45.0));
+        assert_eq!(c.flip.as_deref(), Some("h"), "未给出的字段不得被清掉");
     }
 
     /// 嵌套子 patch 合并语义:None 不改;Some 只覆盖给出的字段(部分合并);

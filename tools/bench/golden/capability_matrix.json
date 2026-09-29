@@ -17,7 +17,7 @@
         "target": null
        },
        {
-        "evidence": "M11:parity_matrix 变速夹具(setpts/atempo,2x 时长保持语义)",
+        "evidence": "M11:parity_matrix 变速夹具(setpts/atempo,2x 时长保持语义);A4-BE2:分段恒速链(filter_complex 分支 trim/setpts/fps/concat),投影↔渲染时长=分段积分对拍",
         "ffmpeg": "支持",
         "item": "变速 0.25–4x",
         "jianying": "支持",
@@ -33,7 +33,7 @@
         "target": null
        },
        {
-        "evidence": "M11 parity_matrix overlay 夹具(绝对像素+时间窗);旋转:契约无字段(CutFlow 同口径),不入渲染域",
+        "evidence": "M11 parity_matrix overlay 夹具(绝对像素+时间窗);A4-BE2(T4.9):rotation/crop/flip 契约字段+渲染链落地(裁剪→翻转→旋转→画幅归一),90° transpose 实渲夹具",
         "ffmpeg": "支持",
         "item": "位置/缩放/旋转",
         "jianying": "支持",
@@ -89,7 +89,7 @@
         "target": null
        },
        {
-        "evidence": "tpad stop_mode=clone(render/lib.rs segment 步)",
+        "evidence": "tpad stop_mode=clone(segment 步);A4-BE2(T4.4):freezeMs 定格真消费(-t 截断到定格点+tpad 一次补足),与变速/倒放组合语义单测锁定",
         "ffmpeg": "支持",
         "item": "冻结帧补长",
         "jianying": "支持",
@@ -127,10 +127,34 @@
         "jianying": "原生",
         "status": "achieved",
         "target": null
+       },
+       {
+        "evidence": "A4-BE2(T4.4):分段积分源消耗+恒速段拼接,parity_matrix 曲线夹具(时长对拍=分段积分,两段曲线实渲)",
+        "ffmpeg": "支持",
+        "item": "曲线变速 speedCurve",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "A4-BE2(T4.4):视频 reverse+PTS 重盖/音频 areverse+asetpts,先于变速;短片夹具首末帧对调断言(整段缓冲内存风险已在契约与注释声明)",
+        "ffmpeg": "支持",
+        "item": "倒放 reverse",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "A4-BE2(T4.9/ADR-0015):schema+mcp-tools+scaffold 三面范围/偶数闸,双端引擎 multipleOf 对拍边界样本(64/66/7678/7680 过,63/65/7681 拒),canvasAllowed 降格预设推荐集",
+        "ffmpeg": "支持",
+        "item": "画布范围约束 64–7680 偶数",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
        }
       ],
       "rule": "诚实口径:status 只认实码 + 对拍夹具(M8-5)。achieved=有专属夹具证据;partial=字段被契约接受但渲染端不完整消费;missing=契约字段存在、渲染零消费;optional=规划可选未启动。本文件是唯一真相源:docs/capability-matrix.md 与 MCP capability_matrix 工具均由它生成(M11-1 起 evidence 由 parity_matrix 夹具实测回填,ADR-0003)。",
-      "updated": "2026-09-19(M11)",
+      "updated": "2026-09-30(A4-BE2:T4.4 速度与时间 + T4.9 画布与变换)",
       "version": 2
      }
     },

@@ -10,6 +10,7 @@
 pub mod cache;
 pub mod frame;
 pub mod plan;
+pub mod segment;
 pub mod steps;
 
 pub use cache::{

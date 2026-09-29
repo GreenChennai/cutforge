@@ -248,12 +248,12 @@ pub fn overlay_key(base_key: &str, overlays: &[OverlaySeg]) -> String {
 }
 
 /// mix 输入 spec:音频段清单 + BGM + 总长。**画幅无关** → 多画幅变体共享一份
-/// (真分叉判据,与拆分前同构)。
+/// (真分叉判据,与拆分前同构)。册四 T4.4:段元组并入 reverse(倒放改变混音产物)。
 pub fn mix_spec(plan: &RenderPlan) -> Value {
     json!({
         "segs": plan.audio_segs.iter().map(|s| (
             s.src.to_string_lossy(), s.start_ms, s.duration_ms, s.source_in_ms,
-            s.volume, s.speed, s.fade_in_ms, s.fade_out_ms
+            s.volume, s.speed, s.reverse, s.fade_in_ms, s.fade_out_ms
         )).collect::<Vec<_>>(),
         "bgm": plan.bgm,
         "total": plan.total_ms,
@@ -482,6 +482,61 @@ mod tests {
         let v = |x: u64| json!({"v": "cutforge-render-4.0", "clip": x});
         assert_eq!(key_hex(&v(1)), key_hex(&v(1)), "同输入同键(确定性)");
         assert_ne!(key_hex(&v(1)), key_hex(&v(2)), "输入变 → 键变(零陈旧复用的根基)");
+    }
+
+    /// 册四 A4 T4.4/T4.9 验证:seg 键对 clip JSON 全量哈希——新字段(曲线/倒放/
+    /// 变换)入 clip JSON 后自动改变键;本测试用真 Clip 走 seg_spec 证明逐字段敏感。
+    #[test]
+    fn seg_key_is_sensitive_to_new_time_transform_fields() {
+        let mk = |extra: &str| -> (RenderPlan, Clip) {
+            let v: Value = serde_json::from_str(&format!(
+                r#"{{"version":1,"schemaVersion":"2.0.0","slug":"k","fps":30,
+                    "canvas":{{"width":1080,"height":1920}},
+                    "tracks":[{{"id":"V1","kind":"video","clips":[
+                        {{"id":"V1-001","src":"a.mp4","startMs":0,"durationMs":2000{extra}}} ]}}]}}"#
+            ))
+            .unwrap();
+            let p: cutforge_core::model::Project = serde_json::from_value(v).unwrap();
+            let plan = RenderPlan::build(&p, Path::new("/w"), None);
+            let clip = p.tracks[0].clips[0].clone();
+            (plan, clip)
+        };
+        let key_of = |extra: &str| {
+            let (plan, clip) = mk(extra);
+            seg_key(&plan, &clip, 0.0)
+        };
+        let base = key_of("");
+        assert_eq!(base, key_of(""), "同输入同键");
+        for extra in [
+            r#", "speedCurve":[{"atMs":0,"speed":2.0}]"#,
+            r#", "reverse":true"#,
+            r#", "rotation":90"#,
+            r#", "crop":{"x":0,"y":0,"w":100,"h":100}"#,
+            r#", "flip":"h""#,
+            r#", "freezeMs":500"#,
+        ] {
+            assert_ne!(base, key_of(extra), "新字段必须改变 seg 键: {extra}");
+        }
+    }
+
+    /// mix 键对 reverse 敏感(倒放改变混音产物;T4.4)。
+    #[test]
+    fn mix_key_is_sensitive_to_reverse() {
+        let mk = |reverse: &str| -> RenderPlan {
+            let v: Value = serde_json::from_str(&format!(
+                r#"{{"version":1,"schemaVersion":"2.0.0","slug":"m","fps":30,
+                    "canvas":{{"width":1080,"height":1920}},
+                    "tracks":[{{"id":"A1","kind":"audio","clips":[
+                        {{"id":"A1-001","src":"v.mp3","startMs":0,"durationMs":1000,
+                          "volume":1.0{reverse}}} ]}}]}}"#
+            ))
+            .unwrap();
+            RenderPlan::build(&mk_project(v), Path::new("/w"), None)
+        };
+        fn mk_project(v: Value) -> cutforge_core::model::Project {
+            serde_json::from_value(v).unwrap()
+        }
+        assert_ne!(mix_key(&mk("")), mix_key(&mk(r#", "reverse":true"#)));
     }
 
     #[test]

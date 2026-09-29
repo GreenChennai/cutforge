@@ -197,7 +197,7 @@ schemas/*.json(唯一手写)
   ├─► cutforge-schema(Rust 引擎 + include_str! 嵌入 + build.rs 存在性闸)
   └─► tools/schema_gen.py → tools/_generated/cf_validate.py(纯 stdlib;勿手改)
 对拍:回归集(3 类 videoType×5 文件)双端结论逐样本一致;迁移器两端输出语义相等且幂等。
-常量:rs_common.RATIOS + platforms.json → gen_constants.py → constants.ratios.json(--check 零漂移)。
+常量:rs_common.RATIOS + platforms.json → gen_constants.py → constants.ratios.json(--check 零漂移;ADR-0015 起 canvasAllowed=预设推荐集,合法域 = CutForge schemas/project.schema.json 的 canvas 范围约束 64–7680 偶数,生成物 canvasRange 键承载)。
 跨字段断言:x-removeRequiresGuardOk(remove 刀 guard 必须真)、x-keepCoversTimeline(keep 覆盖全轴)双端同实现。
 ```
 

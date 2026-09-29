@@ -7,28 +7,31 @@
 | # | 能力 | 剪映 5.9 | ffmpeg 后端 | cutforge 后端(V2 实码) | 要求 | 证据 / M11 目标 |
 |---|---|---|---|---|---|---|
 | 1 | 视频片段裁剪/排序 | 支持 | 支持 | ✅ achieved(scale/pad/fps/concat) | 必达 | segment/concat 管线 + 契约对拍 |
-| 2 | 变速 0.25–4x | 支持 | 支持 | ❌ missing(clip.speed 零消费) | 必达 | M11:setpts/atempo+曲线 |
+| 2 | 变速 0.25–4x | 支持 | 支持 | ✅ achieved(setpts/atempo;A4 起分段恒速链) | 必达 | M11:setpts/atempo;A4-BE2:曲线分段(filter_complex 分支 trim/setpts/fps/concat),时长=分段积分对拍 |
 | 3 | 音量/淡入淡出 | 支持 | 支持 | ⚠️ partial(volume M8 起生效;fade 不消费) | 必达 | render_matrix_fixture / M11:afade |
-| 4 | 位置/缩放/旋转 | 支持 | 支持 | ⚠️ partial(仅画面适配 pad/scale) | 必达 | M11:overlay/rotate |
-| 5 | 转场(三级语法) | 支持 | 支持 | ❌ missing(compose 直通) | 必达 | M11:xfade 链+尾帧扩展 |
+| 4 | 位置/缩放/旋转 | 支持 | 支持 | ✅ achieved(overlay;A4 起 rotation/crop/flip 契约字段+渲染链) | 必达 | M11:overlay;A4-BE2(T4.9):变换链 裁剪→翻转→旋转→画幅归一,90° transpose 实渲夹具 |
+| 5 | 转场(三级语法) | 支持 | 支持 | ✅ achieved(xfade 链+尾帧扩展) | 必达 | M11:零漂移夹具(总时长 4.000s 无吞切) |
 | 6 | 关键词 | 支持 | 不支持 | ⬜ optional | 可选 | — |
 | 7 | 花字/描边/底衬 | 支持 | 支持 | ✅ achieved(ASS styles) | 必达 | 字幕样式表 + 烧录链 |
 | 8 | 音效落点 | 支持 | 支持 | ✅ achieved(M8 修复:adelay 落点) | 必达 | **修复前实现即 Bug(全部 0 秒炸响)**;render_matrix_fixture 起播断言 |
-| 9 | BGM ducking | 支持 | 支持 | ❌ missing(bgm 零引用) | 必达 | M11:侧链 amix→asplit |
+| 9 | BGM ducking | 支持 | 支持 | ✅ achieved(sidechain 侧链) | 必达 | M11:on/off 能量差夹具 |
 | 10 | 蒙版 | 支持 | 支持 | ⬜ optional | 可选 | — |
-| 11 | 冻结帧补长 | 支持 | 支持 | ✅ achieved(tpad clone 尾帧) | 必达 | ADR-0027,纯动画必需 |
-| 12 | punch-in 变焦 | 支持 | 支持 | ❌ missing(punchIn 零消费) | 必达 | M11:zoompan |
+| 11 | 冻结帧补长 | 支持 | 支持 | ✅ achieved(tpad clone;A4 起 freezeMs 定格真消费) | 必达 | ADR-0027;A4-BE2(T4.4):-t 截断到定格点+tpad 一次补足,与变速/倒放组合单测锁定 |
+| 12 | punch-in 变焦 | 支持 | 支持 | ✅ achieved(中心裁剪紧构图) | 必达 | M11:帧字节改变夹具 |
 | 13 | 字幕(ASS 烧录) | 支持 | 支持 | ✅ achieved(subtitles 滤镜,最后叠) | 必达 | S8 护栏,M6 对拍实测 |
 | 14 | 多画幅变体 | 支持 | 支持 | ✅ achieved(M8 修复:缓存键并入 canvas+fps) | 必达 | **修复前缓存跨画幅污染(P0-3)**;render_matrix_fixture 分辨率断言;真·分叉 encode 在 M11 |
 | 15 | 工程可继续精修 | 原生 | 不支持 | ✅ achieved(OpLog/undo 语义为真) | 必达 | M8 P0-1/P0-5 修复:file_level_undo + concurrent_writes_no_loss 夹具 |
+| 16 | 曲线变速 speedCurve | 支持 | 支持 | ✅ achieved(A4-BE2:分段积分源消耗+恒速段拼接) | 必达 | parity_matrix 曲线夹具(时长对拍=分段积分,两段曲线实渲) |
+| 17 | 倒放 reverse | 支持 | 支持 | ✅ achieved(A4-BE2:视频 reverse+PTS 重盖/音频 areverse,先于变速) | 必达 | 短片夹具首末帧对调断言;整段缓冲内存风险已在契约与渲染链注释声明(长素材先切短再倒) |
+| 18 | 画布范围约束 64–7680 偶数 | 支持 | 支持 | ✅ achieved(A4-BE2/ADR-0015:schema+mcp-tools+scaffold 三面闸) | 必达 | 双端引擎 multipleOf 对拍边界样本(64/66/7678/7680 过,63/65/7681 拒);canvasAllowed 降格预设推荐集 |
 
 ## 结论(M11-1 追平后口径)
 
 - 必达 13 项:**实码达成 13/13**(M8 止血后 7 项 → M11 补齐 变速/转场/ducking/punch-in/afade/overlay)
 - 可选 2 项:0 项实现(关键词 6、蒙版 10)
 - **整体 = 13/15 ≈ 87%**(M8 止血时 47%;V1 虚报 93.3% 的差值 = 可选两项)
-- 旋转:契约无字段(CutFlow IR 同口径),在 #4 的 evidence 中如实标注,不计入未实现
-- 证据:crates/cutforge-render/tests/parity_matrix.rs 九项 ffmpeg 实测(转场零漂移/变速时长语义/punch-in 帧差/overlay 时间窗/ducking 能量差/afade RMS/文件名消毒/文本轨口径/mix 真分叉)
+- ~~旋转:契约无字段~~ 册四 A4(T4.9)起 rotation/crop/flip 入契约并渲染落地(#4/#16/#18,ADR-0015 画布范围同批)
+- 证据:crates/cutforge-render/tests/parity_matrix.rs 九项 ffmpeg 实测(转场零漂移/变速时长语义/punch-in 帧差/overlay 时间窗/ducking 能量差/afade RMS/文件名消毒/文本轨口径/mix 真分叉);册四 A4-BE2 增五项(曲线变速时长对拍/倒放首末帧对调/90° 旋转朝向/crop 象限/flip 镜像)
 
 ## 与 V1 版本的差异说明
 

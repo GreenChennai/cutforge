@@ -8,6 +8,8 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// 混音段:一个需要进入总线的音频事件(人声段或音效),带源域裁剪与成片域落点。
+/// 册四 A4 T4.4 起一个 clip 可按 speedCurve 拆为多个恒速子段(每子段一个本结构),
+/// 段间时间线落点无缝(adelay 按子段起点);reverse 为子段级倒放(areverse)。
 #[derive(Debug, Clone)]
 pub struct AudioSeg {
     pub src: PathBuf,
@@ -18,6 +20,8 @@ pub struct AudioSeg {
     pub source_in_ms: u64,
     pub volume: f64,
     pub speed: f64,
+    /// 倒放(册四 A4 T4.4):areverse 先于 atempo(reverse 先于变速)。
+    pub reverse: bool,
     pub fade_in_ms: f64,
     pub fade_out_ms: f64,
 }
@@ -143,12 +147,12 @@ impl RenderPlan {
                         }
                         plan.video_clips.push(c.clone());
                         if clip_gain(c) > 0.0 {
-                            plan.audio_segs.push(audio_seg_of(project_dir, c));
+                            plan.audio_segs.extend(audio_segs_of(project_dir, c));
                         }
                     }
                     TrackKind::Audio => {
                         if clip_gain(c) > 0.0 {
-                            plan.audio_segs.push(audio_seg_of(project_dir, c));
+                            plan.audio_segs.extend(audio_segs_of(project_dir, c));
                         }
                     }
                     // 文本轨:结构性锚点(字幕经 ASS 烧录链);渲染端不消费,与 CutFlow 同口径
@@ -168,17 +172,50 @@ pub fn clip_gain(c: &Clip) -> f64 {
     c.volume.unwrap_or(if c.role == Some(Role::Sfx) { 0.8 } else { 1.0 })
 }
 
-fn audio_seg_of(project_dir: &Path, c: &Clip) -> AudioSeg {
-    AudioSeg {
-        src: project_dir.join(c.src.clone().unwrap_or_default()),
-        start_ms: c.start_ms,
-        duration_ms: c.duration_ms,
-        source_in_ms: c.source_in_ms.unwrap_or(0),
-        volume: clip_gain(c),
-        speed: c.speed.unwrap_or(1.0),
-        fade_in_ms: c.fade.as_ref().map(|f| f.in_ms).unwrap_or(0.0),
-        fade_out_ms: c.fade.as_ref().map(|f| f.out_ms).unwrap_or(0.0),
+/// 定格截断后的播放毫秒(册四 T4.4 组合语义):freezeMs 有值时源只播放到
+/// min(freezeMs, durationMs),其后由 tpad 克隆尾帧补足到 durationMs(视频)/静音(音频)。
+pub fn clip_play_ms(c: &Clip) -> u64 {
+    match c.freeze_ms {
+        Some(f) => c.duration_ms.min(f),
+        None => c.duration_ms,
     }
+}
+
+/// 一个 clip 的混音事件序列(册四 A4 T4.4):无曲线 = 单事件(与既有语义逐位一致);
+/// 有 speedCurve = 按恒速段拆分为多事件,各自 -ss/-t/atempo/adelay,时间线无缝拼接;
+/// 倒放逐子段 areverse(全局倒放 = 分窗倒放的逐窗内容,两种切法内容逐帧一致,
+/// 故音频按子段独立 -ss/-t+areverse 与视频整段 reverse+分段消费完全同构);
+/// freezeMs 定格:定格点之后的曲线段不产生音频事件(画面冻结、声音静默)。
+fn audio_segs_of(project_dir: &Path, c: &Clip) -> Vec<AudioSeg> {
+    let play_end = clip_play_ms(c);
+    let segs = cutforge_core::model::speed_segments(c);
+    let mut out: Vec<AudioSeg> = Vec::new();
+    // 源域累计偏移(ms,f64 累计、落点取整;整数速度与整毫秒段下逐位精确)
+    let mut x = 0f64;
+    let gain = clip_gain(c);
+    let fade_in = c.fade.as_ref().map(|f| f.in_ms).unwrap_or(0.0);
+    let fade_out = c.fade.as_ref().map(|f| f.out_ms).unwrap_or(0.0);
+    for (a, b, s) in segs {
+        if a >= play_end {
+            break; // 定格点之后的段:源不播放
+        }
+        let end = b.min(play_end);
+        let span = (end - a) as f64;
+        let first = out.is_empty();
+        out.push(AudioSeg {
+            src: project_dir.join(c.src.clone().unwrap_or_default()),
+            start_ms: c.start_ms + a,
+            duration_ms: end - a,
+            source_in_ms: c.source_in_ms.unwrap_or(0).saturating_add(x.round() as u64),
+            volume: gain,
+            speed: s,
+            reverse: c.reverse.unwrap_or(false),
+            fade_in_ms: if first { fade_in } else { 0.0 },
+            fade_out_ms: if end >= play_end { fade_out } else { 0.0 },
+        });
+        x += span * s;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -250,7 +287,63 @@ mod tests {
         assert_eq!(seg.speed, 1.0);
         assert_eq!(seg.source_in_ms, 0);
         assert_eq!(seg.fade_in_ms, 0.0);
+        assert!(!seg.reverse, "无 reverse 字段 = 不倒放");
         assert_eq!(plan.overlay_segs[0].spec.x, 1);
+    }
+
+    /// 册四 A4 T4.4:speedCurve 把一个 clip 的混音拆为多子段(时间线落点无缝,
+    /// 源域累计偏移 = 分段积分);reverse 逐子段继承;既有无曲线工程逐位同形。
+    #[test]
+    fn speed_curve_splits_audio_segs_and_reverse_inherits() {
+        let p = project(json!({
+            "version": 1, "schemaVersion": "2.0.0", "slug": "curve", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "src": "a.mp4", "startMs": 500, "durationMs": 2000,
+                 "sourceInMs": 100, "role": "voice", "volume": 1.0,
+                 "speedCurve": [
+                    {"atMs": 0, "speed": 1.0}, {"atMs": 1000, "speed": 1.0},
+                    {"atMs": 2000, "speed": 3.0}
+                 ],
+                 "reverse": true, "fade": {"inMs": 200, "outMs": 400}}
+            ]}]
+        }));
+        let plan = RenderPlan::build(&p, Path::new("/w"), None);
+        assert_eq!(plan.audio_segs.len(), 2, "两段曲线 → 两个混音子段");
+        let (s0, s1) = (&plan.audio_segs[0], &plan.audio_segs[1]);
+        // 段 1:[0,1000) 均值 (1+1)/2=1.0,源累计 [0,1000)
+        assert_eq!((s0.start_ms, s0.duration_ms, s0.speed), (500, 1000, 1.0));
+        assert_eq!(s0.source_in_ms, 100);
+        assert!(s0.reverse, "倒放逐子段继承");
+        assert_eq!(s0.fade_in_ms, 200.0, "淡入只在首子段");
+        assert_eq!(s0.fade_out_ms, 0.0);
+        // 段 2:[1000,2000) 均值 (1+3)/2=2.0,源累计 [1000,1000+1000×2)
+        assert_eq!((s1.start_ms, s1.duration_ms, s1.speed), (1500, 1000, 2.0));
+        assert_eq!(s1.source_in_ms, 100 + 1000, "源域偏移 = 前段积分 ΣΔt×speed");
+        assert_eq!(s1.fade_out_ms, 400.0, "淡出只在末子段");
+        assert!(s1.reverse, "末子段同样继承倒放");
+    }
+
+    /// 册四 T4.4 组合语义:freezeMs 定格点之后的曲线段不产音频事件(画面冻结/声音静默)。
+    #[test]
+    fn freeze_clips_audio_segs_at_freeze_point() {
+        let p = project(json!({
+            "version": 1, "schemaVersion": "2.0.0", "slug": "freeze", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 3000,
+                 "sourceInMs": 0, "role": "voice", "volume": 1.0, "freezeMs": 1200,
+                 "fade": {"inMs": 100, "outMs": 300},
+                 "speedCurve": [{"atMs": 0, "speed": 1.0}, {"atMs": 2000, "speed": 2.0}]
+                }
+            ]}]
+        }));
+        let plan = RenderPlan::build(&p, Path::new("/w"), None);
+        // play=[0,1200):曲线在 2000ms 才拐,段 [0,3000) 均速 1.5 → 截断到 [0,1200)
+        assert_eq!(plan.audio_segs.len(), 1);
+        let s = &plan.audio_segs[0];
+        assert_eq!((s.start_ms, s.duration_ms), (0, 1200));
+        assert_eq!(s.fade_out_ms, 300.0, "截断段即播放末段 → 淡出挂定格点");
     }
 
     #[test]

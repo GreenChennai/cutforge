@@ -308,6 +308,125 @@
        },
        "freezeMs": {
         "type": "integer"
+       },
+       "speedCurve": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "atMs",
+          "speed"
+         ],
+         "properties": {
+          "atMs": {
+           "type": "integer",
+           "minimum": 0
+          },
+          "speed": {
+           "type": "number",
+           "minimum": 0.25,
+           "maximum": 4
+          }
+         }
+        },
+        "description": "分段速度曲线(册四 A4 T4.4):点集 {atMs,speed},atMs 相对片段起点;有值时优先于 speed;整组替换"
+       },
+       "reverse": {
+        "type": "boolean",
+        "description": "倒放开关(册四 A4 T4.4):reverse 先于变速;ffmpeg reverse 整段缓冲,长片段内存风险,长素材先切短再倒"
+       },
+       "rotation": {
+        "type": "number",
+        "description": "旋转角度(度;册四 A4 T4.9):任意值,渲染端 mod 360 归一;±90 走 transpose 精确互换宽高,其余角度画布内旋转出界裁切"
+       },
+       "crop": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+         "w",
+         "h"
+        ],
+        "properties": {
+         "x": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "y": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "w": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+         },
+         "h": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+         }
+        },
+        "description": "源域裁剪矩形(册四 A4 T4.9):源素材像素坐标;整对象替换"
+       },
+       "flip": {
+        "type": "string",
+        "enum": [
+         "none",
+         "h",
+         "v"
+        ],
+        "description": "翻转(册四 A4 T4.9):h=水平镜像 v=垂直镜像"
+       },
+       "transition": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+         "type": {
+          "type": "string",
+          "enum": [
+           "fade",
+           "wipeleft",
+           "wipeup",
+           "slideleft",
+           "circleopen",
+           "cut",
+           "none"
+          ]
+         },
+         "durMs": {
+          "type": "number"
+         },
+         "reason": {
+          "type": "string",
+          "enum": [
+           "jumpcut",
+           "topic"
+          ]
+         },
+         "fx": {
+          "type": "string"
+         }
+        },
+        "description": "转场子 patch(按字段合并,None 不改);独立工具 transition_set 的同参通道"
+       },
+       "motion": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+         "in": {
+          "type": "string"
+         },
+         "inMs": {
+          "type": "number"
+         },
+         "out": {
+          "type": "string"
+         },
+         "outMs": {
+          "type": "number"
+         }
+        },
+        "description": "动效子 patch(按字段合并,None 不改);独立工具 motion_set 的同参通道"
        }
       }
      },
@@ -1356,21 +1475,17 @@
      },
      "canvasW": {
       "type": "integer",
-      "enum": [
-       1080,
-       1440,
-       1920
-      ],
-      "description": "画幅宽(缺省 1080)"
+      "minimum": 64,
+      "maximum": 7680,
+      "multipleOf": 2,
+      "description": "画幅边长(ADR-0015:64–7680 且偶数;缺省宽 1080/高 1920)"
      },
      "canvasH": {
       "type": "integer",
-      "enum": [
-       1080,
-       1440,
-       1920
-      ],
-      "description": "画幅高(缺省 1920)"
+      "minimum": 64,
+      "maximum": 7680,
+      "multipleOf": 2,
+      "description": "画幅边长(ADR-0015:64–7680 且偶数;缺省宽 1080/高 1920)"
      },
      "tracks": {
       "type": "array",

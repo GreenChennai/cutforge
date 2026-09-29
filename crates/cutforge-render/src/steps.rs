@@ -2,12 +2,20 @@
 //! 渲染步骤纯函数(T1.4):每步 = 纯函数(生成 ffmpeg 参数)+ lib.rs 执行器调用。
 //! 本文件**不启动任何进程**:全部函数只做输入 → 命令行字符串的映射,
 //! 可在不装 ffmpeg 的环境单测断言;参数串与拆分前的 render() 逐字一致
-//! (渲染输出逐字节语义不变的底线,由 parity_matrix 九项实渲锁定)。
+//! (渲染输出逐字节语义不变的底线,由 parity_matrix 实渲夹具锁定)。
+//! 册四 A4-BE2:段提取链(步 2 segment)随曲线/变换扩容,纯移动至
+//! [`crate::segment`](段链模块);此处 `pub use` 保持 `steps::segment_*` 接口路径不变。
 
 use crate::plan::{OverlaySeg, RenderPlan};
 use cutforge_core::model::{Clip, Transition};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+
+// ---- 步 2 segment(实现在 segment.rs;路径兼容再导出,册四 A4-BE2) ----
+pub use crate::segment::{
+    play_segments, reverse_chain, segment_args, segment_filter, segment_filter_complex,
+    segment_pad_ms, segment_read_ms, transform_pre_chain,
+};
 
 /// clip i 的出向转场时长(ms;转场字段在 clip i 上表示 i-1→i 的转场,
 /// i=0 无意义)。type=cut/none 或 durMs<=0 → 硬切(None)。
@@ -58,50 +66,6 @@ pub fn probe_paths(plan: &RenderPlan) -> Vec<PathBuf> {
     }
     out.retain(|p| p.is_file());
     out
-}
-
-// ---------------- 步 2 segment ----------------
-
-/// 段剪辑链:画幅归一(scale+pad+fps)→ punch-in → 变速 setpts → 尾帧扩展 tpad。
-pub fn segment_filter(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> String {
-    let (w, h, fps) = (plan.canvas_w, plan.canvas_h, plan.fps);
-    let speed = clip.speed.unwrap_or(1.0);
-    let base_filters = format!(
-        "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
-    );
-    // punch-in(ADR v0.11 R3):取紧构图——中心裁剪 factor 倍后放大回画布(静态)
-    let mut vf = match &clip.punch_in {
-        Some(p) => {
-            let f = p.factor.clamp(1.0, 2.0);
-            format!("{base_filters},crop=w=iw/{f}:h=ih/{f}:x=(iw-ow)/2:y=(ih-oh)/2,scale={w}:{h}")
-        }
-        None => base_filters,
-    };
-    if speed != 1.0 {
-        // setpts 后重锁帧率:不同 ffmpeg 版本 -t 帧取整差异会导致时长漂移
-        vf.push_str(&format!(",setpts=PTS/{},fps={}", fmt_f64(speed), fps));
-    }
-    if tail_ms > 0.0 {
-        // 冻结尾帧扩展(转场零时间漂移的关键,ADR-0023)
-        vf.push_str(&format!(",tpad=stop_mode=clone:stop_duration={:.6}", tail_ms / 1000.0));
-    }
-    vf
-}
-
-/// 段提取命令行(-ss/-t 均在输入侧;纯视频,-an;音频走 mix 步)。
-pub fn segment_args(plan: &RenderPlan, clip: &Clip, tail_ms: f64, seg_out: &Path) -> Vec<String> {
-    let speed = clip.speed.unwrap_or(1.0);
-    let ss = clip.source_in_ms.unwrap_or(0);
-    let read_ms = (clip.duration_ms as f64 * speed).ceil();
-    vec![
-        "-y".into(), "-v".into(), "error".into(),
-        "-ss".into(), format!("{}", ss as f64 / 1000.0),
-        "-t".into(), format!("{}", read_ms / 1000.0),
-        "-i".into(), plan.project_dir.join(clip.src.clone().unwrap_or_default()).to_string_lossy().into(),
-        "-vf".into(), segment_filter(plan, clip, tail_ms),
-        "-an".into(), "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
-        seg_out.to_string_lossy().into(),
-    ]
 }
 
 // ---------------- 步 3 compose(xfade 链 / concat 退化) ----------------
@@ -225,6 +189,12 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
             "-i".into(), seg.src.to_string_lossy().into(),
         ]);
         let mut chain = format!("[{input_idx}:a]aformat=sample_rates=48000:channel_layouts=stereo");
+        if seg.reverse {
+            // 倒放(册四 T4.4):areverse 先于 atempo(reverse 先于变速);
+            // areverse 输出 PTS 逆序,asetpts=N/SR/TB 重盖单调时间戳后混音/淡变才成立。
+            // 逐子段独立 -ss/-t+areverse 与视频整段 reverse+分段消费逐帧同构。
+            chain.push_str(",areverse,asetpts=N/SR/TB");
+        }
         if seg.speed != 1.0 {
             for tempo in atempo_chain(seg.speed) {
                 chain.push_str(&format!(",{tempo}"));
@@ -466,47 +436,6 @@ mod tests {
     /// 全参数拼成单串做子串断言(filter_complex 的滤镜以 ';' 连在同一参数内)。
     fn joined(args: &[String]) -> String {
         args.join("\u{1}")
-    }
-
-    // ---- 步 1/2:probe + segment ----
-
-    #[test]
-    fn segment_args_match_legacy_invocation() {
-        let (plan, clips) = test_plan(base_clips());
-        let out = PathBuf::from("/c/seg/x.mp4");
-        let args = segment_args(&plan, &clips[0], 0.0, &out);
-        assert_eq!(
-            strv(&args),
-            [
-                "-y", "-v", "error",
-                "-ss", "0.5", "-t", "2", "-i", &pj("/w", "a.mp4"),
-                "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30",
-                "-an", "-c:v", "libx264", "-preset", "veryfast", "/c/seg/x.mp4"
-            ]
-        );
-    }
-
-    #[test]
-    fn segment_filter_speed_and_tail_compose_in_order() {
-        let mut v = base_clips();
-        v[0]["speed"] = json!(2.0);
-        let (plan, clips) = test_plan(v);
-        let vf = segment_filter(&plan, &clips[0], 500.0);
-        assert_eq!(
-            vf,
-            "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30"
-                .to_string() + ",setpts=PTS/2,fps=30,tpad=stop_mode=clone:stop_duration=0.500000"
-        );
-    }
-
-    #[test]
-    fn segment_filter_punch_in_clamps_factor() {
-        let mut v = base_clips();
-        v[0]["punchIn"] = json!({"factor": 3.0, "source": "manual"});
-        let (plan, clips) = test_plan(v);
-        let vf = segment_filter(&plan, &clips[0], 0.0);
-        // factor 3.0 → clamp 到 2.0
-        assert!(vf.contains(",crop=w=iw/2:h=ih/2:x=(iw-ow)/2:y=(ih-oh)/2,scale=1080:1920"), "{vf}");
     }
 
     #[test]

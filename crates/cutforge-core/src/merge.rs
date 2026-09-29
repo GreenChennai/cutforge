@@ -375,4 +375,63 @@ mod tests {
             MergeOutcome::Merged(_) => panic!("删改并存必须冲突"),
         }
     }
+
+    /// 册四 A4 T4.4/T4.9:速度/时间与变换新字段(speedCurve/reverse/rotation/crop/flip)
+    /// 的三路合并承接——字段级判定表对新字段自动生效,两侧改不同字段零冲突、
+    /// 改同字段异值 CF-001 精确到叶路径(册一教训:schema 收了内核/合并丢=幻觉)。
+    #[test]
+    fn time_transform_fields_merge_by_field() {
+        let mk = |fields: &[(&str, Value)]| {
+            let mut o = serde_json::Map::new();
+            o.insert("id".into(), json!("V1-001"));
+            o.insert("startMs".into(), json!(0));
+            o.insert("durationMs".into(), json!(4000));
+            for (k, v) in fields {
+                o.insert((*k).to_string(), v.clone());
+            }
+            Value::Array(vec![Value::Object(o)])
+        };
+        // 祖先无新字段;磁盘(AI)设 speedCurve,本地(用户)设 rotation/crop → 零冲突并存
+        let base = mk(&[]);
+        let disk = mk(&[("speedCurve", json!([{"atMs": 0, "speed": 2.0}]))]);
+        let local = mk(&[
+            ("rotation", json!(90.0)),
+            ("crop", json!({"x": 0, "y": 0, "w": 100, "h": 100})),
+        ]);
+        match three_way_merge(&base, &disk, &local) {
+            MergeOutcome::Merged(v) => {
+                let c = &v.as_array().unwrap()[0];
+                assert_eq!(c["speedCurve"][0]["speed"], json!(2.0), "磁盘侧新字段并入");
+                assert_eq!(c["rotation"], json!(90.0), "本地侧新字段并入");
+                assert_eq!(c["crop"]["w"], json!(100));
+                assert_eq!(c.get("reverse"), None, "未设置的字段不得臆造");
+            }
+            MergeOutcome::Conflicts(c) => panic!("不同字段不得冲突: {c:?}"),
+        }
+        // 双侧改同一 speedCurve 为不同曲线 → CF-001,指针精确到 clips[id]/speedCurve
+        let disk2 = mk(&[("speedCurve", json!([{"atMs": 0, "speed": 2.0}]))]);
+        let local2 = mk(&[("speedCurve", json!([{"atMs": 0, "speed": 0.5}]))]);
+        match three_way_merge(&base, &disk2, &local2) {
+            MergeOutcome::Conflicts(c) => {
+                assert_eq!(c[0].code.code(), "CF-001");
+                assert_eq!(c[0].pointer, "$[V1-001]/speedCurve");
+            }
+            MergeOutcome::Merged(_) => panic!("同字段异值必须冲突"),
+        }
+        // speedCurve(磁盘)与 flip(本地)不同叶,reverse 双侧同值 → 幂等合并(表 4 行)
+        let disk3 = mk(&[
+            ("speedCurve", json!([{"atMs": 0, "speed": 2.0}])),
+            ("reverse", json!(true)),
+        ]);
+        let local3 = mk(&[("flip", json!("h")), ("reverse", json!(true))]);
+        match three_way_merge(&base, &disk3, &local3) {
+            MergeOutcome::Merged(v) => {
+                let c = &v.as_array().unwrap()[0];
+                assert_eq!(c["flip"], json!("h"));
+                assert_eq!(c["reverse"], json!(true), "双侧同值幂等合并(表 4 行)");
+                assert_eq!(c["speedCurve"][0]["speed"], json!(2.0));
+            }
+            MergeOutcome::Conflicts(c) => panic!("不同字段+双侧同值不得冲突: {c:?}"),
+        }
+    }
 }

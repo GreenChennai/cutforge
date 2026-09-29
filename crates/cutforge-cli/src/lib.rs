@@ -204,6 +204,23 @@ pub fn run(argv: Vec<String>) -> i32 {
                         if let Some(v) = num("opacity")? { patch.opacity = Some(v); }
                         if let Some(v) = num("scale")? { patch.scale = Some(v); }
                         if let Some(v) = num("speed")? { patch.speed = Some(v); }
+                        // 册四 A4 T4.4/T4.9:B9-1 字段对齐——五新字段与 MCP clip_update 同面;
+                        // speed-curve/crop 收 JSON 字面量(整组替换,与 patch 语义一致)
+                        if let Some(v) = args.flags.get("speed-curve") {
+                            patch.speed_curve = Some(serde_json::from_str::<Vec<cutforge_core::model::SpeedPoint>>(v)
+                                .map_err(|e| format!("speed-curve JSON 非法: {e}"))?);
+                        }
+                        if let Some(v) = args.flags.get("reverse") {
+                            patch.reverse = Some(v != "false");
+                        }
+                        if let Some(v) = num("rotation")? { patch.rotation = Some(v); }
+                        if let Some(v) = args.flags.get("crop") {
+                            patch.crop = Some(serde_json::from_str::<cutforge_core::model::Crop>(v)
+                                .map_err(|e| format!("crop JSON 非法: {e}"))?);
+                        }
+                        if let Some(v) = args.flags.get("flip") {
+                            patch.flip = Some(v.clone());
+                        }
                         if let Some(v) = args.flags.get("text") {
                             patch.text = Some(v.clone());
                         }

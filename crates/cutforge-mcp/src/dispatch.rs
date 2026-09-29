@@ -208,11 +208,34 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
             let p = &args["patch"];
+            // 册四 A4 T4.4/T4.9:速度曲线/倒放/旋转/裁剪/翻转(与 ClipPatch 字段面同 commit 同步;
+            // speedCurve 点集与 crop 整组替换,元素值越界由 schema 层 SCHEMA_INVALID 拒)
+            let speed_curve = p["speedCurve"].as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|pt| {
+                        Some(cutforge_core::model::SpeedPoint {
+                            at_ms: pt["atMs"].as_u64()?,
+                            speed: pt["speed"].as_f64()?,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let crop = p["crop"].as_object().map(|_| cutforge_core::model::Crop {
+                x: p["crop"]["x"].as_u64().unwrap_or(0),
+                y: p["crop"]["y"].as_u64().unwrap_or(0),
+                w: p["crop"]["w"].as_u64().unwrap_or(0),
+                h: p["crop"]["h"].as_u64().unwrap_or(0),
+            });
             let patch = ClipPatch {
                 start_ms: p["startMs"].as_u64(),
                 duration_ms: p["durationMs"].as_u64(),
                 source_in_ms: p["sourceInMs"].as_u64(),
                 speed: p["speed"].as_f64(),
+                speed_curve,
+                reverse: p["reverse"].as_bool(),
+                rotation: p["rotation"].as_f64(),
+                crop,
+                flip: p["flip"].as_str().map(String::from),
                 volume: p["volume"].as_f64(),
                 opacity: p["opacity"].as_f64(),
                 scale: p["scale"].as_f64(),
@@ -604,6 +627,10 @@ fn timeline_projection(project: &cutforge_core::model::Project) -> Vec<Value> {
                 "scale": c.scale, "position": c.position, "overlay": c.overlay,
                 "motion": c.motion, "text": c.text, "freezeMs": c.freeze_ms,
                 "transition": c.transition,
+                // 册四 A4 T4.4/T4.9:速度/时间与变换字段随投影下放(壳检查器/轨道展示消费;
+                // 时长语义单一真相源 = cutforge_core::model::speed_segments,渲染同源)
+                "speedCurve": c.speed_curve, "reverse": c.reverse,
+                "rotation": c.rotation, "crop": c.crop, "flip": c.flip,
                 // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
                 // (transition/motion 已于 ClipPatch 扩展后承接,不再列只读)
                 "fade": c.fade,

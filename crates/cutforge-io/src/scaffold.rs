@@ -12,8 +12,17 @@ use std::path::Path;
 
 /// 允许的帧率集(与 project.schema.json 的 fps enum 同源;零漂移以 schema 校验兜底)。
 pub const ALLOWED_FPS: [u32; 5] = [24, 25, 30, 50, 60];
-/// 允许的画幅边长集(与 project.schema.json 的 canvas enum 同源)。
-pub const ALLOWED_DIM: [u32; 3] = [1080, 1440, 1920];
+/// 画幅边长范围(ADR-0015,册四 T4.9):64 ≤ 值 ≤ 7680 且必须为偶数——
+/// 与 project.schema.json 的范围约束同源(渲染链 yuv420p/x264 对奇数尺寸直接报错,
+/// 约束前移到模板与 schema 双闸);constants.ratios.json 的 canvasAllowed 是
+/// 预设推荐集,不是合法集。
+pub const CANVAS_MIN_DIM: u32 = 64;
+pub const CANVAS_MAX_DIM: u32 = 7680;
+
+/// ADR-0015 画幅边长判定:范围内且为偶数。
+pub fn canvas_dim_allowed(v: u32) -> bool {
+    (CANVAS_MIN_DIM..=CANVAS_MAX_DIM).contains(&v) && v.is_multiple_of(2)
+}
 
 /// 生成最小合法 IR(version 恒 1 + schemaVersion "2.0.0" + canvas/fps + 空轨道)。
 /// 轨道按 `track_kinds` 顺序确定性生成 id(V1/A1/T1…);clips 恒为空数组。
@@ -29,8 +38,10 @@ pub fn new_project_value(
     if !ALLOWED_FPS.contains(&fps) {
         return Err(format!("fps {fps} 不在允许集 {ALLOWED_FPS:?}(契约枚举)"));
     }
-    if !ALLOWED_DIM.contains(&width) || !ALLOWED_DIM.contains(&height) {
-        return Err(format!("画幅 {width}x{height} 不在允许集 {ALLOWED_DIM:?}(契约枚举)"));
+    if !canvas_dim_allowed(width) || !canvas_dim_allowed(height) {
+        return Err(format!(
+            "画幅 {width}x{height} 越界:宽高须为 {CANVAS_MIN_DIM}–{CANVAS_MAX_DIM} 内的偶数(ADR-0015)"
+        ));
     }
     if slug.trim().is_empty() {
         return Err("slug(工程标识)必填".into());
@@ -122,9 +133,15 @@ mod tests {
         scaffold_project(&root, "a", 30, 1080, 1920, &kinds).unwrap();
         let err = scaffold_project(&root, "a", 30, 1080, 1920, &kinds).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "已存在必须拒绝覆盖");
-        // fps/画幅不在契约枚举 → 模板即拒绝(不发盘)
+        // fps/画幅越界 → 模板即拒绝(不发盘);ADR-0015 边界:64/66/7678/7680 合法,63/65/7681 拒
         assert!(new_project_value("a", 90, 1080, 1920, &kinds).is_err());
-        assert!(new_project_value("a", 30, 640, 480, &kinds).is_err());
+        assert!(new_project_value("a", 30, 63, 480, &kinds).is_err(), "低于下界 64 拒");
+        assert!(new_project_value("a", 30, 7681, 480, &kinds).is_err(), "超上界 7680 拒");
+        assert!(new_project_value("a", 30, 65, 480, &kinds).is_err(), "奇数拒");
+        for ok_dim in [64u32, 66, 7678, 7680, 1440, 2160] {
+            assert!(canvas_dim_allowed(ok_dim), "边界内偶数 {ok_dim} 必须合法");
+            assert!(new_project_value("a", 30, ok_dim, 1080, &kinds).is_ok(), "{ok_dim}x1080 必须可建");
+        }
         fsutil::cleanup(&root);
     }
 

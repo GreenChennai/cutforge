@@ -43,22 +43,19 @@
         "width",
         "height"
       ],
+      "description": "ADR-0015(册四 T4.9):宽高从三值枚举扩为范围约束——64 ≤ 值 ≤ 7680 且必须为偶数(渲染链 yuv420p/x264 对奇数尺寸直接报错,约束前移到 schema,超界在 SCHEMA_INVALID 拒绝);schemas/constants.ratios.json 的 canvasAllowed 是预设推荐集(1080/1440/1920),不是合法集",
       "properties": {
         "width": {
           "type": "integer",
-          "enum": [
-            1080,
-            1440,
-            1920
-          ]
+          "minimum": 64,
+          "maximum": 7680,
+          "multipleOf": 2
         },
         "height": {
           "type": "integer",
-          "enum": [
-            1080,
-            1440,
-            1920
-          ]
+          "minimum": 64,
+          "maximum": 7680,
+          "multipleOf": 2
         }
       }
     },
@@ -303,6 +300,76 @@
           "type": "number",
           "minimum": 0.25,
           "maximum": 4
+        },
+        "speedCurve": {
+          "type": "array",
+          "minItems": 1,
+          "description": "分段速度曲线(册四 A4 T4.4):点集 {atMs, speed},atMs 为相对片段 startMs 的时间线毫秒;相邻点之间不内插——每段按其左点速度常速播放(曲线段恒速语义),如需平滑斜坡请加中间点。有 speedCurve 时渲染/投影以其为准,speed 字段仅作无曲线时的兼容回退;段界与总源消耗 = Σ Δt×speed(分段积分),内核 endMs 与渲染时长由此严格一致(对拍夹具锁定)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "atMs",
+              "speed"
+            ],
+            "properties": {
+              "atMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "speed": {
+                "type": "number",
+                "minimum": 0.25,
+                "maximum": 4
+              }
+            }
+          }
+        },
+        "reverse": {
+          "type": "boolean",
+          "default": false,
+          "description": "倒放(册四 A4 T4.4):视频 reverse 滤镜 / 音频 areverse;组合顺序 = reverse 先于变速(先倒回再变速)。内存警示:ffmpeg reverse 滤镜把整段读入内存缓冲,长片段(4K/长时序)可能耗尽内存——长素材请先切短再倒放,该约束在 parity 夹具与渲染链注释同步声明"
+        },
+        "rotation": {
+          "type": "number",
+          "description": "旋转角度(度;册四 A4 T4.9):任意值,渲染端按 mod 360 归一;±90 的整数倍走 transpose(无裁切精确互换宽高),其余角度 rotate 滤镜画布内旋转、出界部分裁切黑底补白,再经 scale/pad 适配画幅"
+        },
+        "crop": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "源域裁剪(册四 A4 T4.9):矩形 {x,y,w,h},源素材像素坐标(非画幅坐标),在画幅归一(scale/pad)之前执行;与 flip/rotation 的叠加顺序 = 裁剪 → 翻转 → 旋转 → 画幅归一 → punchIn → reverse → 变速",
+          "required": [
+            "w",
+            "h"
+          ],
+          "properties": {
+            "x": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "w": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "h": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "flip": {
+          "enum": [
+            "none",
+            "h",
+            "v"
+          ],
+          "description": "翻转(册四 A4 T4.9):h=水平镜像(hflip)、v=垂直镜像(vflip)、none=不翻转;作用于裁剪之后、旋转之前的源域"
         },
         "volume": {
           "type": "number",

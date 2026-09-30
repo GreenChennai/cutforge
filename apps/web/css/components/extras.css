@@ -125,3 +125,41 @@
 /* ---- T3.7 toast 撤销按钮 ---- */
 .toast.has-action { display: flex; gap: var(--cf-s3); align-items: center; justify-content: space-between; }
 .toast-action { flex: 0 0 auto; }
+
+/* ================= 册四 T4.3:历史面板(oplog_tail 时间轴式) ================= */
+.hist-head { margin-bottom: var(--cf-s2); }
+.hist-truncated { color: var(--cf-warn-fg); font-size: var(--cf-fs-s); margin-top: var(--cf-s1); }
+.hist-rows { max-height: 62vh; overflow: auto; border: 1px solid var(--cf-line); border-radius: var(--cf-r-s); }
+.hist-row {
+  display: flex; gap: var(--cf-s2); align-items: baseline;
+  padding: var(--cf-s1) var(--cf-s2); cursor: pointer;
+  border-bottom: 1px dashed var(--cf-line);
+  transition: background-color var(--cf-dur-fast) var(--cf-ease);
+}
+.hist-row:hover { background: var(--cf-elevated); }
+.hist-row .rev { font-family: var(--cf-font-mono); font-size: var(--cf-fs-xs); color: var(--cf-dim); flex: 0 0 auto; }
+.hist-row .bd { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.hist-row .sum { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-row .delta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-row .ts { flex: 0 0 auto; font-family: var(--cf-font-mono); font-size: var(--cf-fs-xs); }
+.hist-row.undone { opacity: .55; }
+.hist-row.undone .sum { text-decoration: line-through; }
+.hist-row.current { background: var(--cf-lane-alt-bg); box-shadow: inset 2px 0 0 var(--cf-accent); }
+.hist-row .kind { flex: 0 0 auto; min-width: 18px; text-align: center; }
+.hist-row .undone-badge, .hist-row .current-badge { flex: 0 0 auto; }
+.hist-row .current-badge { color: var(--cf-accent-soft); border-color: var(--cf-line-strong); }
+.badge.kind-undo, .badge.kind-redo { color: var(--cf-warn-fg); }
+.badge.undone-badge { color: var(--cf-dim); }
+
+/* 快照分隔线(导出前/批量前自动打标 + 手动;会话态) */
+.hist-mark {
+  display: flex; align-items: center; gap: var(--cf-s2);
+  padding: var(--cf-s1) var(--cf-s2); color: var(--cf-accent-soft);
+  font-size: var(--cf-fs-xs);
+}
+.hist-mark-line { flex: 1 1 auto; border-top: 1px solid var(--cf-accent-soft); opacity: .5; }
+
+/* 撤销/重做记录行(回跳以原始操作行为准;记录行中性呈现) */
+.hist-row.record { opacity: .78; cursor: default; }
+.hist-row.record:hover { background: transparent; }
+.badge.record-badge { color: var(--cf-dim); border-color: var(--cf-line); }

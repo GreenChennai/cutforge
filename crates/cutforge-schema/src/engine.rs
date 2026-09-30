@@ -2,7 +2,7 @@
 //! draft-07 子集校验引擎(与 tools/schema_gen.py 生成的 Python 引擎逐语义对齐)。
 //!
 //! 支持:type(string|array)/const/enum/required/properties/additionalProperties(false)/
-//! items/$ref(#/$defs/...)/minimum/maximum/exclusiveMinimum/minLength/maxLength/
+//! items/$ref(#/$defs/...)/minimum/maximum/exclusiveMinimum/multipleOf/minLength/maxLength/
 //! pattern/minItems/maxItems,以及两个自定义跨字段断言:
 //! `x-removeRequiresGuardOk`(cutlist,SKILL Hard Rule 3 进契约)与
 //! `x-keepCoversTimeline`(keep 区间有序不重叠且覆盖 [0,srcTotalMs])。
@@ -81,6 +81,15 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
     if let (Some(limit), Some(d)) = (schema.get("exclusiveMinimum").and_then(num_of), num_of(data))
         && d <= limit {
             errors.push(format!("{path}: exclusiveMinimum {limit} 实际 {d}"));
+        }
+    // multipleOf(ADR-0015 画布偶数约束):d/m 须为整数;浮点余数用容差比较,
+    // 与 Python 生成端(schema_gen.py 模板)逐语义对齐。
+    if let (Some(m), Some(d)) = (schema.get("multipleOf").and_then(num_of), num_of(data))
+        && m > 0.0 {
+            let q = d / m;
+            if (q - q.round()).abs() > 1e-9 {
+                errors.push(format!("{path}: multipleOf {m} 实际 {d}"));
+            }
         }
 
     if let Some(s) = data.as_str() {

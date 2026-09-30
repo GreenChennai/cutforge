@@ -122,6 +122,38 @@ fn dual_negative_injection_agrees() {
     let _ = dir; // silence unused in some cfgs
 }
 
+/// ADR-0015(册四 T4.9)画布范围约束双端对拍边界样本:
+/// 64/66/7678/7680 通过,63/65/7681 拒绝;Rust 引擎与 Python 生成校验器结论逐值一致。
+/// (multipleOf=2 偶数约束是本批新增引擎能力,双端必须逐语义对齐。)
+#[test]
+fn canvas_range_boundary_dual_agreement() {
+    let dir = &regression_dirs()[0];
+    let project = migrate_project(&read_json(&dir.join("project.json")));
+    for (w, h, expect_ok) in [
+        (64, 480, true),
+        (66, 480, true),
+        (7678, 4320, true),
+        (7680, 64, true),
+        (1080, 1920, true),
+        (63, 480, false),
+        (65, 480, false),
+        (7681, 480, false),
+        (1080, 7679, false),
+    ] {
+        let mut v = project.clone();
+        v["canvas"] = serde_json::json!({"width": w, "height": h});
+        let f = std::env::temp_dir().join(format!(
+            "cf-canvas-boundary-{}-{}-{}.json", w, h, std::process::id()
+        ));
+        std::fs::write(&f, serde_json::to_string(&v).unwrap()).expect("写边界样本失败");
+        let rust_ok = validate("project", &v).is_empty();
+        let py_ok = py_validate(&f, "project", false) == 0;
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(rust_ok, expect_ok, "Rust 判定错: {w}x{h} 期望 ok={expect_ok}");
+        assert_eq!(rust_ok, py_ok, "双端结论不一致: {w}x{h}");
+    }
+}
+
 #[test]
 fn migrate_idempotent() {
     for dir in regression_dirs() {

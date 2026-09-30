@@ -2,6 +2,8 @@
 //! 单一派发表:所有通道(stdio/HTTP/脚本宿主)共用的工具分派、JSON-RPC 面、
 //! 参数解析与 5.4 错误映射(T1.1 拆分自 lib.rs,纯移动)。
 
+use crate::edit_ops;
+use crate::subtitle_ops;
 use crate::orchestrate::orchestrate;
 use crate::progress::{existing_rel, render_cutforge_sync, render_frame_tool, render_progress, render_run_async};
 use crate::registry::{capability_matrix, envelope, registry, tool_def};
@@ -47,11 +49,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     // 全程不打开工作区(渲染不持排他锁);ffmpeg 后端(默认)走 CutFlow 编排,维持原路径。
     // render_run / render_progress 同理不持锁(E5-3 异步渲染 + 轮询进度)。
     // ass 过滤在服务端:壳无文件系统能力(壳纯度),ass 路径不存在时不烧录而非整单失败。
+    // 册四 T4.1 代理预览:useProxy 显式 opt-in(默认 false,不悄悄降质),
+    // 透传给 cutforge-render --use-proxy(缺失代理的片段回落原片)。
+    let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
     if name == "render" && args["backend"].as_str() == Some("cutforge") {
-        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()));
+        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy);
     }
     if name == "render_run" {
-        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()));
+        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy);
     }
     if name == "render_progress" {
         let Some(run_id) = args["runId"].as_str() else {
@@ -71,6 +76,11 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "media_browse" => return media_browse_tool(&ws_root, args),
         "render_probe" => return render_probe_tool(&ws_root),
         "stage_status" => return stage_status_tool(&ws_root),
+        // 册四 T4.1/T4.8 媒体池/音频工具(派生物缓存与纯计算,不改工程 IR 不持锁)
+        "media_peaks" => return crate::media_tools::media_peaks_tool(&ws_root, args),
+        "media_thumbnail" => return crate::media_tools::media_thumbnail_tool(&ws_root, args),
+        "media_proxy" => return crate::media_tools::media_proxy_tool(&ws_root, args),
+        "audio_beats" => return crate::media_tools::audio_beats_tool(&ws_root, args),
         _ => {}
     }
 
@@ -152,7 +162,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             // E2-2:扩投影——预览/检查器所需的逐 clip 字段全部由内核算好下放
             // (endMs = start+duration 在服务端完成;壳只消费,不做时间线运算)。
             envelope(true, "OK", "时间线投影", json!({
-                "clips": timeline_projection(ws.project()),
+                "clips": crate::edit_ops::timeline_projection(ws.project()),
                 "rev": ws.rev(),
             }))
         }
@@ -200,19 +210,67 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 Err(e) => return envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
             };
             let request_id = args["requestId"].as_str().map(String::from);
-            finish(ws.apply(Command::ClipInsert { to_track: track_id.into(), clip, request_id }, actor, opts))
+            finish_apply(ws.apply(Command::ClipInsert { to_track: track_id.into(), clip, request_id }, actor, opts))
         }
         "clip_update" => {
             let Some(clip_id) = args["clipId"].as_str() else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
             let p = &args["patch"];
+            // 册四 A4 T4.4/T4.9:速度曲线/倒放/旋转/裁剪/翻转(与 ClipPatch 字段面同 commit 同步;
+            // speedCurve 点集与 crop 整组替换,元素值越界由 schema 层 SCHEMA_INVALID 拒)
+            let speed_curve = p["speedCurve"].as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|pt| {
+                        Some(cutforge_core::model::SpeedPoint {
+                            at_ms: pt["atMs"].as_u64()?,
+                            speed: pt["speed"].as_f64()?,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
+            let crop = p["crop"].as_object().map(|_| cutforge_core::model::Crop {
+                x: p["crop"]["x"].as_u64().unwrap_or(0),
+                y: p["crop"]["y"].as_u64().unwrap_or(0),
+                w: p["crop"]["w"].as_u64().unwrap_or(0),
+                h: p["crop"]["h"].as_u64().unwrap_or(0),
+            });
+            // 花字(册四 T4.7;收口置空语义):显式 null 或空对象 {} = 清除挂载
+            // (huazi_clear 承接,undo 可还原);非空对象 = 整对象替换,非法结构
+            // 显式拒绝(SCHEMA_INVALID,不做静默丢弃的幻觉面);字段缺席 = 不改。
+            let (huazi, huazi_clear) = match p.get("huazi") {
+                None => (None, false),
+                Some(Value::Null) => (None, true),
+                Some(v) if v.is_object() => {
+                    if v.as_object().is_some_and(|o| o.is_empty()) {
+                        (None, true)
+                    } else {
+                        match serde_json::from_value::<cutforge_core::text_style::Huazi>(v.clone()) {
+                            Ok(h) => (Some(h), false),
+                            Err(e) => {
+                                return envelope(false, "SCHEMA_INVALID",
+                                    &format!("patch.huazi 非法: {e}"), json!({}))
+                            }
+                        }
+                    }
+                }
+                Some(_) => {
+                    return envelope(false, "SCHEMA_INVALID", "patch.huazi 必须是对象", json!({}))
+                }
+            };
             let patch = ClipPatch {
                 start_ms: p["startMs"].as_u64(),
                 duration_ms: p["durationMs"].as_u64(),
                 source_in_ms: p["sourceInMs"].as_u64(),
                 speed: p["speed"].as_f64(),
+                speed_curve,
+                reverse: p["reverse"].as_bool(),
+                rotation: p["rotation"].as_f64(),
+                crop,
+                flip: p["flip"].as_str().map(String::from),
                 volume: p["volume"].as_f64(),
+                denoise: p["denoise"].as_str().map(String::from),
+                pitch: p["pitch"].as_f64(),
                 opacity: p["opacity"].as_f64(),
                 scale: p["scale"].as_f64(),
                 text: p["text"].as_str().map(String::from),
@@ -229,18 +287,46 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                     in_ms: t["inMs"].as_f64(),
                     out: t["out"].as_str().map(String::from),
                     out_ms: t["outMs"].as_f64(),
+                    in_fx: t["inFx"].as_str().map(String::from),
+                    out_fx: t["outFx"].as_str().map(String::from),
                 }),
+                // 片段特效(册四 T4.6):整对象替换(combo 上限 3 由 schema 层界)
+                fx: p.get("fx").filter(|t| t.is_object()).and_then(|f| {
+                    serde_json::from_value::<cutforge_core::model::FxSpec>(f.clone())
+                        .map_err(|_| ())
+                        .ok()
+                }),
+                // 文本样式/花字(册四 T4.7):整对象替换;结构非法 → None 由
+                // SCHEMA_INVALID 面?不——此处静默丢弃是幻觉面,非法结构显式拒绝。
+                text_style: match p.get("textStyle") {
+                    None | Some(Value::Null) => None,
+                    Some(v) if v.is_object() => match serde_json::from_value(v.clone()) {
+                        Ok(ts) => Some(ts),
+                        Err(e) => {
+                            return envelope(false, "SCHEMA_INVALID", &format!("patch.textStyle 非法: {e}"), json!({}))
+                        }
+                    },
+                    Some(_) => {
+                        return envelope(false, "SCHEMA_INVALID", "patch.textStyle 必须是对象", json!({}))
+                    }
+                },
+                // 花字语义已在上方 (huazi, huazi_clear) 解出:null/{} = 清除,非空对象 = 整替换
+                huazi,
+                huazi_clear,
             };
-            finish(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+            finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
         }
         "transition_set" => {
             // 设置片段转场(clip.transition):type 必给(durMs/fx/reason 可选,按字段合并);
             // 显式硬切/关闭用 type="cut"/"none"(schema 语义),枚举外值由 schema 层拒。
+            // 册四 T4.5:全量转场目录经 fx="tr.<id>"(或裸 id)直通,目录经 GET /catalogs;
+            // 未注册 fxId 渲染端降级 type(缺省 fade)并 WARN。
             let Some(clip_id) = args["clipId"].as_str() else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
             let Some(t) = args["type"].as_str() else {
-                return envelope(false, "PRECONDITION_FAILED", "缺 type(fade/wipeleft/wipeup/slideleft/circleopen/cut/none)", json!({}));
+                return envelope(false, "PRECONDITION_FAILED",
+                    "缺 type(基础枚举 fade/wipeleft/wipeup/slideleft/circleopen/cut/none;全量 58 项目录走 fx=tr.<id>,GET /catalogs)", json!({}));
             };
             let patch = ClipPatch {
                 transition: Some(TransitionPatch {
@@ -251,10 +337,12 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 }),
                 ..Default::default()
             };
-            finish(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+            finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
         }
         "motion_set" => {
-            // 设置片段入场/出场动效(clip.motion):至少给 in/inMs/out/outMs 之一,按字段合并
+            // 设置片段入场/出场动效(clip.motion):至少给 in/inMs/out/outMs/inFx/outFx 之一,
+            // 按字段合并;册四 T4.6 枚举扩至真实渲染目录(fx-catalog motion.*),
+            // inFx/outFx = mo.<id> 直通别名(优先于枚举,未注册降级并 WARN)。
             let Some(clip_id) = args["clipId"].as_str() else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
@@ -263,18 +351,20 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 in_ms: args["inMs"].as_f64(),
                 out: args["out"].as_str().map(String::from),
                 out_ms: args["outMs"].as_f64(),
+                in_fx: args["inFx"].as_str().map(String::from),
+                out_fx: args["outFx"].as_str().map(String::from),
             };
             if motion.is_empty() {
-                return envelope(false, "PRECONDITION_FAILED", "motion_set 至少给 in/inMs/out/outMs 之一", json!({}));
+                return envelope(false, "PRECONDITION_FAILED", "motion_set 至少给 in/inMs/out/outMs/inFx/outFx 之一", json!({}));
             }
             let patch = ClipPatch { motion: Some(motion), ..Default::default() };
-            finish(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+            finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
         }
         "bgm_set" => {
             // 工程级背景乐(doc.bgm;不经 ClipPatch):src 为字符串=设置/合并;
             // src 显式 null=清除;src 缺省=仅调 gainDb/ducking/loop(工程尚无 bgm 时须先给 src)。
             if args.get("src").is_some_and(Value::is_null) {
-                return finish(ws.apply(Command::BgmClear, actor, opts));
+                return finish_apply(ws.apply(Command::BgmClear, actor, opts));
             }
             let patch = BgmPatch {
                 src: args["src"].as_str().map(String::from),
@@ -291,21 +381,21 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 && let Err(msg) = resolve_within_root(&ws_root, src) {
                     return envelope(false, "PRECONDITION_FAILED", &format!("bgm 路径不合法({src}): {msg}"), json!({}));
                 }
-            finish(ws.apply(Command::BgmSet { patch }, actor, opts))
+            finish_apply(ws.apply(Command::BgmSet { patch }, actor, opts))
         }
         "clip_split" => match args["clipId"].as_str().zip(args["tMs"].as_u64()) {
-            Some((clip_id, t_ms)) => finish(ws.apply(Command::ClipSplit { clip_id: clip_id.into(), t_ms }, actor, opts)),
+            Some((clip_id, t_ms)) => finish_apply(ws.apply(Command::ClipSplit { clip_id: clip_id.into(), t_ms }, actor, opts)),
             None => envelope(false, "PRECONDITION_FAILED", "缺 clipId/tMs", json!({})),
         },
         "clip_delete" => match args["clipId"].as_str() {
-            Some(clip_id) => finish(ws.apply(Command::ClipDelete { clip_id: clip_id.into() }, actor, opts)),
+            Some(clip_id) => finish_apply(ws.apply(Command::ClipDelete { clip_id: clip_id.into() }, actor, opts)),
             None => envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({})),
         },
         "clip_move" => {
             let (Some(clip_id), Some(start_ms)) = (args["clipId"].as_str(), args["startMs"].as_u64()) else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId/startMs", json!({}));
             };
-            finish(ws.apply(
+            finish_apply(ws.apply(
                 Command::ClipMove { clip_id: clip_id.into(), new_start_ms: start_ms, to_track: args["toTrack"].as_str().map(String::from) },
                 actor, opts,
             ))
@@ -330,7 +420,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             clip.id = cutforge_core::model::Project::next_clip_id(&ws.project().tracks[ti]);
             clip.start_ms = start_ms;
             let request_id = args["requestId"].as_str().map(String::from);
-            finish(ws.apply(Command::ClipInsert { to_track, clip, request_id }, actor, opts))
+            finish_apply(ws.apply(Command::ClipInsert { to_track, clip, request_id }, actor, opts))
         }
         "track_add" => {
             let Some(kind) = args["kind"].as_str() else {
@@ -343,7 +433,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 other => return envelope(false, "PRECONDITION_FAILED", &format!("未知 kind: {other}"), json!({})),
             };
             let request_id = args["requestId"].as_str().map(String::from);
-            finish(ws.apply(Command::TrackAdd { kind, request_id }, actor, opts))
+            finish_apply(ws.apply(Command::TrackAdd { kind, request_id }, actor, opts))
         }
         "subtitle_set" | "subtitle_retime" => {
             let Some(clip_id) = args["clipId"].as_str() else {
@@ -358,7 +448,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                     ..Default::default()
                 }
             };
-            finish(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+            finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
         }
         "overlay_add" => {
             let (Some(track_id), Some(src), Some(at_ms), Some(dur)) = (
@@ -377,14 +467,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 Err(e) => return envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
             };
             let request_id = args["requestId"].as_str().map(String::from);
-            finish(ws.apply(Command::ClipInsert { to_track: track_id.into(), clip, request_id }, actor, opts))
+            finish_apply(ws.apply(Command::ClipInsert { to_track: track_id.into(), clip, request_id }, actor, opts))
         }
         "sfx_add" => {
             let (Some(t_ms), Some(src)) = (args["tMs"].as_u64(), args["src"].as_str()) else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 tMs/src", json!({}));
             };
             // 密度护栏:±15s 内已有 ≥2 个 sfx → GUARD_FAILED(计划书 5.2)
-            let sfx_nearby = count_sfx_near(ws.project(), t_ms, 15_000);
+            let sfx_nearby = crate::edit_ops::count_sfx_near(ws.project(), t_ms, 15_000);
             if sfx_nearby >= 2 {
                 return envelope(false, "GUARD_FAILED", &format!("音效密度超限:{t_ms}ms ±15s 内已有 {sfx_nearby} 个"), json!({}));
             }
@@ -402,7 +492,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 Err(e) => return envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
             };
             let request_id = args["requestId"].as_str().map(String::from);
-            finish(ws.apply(Command::ClipInsert { to_track: track_id, clip, request_id }, actor, opts))
+            finish_apply(ws.apply(Command::ClipInsert { to_track: track_id, clip, request_id }, actor, opts))
         }
         "notes_add" => {
             let (Some(anchor_v), Some(body)) = (args["anchor"].as_object(), args["body"].as_str()) else {
@@ -464,9 +554,9 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             let mut last = envelope(true, "OK", "无操作", json!({}));
             for _ in 0..batch {
                 last = if name == "undo" {
-                    finish(ws.undo(actor.clone()))
+                    finish_apply(ws.undo(actor.clone()))
                 } else {
-                    finish(ws.redo(actor.clone()))
+                    finish_apply(ws.redo(actor.clone()))
                 };
                 if last["ok"] != json!(true) {
                     break;
@@ -474,6 +564,21 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             }
             last
         }
+
+        // ---------- 时间线编辑全工具(册四 A4 T4.2;实现集中在 edit_ops) ----------
+        "clip_trim" => edit_ops::clip_trim_tool(ws, args, &actor, opts),
+        "clip_split_all" => edit_ops::clip_split_all_tool(ws, args, &actor, opts),
+        "track_update" => edit_ops::track_update_tool(ws, args, &actor, opts),
+        "clip_gap_delete" => edit_ops::clip_gap_delete_tool(ws, args, &actor, opts),
+        "clip_copy" => edit_ops::clip_copy_tool(ws, root_str, args),
+        "clip_paste_at" => edit_ops::clip_paste_at_tool(ws, root_str, args, &actor, opts),
+
+        // ---------- 文本/字幕(册四 A4 T4.7;实现集中在 subtitle_ops) ----------
+        "text_add" => subtitle_ops::text_add_tool(ws, args, &actor, opts),
+        "subtitle_import" => subtitle_ops::subtitle_import_tool(ws, &ws_root, args, &actor, opts),
+        "subtitle_export" => subtitle_ops::subtitle_export_tool(ws, &ws_root, args),
+        "subtitle_replace" => subtitle_ops::subtitle_replace_tool(ws, args, &actor, opts),
+
 
         // ---------- 编排(封装 CutFlow 脚本,不重实现) ----------
         "stage_run" | "stage_rebuild" | "verify_run" | "sync_check" | "render" | "export_jianying" => {
@@ -493,7 +598,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     })
 }
 
-fn finish(r: Result<cutforge_core::engine::OpReceipt, std::io::Error>) -> Value {
+pub(crate) fn finish_apply(r: Result<cutforge_core::engine::OpReceipt, std::io::Error>) -> Value {
     match r {
         Ok(rec) => envelope(true, "OK", "已应用", json!({"opIds": rec.op_ids, "rev": rec.rev, "idempotent": rec.idempotent})),
         Err(e) => reject_to_envelope(e.to_string()),
@@ -533,17 +638,24 @@ fn read_truth(p: &Path, label: &str) -> Value {
 fn is_readonly_tool(name: &str) -> bool {
     matches!(name,
         "project_get" | "wordline_get" | "cutlist_get" | "notes_list"
-        | "oplog_tail" | "conflict_list" | "timeline_get")
+        | "oplog_tail" | "conflict_list" | "timeline_get"
+        // 册四 T4.7:字幕导出只读工程(产物落 06_成片输出,不产 Op 不改 IR)
+        | "subtitle_export")
 }
 
 /// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。
-/// 排除:只读查询、免开工作区的静态/编排类、工程创建(不产 rev)。
+/// 排除:只读查询、免开工作区的静态/编排类、工程创建(不产 rev)、
+/// clip_copy(会话态剪贴板写入,不产 Op 不升 rev)。
 pub(crate) fn produces_rev_mutation(name: &str) -> bool {
     !(is_readonly_tool(name)
         || matches!(name,
             "capability_matrix" | "project_new" | "render" | "render_run" | "render_progress"
             | "render_frame"
-            | "media_probe" | "media_browse" | "render_probe" | "stage_status"))
+            | "media_probe" | "media_browse" | "render_probe" | "stage_status"
+            | "clip_copy"
+            // 册四 A4 T4.1/T4.8:派生物缓存与纯计算工具(产物非 IR,不升 rev)
+            | "media_peaks" | "media_thumbnail" | "media_proxy" | "audio_beats"
+            | "subtitle_export"))
 }
 
 /// E2-1 的 canonicalize 校验函数化:/media、/media/browse、clip_add、media_probe、
@@ -573,47 +685,6 @@ fn next_clip_id_for(project: &cutforge_core::model::Project, track_id: &str) -> 
         .find_track(track_id)
         .map(|ti| cutforge_core::model::Project::next_clip_id(&project.tracks[ti]))
         .unwrap_or_else(|| format!("{track_id}-999"))
-}
-
-/// E2-2:时间线投影的逐 clip 全字段(endMs 在服务端算好;壳零时间线语义)。
-fn timeline_projection(project: &cutforge_core::model::Project) -> Vec<Value> {
-    let mut rows = Vec::new();
-    for t in &project.tracks {
-        for c in &t.clips {
-            rows.push(json!({
-                "id": c.id, "track": t.id,
-                "trackKind": match t.kind {
-                    cutforge_core::model::TrackKind::Video => "video",
-                    cutforge_core::model::TrackKind::Audio => "audio",
-                    cutforge_core::model::TrackKind::Text => "text",
-                },
-                "src": c.src, "startMs": c.start_ms, "endMs": c.start_ms + c.duration_ms,
-                "durationMs": c.duration_ms, "sourceInMs": c.source_in_ms,
-                "speed": c.speed, "volume": c.volume, "opacity": c.opacity,
-                "scale": c.scale, "position": c.position, "overlay": c.overlay,
-                "motion": c.motion, "text": c.text, "freezeMs": c.freeze_ms,
-                "transition": c.transition,
-                // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
-                // (transition/motion 已于 ClipPatch 扩展后承接,不再列只读)
-                "fade": c.fade,
-                "punchIn": c.punch_in, "role": c.role,
-            }));
-        }
-    }
-    rows
-}
-
-fn count_sfx_near(project: &cutforge_core::model::Project, t_ms: u64, window: u64) -> usize {
-    project
-        .tracks
-        .iter()
-        .flat_map(|t| t.clips.iter())
-        .filter(|c| c.role == Some(cutforge_core::model::Role::Sfx))
-        .filter(|c| {
-            let end = c.start_ms + c.duration_ms;
-            c.start_ms <= t_ms + window && t_ms <= end + window
-        })
-        .count()
 }
 
 /// RFC7386 merge-patch 应用到 cutlist.json,schema 校验后走 record_change 审计。

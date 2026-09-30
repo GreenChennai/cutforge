@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "_doc": "花字目录(T4.7;册四 A4-BE3b)。消费路径:clip.huazi = {template: 'hz.<id>', params?} → 渲染端 textass 生成临时 ASS 时按模板产出 override 标签(ADR-0016 路线,复用字幕烧录链,渲染端零新增通道)。算法与数据结构吸收旧版 rs_subtitle/assets/huazi(计划书 §4.C:标签只进 override,正文原样)。模板四要素:params(参数 schema,clip.huazi.params 覆写默认、越界钳制)、style(可选样式级覆写:borderStyle/backColor/outlineWidth——BorderStyle 无法用 override 表达,由逐片段 Style 行承载)、body(override 模板,{TEXT}=转义后正文,参数名直取,{DUR}=片段时长毫秒;可省略)、bodyKind(逐字动画的生成器实现名:perchar-pop/perchar-typewriter/perchar-wave;生成器端确定性实现,未知 bodyKind 降级纯文本)。卡拉OK:hz.karaoke 声明 karaoke=true,生成器按片段时长逐字均分 \\kf(样式级 Primary=已唱色/Secondary=未唱色)。未注册 template 渲染降级纯文本(诚实降级)。壳经 GET /catalogs 获取本表。",
+  "source": "吸收 CutFlow rs_subtitle/assets/huazi 八套模板的标签语法与参数面(2026-09-30),扩至 12 项",
+  "categories": ["描边", "发光", "立体", "底衬", "渐变", "动画", "卡拉OK"],
+  "huazi": [
+    {
+      "id": "hz.outline", "name": "描边字", "category": "描边",
+      "desc": "粗描边纯色字(描边宽/描边色可调)",
+      "params": [
+        { "name": "outline", "type": "number", "min": 2, "max": 16, "default": 6, "desc": "描边宽(像素)" },
+        { "name": "outlineColor", "type": "color", "default": "&H00000000", "desc": "描边色(ASS &HAABBGGRR&)" }
+      ],
+      "body": "{\\bord{outline}\\3c{outlineColor}}{TEXT}"
+    },
+    {
+      "id": "hz.neon", "name": "霓虹", "category": "发光",
+      "desc": "高亮填充 + 同色泛光描边(霓虹灯管感)",
+      "params": [
+        { "name": "color", "type": "color", "default": "&H00E5FF00", "desc": "霓虹主色(黄绿)" },
+        { "name": "blur", "type": "number", "min": 1, "max": 20, "default": 6, "desc": "泛光模糊半径" }
+      ],
+      "body": "{\\1c{color}\\3c{color}\\blur{blur}}{TEXT}"
+    },
+    {
+      "id": "hz.glow", "name": "泛光晕", "category": "发光",
+      "desc": "柔光晕圈(大半径模糊 + 光晕色阴影)",
+      "params": [
+        { "name": "halo", "type": "color", "default": "&H00E5FF00", "desc": "光晕色" },
+        { "name": "blur", "type": "number", "min": 1, "max": 24, "default": 10, "desc": "光晕半径" },
+        { "name": "shad", "type": "number", "min": 0, "max": 20, "default": 4, "desc": "晕圈深度" }
+      ],
+      "body": "{\\1c&H00FFFFFF&\\4c{halo}\\blur{blur}\\shad{shad}}{TEXT}"
+    },
+    {
+      "id": "hz.emboss", "name": "浮雕立体", "category": "立体",
+      "desc": "深色厚描边 + 同色投影(浮雕挤出感)",
+      "params": [
+        { "name": "depth", "type": "number", "min": 2, "max": 16, "default": 6, "desc": "挤出深度(像素)" },
+        { "name": "dark", "type": "color", "default": "&H00404040", "desc": "挤出暗色" }
+      ],
+      "body": "{\\bord{depth}\\3c{dark}\\4c{dark}\\shad{depth}}{TEXT}"
+    },
+    {
+      "id": "hz.extrude", "name": "长投影立体", "category": "立体",
+      "desc": "白字 + 定向长投影(立体海报字)",
+      "params": [
+        { "name": "depth", "type": "number", "min": 2, "max": 20, "default": 10, "desc": "投影长度(像素)" },
+        { "name": "shadowColor", "type": "color", "default": "&H00202020", "desc": "投影色" }
+      ],
+      "body": "{\\shad{depth}\\4c{shadowColor}}{TEXT}"
+    },
+    {
+      "id": "hz.box", "name": "色块底衬", "category": "底衬",
+      "desc": "底衬色块 + 描边组合(BorderStyle=3 底板)",
+      "params": [
+        { "name": "pad", "type": "number", "min": 2, "max": 20, "default": 10, "desc": "底衬外边距(像素)" },
+        { "name": "backColor", "type": "color", "default": "&H00E5FF00", "desc": "底衬色" }
+      ],
+      "style": { "borderStyle": 3, "outlineColor": "&H00E5FF00", "outlineWidth": 10 },
+      "body": "{\\bord{pad}}{TEXT}"
+    },
+    {
+      "id": "hz.brush", "name": "笔刷斜切", "category": "底衬",
+      "desc": "厚底衬 + 微倾(手写笔刷感)",
+      "params": [
+        { "name": "pad", "type": "number", "min": 2, "max": 20, "default": 12, "desc": "底衬外边距(像素)" },
+        { "name": "tilt", "type": "number", "min": -8, "max": 8, "default": -3, "desc": "倾斜角(度)" },
+        { "name": "backColor", "type": "color", "default": "&H6E44FF", "desc": "底衬色" }
+      ],
+      "style": { "borderStyle": 3, "outlineColor": "&H006EFF44", "outlineWidth": 12 },
+      "body": "{\\bord{pad}\\frz{tilt}}{TEXT}"
+    },
+    {
+      "id": "hz.gradient", "name": "渐变变色", "category": "渐变",
+      "desc": "主色随片段时长从 from 到 to 连续过渡(\\t 颜色动画)",
+      "params": [
+        { "name": "from", "type": "color", "default": "&H00FFE0", "desc": "起始色" },
+        { "name": "to", "type": "color", "default": "&H20A0FF", "desc": "终止色" }
+      ],
+      "body": "{\\1c{from}\\t(0,{DUR},\\1c{to})}{TEXT}"
+    },
+    {
+      "id": "hz.pop", "name": "逐字弹跳", "category": "动画",
+      "desc": "逐字从小弹出过冲后回落(pop 逐字动画;步长 stepMs)",
+      "params": [
+        { "name": "stepMs", "type": "number", "min": 20, "max": 200, "default": 70, "desc": "逐字步长(毫秒)" },
+        { "name": "overshoot", "type": "number", "min": 1.0, "max": 1.3, "default": 1.1, "desc": "过冲倍率(≤1.3)" }
+      ],
+      "bodyKind": "perchar-pop"
+    },
+    {
+      "id": "hz.typewriter", "name": "打字机", "category": "动画",
+      "desc": "逐字浮现(字符从全透明渐入,打字机效果)",
+      "params": [
+        { "name": "stepMs", "type": "number", "min": 20, "max": 200, "default": 70, "desc": "逐字步长(毫秒)" }
+      ],
+      "bodyKind": "perchar-typewriter"
+    },
+    {
+      "id": "hz.wave", "name": "波浪跳动", "category": "动画",
+      "desc": "逐字相位错开的纵向弹跳(波浪)",
+      "params": [
+        { "name": "stepMs", "type": "number", "min": 20, "max": 200, "default": 80, "desc": "逐字相位步长(毫秒)" },
+        { "name": "amp", "type": "number", "min": 5, "max": 40, "default": 15, "desc": "纵向弹跳幅度(%)" }
+      ],
+      "bodyKind": "perchar-wave"
+    },
+    {
+      "id": "hz.karaoke", "name": "卡拉OK", "category": "卡拉OK",
+      "desc": "逐字卡拉OK(\\kf 按时长均分;未唱=secondary,已唱=primary 高亮)",
+      "params": [
+        { "name": "highlight", "type": "color", "default": "&H0040FF", "desc": "已唱高亮色(橙)" }
+      ],
+      "karaoke": true,
+      "style": { "primaryColor": "&H0040FF" },
+      "body": "{\\2c&H00FFFFFF&\\1c{highlight}}{TEXT}"
+    }
+  ]
+}

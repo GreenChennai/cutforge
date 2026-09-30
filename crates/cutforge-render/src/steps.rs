@@ -2,12 +2,20 @@
 //! 渲染步骤纯函数(T1.4):每步 = 纯函数(生成 ffmpeg 参数)+ lib.rs 执行器调用。
 //! 本文件**不启动任何进程**:全部函数只做输入 → 命令行字符串的映射,
 //! 可在不装 ffmpeg 的环境单测断言;参数串与拆分前的 render() 逐字一致
-//! (渲染输出逐字节语义不变的底线,由 parity_matrix 九项实渲锁定)。
+//! (渲染输出逐字节语义不变的底线,由 parity_matrix 实渲夹具锁定)。
+//! 册四 A4-BE2:段提取链(步 2 segment)随曲线/变换扩容,纯移动至
+//! [`crate::segment`](段链模块);此处 `pub use` 保持 `steps::segment_*` 接口路径不变。
 
 use crate::plan::{OverlaySeg, RenderPlan};
 use cutforge_core::model::{Clip, Transition};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+
+// ---- 步 2 segment(实现在 segment.rs;路径兼容再导出,册四 A4-BE2) ----
+pub use crate::segment::{
+    play_segments, reverse_chain, segment_args, segment_filter, segment_filter_complex,
+    segment_pad_ms, segment_read_ms, transform_pre_chain,
+};
 
 /// clip i 的出向转场时长(ms;转场字段在 clip i 上表示 i-1→i 的转场,
 /// i=0 无意义)。type=cut/none 或 durMs<=0 → 硬切(None)。
@@ -29,11 +37,12 @@ pub fn transition_out_ms(clip: &Clip) -> Option<(String, f64)> {
 }
 
 /// 段 i 的尾帧扩展毫秒(ADR-0023):clip i 的转场由 seg_i 与 seg_{i+1} 之间的
-/// xfade 消费,段 i 需要延长 D_{i+1} 保证整链零时间漂移。
-/// 该值进入段缓存键(旧键漏掉它 → 改转场会陈旧复用前一段的 tpad)。
+/// xfade 消费,段 i 需要延长 D_{i+1} 保证整链零时间漂移。该值进入段缓存键
+/// (旧键漏掉它 → 改转场会陈旧复用前一段的 tpad)。D 取**有效转场时长**
+/// (册四 BE3a:钳到两侧片段时长,与 compose/acrossfade 同一函数,尾帧只进重叠)。
 pub fn segment_tail_ms(video_clips: &[Clip], i: usize) -> f64 {
     if i + 1 < video_clips.len() {
-        transition_out_ms(&video_clips[i + 1]).map(|(_, d)| d).unwrap_or(0.0)
+        crate::catalog::effective_transition_ms(video_clips, i + 1)
     } else {
         0.0
     }
@@ -60,50 +69,6 @@ pub fn probe_paths(plan: &RenderPlan) -> Vec<PathBuf> {
     out
 }
 
-// ---------------- 步 2 segment ----------------
-
-/// 段剪辑链:画幅归一(scale+pad+fps)→ punch-in → 变速 setpts → 尾帧扩展 tpad。
-pub fn segment_filter(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> String {
-    let (w, h, fps) = (plan.canvas_w, plan.canvas_h, plan.fps);
-    let speed = clip.speed.unwrap_or(1.0);
-    let base_filters = format!(
-        "scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,fps={fps}"
-    );
-    // punch-in(ADR v0.11 R3):取紧构图——中心裁剪 factor 倍后放大回画布(静态)
-    let mut vf = match &clip.punch_in {
-        Some(p) => {
-            let f = p.factor.clamp(1.0, 2.0);
-            format!("{base_filters},crop=w=iw/{f}:h=ih/{f}:x=(iw-ow)/2:y=(ih-oh)/2,scale={w}:{h}")
-        }
-        None => base_filters,
-    };
-    if speed != 1.0 {
-        // setpts 后重锁帧率:不同 ffmpeg 版本 -t 帧取整差异会导致时长漂移
-        vf.push_str(&format!(",setpts=PTS/{},fps={}", fmt_f64(speed), fps));
-    }
-    if tail_ms > 0.0 {
-        // 冻结尾帧扩展(转场零时间漂移的关键,ADR-0023)
-        vf.push_str(&format!(",tpad=stop_mode=clone:stop_duration={:.6}", tail_ms / 1000.0));
-    }
-    vf
-}
-
-/// 段提取命令行(-ss/-t 均在输入侧;纯视频,-an;音频走 mix 步)。
-pub fn segment_args(plan: &RenderPlan, clip: &Clip, tail_ms: f64, seg_out: &Path) -> Vec<String> {
-    let speed = clip.speed.unwrap_or(1.0);
-    let ss = clip.source_in_ms.unwrap_or(0);
-    let read_ms = (clip.duration_ms as f64 * speed).ceil();
-    vec![
-        "-y".into(), "-v".into(), "error".into(),
-        "-ss".into(), format!("{}", ss as f64 / 1000.0),
-        "-t".into(), format!("{}", read_ms / 1000.0),
-        "-i".into(), plan.project_dir.join(clip.src.clone().unwrap_or_default()).to_string_lossy().into(),
-        "-vf".into(), segment_filter(plan, clip, tail_ms),
-        "-an".into(), "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
-        seg_out.to_string_lossy().into(),
-    ]
-}
-
 // ---------------- 步 3 compose(xfade 链 / concat 退化) ----------------
 
 /// 有出向转场 → xfade 链;否则退化 concat(-c copy,零重编码)。
@@ -111,25 +76,31 @@ pub fn is_xfade_chain(video_clips: &[Clip]) -> bool {
     video_clips.iter().enumerate().any(|(i, c)| i > 0 && transition_out_ms(c).is_some())
 }
 
-/// xfade 链命令行:offset_k = 前序真实时长累计(尾帧扩展保证零漂移)。
+/// xfade 链命令行:offset_k = **前序名义时长累计**(ADR-0023 口径:不含尾帧扩展
+/// ——尾帧只进转场重叠不前移 offset;册四 BE3a 实测修复:旧实现把尾帧计入累计,
+/// offset 越过输入末端导致 xfade 坍缩截断,后段整段丢失)。返回 (参数, WARN 列表)
+/// ——转场名经目录直通解析,未注册降级 fade 留痕(册四 T4.5)。
 pub fn compose_xfade_args(
     video_clips: &[Clip],
     seg_files: &[PathBuf],
-    seg_durs_ms: &[u64],
     composed_out: &Path,
-) -> Vec<String> {
+) -> (Vec<String>, Vec<String>) {
     let mut args: Vec<String> = vec!["-y".into(), "-v".into(), "error".into()];
     for f in seg_files {
         args.extend(["-i".into(), f.to_string_lossy().into()]);
     }
     let mut filters: Vec<String> = Vec::new();
-    let mut acc_ms = 0f64;
+    let mut warns: Vec<String> = Vec::new();
+    let mut acc_nominal_ms = 0f64;
     let mut cur_label = "[0:v]".to_string();
     for i in 1..video_clips.len() {
-        let (kind, dur) = transition_out_ms(&video_clips[i])
-            .unwrap_or_else(|| ("fade".into(), 0.0));
-        acc_ms += seg_durs_ms[i - 1] as f64;
-        let offset = acc_ms / 1000.0;
+        let dur = crate::catalog::effective_transition_ms(video_clips, i);
+        acc_nominal_ms += video_clips[i - 1].duration_ms as f64;
+        let offset = acc_nominal_ms / 1000.0;
+        let (kind, warn) = crate::catalog::resolve_transition(&video_clips[i]);
+        if let Some(w) = warn {
+            warns.push(format!("clip {} 转场: {w}", video_clips[i].id));
+        }
         let out_label = format!("[x{i}]");
         filters.push(format!(
             "{cur_label}[{i}:v]xfade=transition={kind}:duration={:.6}:offset={:.6}{out_label}",
@@ -144,7 +115,7 @@ pub fn compose_xfade_args(
         "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
         composed_out.to_string_lossy().into(),
     ]);
-    args
+    (args, warns)
 }
 
 /// concat 清单内容(路径统一正斜杠;concat demuxer 对引号内反斜杠敏感)。
@@ -205,9 +176,12 @@ pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_ou
 
 // ---------------- 步 5 mix(画幅无关,共享缓存) ----------------
 
-/// mix pass A 命令行:逐段(-ss/-t 裁剪 + atempo 变速 + volume + afade + adelay 落点)
-/// → 总线 → BGM(循环铺满 + gain + ducking 侧链)→ aac。
+/// mix pass A 命令行:主时间线有视频转场时走 acrossfade 链(册四 T4.5,M11-R1;
+/// 见 [`crate::across`] 模块注释),否则既有逐段落点路径(参数逐字一致,parity 红线)。
 pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
+    if crate::across::chain_active(plan) {
+        return crate::across::mix_pass_a_chain_args(plan, mixed_raw_out);
+    }
     let audio_segs = &plan.audio_segs;
     let total_ms = plan.total_ms;
     let mut args: Vec<String> = vec!["-y".into(), "-v".into(), "error".into()];
@@ -224,22 +198,8 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
             "-t".into(), format!("{}", read_ms / 1000.0),
             "-i".into(), seg.src.to_string_lossy().into(),
         ]);
-        let mut chain = format!("[{input_idx}:a]aformat=sample_rates=48000:channel_layouts=stereo");
-        if seg.speed != 1.0 {
-            for tempo in atempo_chain(seg.speed) {
-                chain.push_str(&format!(",{tempo}"));
-            }
-        }
-        chain.push_str(&format!(",volume={:.4}", seg.volume));
-        if seg.fade_in_ms > 0.0 {
-            chain.push_str(&format!(",afade=t=in:st=0:d={:.3}", seg.fade_in_ms / 1000.0));
-        }
-        if seg.fade_out_ms > 0.0 {
-            let st = (seg.duration_ms as f64 - seg.fade_out_ms).max(0.0) / 1000.0;
-            chain.push_str(&format!(",afade=t=out:st={st:.3}:d={:.3}", seg.fade_out_ms / 1000.0));
-        }
-        chain.push_str(&format!(",adelay={}:all=1[a{input_idx}]", seg.start_ms));
-        filters.push(chain);
+        let chain_body = crate::across::event_body(seg);
+        filters.push(format!("[{input_idx}:a]{chain_body},adelay={}:all=1[a{input_idx}]", seg.start_ms));
         labels.push(format!("[a{input_idx}]"));
         input_idx += 1;
     }
@@ -352,13 +312,16 @@ pub fn mix_measured_is_loud(measured: &Value) -> bool {
 // ---------------- 步 6 subtitle(最后叠) ----------------
 
 /// 字幕烧录命令行(cwd = 缓存根;ASS 以相对路径喂给 subtitles 滤镜,规避
-/// Windows 盘符冒号在滤镜参数里的转义问题)。ass_rel 形如 "tmp/ass-<key>.ass"。
-pub fn subtitle_burn_args(video_in: &Path, mixed_in: &Path, ass_rel: &str, subbed_out: &Path) -> Vec<String> {
+/// Windows 盘符冒号在滤镜参数里的转义问题)。ass_rels = 烧录序列(册四 T4.7:
+/// 外部字幕 + 文本轨生成 ASS 串联——多条 subtitles 滤镜链式应用,免解析合并
+/// 外部文件;单条时参数与拆分前逐字一致,parity 红线)。
+pub fn subtitle_burn_args(video_in: &Path, mixed_in: &Path, ass_rels: &[String], subbed_out: &Path) -> Vec<String> {
+    let vf = ass_rels.iter().map(|r| format!("subtitles={r}")).collect::<Vec<_>>().join(",");
     [
         "-y", "-v", "error",
         "-i", &video_in.to_string_lossy(),
         "-i", &mixed_in.to_string_lossy(),
-        "-vf", &format!("subtitles={ass_rel}"),
+        "-vf", &vf,
         "-map", "0:v", "-map", "1:a",
         "-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy",
         &subbed_out.to_string_lossy(),
@@ -468,47 +431,6 @@ mod tests {
         args.join("\u{1}")
     }
 
-    // ---- 步 1/2:probe + segment ----
-
-    #[test]
-    fn segment_args_match_legacy_invocation() {
-        let (plan, clips) = test_plan(base_clips());
-        let out = PathBuf::from("/c/seg/x.mp4");
-        let args = segment_args(&plan, &clips[0], 0.0, &out);
-        assert_eq!(
-            strv(&args),
-            [
-                "-y", "-v", "error",
-                "-ss", "0.5", "-t", "2", "-i", &pj("/w", "a.mp4"),
-                "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30",
-                "-an", "-c:v", "libx264", "-preset", "veryfast", "/c/seg/x.mp4"
-            ]
-        );
-    }
-
-    #[test]
-    fn segment_filter_speed_and_tail_compose_in_order() {
-        let mut v = base_clips();
-        v[0]["speed"] = json!(2.0);
-        let (plan, clips) = test_plan(v);
-        let vf = segment_filter(&plan, &clips[0], 500.0);
-        assert_eq!(
-            vf,
-            "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,fps=30"
-                .to_string() + ",setpts=PTS/2,fps=30,tpad=stop_mode=clone:stop_duration=0.500000"
-        );
-    }
-
-    #[test]
-    fn segment_filter_punch_in_clamps_factor() {
-        let mut v = base_clips();
-        v[0]["punchIn"] = json!({"factor": 3.0, "source": "manual"});
-        let (plan, clips) = test_plan(v);
-        let vf = segment_filter(&plan, &clips[0], 0.0);
-        // factor 3.0 → clamp 到 2.0
-        assert!(vf.contains(",crop=w=iw/2:h=ih/2:x=(iw-ow)/2:y=(ih-oh)/2,scale=1080:1920"), "{vf}");
-    }
-
     #[test]
     fn tail_ms_comes_from_next_clip_transition() {
         let mut v = base_clips();
@@ -553,18 +475,56 @@ mod tests {
         let (_, clips) = test_plan(v);
         assert!(is_xfade_chain(&clips));
         let segs = vec![PathBuf::from("/c/seg/1.mp4"), PathBuf::from("/c/seg/2.mp4")];
-        let args = compose_xfade_args(&clips, &segs, &[2500, 2000], Path::new("/c/compose/o.mp4"));
+        let (args, warns) = compose_xfade_args(&clips, &segs, Path::new("/c/compose/o.mp4"));
+        assert!(warns.is_empty());
         let s = strv(&args);
         assert_eq!(
             s[8],
-            "[0:v][1:v]xfade=transition=fade:duration=0.500000:offset=2.500000[x1]",
-            "offset = 前段真实时长(含尾帧扩展)累计"
+            "[0:v][1:v]xfade=transition=fade:duration=0.500000:offset=2.000000[x1]",
+            "offset = 前序**名义**时长累计(ADR-0023;尾帧只进重叠不前移 offset)"
         );
         assert_eq!(&s[..7], ["-y", "-v", "error", "-i", "/c/seg/1.mp4", "-i", "/c/seg/2.mp4"]);
         assert_eq!(
             &s[9..],
             ["-map", "[x1]", "-c:v", "libx264", "-preset", "veryfast", "/c/compose/o.mp4"]
         );
+    }
+
+    /// 册四 BE3a 零漂移红线:两段各 2s + 500ms 转场,xfade 链总输出 = Σdur = 4.0s
+    /// (offset=名义时长口径;旧实现 offset 含尾帧会把后段截没——夹具以**视频流**
+    /// 帧数锁定,容器时长会被音频 mux 撑大而说谎)。
+    #[test]
+    fn compose_xfade_two_boundary_chain_offsets_use_nominal_durations() {
+        let mut v = base_clips();
+        v[1]["durationMs"] = json!(1500);
+        v[1]["startMs"] = json!(2000);
+        v[1]["transition"] = json!({"type": "fade", "durMs": 500});
+        v.as_array_mut().unwrap().push(json!({"id": "V1-003", "src": "a.mp4", "startMs": 3500, "durationMs": 1000,
+             "role": "voice", "transition": {"type": "fade", "durMs": 400}}));
+        let (_, clips) = test_plan(v);
+        let segs: Vec<PathBuf> = (1..=3).map(|i| PathBuf::from(format!("/c/seg/{i}.mp4"))).collect();
+        let (args, warns) = compose_xfade_args(&clips, &segs, Path::new("/c/o.mp4"));
+        assert!(warns.is_empty());
+        let s = args.join("\u{1}");
+        assert!(s.contains("xfade=transition=fade:duration=0.500000:offset=2.000000[x1]"), "{s}");
+        assert!(s.contains("[x1][2:v]xfade=transition=fade:duration=0.400000:offset=3.500000[x2]"), "{s}");
+    }
+
+    /// 目录直通:fx=tr.circleclose 覆写 type;未注册 id 进 WARN 列表(降级 fade)。
+    #[test]
+    fn compose_xfade_resolves_catalog_ids_with_warnings() {
+        let mut v = base_clips();
+        v[1]["transition"] = json!({"type": "fade", "fx": "tr.circleclose", "durMs": 500});
+        let (_, clips) = test_plan(v.clone());
+        let segs = vec![PathBuf::from("/c/seg/1.mp4"), PathBuf::from("/c/seg/2.mp4")];
+        let (args, warns) = compose_xfade_args(&clips, &segs, Path::new("/c/o.mp4"));
+        assert!(args.join("\u{1}").contains("transition=circleclose"));
+        assert!(warns.iter().any(|w| w.contains("以 fx 为准")), "{warns:?}");
+        v[1]["transition"] = json!({"type": "fade", "fx": "tr.幽灵", "durMs": 500});
+        let (_, clips) = test_plan(v);
+        let (args, warns) = compose_xfade_args(&clips, &segs, Path::new("/c/o.mp4"));
+        assert!(args.join("\u{1}").contains("transition=fade"), "未注册降级 fade");
+        assert!(warns.iter().any(|w| w.contains("未注册")), "{warns:?}");
     }
 
     // ---- 步 4:overlay ----
@@ -744,7 +704,7 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
     #[test]
     fn subtitle_burn_and_mux_args_are_backward_compatible() {
         let burn = subtitle_burn_args(
-            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"), "tmp/ass-k.ass", Path::new("/c/sub/o.mp4"),
+            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"), &["tmp/ass-k.ass".into()], Path::new("/c/sub/o.mp4"),
         );
         assert_eq!(
             strv(&burn),
@@ -752,6 +712,12 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
              "-vf", "subtitles=tmp/ass-k.ass", "-map", "0:v", "-map", "1:a",
              "-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy", "/c/sub/o.mp4"]
         );
+        // 册四 T4.7:外部字幕 + 文本轨生成 ASS 串联(链式 subtitles 滤镜)
+        let both = subtitle_burn_args(
+            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"),
+            &["tmp/ass-user.ass".into(), "tmp/ass-text.ass".into()], Path::new("/c/sub/o.mp4"),
+        );
+        assert_eq!(both[8], "subtitles=tmp/ass-user.ass,subtitles=tmp/ass-text.ass", "{:?}", both[8]);
         let mux = subtitle_mux_args(
             Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"), Path::new("/c/sub/o.mp4"),
         );

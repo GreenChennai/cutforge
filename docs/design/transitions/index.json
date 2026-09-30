@@ -1,0 +1,420 @@
+{
+ "version": 1,
+ "spec": "240x135 jpeg",
+ "items": {
+  "fade": {
+   "file": "fade.jpg",
+   "kind": "transition",
+   "category": "基础",
+   "name": "溶解"
+  },
+  "dissolve": {
+   "file": "dissolve.jpg",
+   "kind": "transition",
+   "category": "基础",
+   "name": "噪声溶解"
+  },
+  "fadeblack": {
+   "file": "fadeblack.jpg",
+   "kind": "transition",
+   "category": "基础",
+   "name": "黑场过渡"
+  },
+  "fadewhite": {
+   "file": "fadewhite.jpg",
+   "kind": "transition",
+   "category": "基础",
+   "name": "白场过渡"
+  },
+  "fadefast": {
+   "file": "fadefast.jpg",
+   "kind": "transition",
+   "category": "基础",
+   "name": "快速溶解"
+  },
+  "fadeslow": {
+   "file": "fadeslow.jpg",
+   "kind": "transition",
+   "category": "基础",
+   "name": "缓慢溶解"
+  },
+  "fadegrays": {
+   "file": "fadegrays.jpg",
+   "kind": "transition",
+   "category": "基础",
+   "name": "灰化溶解"
+  },
+  "distance": {
+   "file": "distance.jpg",
+   "kind": "transition",
+   "category": "基础",
+   "name": "距离溶解"
+  },
+  "slideleft": {
+   "file": "slideleft.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "左滑"
+  },
+  "slideright": {
+   "file": "slideright.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "右滑"
+  },
+  "slideup": {
+   "file": "slideup.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "上滑"
+  },
+  "slidedown": {
+   "file": "slidedown.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "下滑"
+  },
+  "coverleft": {
+   "file": "coverleft.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "左覆盖"
+  },
+  "coverright": {
+   "file": "coverright.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "右覆盖"
+  },
+  "coverup": {
+   "file": "coverup.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "上覆盖"
+  },
+  "coverdown": {
+   "file": "coverdown.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "下覆盖"
+  },
+  "revealleft": {
+   "file": "revealleft.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "左揭幕"
+  },
+  "revealright": {
+   "file": "revealright.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "右揭幕"
+  },
+  "revealup": {
+   "file": "revealup.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "上揭幕"
+  },
+  "revealdown": {
+   "file": "revealdown.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "下揭幕"
+  },
+  "squeezeh": {
+   "file": "squeezeh.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "横向挤压"
+  },
+  "squeezev": {
+   "file": "squeezev.jpg",
+   "kind": "transition",
+   "category": "滑动",
+   "name": "纵向挤压"
+  },
+  "wipeleft": {
+   "file": "wipeleft.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "左擦除"
+  },
+  "wiperight": {
+   "file": "wiperight.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "右擦除"
+  },
+  "wipeup": {
+   "file": "wipeup.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "上擦除"
+  },
+  "wipedown": {
+   "file": "wipedown.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "下擦除"
+  },
+  "wipetl": {
+   "file": "wipetl.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "左上擦除"
+  },
+  "wipetr": {
+   "file": "wipetr.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "右上擦除"
+  },
+  "wipebl": {
+   "file": "wipebl.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "左下擦除"
+  },
+  "wipebr": {
+   "file": "wipebr.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "右下擦除"
+  },
+  "radial": {
+   "file": "radial.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "径向擦除"
+  },
+  "diagtl": {
+   "file": "diagtl.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "对角擦除(左上)"
+  },
+  "diagtr": {
+   "file": "diagtr.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "对角擦除(右上)"
+  },
+  "diagbl": {
+   "file": "diagbl.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "对角擦除(左下)"
+  },
+  "diagbr": {
+   "file": "diagbr.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "对角擦除(右下)"
+  },
+  "hlslice": {
+   "file": "hlslice.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "横条左滑"
+  },
+  "hrslice": {
+   "file": "hrslice.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "横条右滑"
+  },
+  "vuslice": {
+   "file": "vuslice.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "竖条上滑"
+  },
+  "vdslice": {
+   "file": "vdslice.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "竖条下滑"
+  },
+  "hlwind": {
+   "file": "hlwind.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "横条风(左)"
+  },
+  "hrwind": {
+   "file": "hrwind.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "横条风(右)"
+  },
+  "vuwind": {
+   "file": "vuwind.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "竖条风(上)"
+  },
+  "vdwind": {
+   "file": "vdwind.jpg",
+   "kind": "transition",
+   "category": "擦除",
+   "name": "竖条风(下)"
+  },
+  "circleopen": {
+   "file": "circleopen.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "圆形展开"
+  },
+  "circleclose": {
+   "file": "circleclose.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "圆形收拢"
+  },
+  "circlecrop": {
+   "file": "circlecrop.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "圆形裁切"
+  },
+  "rectcrop": {
+   "file": "rectcrop.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "矩形裁切"
+  },
+  "vertopen": {
+   "file": "vertopen.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "纵开"
+  },
+  "vertclose": {
+   "file": "vertclose.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "纵合"
+  },
+  "horzopen": {
+   "file": "horzopen.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "横开"
+  },
+  "horzclose": {
+   "file": "horzclose.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "横合"
+  },
+  "smoothleft": {
+   "file": "smoothleft.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "平滑左"
+  },
+  "smoothright": {
+   "file": "smoothright.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "平滑右"
+  },
+  "smoothup": {
+   "file": "smoothup.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "平滑上"
+  },
+  "smoothdown": {
+   "file": "smoothdown.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "平滑下"
+  },
+  "zoomin": {
+   "file": "zoomin.jpg",
+   "kind": "transition",
+   "category": "图形",
+   "name": "放大切入"
+  },
+  "hblur": {
+   "file": "hblur.jpg",
+   "kind": "transition",
+   "category": "模糊",
+   "name": "横向模糊"
+  },
+  "pixelize": {
+   "file": "pixelize.jpg",
+   "kind": "transition",
+   "category": "模糊",
+   "name": "像素化"
+  },
+  "fx.blur": {
+   "file": "fx.blur.jpg",
+   "kind": "fx",
+   "category": "模糊",
+   "name": "模糊"
+  },
+  "fx.gaussian": {
+   "file": "fx.gaussian.jpg",
+   "kind": "fx",
+   "category": "模糊",
+   "name": "高斯模糊"
+  },
+  "fx.mosaic": {
+   "file": "fx.mosaic.jpg",
+   "kind": "fx",
+   "category": "模糊",
+   "name": "马赛克"
+  },
+  "fx.sharpen": {
+   "file": "fx.sharpen.jpg",
+   "kind": "fx",
+   "category": "锐化",
+   "name": "锐化"
+  },
+  "fx.glow": {
+   "file": "fx.glow.jpg",
+   "kind": "fx",
+   "category": "光影",
+   "name": "发光"
+  },
+  "fx.shake": {
+   "file": "fx.shake.jpg",
+   "kind": "fx",
+   "category": "干扰",
+   "name": "抖动"
+  },
+  "fx.glitch": {
+   "file": "fx.glitch.jpg",
+   "kind": "fx",
+   "category": "干扰",
+   "name": "故障"
+  },
+  "fx.grain": {
+   "file": "fx.grain.jpg",
+   "kind": "fx",
+   "category": "风格",
+   "name": "胶片颗粒"
+  },
+  "fx.vignette": {
+   "file": "fx.vignette.jpg",
+   "kind": "fx",
+   "category": "光影",
+   "name": "暗角"
+  },
+  "fx.mono": {
+   "file": "fx.mono.jpg",
+   "kind": "fx",
+   "category": "风格",
+   "name": "黑白"
+  },
+  "fx.vintage": {
+   "file": "fx.vintage.jpg",
+   "kind": "fx",
+   "category": "风格",
+   "name": "复古"
+  }
+ }
+}

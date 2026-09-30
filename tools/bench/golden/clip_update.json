@@ -49,6 +49,37 @@
     "ns": "ok",
     "ok": true
    }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipId": "V1-001",
+    "patch": {
+     "textStyle": {
+      "fontSize": 72,
+      "color": "#FFCC00",
+      "align": "topCenter"
+     },
+     "huazi": {
+      "template": "hz.pop"
+     },
+     "denoise": "mid",
+     "pitch": -4
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-31"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
   }
  ]
 }

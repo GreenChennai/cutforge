@@ -4,7 +4,7 @@
 
 use crate::dispatch::{handle_rpc_as, produces_rev_mutation, resolve_within_root};
 use crate::progress::resolve_render_bin;
-use crate::registry::UI_FIELDS_JSON;
+use crate::registry::{FX_CATALOG_JSON, HUAZI_CATALOG_JSON, TRANSITION_CATALOG_JSON, UI_FIELDS_JSON};
 use crate::session::{session_journal_begin, session_journal_note, session_summary_path};
 use crate::tools_nolock::media_browse_payload;
 use crate::transport::events;
@@ -270,6 +270,9 @@ fn handle_workspace_conn(
     // E3-3 素材浏览 + E4-2 检查器字段真相源:数据面(带 token),不进静态白名单
     let is_media_browse = path_only == "/media/browse" && first_line.starts_with("GET");
     let is_ui_fields = path_only == "/ui-fields" && first_line.starts_with("GET");
+    // 册四 T4.5/T4.6:转场/特效/动效目录(壳转场与特效面板的数据面;/ui-fields 同风格,
+    // 编译期嵌入,不经 MCP 工具——工具数四则口径不变)
+    let is_catalogs = path_only == "/catalogs" && first_line.starts_with("GET");
     let range = req.header("range");
     let body = req.body.as_str();
 
@@ -316,6 +319,17 @@ fn handle_workspace_conn(
         // E4-2 单一真相源下发:壳检查器分组由此渲染(壳不读文件系统,壳纯度)
         let doc: Value = serde_json::from_str(UI_FIELDS_JSON)
             .expect("schemas/ui-fields.json 必须合法(受 check-ui-fields 机械校验)");
+        HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() }
+    } else if is_catalogs {
+        // 册四 T4.5/T4.6 目录下发:转场(58 实测)+ 特效/动效(渲染端 catalog 模块同源)
+        let doc = json!({
+            "transition": serde_json::from_str::<Value>(TRANSITION_CATALOG_JSON)
+                .expect("schemas/transition-catalog.json 必须合法"),
+            "fx": serde_json::from_str::<Value>(FX_CATALOG_JSON)
+                .expect("schemas/fx-catalog.json 必须合法"),
+            "huazi": serde_json::from_str::<Value>(HUAZI_CATALOG_JSON)
+                .expect("schemas/huazi-catalog.json 必须合法"),
+        });
         HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() }
     } else if is_get_session {
         HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: session_str.as_bytes().to_vec() }

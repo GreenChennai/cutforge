@@ -8,7 +8,9 @@ fn capability_matrix_single_source() {
     let m = capability_matrix();
     assert_eq!(m["version"], json!(2));
     let items = m["items"].as_array().unwrap();
-    assert_eq!(items.len(), 15, "15 项口径不变");
+    // M11 时点 15 项;A4-BE2(T4.4/T4.9)增曲线变速/倒放/画布范围 → 18 项;
+    // A4-BE3a(T4.5/T4.6)增转场库目录化/特效库/动效库 → 21 项
+    assert_eq!(items.len(), 21, "A4-BE3a 后 21 项口径(M11 15 项 + A4 新增 6 项)");
     let mut achieved = 0;
     for it in items {
         let status = it["status"].as_str().unwrap();
@@ -25,7 +27,7 @@ fn capability_matrix_single_source() {
             assert!(it["target"].is_string(), "未达成项必须写明 M11 目标: {}", it["item"]);
         }
     }
-    assert_eq!(achieved, 13, "M11 后实码达成 13 项(必达 13/13 + 0 可选;证据=parity_matrix)");
+    assert_eq!(achieved, 19, "M11 必达 13 项 + A4 新增 6 项(曲线/倒放/画布范围/转场库/特效库/动效库;证据=parity_matrix)");
 }
 
 /// M8-5:python 启动器探测——本机/CI 至少一个可用,且返回的命令可执行。
@@ -138,12 +140,15 @@ fn media_browse_lists_media_and_rejects_bad_dir() {
 fn mutation_classification() {
     for q in ["project_get", "timeline_get", "oplog_tail", "notes_list", "conflict_list",
               "render_probe", "stage_status", "media_probe", "media_browse", "capability_matrix",
-              "render_run", "render_progress", "render_frame", "project_new"] {
+              "render_run", "render_progress", "render_frame", "project_new",
+              "clip_copy"] {
         assert!(!produces_rev_mutation(q), "{q} 不应计入会话变更");
     }
     for w in ["clip_update", "clip_add", "clip_delete", "clip_split", "clip_move",
               "track_add", "undo", "redo", "cut_apply", "notes_add",
-              "transition_set", "motion_set", "bgm_set"] {
+              "transition_set", "motion_set", "bgm_set",
+              "clip_trim", "clip_split_all", "track_update", "clip_gap_delete",
+              "clip_paste_at"] {
         assert!(produces_rev_mutation(w), "{w} 应计入会话变更");
     }
 }
@@ -263,5 +268,55 @@ fn transition_motion_bgm_tools_end_to_end() {
     assert_eq!(first["motion"]["out"], json!("slideOutRight"));
     assert_eq!(first["motion"]["outMs"], json!(260.0));
 
+    cutforge_io::fsutil::cleanup(&root);
+}
+
+/// 册四收口(候 BE 了断):clip_update patch.huazi 显式清除语义——
+/// null 与 {} 双形态均清除(单 Op,undo 可还原);非空对象整替换;非法类型 SCHEMA_INVALID;
+/// 字段缺席不改(既有行为回归)。
+#[test]
+fn clip_update_huazi_clear_semantics() {
+    let root = cutforge_io::tests_fixture("mcp-huazi-clear").unwrap();
+    let root_s = root.to_string_lossy().to_string();
+    let huazi_of = |p: serde_json::Value| p["tracks"].as_array().unwrap()
+        .iter().find(|t| t["id"] == "V1").unwrap()["clips"].as_array().unwrap()
+        .iter().find(|c| c["id"] == "V1-001").unwrap().get("huazi").cloned();
+
+    // 挂载(非空对象整替换)
+    let r = dispatch("clip_update", &json!({
+        "root": root_s, "clipId": "V1-001", "patch": {"huazi": {"template": "hz.pop"}},
+    }));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+    assert_eq!(huazi_of(proj).unwrap()["template"], json!("hz.pop"), "挂载必须落盘");
+    let rev_set = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+
+    // 显式 null 清除:单 Op、huazi 消失、undo 还原
+    let r = dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": null}}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["opIds"].as_array().unwrap().len(), 1, "清除必须单 Op");
+    let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+    assert_eq!(huazi_of(proj), None, "null 清除后 huazi 必须消失");
+    dispatch("undo", &json!({"root": root_s}));
+    let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+    assert_eq!(huazi_of(proj).unwrap()["template"], json!("hz.pop"), "undo 必须还原花字挂载");
+
+    // 空对象 {} 清除(第二形态);再清除一次幂等(零变更仍 OK 回执)
+    dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": {}}}));
+    let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+    assert_eq!(huazi_of(proj), None, "{{}} 清除后 huazi 必须消失");
+    let rev_cleared = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+    assert!(rev_cleared > rev_set);
+    // 字段缺席 = 不改(既有行为回归;同值幂等回执)
+    let r = dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"volume": 1.0}}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
+    assert_eq!(huazi_of(proj), None);
+    // 非法类型拒绝
+    let r = dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": "hz.pop"}}));
+    assert_eq!(r["code"], json!("SCHEMA_INVALID"), "{r}");
+    // 非空对象缺 template 拒绝(空对象是清除哨兵,不是合法挂载)
+    let r = dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": {"params": {"x": 1}}}}));
+    assert_eq!(r["code"], json!("SCHEMA_INVALID"), "{r}");
     cutforge_io::fsutil::cleanup(&root);
 }

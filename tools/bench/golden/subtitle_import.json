@@ -1,0 +1,27 @@
+{
+ "tool": "subtitle_import",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "05_时间线工程/subs.srt",
+    "requestId": "parity-imp-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "firstClipId": "T1-003",
+     "idempotent": false,
+     "imported": 2,
+     "opIds": [
+      "op-33"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

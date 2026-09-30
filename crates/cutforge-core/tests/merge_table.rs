@@ -123,3 +123,47 @@ fn merge_table_clip_array_mixed_ops() {
     let local3 = json!([mk("V1-001", 0, 100), mk("V1-002", 110, 100)]);
     expect_conflict(&base, &disk, &local3, "CF-002");
 }
+
+/// 册四 A4 T4.2:轨道新字段(locked/mute/solo/hidden/heightPx/color)必须被三路合并
+/// 按字段承接——tracks 是带 id 的对象数组,元素内递归到叶;这是册一"字段内核零承接"
+/// 教训在合并面的对位证明(字段存在即可合并,不因新字段而整轨冲突)。
+#[test]
+fn merge_table_track_fields_field_level() {
+    let tr = |id: &str, extra: Value| {
+        let mut o = json!({"id": id, "kind": "video", "clips": []});
+        for (k, v) in extra.as_object().unwrap() {
+            o[k] = v.clone();
+        }
+        o
+    };
+    let base = json!([tr("V1", json!({"mute": false, "solo": false}))]);
+    // 磁盘改 mute,本地改 heightPx/color(mute/solo 未动、原值在位):不同字段自动合并,零冲突
+    let disk = json!([tr("V1", json!({"mute": true, "solo": false}))]);
+    let local = json!([tr("V1", json!({"mute": false, "solo": false, "heightPx": 240, "color": "#3D7EAF"}))]);
+    match three_way_merge(&base, &disk, &local) {
+        MergeOutcome::Merged(v) => {
+            let t = &v[0];
+            assert_eq!(t["mute"], json!(true));
+            assert_eq!(t["heightPx"], json!(240));
+            assert_eq!(t["color"], json!("#3D7EAF"));
+        }
+        MergeOutcome::Conflicts(c) => panic!("轨道不同字段不得冲突: {c:?}"),
+    }
+    // 同一字段双方不同值(布尔只有两态,用 heightPx 造三方分歧)→ CF-001,指针精确到轨道叶路径
+    let base2 = json!([tr("V1", json!({"mute": false, "heightPx": 80}))]);
+    let disk2 = json!([tr("V1", json!({"mute": false, "heightPx": 240}))]);
+    let local2 = json!([tr("V1", json!({"mute": false, "heightPx": 120}))]);
+    match three_way_merge(&base2, &disk2, &local2) {
+        MergeOutcome::Conflicts(c) => {
+            assert_eq!(c[0].code.code(), "CF-001");
+            assert_eq!(c[0].pointer, "$[V1]/heightPx");
+        }
+        MergeOutcome::Merged(_) => panic!("同字段异值必须冲突(静默覆盖!)"),
+    }
+    // 单侧新增 locked 字段(祖先与另一侧均无)→ 直接采纳
+    let disk3 = json!([tr("V1", json!({"locked": true}))]);
+    match three_way_merge(&base, &disk3, &base) {
+        MergeOutcome::Merged(v) => assert_eq!(v[0]["locked"], json!(true)),
+        MergeOutcome::Conflicts(c) => panic!("单侧新增字段不得冲突: {c:?}"),
+    }
+}

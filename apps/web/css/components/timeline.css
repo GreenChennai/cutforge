@@ -144,3 +144,70 @@
   position: absolute; top: var(--cf-ruler-h); left: 0;
   display: block; pointer-events: none; z-index: var(--cf-z-lane-label);
 }
+
+/* ================= 册四 T4.2:轨道头全功能 + 工具模式 + overlay 片段 ================= */
+
+/* 轨头功能按钮(L 锁定 / M 静音 / S 独奏;字标 + aria-label,激活态字色反白)
+ * 状态变化走 fast 过渡(非颜色单线索:aria-pressed + 字重)。 */
+.lane-btn {
+  flex: 0 0 auto; width: 14px; height: 14px; padding: 0;
+  border: 1px solid transparent; border-radius: var(--cf-r-s);
+  background: transparent; color: var(--cf-lane-fg-off);
+  font-size: var(--cf-fs-xs); font-weight: 700; line-height: 1;
+  font-family: var(--cf-font-mono); cursor: pointer;
+  transition: color var(--cf-dur-fast) var(--cf-ease),
+              border-color var(--cf-dur-fast) var(--cf-ease),
+              background-color var(--cf-dur-fast) var(--cf-ease);
+}
+.lane-btn:hover { color: var(--cf-fg); border-color: var(--cf-line-strong); }
+.lane-btn.is-on {
+  color: var(--cf-fg-bright);
+  background: var(--cf-btn-hover);
+  border-color: var(--cf-line-strong);
+}
+.lane-name {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; cursor: text; font-weight: 500;
+}
+.lane-name:hover { color: var(--cf-fg); }
+.lane-rename {
+  width: 100%; min-width: 0; font-size: var(--cf-fs-xs);
+  background: var(--cf-panel-deep); color: var(--cf-fg);
+  border: 1px solid var(--cf-line-strong); border-radius: var(--cf-r-s);
+  box-sizing: border-box;
+}
+
+/* 高度拖拽把手(lane 底边 5px 热区;hover 显形) */
+.lane-grip {
+  position: absolute; left: 0; right: 0; bottom: -3px; height: 6px;
+  cursor: ns-resize; z-index: var(--cf-z-lane-label);
+}
+.lane-grip:hover { background: var(--cf-accent-soft); opacity: .35; }
+
+/* 锁定轨:名称行斜纹衬底(非颜色单线索:右键菜单/按钮 aria-pressed 同步)+ 拒绝编辑光标 */
+.track.lane-locked .lane-label { font-style: normal; box-shadow: inset 0 -2px 0 var(--cf-warn-fg); }
+.track.lane-locked .clip { cursor: not-allowed; }
+.track.lane-locked .clip .edge { cursor: not-allowed; }
+.track.lane-locked-flash { animation: cf-shake var(--cf-dur-base) var(--cf-ease); }
+/* 静音/独奏:音频片段与波形灰化(亮度/饱和度,文本不受影响) */
+.track.lane-muted .clip { filter: saturate(.25) brightness(.72); }
+.track.lane-soloed .clip { box-shadow: inset 0 0 0 1px var(--cf-accent-soft), var(--cf-shadow-1); }
+
+/* 工具模式光标/命中区(T4.2 A/B/T;命中区只在 trim 工具下加宽) */
+#timeline-wrap.tool-select .clip { cursor: grab; }
+#timeline-wrap.blade-mode .clip { cursor: crosshair; }
+#timeline-wrap.trim-mode .clip { cursor: ew-resize; }
+#timeline-wrap.trim-mode .clip .edge { opacity: 1; width: var(--cf-edge-w-trim-tool); }
+
+/* slip 手势:内容平移预览(片段占位不动,内部纹理平移,js 直写 transform) */
+.clip.slip-preview { outline: 1px dashed var(--cf-accent-soft); }
+
+/* overlay(画中画)片段:虚线描边 + 左下角标(与选中态叠加时仍然可辨) */
+.clip.overlay { border-style: dashed; }
+.clip-pip {
+  position: absolute; left: 0; bottom: 0;
+  font-size: var(--cf-fs-xs); line-height: 1.2;
+  padding: 0 var(--cf-s1);
+  background: var(--cf-badge-bg); color: var(--cf-accent-soft);
+  border-top-right-radius: var(--cf-r-s); pointer-events: none;
+}

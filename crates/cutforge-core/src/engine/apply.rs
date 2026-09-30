@@ -5,7 +5,7 @@
 
 use super::invariants::enforce_no_overlap;
 use super::{Engine, Reject};
-use crate::command::Command;
+use crate::command::{Command, TrimEdge, TrimMode};
 use crate::model::Project;
 use crate::oplog::{Actor, Op, OpKind, OpTarget};
 use serde_json::Value;
@@ -172,8 +172,12 @@ impl Engine {
     }
 
     /// 命令 → (路径, before, after, 摘要)。变更就地生效;失败时调用方回滚快照。
+    /// 批量命令(ClipsInsert/ClipsPatch,册四 T4.7)委托 engine::batch(行数红线)。
     #[allow(clippy::type_complexity)]
     fn mutate(&mut self, cmd: Command) -> Result<(String, Value, Value, String, OpKind), Reject> {
+        if let Some(outcome) = self.mutate_dispatch_batch(&cmd) {
+            return outcome;
+        }
         let p = &mut self.project;
         match cmd {
             Command::ClipUpdate { clip_id, patch } => {
@@ -279,7 +283,10 @@ impl Engine {
                 let id = p.next_track_id(kind);
                 let path = "/tracks".to_string();
                 let before = serde_json::to_value(&p.tracks).unwrap();
-                p.tracks.push(crate::model::Track { id: id.clone(), kind, name: None, clips: Vec::new() });
+                p.tracks.push(crate::model::Track {
+                    id: id.clone(), kind, name: None, locked: None, mute: None,
+                    solo: None, hidden: None, height_px: None, color: None, clips: Vec::new(),
+                });
                 let after = serde_json::to_value(&p.tracks).unwrap();
                 Ok((path, before, after, format!("track_add {id}"), OpKind::Insert))
             }
@@ -320,6 +327,253 @@ impl Engine {
                 let before = serde_json::to_value(&p.bgm).unwrap_or(Value::Null);
                 p.bgm = None;
                 Ok(("/bgm".to_string(), before, Value::Null, "bgm_clear".to_string(), OpKind::Delete))
+            }
+            Command::ClipTrim { clip_id, mode, edge, delta_ms } => {
+                let (ti, ci) = p.find_clip(&clip_id).ok_or(Reject::UnknownClip(clip_id.clone()))?;
+                let d = delta_ms as i128;
+                // roll/slide 联动多片段 → Op 面为整轨 clips 数组;trim/slip 单片段
+                let multi = matches!(mode, TrimMode::Roll | TrimMode::Slide);
+                let path = if multi { clips_pointer(ti) } else { clip_pointer(ti, ci) };
+                let before = if multi {
+                    serde_json::to_value(&p.tracks[ti].clips).unwrap()
+                } else {
+                    serde_json::to_value(&p.tracks[ti].clips[ci]).unwrap()
+                };
+                match mode {
+                    TrimMode::Trim => {
+                        let clip = &mut p.tracks[ti].clips[ci];
+                        let (ns, nd) = match edge {
+                            TrimEdge::In => (clip.start_ms as i128 + d, clip.duration_ms as i128 - d),
+                            TrimEdge::Out => (clip.start_ms as i128, clip.duration_ms as i128 + d),
+                        };
+                        if ns < 0 {
+                            return Err(Reject::InvariantViolation(format!("trim 越出时间轴起点: start {ns}ms")));
+                        }
+                        if nd <= 0 {
+                            return Err(Reject::InvariantViolation(format!("trim 后时长必须 > 0: {nd}ms")));
+                        }
+                        if edge == TrimEdge::In
+                            && let Some(si) = clip.source_in_ms
+                        {
+                            let nsi = si as i128 + d;
+                            if nsi < 0 {
+                                return Err(Reject::InvariantViolation(format!("trim-in 越出素材入点: sourceIn {nsi}ms < 0")));
+                            }
+                            clip.source_in_ms = Some(nsi as u64);
+                        }
+                        clip.start_ms = ns as u64;
+                        clip.duration_ms = nd as u64;
+                        enforce_no_overlap(p, ti)?;
+                    }
+                    TrimMode::Slip => {
+                        // 内容平移:sourceInMs 平移,时间线占位不变;素材时长约束
+                        // (sourceIn+duration ≤ 素材长)在派发层经 ffprobe 承接(内核无媒体知识)
+                        let clip = &mut p.tracks[ti].clips[ci];
+                        let nsi = clip.source_in_ms.unwrap_or(0) as i128 + d;
+                        if nsi < 0 {
+                            return Err(Reject::InvariantViolation(format!("slip 越出素材入点: sourceIn {nsi}ms < 0")));
+                        }
+                        clip.source_in_ms = Some(nsi as u64);
+                    }
+                    TrimMode::Roll => {
+                        // 双边联动:与 clip 在 edge 侧**贴合**的相邻片段边界同移,总时长不变;
+                        // 无贴合邻居 → InvariantViolation(roll 需要相邻片段)
+                        let clip_start = p.tracks[ti].clips[ci].start_ms as i128;
+                        let clip_end = clip_start + p.tracks[ti].clips[ci].duration_ms as i128;
+                        let neighbor = match edge {
+                            TrimEdge::In => p.tracks[ti].clips.iter().position(|c| {
+                                c.id != clip_id && c.start_ms < clip_start as u64 && c.start_ms as i128 + c.duration_ms as i128 == clip_start
+                            }),
+                            TrimEdge::Out => p.tracks[ti].clips.iter().position(|c| {
+                                c.id != clip_id && c.start_ms as i128 == clip_end
+                            }),
+                        };
+                        let Some(ni) = neighbor else {
+                            return Err(Reject::InvariantViolation(format!(
+                                "roll 需要 {} 侧贴合相邻片段({clip_id} 的 {} 边界无邻居)",
+                                match edge { TrimEdge::In => "入点", TrimEdge::Out => "出点" },
+                                match edge { TrimEdge::In => "in", TrimEdge::Out => "out" })));
+                        };
+                        let nb = match edge {
+                            TrimEdge::In => clip_start + d,
+                            TrimEdge::Out => clip_end + d,
+                        };
+                        let left_bound = match edge { TrimEdge::In => p.tracks[ti].clips[ni].start_ms as i128, TrimEdge::Out => clip_start };
+                        let right_bound = match edge { TrimEdge::In => clip_end, TrimEdge::Out => {
+                            let n = &p.tracks[ti].clips[ni];
+                            n.start_ms as i128 + n.duration_ms as i128
+                        }};
+                        if nb <= left_bound {
+                            return Err(Reject::InvariantViolation(format!("roll 后边界一侧时长必须 > 0: 边界 {nb}ms ≤ {left_bound}ms")));
+                        }
+                        if nb >= right_bound {
+                            return Err(Reject::InvariantViolation(format!("roll 后边界另一侧时长必须 > 0: 边界 {nb}ms ≥ {right_bound}ms")));
+                        }
+                        match edge {
+                            TrimEdge::In => {
+                                let shift = nb - clip_start;
+                                let n = &mut p.tracks[ti].clips[ni];
+                                n.duration_ms = (nb - n.start_ms as i128) as u64;
+                                let c = &mut p.tracks[ti].clips[ci];
+                                c.start_ms = nb as u64;
+                                c.duration_ms = (clip_end - nb) as u64;
+                                if let Some(si) = c.source_in_ms {
+                                    c.source_in_ms = Some((si as i128 + shift) as u64);
+                                }
+                            }
+                            TrimEdge::Out => {
+                                let n = &mut p.tracks[ti].clips[ni];
+                                let shift = nb - n.start_ms as i128;
+                                n.duration_ms = ((n.start_ms + n.duration_ms) as i128 - nb) as u64;
+                                n.start_ms = nb as u64;
+                                if let Some(si) = n.source_in_ms {
+                                    n.source_in_ms = Some((si as i128 + shift) as u64);
+                                }
+                                let c = &mut p.tracks[ti].clips[ci];
+                                c.duration_ms = (nb - clip_start) as u64;
+                            }
+                        }
+                    }
+                    TrimMode::Slide => {
+                        // 位置平移:内容窗不变,贴合邻居随之让位(邻居边界跟随闭合)/压缩;
+                        // 非贴合邻居不动,越界相撞交 enforce_no_overlap 裁决
+                        let clip = &p.tracks[ti].clips[ci];
+                        let old_start = clip.start_ms as i128;
+                        let dur = clip.duration_ms as i128;
+                        let old_end = old_start + dur;
+                        let ns = old_start + d;
+                        if ns < 0 {
+                            return Err(Reject::InvariantViolation(format!("slide 越出时间轴起点: start {ns}ms")));
+                        }
+                        let ne = ns + dur;
+                        let li = p.tracks[ti].clips.iter().position(|c| {
+                            c.id != clip_id && c.start_ms as i128 + c.duration_ms as i128 == old_start
+                        });
+                        let ri = p.tracks[ti].clips.iter().position(|c| {
+                            c.id != clip_id && c.start_ms as i128 == old_end
+                        });
+                        if let Some(li) = li {
+                            let l = &mut p.tracks[ti].clips[li];
+                            let l_start = l.start_ms as i128;
+                            if ns <= l_start {
+                                return Err(Reject::InvariantViolation(format!(
+                                    "slide 后左邻时长必须 > 0: 新边界 {ns}ms ≤ 左邻起点 {l_start}ms")));
+                            }
+                            l.duration_ms = (ns - l_start) as u64;
+                        }
+                        if let Some(ri) = ri {
+                            let r = &mut p.tracks[ti].clips[ri];
+                            let r_end = (r.start_ms + r.duration_ms) as i128;
+                            if ne >= r_end {
+                                return Err(Reject::InvariantViolation(format!(
+                                    "slide 后右邻时长必须 > 0: 新边界 {ne}ms ≥ 右邻终点 {r_end}ms")));
+                            }
+                            let shift = ne - r.start_ms as i128;
+                            r.duration_ms = (r_end - ne) as u64;
+                            r.start_ms = ne as u64;
+                            if let Some(si) = r.source_in_ms {
+                                r.source_in_ms = Some((si as i128 + shift) as u64);
+                            }
+                        }
+                        p.tracks[ti].clips[ci].start_ms = ns as u64;
+                        enforce_no_overlap(p, ti)?;
+                    }
+                }
+                let after = if multi {
+                    serde_json::to_value(&p.tracks[ti].clips).unwrap()
+                } else {
+                    serde_json::to_value(&p.tracks[ti].clips[ci]).unwrap()
+                };
+                let label = match mode {
+                    TrimMode::Trim => format!("clip_trim {clip_id} {} {delta_ms:+}ms", match edge { TrimEdge::In => "in", TrimEdge::Out => "out" }),
+                    TrimMode::Roll => format!("clip_trim roll {clip_id} {} {delta_ms:+}ms(边界联动)", match edge { TrimEdge::In => "in", TrimEdge::Out => "out" }),
+                    TrimMode::Slip => format!("clip_trim slip {clip_id} {delta_ms:+}ms(内容平移)"),
+                    TrimMode::Slide => format!("clip_trim slide {clip_id} {delta_ms:+}ms(位置平移)"),
+                };
+                Ok((path, before, after, label, if matches!(mode, TrimMode::Slide) { OpKind::Move } else { OpKind::Set }))
+            }
+            Command::ClipSplitAll { t_ms } => {
+                let path = "/tracks".to_string();
+                let before = serde_json::to_value(&p.tracks).unwrap();
+                let mut n = 0usize;
+                for track in p.tracks.iter_mut() {
+                    // 先收集命中下标再改,避免插队导致的下标漂移
+                    let hits: Vec<usize> = track.clips.iter().enumerate()
+                        .filter(|(_, c)| c.start_ms < t_ms && t_ms < c.start_ms + c.duration_ms)
+                        .map(|(i, _)| i)
+                        .collect();
+                    for (offset, i) in hits.into_iter().enumerate() {
+                        let ci = i + offset;
+                        let start = track.clips[ci].start_ms;
+                        let end = start + track.clips[ci].duration_ms;
+                        let src_shift = t_ms - start;
+                        let mut right = track.clips[ci].clone();
+                        right.id = Project::next_clip_id(track);
+                        right.start_ms = t_ms;
+                        right.duration_ms = end - t_ms;
+                        right.source_in_ms = right.source_in_ms.map(|s| s + src_shift);
+                        right.text = None; // 文本归属左段(与 clip_split 同语义)
+                        track.clips[ci].duration_ms = t_ms - start;
+                        track.clips.insert(ci + 1, right);
+                        n += 1;
+                    }
+                }
+                let after = serde_json::to_value(&p.tracks).unwrap();
+                Ok((path, before, after, format!("clip_split_all @{t_ms}({n} 段)"), OpKind::Split))
+            }
+            Command::TrackUpdate { track_id, patch } => {
+                if patch.is_empty() {
+                    return Err(Reject::EmptyPatch(track_id));
+                }
+                let ti = p.find_track(&track_id).ok_or(Reject::UnknownTrack(track_id.clone()))?;
+                let path = format!("/tracks/{ti}");
+                let before = serde_json::to_value(&p.tracks[ti]).unwrap();
+                let changes = patch.apply_to(&mut p.tracks[ti]);
+                let summary = if changes.is_empty() {
+                    "无实际变更".to_string()
+                } else {
+                    changes.iter().map(|(ptr, o, n)| format!("{ptr}: {o}→{n}")).collect::<Vec<_>>().join(", ")
+                };
+                let after = serde_json::to_value(&p.tracks[ti]).unwrap();
+                Ok((path, before, after, format!("track_update {track_id}: {summary}"), OpKind::Set))
+            }
+            Command::ClipGapDelete { track_id, t_ms } => {
+                let ti = p.find_track(&track_id).ok_or(Reject::UnknownTrack(track_id.clone()))?;
+                let before = serde_json::to_value(&p.tracks[ti].clips).unwrap();
+                let clips = &mut p.tracks[ti].clips;
+                if clips.is_empty() {
+                    return Err(Reject::InvariantViolation(format!("{track_id} 轨上无片段,无间隙可删")));
+                }
+                // 按 start 排序的视图定位包含 t_ms 的间隙 [prev_end, next_start);
+                // 首段之前的空档视作 [0, first.start)
+                let mut order: Vec<usize> = (0..clips.len()).collect();
+                order.sort_by_key(|&i| clips[i].start_ms);
+                let mut prev_end: u64 = 0;
+                let mut gap: Option<(u64, u64)> = None;
+                for &i in &order {
+                    let s = clips[i].start_ms;
+                    if s > prev_end && prev_end <= t_ms && t_ms < s {
+                        gap = Some((prev_end, s));
+                        break;
+                    }
+                    prev_end = prev_end.max(s + clips[i].duration_ms);
+                }
+                let (gs, ge) = gap.ok_or_else(|| {
+                    Reject::InvariantViolation(format!("t_ms={t_ms} 处无间隙可删(位于片段内部或全部片段之后)"))
+                })?;
+                let shift = ge - gs;
+                for c in clips.iter_mut() {
+                    if c.start_ms >= ge {
+                        c.start_ms -= shift;
+                    }
+                }
+                let after = serde_json::to_value(&p.tracks[ti].clips).unwrap();
+                Ok((clips_pointer(ti), before, after,
+                    format!("clip_gap_delete {track_id}@{t_ms} 闭合 {shift}ms"), OpKind::Move))
+            }
+            // 批量命令(册四 T4.7):mutate 入口已委托 engine::batch,此臂仅穷尽性
+            Command::ClipsInsert { .. } | Command::ClipsPatch { .. } => {
+                unreachable!("批量命令已在 mutate 入口分派(engine::batch)")
             }
         }
     }

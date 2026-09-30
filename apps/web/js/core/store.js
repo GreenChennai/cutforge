@@ -125,6 +125,7 @@ export const mediaStore = createStore("media", {
  * connBanner:断连/网络错误横幅文本(T3.4 接线:api 层 net 事件写入,恢复自动收起)。
  * connBadge:事件通道连接态徽标(A2 遗留接线:testid=conn-badge)。
  * blade:切割模式(B 键;会话开关,光标变刀,点击片段即分割)。
+ * tool:工具模式(T4.2:A 选择/B 刀/T 裁剪;blade 字段由 tool 派生兼容旧读点)。
  * panelsOpen:侧面板开合(Tab 键;视图态)。 */
 export const uiStore = createStore("ui", {
   tab: "timeline",
@@ -135,18 +136,28 @@ export const uiStore = createStore("ui", {
   connBadge: "连接中…",
   connBadgeState: "init",
   blade: false,
+  tool: "select",
   panelsOpen: true,
   conflicts: 0,
   internalErrors: 0,
   uiFields: null,
+  catalogs: null,  // 册四 T4.5~T4.7:GET /catalogs 目录(转场/fx/motion/花字;派生面可重建)
 });
 
-/** 临时投影(ADR-0013):拖拽 ghost/吸附线/轨头视图隐藏/会话标记。物理隔离 + 强制前缀。 */
+/** 临时投影(ADR-0013):拖拽 ghost/吸附线/轨头视图隐藏/会话标记。物理隔离 + 强制前缀。
+ * T4.1/T4.3 增:recentMedia(素材最近使用,会话序)/ historyMarks(历史快照标记)。
+ * T4.2 增:trimLineMs(roll/slide 边界拖拽指示线,ephemeral 不落盘)。
+ * T4.8 增:beats(audio_beats 会话节拍 {src,bpm,beats[],confidence,at};不落盘,
+ * 吸附候选源之一 + 标尺旗标;刷新即失,重按「检测节拍」再生)。 */
 export const ephemeralStore = createStore("ephemeral", {
   dragGhost: null,   // {clipId, trackId, startMs, durationMs, trim:"l"|"r"|null}
   snapMs: null,      // 吸附指示线位置(ms)
+  trimLineMs: null,  // roll/slide 共享边界拖拽指示线(ms)
   hiddenTracks: [],  // 眼睛开关(视图隐藏;不落盘,刷新即回默认)
   markers: [],       // 会话标记 ms 列表(T3.4:M 键;ephemeral 不落盘不进 IR)
+  recentMedia: [],   // 最近使用素材 path 序(插入即前插;会话态)
+  historyMarks: [],  // 历史面板快照标记 [{rev,label,t}](导出/批量前自动打标)
+  beats: null,       // audio_beats 会话节拍 {src,bpm,beats[],confidence,degraded}
 }, { ephemeral: true });
 
 /** 调试面:全局 patch 记录(测试断言 ephemeral.* 前缀纪律用)。 */

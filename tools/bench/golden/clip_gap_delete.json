@@ -1,0 +1,25 @@
+{
+ "tool": "clip_gap_delete",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "trackId": "V1",
+    "tMs": 1900
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-26"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

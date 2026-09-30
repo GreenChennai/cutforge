@@ -1,0 +1,26 @@
+{
+ "tool": "subtitle_replace",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "find": "第一句",
+    "replace": "改一句"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-34"
+     ],
+     "replaced": 1,
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

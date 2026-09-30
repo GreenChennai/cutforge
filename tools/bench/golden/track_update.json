@@ -1,0 +1,52 @@
+{
+ "tool": "track_update",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "trackId": "T1",
+    "patch": {
+     "name": "字幕轨",
+     "color": "#22CC88",
+     "heightPx": 120
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-23"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "trackId": "A1",
+    "patch": {
+     "mute": true,
+     "solo": false
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-24"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -2,7 +2,7 @@
 //! 命令定义(计划书 2.6):命令是唯一的写入口,任何状态变更都表达为一条 Command,
 //! 由 Engine::apply 翻译为 Op。不存在"直接赋值"的旁路。
 
-use crate::model::Clip;
+use crate::model::{Clip, Crop, FxSpec, SpeedPoint};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -32,6 +32,12 @@ pub struct MotionPatch {
     pub out: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub out_ms: Option<f64>,
+    /// 入场直通别名 mo.<id>(册四 T4.6;声明时优先于 in 枚举)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_fx: Option<String>,
+    /// 出场直通别名 mo.<id>(册四 T4.6)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out_fx: Option<String>,
 }
 
 /// 工程级背景乐 patch(对应 doc.bgm;项目级字段,不经 ClipPatch)。
@@ -62,20 +68,57 @@ pub struct ClipPatch {
     pub source_in_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed: Option<f64>,
+    /// 分段速度曲线(册四 A4 T4.4):整组替换(数组在三路合并中整体为一个值,语义一致)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_curve: Option<Vec<SpeedPoint>>,
+    /// 倒放开关(册四 A4 T4.4)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse: Option<bool>,
+    /// 旋转角度(度;册四 A4 T4.9)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<f64>,
+    /// 源域裁剪矩形(册四 A4 T4.9):整对象替换(原子构图操作)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<Crop>,
+    /// 翻转(none/h/v;册四 A4 T4.9)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flip: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<f64>,
+    /// 降噪档(册四 A4 T4.8):off/low/mid/high(混音链 afftdn)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denoise: Option<String>,
+    /// 保速变调半音档(册四 A4 T4.8;±12,混音链 asetrate+atempo 补偿)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// 文本样式(册四 A4 T4.7):整对象替换(与 crop 同为原子样式操作;
+    /// 渲染端 ADR-0016 ASS 生成消费)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<crate::text_style::TextStyle>,
+    /// 花字挂载(册四 T4.7):整对象替换(template+params)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub huazi: Option<crate::text_style::Huazi>,
+    /// 花字显式清除(册四收口):clip_update patch.huazi = null / {} 的承接位——
+    /// Option<Huazi> 表达不了「从有到无」,以独立布尔承载清除语义(serde default
+    /// 保证既有 oplog 回放零迁移);与 huazi 同现时清除胜出(派发层互斥构造)。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub huazi_clear: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freeze_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<TransitionPatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion: Option<MotionPatch>,
+    /// 片段特效(册四 A4 T4.6):整对象替换(与 crop 同为原子构图/风格操作;
+    /// combo 数组上限 3 在 schema 层界,数组顺序即应用顺序)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx: Option<FxSpec>,
 }
 
 impl ClipPatch {
@@ -94,6 +137,90 @@ impl MotionPatch {
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
     }
+}
+
+/// 轨道属性 patch(对应 MCP `track_update`;册四 A4 T4.2):只改出现的字段
+/// (None = 不改),字段级 Op 的 before/after 由此派生。静音/独奏/隐藏的
+/// 渲染混音联动候 BE3,本册只保证 IR 字段 + 命令 + 契约链就位。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackPatch {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mute: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_px: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+impl TrackPatch {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// 应用到 track 并返回字段级变更(指针相对 track 对象,即 /tracks/{i}/…)。
+    pub fn apply_to(self, track: &mut crate::model::Track) -> Vec<FieldChange> {
+        let mut changes: Vec<FieldChange> = Vec::new();
+        let mut record = |name: &str, old: Value, new: Value| {
+            if old != new {
+                changes.push((format!("/{name}"), old, new));
+            }
+        };
+        if let Some(v) = self.name {
+            let old = track.name.replace(v.clone());
+            record("name", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
+        if let Some(v) = self.locked {
+            let old = track.locked.replace(v);
+            record("locked", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.mute {
+            let old = track.mute.replace(v);
+            record("mute", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.solo {
+            let old = track.solo.replace(v);
+            record("solo", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.hidden {
+            let old = track.hidden.replace(v);
+            record("hidden", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.height_px {
+            let old = track.height_px.replace(v);
+            record("heightPx", opt_json_num(old), json_num(v));
+        }
+        if let Some(v) = self.color {
+            let old = track.color.replace(v.clone());
+            record("color", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
+        changes
+    }
+}
+
+/// `clip_trim` 模式(册四 A4 T4.2):trim 单边伸缩 / roll 边界双边联动 /
+/// slip 内容平移 / slide 位置平移。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimMode {
+    Trim,
+    Roll,
+    Slip,
+    Slide,
+}
+
+/// `clip_trim` 的作用边(边缘;trim/roll 必给,slip/slide 不适用)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrimEdge {
+    In,
+    Out,
 }
 
 impl BgmPatch {
@@ -165,6 +292,23 @@ pub enum Command {
     BgmSet { patch: BgmPatch },
     /// 清除工程级背景乐(已无 bgm 时幂等)。
     BgmClear,
+    /// 片段修剪(册四 A4 T4.2 四模式):trim 单边伸缩(edge 必给)/
+    /// roll 相邻边界双边联动(总时长不变)/ slip 内容平移(sourceInMs 平移,
+    /// 时间线占位不变)/ slide 位置平移(贴合邻居让位/压缩)。
+    /// 硬约束(时长>0、不越 0、无重叠)违反返回既有 InvariantViolation/NotAdjacent。
+    ClipTrim { clip_id: String, mode: TrimMode, edge: TrimEdge, delta_ms: i64 },
+    /// 播放头处**所有轨**命中的片段一次全分割(单 Op;切点在片段内部才切)。
+    ClipSplitAll { t_ms: u64 },
+    /// 轨道属性 patch(幂等;None 字段不改)。
+    TrackUpdate { track_id: String, patch: TrackPatch },
+    /// 删除片段间间隙:定位轨上包含 t_ms 的间隙,后继片段整体左移闭合(单 Op 原子)。
+    ClipGapDelete { track_id: String, t_ms: u64 },
+    /// 批量插入片段(册四 A4 T4.7 subtitle_import):单 Op 原子——任一片段
+    /// id 重复或落点重叠则整批拒绝;id 已由派发层确定性分配。
+    ClipsInsert { to_track: String, clips: Vec<Clip>, request_id: Option<String> },
+    /// 批量改片段属性(册四 A4 T4.7 subtitle_replace 批量替换):单 Op 原子,
+    /// 每个 (clipId, patch) 独立按字段合并;任一 clipId 不存在则整批拒绝。
+    ClipsPatch { updates: Vec<(String, ClipPatch)> },
 }
 
 /// 从 patch 派生的字段级变更(指针片段 → before/after),用于生成叶级 Op。
@@ -199,10 +343,44 @@ impl ClipPatch {
             clip.speed = Some(v);
             record("speed", opt_json_f64(old), json_f64(v));
         }
+        if let Some(v) = self.speed_curve {
+            let old = clip.speed_curve.replace(v.clone());
+            record("speedCurve",
+                   old.map(|ps| json_points(&ps)).unwrap_or(Value::Null),
+                   json_points(&v));
+        }
+        if let Some(v) = self.reverse {
+            let old = clip.reverse;
+            clip.reverse = Some(v);
+            record("reverse", opt_json_bool(old), Value::from(v));
+        }
+        if let Some(v) = self.rotation {
+            let old = clip.rotation;
+            clip.rotation = Some(v);
+            record("rotation", opt_json_f64(old), json_f64(v));
+        }
+        if let Some(v) = self.crop {
+            let old = clip.crop.replace(v);
+            record("crop", old.map(|c| serde_json::to_value(c).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                   serde_json::to_value(v).unwrap_or(Value::Null));
+        }
+        if let Some(v) = self.flip {
+            let old = clip.flip.replace(v.clone());
+            record("flip", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
         if let Some(v) = self.volume {
             let old = clip.volume;
             clip.volume = Some(v);
             record("volume", opt_json_f64(old), json_f64(v));
+        }
+        if let Some(v) = self.denoise {
+            let old = clip.denoise.replace(v.clone());
+            record("denoise", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
+        if let Some(v) = self.pitch {
+            let old = clip.pitch;
+            clip.pitch = Some(v);
+            record("pitch", opt_json_f64(old), json_f64(v));
         }
         if let Some(v) = self.opacity {
             let old = clip.opacity;
@@ -218,6 +396,32 @@ impl ClipPatch {
             let old = clip.text.take();
             clip.text = Some(v.clone());
             record("text", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+        }
+        if let Some(v) = self.text_style {
+            // 整对象替换(册四 T4.7;与 crop 同口径原子操作)
+            let old = clip.text_style.replace(v.clone());
+            record(
+                "textStyle",
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                serde_json::to_value(v).unwrap_or(Value::Null),
+            );
+        }
+        if let Some(v) = self.huazi {
+            let old = clip.huazi.replace(v.clone());
+            record(
+                "huazi",
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                serde_json::to_value(v).unwrap_or(Value::Null),
+            );
+        }
+        if self.huazi_clear {
+            // 显式清除(册四收口;huazi_clear 与 huazi 同现时清除胜出,replay 稳健)
+            let old = clip.huazi.take();
+            record(
+                "huazi",
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                Value::Null,
+            );
         }
         if let Some(v) = self.freeze_ms {
             let old = clip.freeze_ms;
@@ -262,6 +466,23 @@ impl ClipPatch {
                 let old = m.out_ms.replace(v);
                 record("motion/outMs", opt_json_f64(old), json_f64(v));
             }
+            if let Some(v) = mp.in_fx {
+                let old = m.in_fx.replace(v.clone());
+                record("motion/inFx", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+            if let Some(v) = mp.out_fx {
+                let old = m.out_fx.replace(v.clone());
+                record("motion/outFx", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            }
+        }
+        if let Some(fx) = self.fx {
+            // 整对象替换(册四 T4.6;与 crop 同口径原子操作)
+            let old = clip.fx.replace(fx.clone());
+            record(
+                "fx",
+                old.map(|f| serde_json::to_value(f).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                serde_json::to_value(fx).unwrap_or(Value::Null),
+            );
         }
         changes
     }
@@ -275,6 +496,10 @@ fn opt_json_num(v: Option<u64>) -> Value {
     v.map(json_num).unwrap_or(Value::Null)
 }
 
+fn opt_json_bool(v: Option<bool>) -> Value {
+    v.map(Value::from).unwrap_or(Value::Null)
+}
+
 fn json_f64(v: f64) -> Value {
     serde_json::Number::from_f64(v).map(Value::Number).unwrap_or(Value::Null)
 }
@@ -283,9 +508,15 @@ fn opt_json_f64(v: Option<f64>) -> Value {
     v.map(json_f64).unwrap_or(Value::Null)
 }
 
+/// 速度曲线点集 → JSON 数组([{atMs, speed}, …];serde 形态与 Clip 落盘逐字一致)。
+fn json_points(v: &[SpeedPoint]) -> Value {
+    Value::Array(v.iter().map(|p| serde_json::to_value(p).unwrap_or(Value::Null)).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::FxEntry;
 
     fn clip() -> Clip {
         serde_json::from_value(serde_json::json!({
@@ -303,21 +534,39 @@ mod tests {
             duration_ms: Some(8000),
             source_in_ms: Some(12100),
             speed: Some(1.25),
+            speed_curve: Some(vec![SpeedPoint { at_ms: 0, speed: 1.25 }]),
+            reverse: Some(false),
+            rotation: Some(0.0),
+            crop: Some(Crop { x: 0, y: 0, w: 320, h: 240 }),
+            flip: Some("none".into()),
             volume: Some(0.8),
+            denoise: Some("high".into()),
+            pitch: Some(3.0),
             opacity: Some(0.5),
             scale: Some(1.1),
             text: Some("字幕".into()),
+            text_style: Some(crate::text_style::TextStyle { color: Some("#FFCC00".into()), ..Default::default() }),
+            huazi: Some(crate::text_style::Huazi { template: "hz.pop".into(), params: None }),
+            huazi_clear: false,
             freeze_ms: Some(300),
             transition: Some(TransitionPatch { type_: Some("fade".into()), dur_ms: Some(300.0), ..Default::default() }),
             motion: Some(MotionPatch { in_: Some("fadeIn".into()), ..Default::default() }),
+            fx: None,
         }
         .apply_to(&mut c);
-        assert_eq!(changes.len(), 12);
+        assert_eq!(changes.len(), 21);
         assert_eq!(c.start_ms, 100);
         assert_eq!(c.duration_ms, 8000);
         assert_eq!(c.source_in_ms, Some(12100));
         assert_eq!(c.speed, Some(1.25));
+        assert_eq!(c.speed_curve.as_ref().unwrap().len(), 1);
+        assert_eq!(c.reverse, Some(false));
+        assert_eq!(c.rotation, Some(0.0));
+        assert_eq!(c.crop, Some(Crop { x: 0, y: 0, w: 320, h: 240 }));
+        assert_eq!(c.flip.as_deref(), Some("none"));
         assert_eq!(c.volume, Some(0.8));
+        assert_eq!(c.denoise.as_deref(), Some("high"));
+        assert_eq!(c.pitch, Some(3.0));
         assert_eq!(c.opacity, Some(0.5));
         assert_eq!(c.scale, Some(1.1));
         assert_eq!(c.text.as_deref(), Some("字幕"));
@@ -342,6 +591,61 @@ mod tests {
         let mut c = clip();
         let changes = ClipPatch { volume: Some(1.0), ..Default::default() }.apply_to(&mut c);
         assert!(changes.is_empty(), "同值字段不得计入变更");
+    }
+
+    /// 册四 A4 T4.4/T4.9:速度/时间与变换五字段(speedCurve/reverse/rotation/crop/flip)
+    /// 的 patch 合并语义:整组替换、同值不产变更、None 不改、undo 用的 before/after 成对。
+    #[test]
+    fn time_transform_patch_replaces_whole_value() {
+        let mut c = clip(); // volume=1.0,无新字段
+        let changes = ClipPatch {
+            speed_curve: Some(vec![
+                SpeedPoint { at_ms: 0, speed: 0.5 },
+                SpeedPoint { at_ms: 1000, speed: 2.0 },
+            ]),
+            reverse: Some(true),
+            rotation: Some(-90.0),
+            crop: Some(Crop { x: 10, y: 0, w: 160, h: 120 }),
+            flip: Some("h".into()),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(changes.len(), 5);
+        let m: std::collections::BTreeMap<String, (Value, Value)> =
+            changes.into_iter().map(|(p, o, n)| (p, (o, n))).collect();
+        // before 均为 Null(字段此前缺席);after 与落盘形态逐字一致
+        let (o, n) = m.get("/speedCurve").unwrap();
+        assert_eq!(*o, Value::Null);
+        assert_eq!(n[0]["atMs"], serde_json::json!(0));
+        assert_eq!(n[1]["speed"], serde_json::json!(2.0));
+        assert_eq!(m.get("/reverse").unwrap().1, serde_json::json!(true));
+        assert_eq!(m.get("/rotation").unwrap().1, serde_json::json!(-90.0));
+        let (_, cn) = m.get("/crop").unwrap();
+        assert_eq!(cn["w"], serde_json::json!(160));
+        assert_eq!(m.get("/flip").unwrap().1, serde_json::json!("h"));
+        assert_eq!(c.speed_curve.as_ref().unwrap().len(), 2);
+        assert_eq!(c.crop, Some(Crop { x: 10, y: 0, w: 160, h: 120 }));
+
+        // 同值重复应用:零变更(幂等)
+        let changes = ClipPatch {
+            speed_curve: Some(vec![
+                SpeedPoint { at_ms: 0, speed: 0.5 },
+                SpeedPoint { at_ms: 1000, speed: 2.0 },
+            ]),
+            reverse: Some(true),
+            rotation: Some(-90.0),
+            crop: Some(Crop { x: 10, y: 0, w: 160, h: 120 }),
+            flip: Some("h".into()),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert!(changes.is_empty(), "同值整组替换不得计入变更: {changes:?}");
+
+        // 部分合并:只改 rotation,其余保持(None 不改)
+        let changes = ClipPatch { rotation: Some(45.0), ..Default::default() }.apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(c.rotation, Some(45.0));
+        assert_eq!(c.flip.as_deref(), Some("h"), "未给出的字段不得被清掉");
     }
 
     /// 嵌套子 patch 合并语义:None 不改;Some 只覆盖给出的字段(部分合并);
@@ -405,6 +709,52 @@ mod tests {
         assert!(changes.is_empty(), "同值嵌套字段不得计入变更: {changes:?}");
     }
 
+    /// fx patch(册四 T4.6):整对象替换;先建后换;指针恒为 /fx;
+    /// combo 数组顺序即应用顺序;同值不产变更。
+    #[test]
+    fn fx_patch_replaces_whole_object() {
+        let mut c = clip();
+        assert!(c.fx.is_none());
+        // 首次:新建 + 一条变更
+        let changes = ClipPatch {
+            fx: Some(FxSpec {
+                combo: Some(vec![
+                    FxEntry { fx: "fx.mono".into(), params: None },
+                    FxEntry {
+                        fx: "fx.grain".into(),
+                        params: Some(serde_json::from_str(r#"{"strength":24}"#).unwrap()),
+                    },
+                ]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, "/fx");
+        let fx = c.fx.as_ref().unwrap();
+        assert_eq!(fx.combo.as_ref().unwrap()[0].fx, "fx.mono");
+        assert_eq!(fx.combo.as_ref().unwrap()[1].fx, "fx.grain");
+        // 覆盖:整对象替换(不逐项合并),combo 被换掉、in 槽位出现
+        let changes = ClipPatch {
+            fx: Some(FxSpec { in_: Some(FxEntry { fx: "mo.fadeIn".into(), params: None }), ..Default::default() }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, "/fx");
+        let fx = c.fx.as_ref().unwrap();
+        assert!(fx.combo.is_none(), "整对象替换:旧 combo 不得残留");
+        assert_eq!(fx.in_.as_ref().unwrap().fx, "mo.fadeIn");
+        // 同值不产变更
+        let changes = ClipPatch {
+            fx: Some(FxSpec { in_: Some(FxEntry { fx: "mo.fadeIn".into(), params: None }), ..Default::default() }),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert!(changes.is_empty(), "同值 fx 不得计入变更: {changes:?}");
+    }
+
     /// BgmPatch:合并语义 + 无 bgm 时按 schema 默认新建;is_empty 口径。
     #[test]
     fn bgm_patch_merges_and_creates_with_schema_defaults() {
@@ -439,4 +789,5 @@ mod tests {
         assert!(BgmPatch::default().is_empty());
         assert!(!BgmPatch { src: Some("x".into()), ..Default::default() }.is_empty());
     }
+
 }

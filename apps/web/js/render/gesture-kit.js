@@ -2,8 +2,8 @@
  * 与具体手势解耦:clip 移动/trim/框选/标尺 scrub 在 gestures.js,素材拖放走 HTML5 DnD。 */
 
 import { h } from "../ui/dom.js";
-import { PX_PER_MS, snapMs, frameMsOf } from "../core/model.js";
-import { projectStore, uiStore, selectionStore } from "../core/store.js";
+import { PX_PER_MS, snapMs, frameMsOf, msAdd } from "../core/model.js";
+import { projectStore, timelineStore, uiStore, selectionStore, ephemeralStore } from "../core/store.js";
 import { pulseSnap } from "./playhead.js";
 
 export const THRESHOLD_PX = 3;     // 点击/拖拽判定阈值
@@ -138,14 +138,93 @@ export function edgeScroll(wrap) {
   };
 }
 
-/* ---------------- 吸附候选(播放头半径优先,否则帧磁吸)+ 对齐脉冲 ---------------- */
+/* ---------------- 吸附体系(T4.2 统一候选源;T4.8 增节拍)----------------
+ * 候选源:帧网格(既有)/ 片段边缘 / 播放头 / 会话标记 / 会话节拍(audio_beats);
+ * 主开关 = 磁吸 checkbox;强度档(prefs snapStrength):loose=仅帧网格,
+ * standard=+播放头/片段边缘/节拍(8px),strong=+标记(12px)。
+ * 优先级:播放头 > 标记 > 节拍 > 片段边缘 > 帧网格。 */
+import { pref } from "../ui/prefs.js";
 
-export function snapCandidate(ms) {
-  const ph = selectionStore.get().playheadMs || 0;
-  if (ph > 0 && Math.abs(ms - ph) <= PLAYHEAD_SNAP_PX / PX_PER_MS) {
-    return { ms: Math.max(0, Math.round(ph)), playhead: true };
+export const SNAP_RADIUS_PX = 8;      // standard 档吸附半径
+export const SNAP_RADIUS_STRONG_PX = 12;
+
+/** 当前吸附半径(px;强度档)。 */
+export function snapRadiusPx() {
+  return pref("snapStrength", "standard") === "strong" ? SNAP_RADIUS_STRONG_PX : SNAP_RADIUS_PX;
+}
+
+/** 就近节拍(standard 档候选;无节拍/未开磁吸返回 null)。 */
+function beatCandidate(ms, radius) {
+  const beats = ephemeralStore.get().beats;
+  if (!beats || !Array.isArray(beats.beats) || !beats.beats.length) return null;
+  let best = null;
+  let bestDist = radius;
+  for (const b of beats.beats) {
+    const d = Math.abs(msAdd(ms, -b));
+    if (d <= bestDist) { bestDist = d; best = b; }
   }
-  return { ms: Math.max(0, snapAt(ms)), playhead: false };
+  return best;
+}
+
+/**
+ * 统一吸附候选(T4.2/T4.8):@param excludeIds 排除自身片段(拖拽中的 clip 边缘不作候选)。
+ * @returns {{ ms: number, playhead: boolean, source: string }} source ∈ frame|edge|playhead|marker|beat
+ */
+export function snapCandidateEx(ms, excludeIds = []) {
+  if (!uiStore.get().magnet) return { ms: Math.max(0, Math.round(ms)), playhead: false, source: "frame" };
+  const radius = snapRadiusPx() / PX_PER_MS;
+  const strength = pref("snapStrength", "standard");
+  // 1) 播放头(半径优先,旧口径)
+  const ph = selectionStore.get().playheadMs || 0;
+  if (strength !== "loose" && ph > 0 && Math.abs(msAdd(ms, -ph)) <= radius) {
+    return { ms: Math.max(0, Math.round(ph)), playhead: true, source: "playhead" };
+  }
+  // 2) 会话标记(strong 档)
+  if (strength === "strong") {
+    for (const m of ephemeralStore.get().markers || []) {
+      if (Math.abs(msAdd(ms, -m)) <= radius) {
+        return { ms: Math.max(0, Math.round(m)), playhead: false, source: "marker" };
+      }
+    }
+  }
+  // 3) 会话节拍(standard 档;audio_beats 会话结果,吸附体系合并口)
+  if (strength !== "loose") {
+    const beat = beatCandidate(ms, radius);
+    if (beat !== null) return { ms: Math.max(0, Math.round(beat)), playhead: false, source: "beat" };
+  }
+  // 4) 片段边缘(全部投影行的 start/end;排除拖拽自身与隐藏轨)
+  if (strength !== "loose") {
+    const hidden = new Set(ephemeralStore.get().hiddenTracks || []);
+    const rows = timelineStore.get().clips || [];
+    let best = null;
+    let bestDist = radius;
+    for (const c of rows) {
+      if (excludeIds.includes(c.id) || hidden.has(c.track)) continue;
+      for (const edge of [c.startMs, c.endMs]) {
+        const d = Math.abs(msAdd(ms, -edge));
+        if (d <= bestDist) { bestDist = d; best = edge; }
+      }
+    }
+    if (best !== null) return { ms: Math.max(0, Math.round(best)), playhead: false, source: "edge" };
+  }
+  // 5) 帧网格(旧缺省)
+  return { ms: Math.max(0, snapAt(ms)), playhead: false, source: "frame" };
+}
+
+/** 旧签名兼容:单参版本(拖拽移动/标尺 scrub 沿用;无排除集)。 */
+export function snapCandidate(ms) {
+  const c = snapCandidateEx(ms, []);
+  return { ms: c.ms, playhead: c.source === "playhead" };
+}
+
+/**
+ * 标尺 scrub 专用节拍吸附(播放头吸附节拍;仅磁吸开 + 非 loose + 已检测节拍时生效;
+ * 不引入边缘候选,标尺旧口径零漂移,e2e 兼容红线)。无命中返回 null。
+ */
+export function snapBeatScrub(ms) {
+  if (!uiStore.get().magnet) return null;
+  if (pref("snapStrength", "standard") === "loose") return null;
+  return beatCandidate(ms, snapRadiusPx() / PX_PER_MS);
 }
 
 /** 对齐脉冲(磁性提示):吸附值变化时 80ms 一次;限频防频闪。 */

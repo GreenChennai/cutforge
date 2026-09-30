@@ -103,12 +103,46 @@ pub struct Clip {
     pub source_in_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub speed: Option<f64>,
+    /// 分段速度曲线(册四 A4 T4.4):有值时渲染/投影以其为准,speed 仅作兼容回退;
+    /// 段语义见 [`Clip::speed_segments`](分段恒速,左点区间)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed_curve: Option<Vec<SpeedPoint>>,
+    /// 倒放(册四 A4 T4.4):视频 reverse / 音频 areverse;reverse 先于变速。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse: Option<bool>,
+    /// 旋转角度(度;册四 A4 T4.9):任意值,渲染端 mod 360 归一。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation: Option<f64>,
+    /// 源域裁剪(册四 A4 T4.9):源素材像素矩形,画幅归一前执行。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crop: Option<Crop>,
+    /// 翻转(册四 A4 T4.9):none/h/v(枚举约束在 schema 层,模型从宽收 String)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flip: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<Role>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// 文本样式(册四 A4 T4.7):字体/字号/颜色/描边/底衬/阴影/对齐/行距/
+    /// 透明度/画布内位置 x,y/卡拉OK;渲染端按 ADR-0016 生成临时 ASS 消费。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_style: Option<crate::text_style::TextStyle>,
+    /// 花字挂载(册四 T4.7):hz.<id> 引用 huazi-catalog.json;模型层承接防丢。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub huazi: Option<crate::text_style::Huazi>,
+    /// 片段级字体覆盖(CutFlow S7 兼容字段;模型层承接防丢,渲染以
+    /// textStyle.fontFamily 优先,无 textStyle 时本字段兜底)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<crate::text_style::FontSpec>,
+    /// 降噪档(册四 A4 T4.8):off/low/mid/high → afftdn 参数映射(混音链)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub denoise: Option<String>,
+    /// 保速变调半音档(册四 A4 T4.8):±12;asetrate+aresample 补偿 atempo,
+    /// 与 speed 组合的链序见 across::event_body(降噪→倒放→变调→变速)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<Position>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -131,12 +165,36 @@ pub struct Clip {
     pub punch_in: Option<PunchIn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freeze_ms: Option<u64>,
+    /// 片段特效(册四 A4 T4.6):combo 叠加栈(上限 3,顺序即应用顺序)+ in/out 槽位;
+    /// 渲染端按 fx 目录(schemas/fx-catalog.json)解析为段滤镜链,未注册降级 WARN。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fx: Option<FxSpec>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Position {
     pub x: f64,
     pub y: f64,
+}
+
+/// 速度曲线点(册四 A4 T4.4):`atMs` 为相对片段 startMs 的时间线毫秒,
+/// `speed` ∈ [0.25,4](界在 schema 层);相邻点之间不内插——左点区间恒速。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpeedPoint {
+    pub at_ms: u64,
+    pub speed: f64,
+}
+
+/// 源域裁剪矩形(册四 A4 T4.9):源素材像素坐标;x/y 缺省 0,w/h 必填(>0 由 schema 界)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Crop {
+    #[serde(default)]
+    pub x: u64,
+    #[serde(default)]
+    pub y: u64,
+    pub w: u64,
+    pub h: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -156,6 +214,13 @@ pub struct Motion {
     pub out: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub out_ms: Option<f64>,
+    /// 入场直通别名(册四 T4.6):mo.<id>(fx-catalog motion.in 目录);与 in 枚举
+    /// 并存,声明时优先于枚举;未注册渲染端降级枚举并 WARN。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_fx: Option<String>,
+    /// 出场直通别名(册四 T4.6):mo.<id>(fx-catalog motion.out 目录)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out_fx: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -168,8 +233,32 @@ pub struct Transition {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     /// 转场 fxId(CutFlow 分册04 §3.3;与 type 并存,同给以 fx 为准)。
+    /// 册四 T4.5:tr.<id>/裸 id 经转场目录(schemas/transition-catalog.json,
+    /// ffmpeg xfade 全集)直通;未注册渲染端降级 type(缺省 fade)并 WARN。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx: Option<String>,
+}
+
+/// 单条特效声明(册四 T4.6):fxId + 透传参数(未声明的键由渲染端注册表按默认值裁决)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FxEntry {
+    pub fx: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<serde_json::Map<String, Value>>,
+}
+
+/// 片段特效(册四 T4.6,对应 schema clip.fx):`in`/`out` 为入场/出场槽位
+/// (暂登记不渲染,渲染端 WARN 留痕);`combo` 为整段特效叠加栈——数组上限 3
+/// (schema maxItems),数组顺序即应用顺序,整组替换。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FxSpec {
+    #[serde(rename = "in", default, skip_serializing_if = "Option::is_none")]
+    pub in_: Option<FxEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out: Option<FxEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub combo: Option<Vec<FxEntry>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -212,6 +301,8 @@ fn default_factor() -> f64 {
 }
 
 /// 轨道:同类型元素的容器;`id`(如 V1)首次生成后写回并不再变。
+/// 轨道级属性字段(册四 A4 T4.2):Option + skip_serializing_if,旧工程缺省即
+/// 不落盘(零迁移);静音/独奏/隐藏的渲染混音联动候 BE3,此处先保证读写不丢。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Track {
@@ -219,6 +310,18 @@ pub struct Track {
     pub kind: TrackKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mute: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solo: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hidden: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height_px: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
     #[serde(default)]
     pub clips: Vec<Clip>,
 }
@@ -361,6 +464,67 @@ pub fn migrate_from_value(v: &Value) -> Result<Project, Vec<String>> {
     Project::from_value(&migrated)
 }
 
+/// 时间线恒速段(timeline 恒速段;册四 A4 T4.4 的**单一真相源**):
+/// `(start_ms, end_ms, mean_speed)` 三元组,`mean_speed` 为该段渲染用的常速
+/// (区间两端点速度的算术平均 = 线性插值 speed 函数在区间上的积分均值)。
+///
+/// 口径(投影与渲染共用本函数,红线 = 两边时长严格一致):
+/// - 无 speedCurve → 单段 `(0, duration_ms, speed.unwrap_or(1.0))`,与既有线性 speed 完全同形;
+/// - 有 speedCurve → 点按 atMs 升序(防御性排序),首点速度前延到 0、末点速度后延到
+///   durationMs(端点常速外延);相邻点之间 speed 函数线性插值,渲染按区间
+///   **均值常速**执行(每段一个 setpts,总时长与总源消耗都是分段积分的精确值);
+/// - 单点曲线 ≡ 常速;atMs 超出 [0,durationMs] 的点被钳到边界后并段。
+pub fn speed_segments(clip: &Clip) -> Vec<(u64, u64, f64)> {
+    let dur = clip.duration_ms;
+    if dur == 0 {
+        return Vec::new();
+    }
+    let Some(points) = &clip.speed_curve else {
+        return vec![(0, dur, clip.speed.unwrap_or(1.0))];
+    };
+    // 防御性归一:排序(乱序输入),钳到 [0, dur](越界点钳边)
+    let mut pts: Vec<(u64, f64)> = points.iter().map(|p| (p.at_ms.min(dur), p.speed)).collect();
+    pts.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    if pts.is_empty() {
+        return vec![(0, dur, clip.speed.unwrap_or(1.0))];
+    }
+    // 端点外延成完整覆盖 [0, dur] 的节点序列:0→首点速度,dur→末点速度
+    let mut nodes: Vec<(u64, f64)> = Vec::with_capacity(pts.len() + 2);
+    if pts[0].0 > 0 {
+        nodes.push((0, pts[0].1));
+    }
+    nodes.extend(pts);
+    if nodes.last().map(|(t, _)| *t).unwrap_or(0) < dur {
+        let s = nodes.last().map(|(_, s)| *s).unwrap_or(1.0);
+        nodes.push((dur, s));
+    }
+    // 相邻节点成段;区间速度 = 线性插值 → 常速渲染取区间均值(积分精确)
+    let mut segs: Vec<(u64, u64, f64)> = Vec::new();
+    for w in nodes.windows(2) {
+        let (a, sa) = w[0];
+        let (b, sb) = w[1];
+        if b <= a {
+            continue; // 零长段(重复 atMs)跳过
+        }
+        let mean = (sa + sb) / 2.0;
+        match segs.last_mut() {
+            // 均值相等的相邻段并段(等速点不产生多余 setpts)
+            Some(last) if (last.2 - mean).abs() < f64::EPSILON => last.1 = b,
+            _ => segs.push((a, b, mean)),
+        }
+    }
+    segs
+}
+
+/// 片段的源域读取时长(ms,f64;调用方决定取整)= ∫ speed dt 的分段积分。
+/// 无曲线 = durationMs × speed(与既有语义逐位一致);freezeMs 定格在调用方裁剪。
+pub fn source_read_ms(clip: &Clip) -> f64 {
+    speed_segments(clip)
+        .iter()
+        .map(|(a, b, s)| (*b - *a) as f64 * s)
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +612,175 @@ mod tests {
         assert_eq!(Project::next_clip_id(&p.tracks[0]), "V1-003");
         assert_eq!(p.next_track_id(TrackKind::Video), "V2");
         assert_eq!(p.next_track_id(TrackKind::Text), "T1");
+    }
+
+    /// 册四 A4 T4.2:轨道新字段(locked/mute/solo/hidden/heightPx/color)必须被内核
+    /// 模型承接——"不加载 = 必丢"教训(册一 worked example:bgm.assetId 静默丢弃),
+    /// 每个新字段都要 roundtrip 测试证明读写不丢。
+    #[test]
+    fn track_fields_roundtrip_no_loss() {
+        let mut v = sample();
+        v["tracks"][0]["locked"] = json!(true);
+        v["tracks"][0]["mute"] = json!(false);
+        v["tracks"][0]["solo"] = json!(true);
+        v["tracks"][0]["hidden"] = json!(false);
+        v["tracks"][0]["heightPx"] = json!(220);
+        v["tracks"][0]["color"] = json!("#3D7EAF");
+        v["tracks"][0]["name"] = json!("主画面");
+        let p = Project::from_value(&v).expect("带轨道属性字段的工程必须通过 v2 校验");
+        let t = &p.tracks[0];
+        assert_eq!(t.locked, Some(true));
+        assert_eq!(t.mute, Some(false));
+        assert_eq!(t.solo, Some(true));
+        assert_eq!(t.hidden, Some(false));
+        assert_eq!(t.height_px, Some(220));
+        assert_eq!(t.color.as_deref(), Some("#3D7EAF"));
+        assert_eq!(t.name.as_deref(), Some("主画面"));
+        // 序列化回 Value:七个字段逐键在位(写不丢)
+        let back = p.to_validated_value().unwrap();
+        assert_eq!(back["tracks"][0]["locked"], json!(true));
+        assert_eq!(back["tracks"][0]["heightPx"], json!(220));
+        assert_eq!(back["tracks"][0]["color"], json!("#3D7EAF"));
+        // 再读入:语义相等(serde 往返无静默丢弃)
+        let p2 = Project::from_value(&back).unwrap();
+        assert_eq!(p, p2);
+        // 旧工程(无这些字段)照常读写:缺省 None,不臆造落盘
+        let old = Project::from_value(&sample()).unwrap();
+        assert_eq!(old.tracks[0].locked, None);
+        let back_old = old.to_validated_value().unwrap();
+        assert!(back_old["tracks"][0].get("locked").is_none(), "缺省字段不得臆造");
+    }
+
+    /// 册四 A4 T4.4/T4.9:片段新字段(speedCurve/reverse/rotation/crop/flip)必须被内核
+    /// 模型承接——"不加载 = 必丢"教训(册一 worked example),逐字段 roundtrip 证明读写不丢。
+    #[test]
+    fn clip_time_transform_fields_roundtrip_no_loss() {
+        let mut v = sample();
+        v["tracks"][0]["clips"][0]["speedCurve"] = json!([
+            {"atMs": 0, "speed": 0.5}, {"atMs": 1000, "speed": 2.0}
+        ]);
+        v["tracks"][0]["clips"][0]["reverse"] = json!(true);
+        v["tracks"][0]["clips"][0]["rotation"] = json!(90.0);
+        v["tracks"][0]["clips"][0]["crop"] = json!({"x": 10, "y": 20, "w": 300, "h": 200});
+        v["tracks"][0]["clips"][0]["flip"] = json!("h");
+        let p = Project::from_value(&v).expect("带时间/变换字段的工程必须通过 v2 校验");
+        let c = &p.tracks[0].clips[0];
+        assert_eq!(c.speed_curve.as_ref().unwrap().len(), 2);
+        assert_eq!(c.speed_curve.as_ref().unwrap()[0], SpeedPoint { at_ms: 0, speed: 0.5 });
+        assert_eq!(c.speed_curve.as_ref().unwrap()[1], SpeedPoint { at_ms: 1000, speed: 2.0 });
+        assert_eq!(c.reverse, Some(true));
+        assert_eq!(c.rotation, Some(90.0));
+        assert_eq!(c.crop, Some(Crop { x: 10, y: 20, w: 300, h: 200 }));
+        assert_eq!(c.flip.as_deref(), Some("h"));
+        // 序列化回 Value:五字段逐键在位(写不丢)
+        let back = p.to_validated_value().unwrap();
+        let c0 = &back["tracks"][0]["clips"][0];
+        assert_eq!(c0["speedCurve"][1]["speed"], json!(2.0));
+        assert_eq!(c0["speedCurve"][1]["atMs"], json!(1000));
+        assert_eq!(c0["reverse"], json!(true));
+        assert_eq!(c0["rotation"], json!(90.0));
+        assert_eq!(c0["crop"]["w"], json!(300));
+        assert_eq!(c0["flip"], json!("h"));
+        // 再读入:语义相等(serde 往返无静默丢弃)
+        let p2 = Project::from_value(&back).unwrap();
+        assert_eq!(p, p2);
+        // 旧工程(无这些字段)照常读写:缺省 None,不臆造落盘
+        let old = Project::from_value(&sample()).unwrap();
+        let c = &old.tracks[0].clips[0];
+        assert!(c.speed_curve.is_none() && c.reverse.is_none() && c.rotation.is_none()
+            && c.crop.is_none() && c.flip.is_none());
+        let back_old = old.to_validated_value().unwrap();
+        let c0 = &back_old["tracks"][0]["clips"][0];
+        assert!(c0.get("speedCurve").is_none() && c0.get("reverse").is_none()
+            && c0.get("rotation").is_none() && c0.get("crop").is_none() && c0.get("flip").is_none(),
+            "缺省字段不得臆造");
+        // 契约边界:speed 越界(>4)在 schema 层拒
+        let mut bad = sample();
+        bad["tracks"][0]["clips"][0]["speedCurve"] = json!([{"atMs": 0, "speed": 8.0}]);
+        assert!(Project::from_value(&bad).is_err(), "曲线速度越界必须 SCHEMA_INVALID");
+    }
+
+    /// 册四 A4 T4.6:片段特效字段(fx.combo 叠加栈 + in/out 槽位)必须被内核模型
+    /// 承接——"不加载 = 必丢"教训,roundtrip 证明读写不丢(参数键序确定性)。
+    #[test]
+    fn clip_fx_field_roundtrip_no_loss() {
+        let mut v = sample();
+        v["tracks"][0]["clips"][0]["fx"] = json!({
+            "in": {"fx": "mo.fadeIn"},
+            "combo": [
+                {"fx": "fx.mono"},
+                {"fx": "fx.grain", "params": {"strength": 24}}
+            ]
+        });
+        let p = Project::from_value(&v).expect("带 fx 字段的工程必须通过 v2 校验");
+        let c = &p.tracks[0].clips[0];
+        let fx = c.fx.as_ref().unwrap();
+        assert_eq!(fx.in_.as_ref().unwrap().fx, "mo.fadeIn");
+        assert_eq!(fx.combo.as_ref().unwrap().len(), 2);
+        assert_eq!(fx.combo.as_ref().unwrap()[0].fx, "fx.mono");
+        assert_eq!(
+            fx.combo.as_ref().unwrap()[1].params.as_ref().unwrap()["strength"],
+            json!(24)
+        );
+        // 序列化回 Value:逐键在位(写不丢)
+        let back = p.to_validated_value().unwrap();
+        let f0 = &back["tracks"][0]["clips"][0]["fx"];
+        assert_eq!(f0["combo"][1]["params"]["strength"], json!(24));
+        assert_eq!(f0["in"]["fx"], json!("mo.fadeIn"));
+        // 再读入:语义相等(serde 往返无静默丢弃)
+        let p2 = Project::from_value(&back).unwrap();
+        assert_eq!(p, p2);
+        // 旧工程(无 fx 字段)照常读写:缺省 None,不臆造落盘
+        let old = Project::from_value(&sample()).unwrap();
+        assert!(old.tracks[0].clips[0].fx.is_none());
+        let back_old = old.to_validated_value().unwrap();
+        assert!(back_old["tracks"][0]["clips"][0].get("fx").is_none(), "缺省字段不得臆造");
+        // 契约边界:combo 上限 3,第 4 条在 schema 层拒
+        let mut bad = sample();
+        bad["tracks"][0]["clips"][0]["fx"] = json!({"combo": [
+            {"fx": "fx.mono"}, {"fx": "fx.blur"}, {"fx": "fx.grain"}, {"fx": "fx.vignette"}
+        ]});
+        assert!(Project::from_value(&bad).is_err(), "combo 超 3 条必须 SCHEMA_INVALID");
+    }
+
+    /// speed_segments:投影与渲染共用的段划分单一真相源(T4.4 红线的根基)。
+    #[test]
+    fn speed_segments_piecewise_semantics() {
+        let mk = |v: Value| -> Clip { serde_json::from_value(v).unwrap() };
+        // 无曲线:单段,线性 speed 回退
+        let c = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 4000, "speed": 2.0}));
+        assert_eq!(speed_segments(&c), vec![(0, 4000, 2.0)]);
+        assert_eq!(source_read_ms(&c), 8000.0, "无曲线 = durationMs × speed(既有语义逐位一致)");
+        // 无曲线无 speed:1.0
+        let c = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 4000}));
+        assert_eq!(speed_segments(&c), vec![(0, 4000, 1.0)]);
+        // 两段曲线:乱序输入被排序;0 点在集 → 无前延;末点速度后延到 durationMs
+        // [0,1s) 为 0.5→2.0 的线性插值区间 → 均值 1.25;[1s,2s) 后延恒速 2.0
+        let c = mk(json!({
+            "id": "V1-001", "startMs": 0, "durationMs": 2000, "src": "a.mp4",
+            "speedCurve": [{"atMs": 1000, "speed": 2.0}, {"atMs": 0, "speed": 0.5}]
+        }));
+        assert_eq!(speed_segments(&c), vec![(0, 1000, 1.25), (1000, 2000, 2.0)]);
+        assert_eq!(source_read_ms(&c), 1250.0 + 2000.0, "分段积分 ΣΔt×均值速度");
+        // 线性插值区间:0→1s 速度 0.5→1.5,区间均值 1.0(积分均值=常速渲染值)
+        let c = mk(json!({
+            "id": "V1-001", "startMs": 0, "durationMs": 2000, "src": "a.mp4",
+            "speedCurve": [{"atMs": 0, "speed": 0.5}, {"atMs": 1000, "speed": 1.5}]
+        }));
+        assert_eq!(speed_segments(&c), vec![(0, 1000, 1.0), (1000, 2000, 1.5)],
+            "区间渲染速度 = 两端点均值(线性插值的精确积分)");
+        assert_eq!(source_read_ms(&c), 1000.0 * 1.0 + 1000.0 * 1.5);
+        // 等速相邻点并段;首点不在 0 → 首速前延到 0
+        let c = mk(json!({
+            "id": "V1-001", "startMs": 0, "durationMs": 3000, "src": "a.mp4",
+            "speedCurve": [{"atMs": 1000, "speed": 2.0}]
+        }));
+        assert_eq!(speed_segments(&c), vec![(0, 3000, 2.0)], "等速段并段+端速外延");
+        // 越界 atMs 钳到 durationMs
+        let c = mk(json!({
+            "id": "V1-001", "startMs": 0, "durationMs": 2000, "src": "a.mp4",
+            "speedCurve": [{"atMs": 0, "speed": 1.0}, {"atMs": 9999, "speed": 4.0}]
+        }));
+        assert_eq!(speed_segments(&c), vec![(0, 2000, 2.5)], "越界点钳边,区间均值");
     }
 }

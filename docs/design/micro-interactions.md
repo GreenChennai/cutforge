@@ -68,3 +68,22 @@
 - 拖拽全程零动画:ghost/trim/框选矩形几何每帧直写,无 transition/animation;
 - 已知边界:面板离场为即时隐藏(display:none),只有入场动效——离场动画需要延迟卸载,
   与 e2e「切换后立即断言 active」冲突,列为有意取舍(见 ADR-0014 取舍段口径)。
+
+## 七、册四 A4 新增微交互(FE1:T4.1/T4.2/T4.3;实现位置登记,录屏候 e2e 波补录)
+
+| # | 微交互 | 实现位置 | testid/锚点 | 状态 | 录屏 |
+|---|---|---|---|---|---|
+| 28 | 素材缩略卡懒加载(视口内才发 media_thumbnail;缩略 2 路限流) | `js/panels/media-card.js`(IntersectionObserver)+ `js/core/media-cache.js`(排队/去重/负缓存) | `media-item .thumb` | 已实现 | 待录 |
+| 29 | 音频卡迷你波形(peaks coarse;失败回落纹理) | `js/panels/media-card.js` loadThumb + `js/render/waveform.js` drawMiniWave | `.thumb canvas.thumb-wave` | 已实现 | 待录 |
+| 30 | 缩放联动波形密度档(coarse/standard/fine) | `js/core/media-cache.js` peaksLevelFor + `js/render/waveform.js`(PX_PER_MS live binding) | `clip canvas.clip-wave` | 已实现 | 待录 |
+| 31 | 代理徽标点击生成(等待省略号→✓/✗ 文本态) | `js/panels/media-card.js` proxyBadge + `js/ui/menu.js` 生成代理 | `media-proxy` | 已实现 | 待录 |
+| 32 | 锁定轨拒绝编辑:lane 抖动一次(cf-shake 160ms)+ toast | `js/render/clip-gestures.js` flashLocked + `css/motion.css` cf-shake | `.lane-locked / .lane-locked-flash` | 已实现 | 待录 |
+| 33 | 静音/独奏音频片段灰化(saturate/brightness 快过渡,非颜色单线索) | `css/components/timeline.css` `.lane-muted/.lane-soloed` | `track-lane-<id>` | 已实现 | 待录 |
+| 34 | roll/slide 共享边界指示线(2px 实线,区别于吸附虚线) | `js/render/playhead.js` drawOverlay(trimLineMs)+ `js/render/clip-gestures.js` frameRoll | `tl-overlay` | 已实现 | 待录 |
+| 35 | slip 内容平移预览(占位不动,波形纹理反向平移 + 源时间码气泡) | `js/render/clip-gestures.js` frameSlip(`.slip-preview`) | `clip.slip-preview` | 已实现 | 待录 |
+| 36 | 轨道高度拖拽(拖拽期零 Op 直写高度;松手一笔 track_update) | `js/render/track-head.js` mountGrip | `.lane-grip` | 已实现 | 待录 |
+| 37 | 轨名双击内联重命名(Enter/Esc/失焦收束) | `js/render/track-head.js` startRename | `track-name-<id>` | 已实现 | 待录 |
+| 38 | 历史回跳确认弹窗(「将撤销 N 笔」;复用 confirm-dialog) | `js/panels/history.js` confirmDialog | `history-row / confirm-dialog` | 已实现 | 待录 |
+| 39 | 历史快照分隔线(导出/批量前自动打标,ephemeral 不落盘) | `js/core/edit-commands.js` markHistory + `js/panels/history.js` markRow | `history-mark` | 已实现 | 待录 |
+
+降级登记:素材缩略图/波形不可用(无 ffmpeg/无音轨)回落图标/装饰纹理,不假图;外部文件拖入导入面板 = 诚实提示(无拷入通道,登记候 BE 补);「在资源管理器打开」= 禁用项(浏览器沙箱),不假实现。

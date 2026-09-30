@@ -23,6 +23,9 @@
 mod tests;
 
 mod dispatch;
+mod edit_ops;
+mod media_tools;
+mod subtitle_ops;
 mod orchestrate;
 mod progress;
 mod registry;

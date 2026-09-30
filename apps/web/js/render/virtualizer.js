@@ -32,6 +32,19 @@ export function createVirtualizer(wrap) {
       const scrollLeft = wrap.scrollLeft;
       const viewW = wrap.clientWidth;
       const padMs = SCROLL_PAD_PX / PX_PER_MS;
+      // 页签隐藏(display:none)时 clientWidth=0 → t1 落到负值,renderClips 会把全部
+      // 片段当"视口外"裁除,而切回页签无 scroll/resize 事件、不重渲 → 时间线空面板。
+      // 隐藏期退化为全量窗口(用户看不见,渲染成本一次性;切回即所见即所得)。
+      if (!viewW) {
+        return {
+          scrollLeft,
+          viewW,
+          viewH: wrap.clientHeight,
+          scrollTop: wrap.scrollTop,
+          t0: 0,
+          t1: Number.MAX_SAFE_INTEGER,
+        };
+      }
       return {
         scrollLeft,
         viewW,

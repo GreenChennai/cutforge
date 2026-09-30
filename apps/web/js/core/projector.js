@@ -47,8 +47,28 @@ async function reprojectOnce() {
     console.warn("[projector] project_get:", messageOf(envP, "project_get"));
   }
   if (envT.ok) {
-    timelineStore.set({ clips: envT.data.clips, rev: envT.data.rev });
+    timelineStore.set({ clips: withFxReadback(envP, envT), rev: envT.data.rev });
   }
+}
+
+/**
+ * fx 读回桥(册四 T4.6;候 BE):timeline_projection 尚未下放 clip.fx(特效栈读回
+ * 缺口,BE 侧 edit_ops.rs 投影表漏列),此处从 project_get 工程文档按 clip id 只读
+ * 合并——单一真相源仍是内核文档,壳不加工语义。BE 补投影后本合并自然退化为空操作。
+ */
+function withFxReadback(envP, envT) {
+  const project = envP.ok && envP.data.project;
+  if (!project || !Array.isArray(project.tracks)) return envT.data.clips;
+  /** @type {Object<string, *>} */
+  const fxById = {};
+  for (const t of project.tracks) {
+    for (const c of t.clips || []) {
+      if (c && c.id && c.fx !== undefined) fxById[c.id] = c.fx;
+    }
+  }
+  return envT.data.clips.map((c) => (c.fx === undefined && fxById[c.id] !== undefined
+    ? { ...c, fx: fxById[c.id] }
+    : c));
 }
 
 /** 冲突计数(E8 停写横幅的数据源)。 */
@@ -115,7 +135,7 @@ export function resetDerived() {
   projectStore.reset();
   timelineStore.reset();
   mediaStore.reset();
-  uiStore.set({ uiFields: null, conflicts: 0 });
+  uiStore.set({ uiFields: null, conflicts: 0, catalogs: null });
   projectStore.set(keep);
 }
 

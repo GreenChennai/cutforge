@@ -43,22 +43,19 @@
         "width",
         "height"
       ],
+      "description": "ADR-0015(册四 T4.9):宽高从三值枚举扩为范围约束——64 ≤ 值 ≤ 7680 且必须为偶数(渲染链 yuv420p/x264 对奇数尺寸直接报错,约束前移到 schema,超界在 SCHEMA_INVALID 拒绝);schemas/constants.ratios.json 的 canvasAllowed 是预设推荐集(1080/1440/1920),不是合法集",
       "properties": {
         "width": {
           "type": "integer",
-          "enum": [
-            1080,
-            1440,
-            1920
-          ]
+          "minimum": 64,
+          "maximum": 7680,
+          "multipleOf": 2
         },
         "height": {
           "type": "integer",
-          "enum": [
-            1080,
-            1440,
-            1920
-          ]
+          "minimum": 64,
+          "maximum": 7680,
+          "multipleOf": 2
         }
       }
     },
@@ -103,7 +100,37 @@
             ]
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "轨道显示名(track_update 重命名;册四 A4 T4.2)"
+          },
+          "locked": {
+            "type": "boolean",
+            "default": false,
+            "description": "轨道锁定(防误编辑标记;track_update 设置。本册仅承载 IR 字段与命令链,编辑拦截策略候后续册)"
+          },
+          "mute": {
+            "type": "boolean",
+            "default": false,
+            "description": "轨道静音(渲染混音链消费;track_update 设置,字段与语义链册四 A4 T4.2 就位,渲染联动候 BE3)"
+          },
+          "solo": {
+            "type": "boolean",
+            "default": false,
+            "description": "轨道独奏(渲染混音链:solo 生效时仅独奏轨出声;track_update 设置,渲染联动候 BE3)"
+          },
+          "hidden": {
+            "type": "boolean",
+            "default": false,
+            "description": "轨道隐藏(视频轨不参与合成/壳不显示其片段;track_update 设置,渲染联动候 BE3)"
+          },
+          "heightPx": {
+            "type": "integer",
+            "minimum": 16,
+            "description": "轨道在时间线面板的显示高度(像素;壳消费,纯 UI 偏好,不影响渲染)"
+          },
+          "color": {
+            "type": "string",
+            "description": "轨道标识色(壳时间线轨道条着色;建议 #RRGGBB 形态,契约层不锁格式)"
           },
           "clips": {
             "type": "array",
@@ -274,6 +301,76 @@
           "minimum": 0.25,
           "maximum": 4
         },
+        "speedCurve": {
+          "type": "array",
+          "minItems": 1,
+          "description": "分段速度曲线(册四 A4 T4.4):点集 {atMs, speed},atMs 为相对片段 startMs 的时间线毫秒;相邻点之间不内插——每段按其左点速度常速播放(曲线段恒速语义),如需平滑斜坡请加中间点。有 speedCurve 时渲染/投影以其为准,speed 字段仅作无曲线时的兼容回退;段界与总源消耗 = Σ Δt×speed(分段积分),内核 endMs 与渲染时长由此严格一致(对拍夹具锁定)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "atMs",
+              "speed"
+            ],
+            "properties": {
+              "atMs": {
+                "type": "number",
+                "minimum": 0
+              },
+              "speed": {
+                "type": "number",
+                "minimum": 0.25,
+                "maximum": 4
+              }
+            }
+          }
+        },
+        "reverse": {
+          "type": "boolean",
+          "default": false,
+          "description": "倒放(册四 A4 T4.4):视频 reverse 滤镜 / 音频 areverse;组合顺序 = reverse 先于变速(先倒回再变速)。内存警示:ffmpeg reverse 滤镜把整段读入内存缓冲,长片段(4K/长时序)可能耗尽内存——长素材请先切短再倒放,该约束在 parity 夹具与渲染链注释同步声明"
+        },
+        "rotation": {
+          "type": "number",
+          "description": "旋转角度(度;册四 A4 T4.9):任意值,渲染端按 mod 360 归一;±90 的整数倍走 transpose(无裁切精确互换宽高),其余角度 rotate 滤镜画布内旋转、出界部分裁切黑底补白,再经 scale/pad 适配画幅"
+        },
+        "crop": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "源域裁剪(册四 A4 T4.9):矩形 {x,y,w,h},源素材像素坐标(非画幅坐标),在画幅归一(scale/pad)之前执行;与 flip/rotation 的叠加顺序 = 裁剪 → 翻转 → 旋转 → 画幅归一 → punchIn → reverse → 变速",
+          "required": [
+            "w",
+            "h"
+          ],
+          "properties": {
+            "x": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "y": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "w": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "h": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "flip": {
+          "enum": [
+            "none",
+            "h",
+            "v"
+          ],
+          "description": "翻转(册四 A4 T4.9):h=水平镜像(hflip)、v=垂直镜像(vflip)、none=不翻转;作用于裁剪之后、旋转之前的源域"
+        },
         "volume": {
           "type": "number",
           "minimum": 0,
@@ -332,9 +429,15 @@
                 "fadeIn",
                 "slideInLeft",
                 "slideInRight",
+                "slideInUp",
+                "slideInDown",
                 "scaleIn",
-                "zoomIn"
-              ]
+                "zoomIn",
+                "popIn",
+                "bounceIn",
+                "spinIn"
+              ],
+              "description": "入场动画(册四 T4.6 扩充;只收真实渲染项,目录 = schemas/fx-catalog.json motion.in;既有 6 值语义逐字兼容且自本册起真实渲染)"
             },
             "inFx": {
               "type": "string",
@@ -349,8 +452,15 @@
                 "none",
                 "fadeOut",
                 "slideOutLeft",
-                "slideOutRight"
-              ]
+                "slideOutRight",
+                "slideOutUp",
+                "slideOutDown",
+                "zoomOut",
+                "popOut",
+                "bounceOut",
+                "spinOut"
+              ],
+              "description": "出场动画(册四 T4.6 扩充;时窗 = 末尾 outMs;目录 = schemas/fx-catalog.json motion.out)"
             },
             "outFx": {
               "type": "string",
@@ -384,7 +494,7 @@
             },
             "fx": {
               "type": "string",
-              "description": "转场 fxId(CutFlow 分册04 §3.3 扩展);与 type 并存,两者同时给出以 fx 为准并 WARN。既有 5 种转场有 tr.* 别名直通;未注册 fxId 回退 type(缺省 fade)并留痕 fxDegraded"
+              "description": "转场 fxId 直通(册四 T4.5 目录化):tr.<id> 或裸 id,目录 = schemas/transition-catalog.json(ffmpeg xfade 全集 58 项实测);与 type 并存两者同给以 fx 为准并 WARN。未注册 fxId 回退 type(缺省 fade)并留痕 fxDegraded(compose 步进度事件 warnings 数组)"
             },
             "reason": {
               "enum": [
@@ -490,7 +600,12 @@
               "$ref": "#/$defs/fxEntry"
             },
             "combo": {
-              "$ref": "#/$defs/fxEntry"
+              "type": "array",
+              "maxItems": 3,
+              "items": {
+                "$ref": "#/$defs/fxEntry"
+              },
+              "description": "整段特效叠加栈(册四 T4.6):上限 3 条,数组顺序即应用顺序;整组替换(clip_update patch.fx.combo 原子)。未注册 fxId 逐项降级 WARN,不整链回退"
             }
           }
         },
@@ -587,6 +702,115 @@
               "type": "string"
             }
           }
+        },
+        "textStyle": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "文本样式(册四 A4 T4.7):字体/字号/颜色/描边/底衬/阴影/对齐/行距/透明度/画布内位置/卡拉OK;渲染端按 ADR-0016 生成临时 ASS 消费(确定性纯函数)。位置 x,y 为画布像素坐标(PlayRes=画布,与 ASS \\pos 同域;锚点由 align 决定),x/y 均缺省 = 按 align 边距网格排版。颜色 #RRGGBB[AA]。整对象替换(clip_update patch.textStyle)",
+          "properties": {
+            "fontFamily": {
+              "type": "string",
+              "description": "字体族名;渲染时经 libass/fontconfig 探测系统字体,缺失降级默认字体(ADR-0016 契约行为,非缺陷)"
+            },
+            "fontSize": {
+              "type": "number",
+              "minimum": 8,
+              "maximum": 500,
+              "description": "字号(PlayRes 像素)"
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+              "description": "主色 #RRGGBB[AA];AA=不透明度(CSS 风,FF=不透明),渲染端确定性转 ASS alpha(取反)"
+            },
+            "outlineColor": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+              "description": "描边色 #RRGGBB[AA](AA=不透明度)"
+            },
+            "outlineWidth": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20,
+              "description": "描边宽(BorderStyle=3 时为底衬外边距)"
+            },
+            "borderStyle": {
+              "type": "integer",
+              "enum": [
+                1,
+                3
+              ],
+              "description": "ASS BorderStyle:1=描边+阴影,3=底衬色块"
+            },
+            "backColor": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$",
+              "description": "底衬色 #RRGGBB[AA](AA=不透明度;注意 libass BorderStyle=3 的色块填充走 outlineColor)"
+            },
+            "shadow": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20,
+              "description": "阴影深度"
+            },
+            "align": {
+              "type": "string",
+              "enum": [
+                "topLeft",
+                "topCenter",
+                "topRight",
+                "middleLeft",
+                "center",
+                "middleRight",
+                "bottomLeft",
+                "bottomCenter",
+                "bottomRight"
+              ],
+              "description": "九宫格对齐(缺省 bottomCenter)"
+            },
+            "lineSpacing": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 200,
+              "description": "行距(像素;0=字体默认)"
+            },
+            "opacity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "整体不透明度(1=不透明)"
+            },
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "description": "画布内位置 x(像素)"
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "description": "画布内位置 y(像素,自顶部)"
+            },
+            "karaoke": {
+              "type": "boolean",
+              "description": "卡拉OK(册四 T4.7):true 时按片段时长逐字均分生成 \\kf 高亮序列"
+            }
+          }
+        },
+        "denoise": {
+          "type": "string",
+          "enum": [
+            "off",
+            "low",
+            "mid",
+            "high"
+          ],
+          "description": "降噪档(册四 A4 T4.8):afftdn 滤镜参数映射 low/mid/high;混音链位置 = aformat 之后、倒放/变速之前;off/缺省 = 不降噪"
+        },
+        "pitch": {
+          "type": "number",
+          "minimum": -12,
+          "maximum": 12,
+          "description": "保速变调半音档(册四 A4 T4.8):asetrate+aresample 升降采样率 ×2^(n/12),atempo 补偿保速;与 speed 组合链序 = 降噪→倒放→变调→变速(总时长恒 durationMs)"
         }
       }
     }

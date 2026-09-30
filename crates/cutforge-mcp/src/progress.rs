@@ -41,12 +41,12 @@ pub(crate) fn existing_rel<'a>(root: &Path, rel: Option<&'a str>) -> Option<&'a 
     rel.filter(|r| !r.is_empty() && root.join(r).is_file())
 }
 
-fn spawn_render(root: &Path, ass: Option<&str>) -> std::process::Command {
-    spawn_render_extra(root, ass, &[])
+fn spawn_render(root: &Path, ass: Option<&str>, use_proxy: bool) -> std::process::Command {
+    spawn_render_extra(root, ass, use_proxy, &[])
 }
 
 /// spawn cutforge-render(共享二进制定位);extra = 附加 CLI 参数(单帧模式用)。
-fn spawn_render_extra(root: &Path, ass: Option<&str>, extra: &[&str]) -> std::process::Command {
+fn spawn_render_extra(root: &Path, ass: Option<&str>, use_proxy: bool, extra: &[&str]) -> std::process::Command {
     let mut cmd = match resolve_render_bin() {
         Some(p) => std::process::Command::new(p),
         None => std::process::Command::new("cutforge-render"),
@@ -55,16 +55,19 @@ fn spawn_render_extra(root: &Path, ass: Option<&str>, extra: &[&str]) -> std::pr
     if let Some(a) = ass {
         cmd.arg("--ass").arg(a);
     }
+    if use_proxy {
+        cmd.arg("--use-proxy");
+    }
     cmd.args(extra);
     cmd
 }
 
 /// 同步渲染(MCP 工具 render,backend=cutforge):输出 JSON 行进度进 data.stdout。
-pub(crate) fn render_cutforge_sync(root: &Path, ass: Option<&str>) -> Value {
+pub(crate) fn render_cutforge_sync(root: &Path, ass: Option<&str>, use_proxy: bool) -> Value {
     if resolve_render_bin().is_none() {
         return render_missing_dep();
     }
-    match spawn_render(root, ass).output() {
+    match spawn_render(root, ass, use_proxy).output() {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout);
             let output = text.lines().rev().find_map(|l| serde_json::from_str::<Value>(l).ok())
@@ -92,7 +95,7 @@ fn renders() -> &'static std::sync::Mutex<HashMap<String, RenderJob>> {
     R.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
-pub(crate) fn render_run_async(root: &Path, ass: Option<&str>) -> Value {
+pub(crate) fn render_run_async(root: &Path, ass: Option<&str>, use_proxy: bool) -> Value {
     if resolve_render_bin().is_none() {
         return render_missing_dep();
     }
@@ -105,7 +108,7 @@ pub(crate) fn render_run_async(root: &Path, ass: Option<&str>) -> Value {
         .as_nanos()
         .hash(&mut h);
     let run_id = format!("r{:016x}", h.finish());
-    let mut cmd = spawn_render(root, ass);
+    let mut cmd = spawn_render(root, ass, use_proxy);
     if let Ok(mut m) = renders().lock() {
         m.insert(run_id.clone(), RenderJob { state: "running", lines: Vec::new(), output: None, error: None });
     }
@@ -202,9 +205,10 @@ pub(crate) fn render_frame_tool(root: &Path, args: &Value) -> Value {
     }
     // ass 过滤在服务端(与 render/render_run 同口径):路径不存在时不烧录而非失败
     let ass = existing_rel(root, args["ass"].as_str());
+    let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
     let extra: Vec<String> = vec!["--frame".into(), format!("{at_ms}"), "--format".into(), fmt.into()];
     let extra_refs: Vec<&str> = extra.iter().map(|s| s.as_str()).collect();
-    let mut cmd = spawn_render_extra(root, ass, &extra_refs);
+    let mut cmd = spawn_render_extra(root, ass, use_proxy, &extra_refs);
     match cmd.output() {
         Ok(out) if out.status.success() => {
             let text = String::from_utf8_lossy(&out.stdout);

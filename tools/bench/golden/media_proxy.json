@@ -1,0 +1,46 @@
+{
+ "tool": "media_proxy",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/take1.mp4"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "cached": false,
+     "file": ".cutforge/proxy/<MEDIA_CACHE>.mp4",
+     "media": ".cutforge/proxy/<MEDIA_CACHE>.mp4",
+     "scale": "1/2",
+     "src": "01_原始素材/take1.mp4",
+     "state": "ready"
+    },
+    "message": "代理已生成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/take1.mp4",
+    "generate": false
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "cached": true,
+     "file": ".cutforge/proxy/<MEDIA_CACHE>.mp4",
+     "media": ".cutforge/proxy/<MEDIA_CACHE>.mp4",
+     "scale": "1/2",
+     "src": "01_原始素材/take1.mp4",
+     "state": "ready"
+    },
+    "message": "代理已存在(缓存命中)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

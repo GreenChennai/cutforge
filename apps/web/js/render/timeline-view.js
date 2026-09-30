@@ -13,8 +13,9 @@ import { createVirtualizer } from "./virtualizer.js";
 import { setRulerContent, drawRuler } from "./ruler.js";
 import { setPlayheadPx, drawOverlay } from "./playhead.js";
 import { drawWaveIfAudio } from "./waveform.js";
-import { svgUse } from "../../assets/icons.js";
-import { onClipPointerDown, onLanePointerDown, onLaneDragOver, onLaneDragLeave, onLaneDrop } from "./gestures.js";
+import { onClipPointerDown } from "./clip-gestures.js";
+import { onLanePointerDown, onLaneDragOver, onLaneDragLeave, onLaneDrop } from "./gestures.js";
+import { buildTrackHead, syncTrackHead } from "./track-head.js";
 import { openClipContextMenu, openTrackContextMenu, openTimelineContextMenu } from "../ui/menu.js";
 
 /** @type {Map<string, HTMLElement>} */
@@ -30,7 +31,22 @@ export function mountTimeline() {
   virt = createVirtualizer($("timeline-wrap"));
   virt.onChange(() => renderTimelineView());
   mountEmptyState();
-  mountBladeBadge();
+  mountToolBadges();
+  // 轨道属性(track_update)只改 projectStore:挂订阅让轨头/锁定态跟着重绘
+  projectStore.subscribe((patch) => {
+    if (patch.project !== undefined) renderTimelineView();
+  });
+  // 工具模式(T4.2):光标与命中区随模式(wrap class;e2e 断言面)
+  const applyTool = (st) => {
+    const wrap = $("timeline-wrap");
+    wrap.classList.toggle("blade-mode", st.tool === "blade");
+    wrap.classList.toggle("trim-mode", st.tool === "trim");
+    wrap.classList.toggle("tool-select", (st.tool || "select") === "select");
+  };
+  uiStore.subscribe((patch, st) => {
+    if (patch.tool !== undefined) applyTool(st);
+  });
+  applyTool(uiStore.get());
   return virt;
 }
 
@@ -53,18 +69,23 @@ function mountEmptyState() {
   el.classList.add("show"); // 装配期投影未到:先按空工程口径显示,clips 到达即收敛
 }
 
-/** 切割模式徽标(T3.4 B 键;文本态,非颜色单线索)。 */
-function mountBladeBadge() {
+/** 工具模式徽标(T4.2:A/B/T 三模式;blade 徽标保持 T3.4 e2e 口径,B/A 文案微调)。
+ * 切割=点击即分割;裁剪=点片段边缘修剪。文本态,非颜色单线索。 */
+function mountToolBadges() {
   const badge = h("span", {
     class: "blade-badge", testid: "blade-mode", hidden: true,
     "aria-live": "polite",
   }, ["✂ 切割模式:点击片段即分割(B 或 A 退出)"]);
+  const trimBadge = h("span", {
+    class: "blade-badge", testid: "trim-mode", hidden: true,
+    "aria-live": "polite",
+  }, ["⇱ 裁剪模式:点片段边缘拖动修剪(V 或 A 退出)"]);
   const toolbar = $("toolbar");
-  if (toolbar) toolbar.appendChild(badge);
+  if (toolbar) { toolbar.appendChild(badge); toolbar.appendChild(trimBadge); }
   uiStore.subscribe((patch, st) => {
-    if (patch.blade !== undefined) {
-      badge.hidden = !st.blade;
-      $("timeline-wrap").classList.toggle("blade-mode", st.blade);
+    if (patch.tool !== undefined) {
+      badge.hidden = st.tool !== "blade";
+      trimBadge.hidden = st.tool !== "trim";
     }
   });
 }
@@ -141,43 +162,26 @@ function renderLanes(tracks, contentW) {
     }
     prev = lane;
     lane.style.width = `${contentW}px`;
-    const eye = lane.querySelector(".lane-eye");
-    if (eye) {
-      const hidden = ephemeralStore.get().hiddenTracks.includes(t.id);
-      eye.setAttribute("aria-pressed", hidden ? "false" : "true");
-      lane.classList.toggle("hidden-by-user", hidden);
-    }
+    syncTrackHead(lane, t); // 轨头七字段状态(锁定/静音/独奏/眼睛/名称/高度/标识色)
   }
 }
 
 function createLane(t) {
   const kind = t.kind || clipKindOf({ track: t.id });
-  const label = h("span", { class: "lane-label", testid: `lane-label-${t.id}` }, [
-    h("span", { class: "lane-kind" }, [t.id]),
-    h("button", {
-      class: "lane-eye", testid: `track-visibility-${t.id}`,
-      "aria-pressed": "true", "aria-label": `切换 ${t.id} 轨显示(仅视图,不落盘)`,
-      "data-tip": "眼睛开关:仅隐藏视图(ephemeral,不落盘/不参与撤销)",
-      onclick: (e) => {
-        e.stopPropagation();
-        toggleTrackVisible(t.id);
-      },
-    }, [svgUse("icon-eye")]),
-    h("span", { class: "badge", "data-tip": "轨型" }, [kind]),
-  ]);
+  const { label, grip } = buildTrackHead(t);
   const lane = h("div", {
     class: "track", dataset: { trackId: t.id, kind },
     testid: `track-lane-${t.id}`,
-  }, [label]);
+  }, [label, grip]);
   lane.addEventListener("pointerdown", onLanePointerDown);
   lane.addEventListener("dragover", onLaneDragOver);
   lane.addEventListener("dragleave", onLaneDragLeave);
   lane.addEventListener("drop", onLaneDrop);
-  // 右键上下文(T3.6 四菜单之二/四):轨头 = 轨道菜单;轨道空白 = 时间线空白菜单
+  // 右键上下文(T3.6 四菜单之二/四;T4.2 轨道全功能菜单):轨头 = 轨道菜单;空白 = 时间线菜单
   lane.addEventListener("contextmenu", (e) => {
     if (e.target.closest(".clip")) return; // 片段菜单由 clip 自己处理
     e.preventDefault();
-    if (e.target.closest(".lane-label")) openTrackContextMenu(t.id, e.clientX, e.clientY);
+    if (e.target.closest(".lane-label") || e.target === grip) openTrackContextMenu(t.id, e.clientX, e.clientY);
     else openTimelineContextMenu(e.clientX, e.clientY);
   });
   return lane;
@@ -213,7 +217,9 @@ function renderClips(clips, win) {
     const kind = clipKindOf(row);
     const selected = row.id === sel || selIds.has(row.id);
     const text = clipLabelOf(row);
-    const cls = `clip${kind !== "video" ? ` ${kind}` : ""}${selected ? " selected" : ""}`;
+    // T4.2:overlay(画中画)片段视觉区分(虚线描边 + 角标);音频轨静音/独奏态灰化由 lane class 下传
+    const cls = `clip${kind !== "video" ? ` ${kind}` : ""}${selected ? " selected" : ""}`
+      + `${row.overlay ? " overlay" : ""}`;
     const meta = clipEls.get(row.id);
     if (!meta) {
       // 新增(创建即落几何:absolute 无 left/width 会退化为 shrink-to-fit)
@@ -260,8 +266,9 @@ function createClipEl(row, cls, text) {
     "aria-label": `片段 ${text}`,
   }, [
     h("span", { class: "clip-name" }, [text]),
-    h("span", { class: "edge edge-l", testid: "clip-edge-l", "data-tip": "拖动裁剪入点" }),
-    h("span", { class: "edge edge-r", testid: "clip-edge-r", "data-tip": "拖动裁剪出点" }),
+    row.overlay ? h("span", { class: "clip-pip", "data-tip": "画中画(overlay 层)" }, ["画中画"]) : null,
+    h("span", { class: "edge edge-l", testid: "clip-edge-l", "data-tip": "拖动裁剪入点(Shift+拖 = 双边联动 roll)" }),
+    h("span", { class: "edge edge-r", testid: "clip-edge-r", "data-tip": "拖动裁剪出点(Shift+拖 = 双边联动 roll)" }),
   ]);
   el.addEventListener("pointerdown", onClipPointerDown);
   el.addEventListener("contextmenu", (e) => {

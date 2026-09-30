@@ -11,6 +11,7 @@ serde_json = "1"
 cutforge-core = { path = "../cutforge-core" }
 cutforge-io = { path = "../cutforge-io" }
 cutforge-schema = { path = "../cutforge-schema" }
+cutforge-render = { path = "../cutforge-render" }
 cutforge-script = { path = "../cutforge-script" }
 
 [[bin]]

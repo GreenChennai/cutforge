@@ -204,6 +204,23 @@ pub fn run(argv: Vec<String>) -> i32 {
                         if let Some(v) = num("opacity")? { patch.opacity = Some(v); }
                         if let Some(v) = num("scale")? { patch.scale = Some(v); }
                         if let Some(v) = num("speed")? { patch.speed = Some(v); }
+                        // 册四 A4 T4.4/T4.9:B9-1 字段对齐——五新字段与 MCP clip_update 同面;
+                        // speed-curve/crop 收 JSON 字面量(整组替换,与 patch 语义一致)
+                        if let Some(v) = args.flags.get("speed-curve") {
+                            patch.speed_curve = Some(serde_json::from_str::<Vec<cutforge_core::model::SpeedPoint>>(v)
+                                .map_err(|e| format!("speed-curve JSON 非法: {e}"))?);
+                        }
+                        if let Some(v) = args.flags.get("reverse") {
+                            patch.reverse = Some(v != "false");
+                        }
+                        if let Some(v) = num("rotation")? { patch.rotation = Some(v); }
+                        if let Some(v) = args.flags.get("crop") {
+                            patch.crop = Some(serde_json::from_str::<cutforge_core::model::Crop>(v)
+                                .map_err(|e| format!("crop JSON 非法: {e}"))?);
+                        }
+                        if let Some(v) = args.flags.get("flip") {
+                            patch.flip = Some(v.clone());
+                        }
                         if let Some(v) = args.flags.get("text") {
                             patch.text = Some(v.clone());
                         }
@@ -350,7 +367,8 @@ fn new_project_cmd(a: &Args) -> i32 {
     }
 }
 
-/// E4-2 机械校验:schemas/ui-fields.json 声明的"壳允许编辑字段集" ⊆ ClipPatch 字段集。
+/// E4-2 机械校验:schemas/ui-fields.json 声明的"壳允许编辑字段集" ⊆ 内核 patch 字段集。
+/// editable(片段检查器)⊆ ClipPatch;trackEditable(轨道头,册四 A4 T4.2)⊆ TrackPatch。
 /// 与 check-shell-purity 同风格(判定器进 CLI,可入门禁);真相源漂移在此红。
 fn check_ui_fields(json: bool) -> i32 {
     let root = repo_root();
@@ -361,53 +379,65 @@ fn check_ui_fields(json: bool) -> i32 {
         Ok(v) => v,
         Err(e) => return emit(json, false, "NO_CONFIG", &format!("schemas/ui-fields.json 不可读: {e}"), serde_json::json!({})),
     };
-    // ClipPatch 字段集:从 command.rs 的 struct ClipPatch 块按 `pub <snake>_ms…` 抽取,再转 camelCase
+    // patch 字段集:从 command.rs 的 struct 块按 `pub <snake>: Option<…>` 抽取,再转 camelCase
     let src = match std::fs::read_to_string(root.join("crates/cutforge-core/src/command.rs")) {
         Ok(s) => s,
         Err(e) => return emit(json, false, "NO_CONFIG", &format!("command.rs 不可读: {e}"), serde_json::json!({})),
     };
-    let patch_fields = clippatch_fields(&src);
-    if patch_fields.is_empty() {
-        return emit(json, false, "INTERNAL", "未能从 command.rs 解析出 ClipPatch 字段(结构变化需同步本判定器)", serde_json::json!({}));
+    let clip_patch_fields = patch_fields(&src, "ClipPatch");
+    let track_patch_fields = patch_fields(&src, "TrackPatch");
+    if clip_patch_fields.is_empty() || track_patch_fields.is_empty() {
+        return emit(json, false, "INTERNAL", "未能从 command.rs 解析出 ClipPatch/TrackPatch 字段(结构变化需同步本判定器)", serde_json::json!({}));
     }
-    let mut ui_fields: Vec<String> = Vec::new();
-    if let Some(groups) = doc["editable"].as_object() {
-        for (group, fields) in groups {
-            for f in fields.as_array().map(|a| a.iter().filter_map(|v| v.as_str()).map(String::from).collect::<Vec<_>>()).unwrap_or_default() {
-                ui_fields.push(f.clone());
-                let _ = group; // 分组名单独校验存在性(下方)
-            }
-        }
-    }
+    let collect = |key: &str| -> Vec<String> {
+        doc[key].as_object().map(|groups| {
+            groups.values().flat_map(|fields| {
+                fields.as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect::<Vec<_>>()).unwrap_or_default()
+            }).collect()
+        }).unwrap_or_default()
+    };
+    let ui_fields = collect("editable");
+    let track_ui_fields = collect("trackEditable");
     let mut violations: Vec<serde_json::Value> = Vec::new();
     for f in &ui_fields {
-        if !patch_fields.contains(f) {
+        if !clip_patch_fields.contains(f) {
             violations.push(serde_json::json!({"field": f, "reason": "ui-fields 声明可编辑,但 ClipPatch 无此字段(内核不支持,编辑会成幻觉)"}));
         }
     }
+    for f in &track_ui_fields {
+        if !track_patch_fields.contains(f) {
+            violations.push(serde_json::json!({"field": f, "reason": "trackEditable 声明可编辑,但 TrackPatch 无此字段(track_update 不认,编辑会成幻觉)"}));
+        }
+    }
     // 分组声明完整性:分组名单不得为空(壳按分组渲染)
-    let groups = doc["editable"].as_object().map(|o| o.len()).unwrap_or(0);
-    if groups == 0 {
+    if doc["editable"].as_object().map(|o| o.len()).unwrap_or(0) == 0 {
         violations.push(serde_json::json!({"field": "editable", "reason": "editable 分组缺失或为空"}));
+    }
+    if doc["trackEditable"].as_object().map(|o| o.len()).unwrap_or(0) == 0 {
+        violations.push(serde_json::json!({"field": "trackEditable", "reason": "trackEditable 分组缺失或为空(册四 A4 轨道头字段必须显式声明)"}));
     }
     let data = serde_json::json!({
         "uiFields": ui_fields,
-        "clipPatchFields": patch_fields,
+        "clipPatchFields": clip_patch_fields,
+        "trackUiFields": track_ui_fields,
+        "trackPatchFields": track_patch_fields,
         "readonlyDisplay": doc["readonly"].clone(),
         "violations": violations,
-        "rule": "壳可编辑字段集 ⊆ ClipPatch 字段集(E4-2);差异必须显式声明,不得静默漂移",
+        "rule": "壳可编辑字段集 ⊆ 内核 patch 字段集(E4-2):editable ⊆ ClipPatch、trackEditable ⊆ TrackPatch;差异必须显式声明,不得静默漂移",
     });
     if violations.is_empty() {
-        emit(json, true, "OK", &format!("ui-fields 合规:{} 个可编辑字段全部被 ClipPatch 支撑", ui_fields.len()), data)
+        emit(json, true, "OK", &format!(
+            "ui-fields 合规:{} 个片段可编辑字段全部被 ClipPatch 支撑,{} 个轨道可编辑字段全部被 TrackPatch 支撑",
+            ui_fields.len(), track_ui_fields.len()), data)
     } else {
         emit(json, false, "UI_FIELDS_VIOLATION", &format!("违规 {} 处", violations.len()), data)
     }
 }
 
-/// 从 `struct ClipPatch { … }` 块抽取 `pub <snake>: Option<…>` 字段名并转 camelCase。
-fn clippatch_fields(src: &str) -> Vec<String> {
+/// 从 `struct <name> { … }` 块抽取 `pub <snake>: Option<…>` 字段名并转 camelCase。
+fn patch_fields(src: &str, struct_name: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let Some(start) = src.find("pub struct ClipPatch") else { return out };
+    let Some(start) = src.find(&format!("pub struct {struct_name}")) else { return out };
     let body = &src[start..];
     let Some(end) = body.find('}') else { return out };
     for line in body[..end].lines() {

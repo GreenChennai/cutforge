@@ -119,4 +119,18 @@ export function drawOverlay(snapMsVal = null) {
       overlayCtx.setLineDash([]);
     }
   }
+  // roll/slide 共享边界拖拽指示线(T4.2;实线强调,区别于吸附虚线)
+  const trimLine = ephemeralStore.get().trimLineMs;
+  if (trimLine !== null && trimLine !== undefined) {
+    const x = Math.round(trimLine * PX_PER_MS - sl) + 0.5;
+    if (x >= -1 && x <= overlay.width + 1) {
+      overlayCtx.strokeStyle = cssVar("--cf-snap-line");
+      overlayCtx.lineWidth = 2;
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(x, 0);
+      overlayCtx.lineTo(x, overlay.height);
+      overlayCtx.stroke();
+      overlayCtx.lineWidth = 1;
+    }
+  }
 }

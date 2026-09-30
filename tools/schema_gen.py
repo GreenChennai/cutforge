@@ -123,6 +123,10 @@ def _validate(schema: dict, root: dict, data, path: str) -> list[str]:
             errors.append(f"{{path}}: maximum {{schema['maximum']}} 实际 {{data}}")
         if "exclusiveMinimum" in schema and data <= schema["exclusiveMinimum"]:
             errors.append(f"{{path}}: exclusiveMinimum {{schema['exclusiveMinimum']}} 实际 {{data}}")
+        if "multipleOf" in schema and schema["multipleOf"] > 0:
+            q = data / schema["multipleOf"]
+            if abs(q - round(q)) > 1e-9:
+                errors.append(f"{{path}}: multipleOf {{schema['multipleOf']}} 实际 {{data}}")
 
     if isinstance(data, str):
         if "minLength" in schema and len(data) < schema["minLength"]:

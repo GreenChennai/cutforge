@@ -61,6 +61,17 @@ fn protocol_conformance() {
         ("bgm_set", json!({"root": root_s})),
         // T2.4:render_frame 缺 atMs 同样 PRECONDITION_FAILED(缺 root 由统一探针覆盖)
         ("render_frame", json!({"root": root_s})),
+        // 册四 A4 T4.2 时间线编辑全工具缺参/非法参数面
+        ("clip_trim", json!({"root": root_s})),
+        ("clip_trim", json!({"root": root_s, "clipId": "V1-001", "mode": "prune", "deltaMs": 100})),
+        ("clip_trim", json!({"root": root_s, "clipId": "V1-001", "mode": "trim", "deltaMs": 100})),
+        ("clip_split_all", json!({"root": root_s})),
+        ("track_update", json!({"root": root_s})),
+        ("track_update", json!({"root": root_s, "trackId": "V1", "patch": {}})),
+        ("clip_gap_delete", json!({"root": root_s})),
+        ("clip_copy", json!({"root": root_s})),
+        ("clip_paste_at", json!({"root": root_s})),
+        ("clip_paste_at", json!({"root": root_s, "trackId": "V1"})),
     ] {
         let resp = cutforge_mcp::dispatch(name, &args);
         assert_envelope(&resp, name);
@@ -85,22 +96,25 @@ fn protocol_conformance() {
 
     // 注册表与 mcp-tools.json 契约:工具全部有名/有描述/有双 schema
     // (数量与 json 对拍;阶段二 34→38;阶段三新增 transition_set/motion_set/bgm_set → 41;
-    //  册二 A2 新增 render_frame → 42)
+    //  册二 A2 新增 render_frame → 42;册四 A4 新增 clip_trim/clip_split_all/
+    //  track_update/clip_gap_delete/clip_copy/clip_paste_at → 48;册四 A4-BE3b 增
+    //  text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/
+    //  media_thumbnail/media_proxy/audio_beats → 56)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 42, "B7 口径:工具数以 schemas/mcp-tools.json 为准");
+    assert_eq!(names.len(), 56, "B7 口径:工具数以 schemas/mcp-tools.json 为准");
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);
         assert!(t["outputSchema"].is_object(), "{} 缺 outputSchema", t["name"]);
     }
-    // kind 口径:13 查询 + 21 写 + 8 编排(与 _doc 同句)
+    // kind 口径:13 查询 + 30 写 + 13 编排(与 _doc 同句;册四 BE3b 48→56)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds.entry(t["kind"].as_str().unwrap().to_string()).or_insert(0usize) += 1;
     }
     assert_eq!(kinds.get("query"), Some(&13), "查询 13:{kinds:?}");
-    assert_eq!(kinds.get("write"), Some(&21), "写 21:{kinds:?}");
-    assert_eq!(kinds.get("orchestrate"), Some(&8), "编排 8:{kinds:?}");
+    assert_eq!(kinds.get("write"), Some(&30), "写 30:{kinds:?}");
+    assert_eq!(kinds.get("orchestrate"), Some(&13), "编排 13:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
     // 实现分支,不得出现"已注册但未实现"。统一以缺 root 空参探针:所有工具(capability_matrix
@@ -145,5 +159,95 @@ fn readonly_query_holds_no_lock() {
     let resp = cutforge_mcp::dispatch("project_get", &json!({"root": root_s}));
     assert_eq!(resp["code"], json!("OK"), "{resp}");
     assert!(!root.join(".cutforge/lock").exists(), "只读查询不得留下工程锁");
+    cutforge_io::fsutil::cleanup(&root);
+}
+
+/// 册四 A4 T4.2:时间线编辑全工具的 dispatch 级闭环——roll/trim/slip/slide、
+/// 全轨分割、轨道属性、间隙删除、复制粘贴,外加 undo 逐级还原与守护拒绝。
+/// 夹具工程迁移后:V1-001[0,8400) V1-002[8400,14600) A1-001[8400,8800)。
+#[test]
+fn edit_ops_tools_full_chain() {
+    let root = cutforge_io::tests_fixture("mcp-edit-ops").unwrap();
+    let root_s = root.to_string_lossy().to_string();
+    let call = |name: &str, args: Value| cutforge_mcp::dispatch(name, &args);
+
+    // 剪贴板空板:粘贴必须 PRECONDITION_FAILED(先于任何 copy)
+    let r = call("clip_paste_at", json!({"root": root_s, "trackId": "V1", "startMs": 15000}));
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "{r}");
+
+    // 1) roll out +200:V1-001[0,8600) / V1-002[8600,14600)(srcIn 21800)
+    let r = call("clip_trim", json!({"root": root_s, "clipId": "V1-001", "mode": "roll", "edge": "out", "deltaMs": 200}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // 2) trim out -600:V1-001[0,8000),与 V1-002 间出现 600ms 间隙
+    let r = call("clip_trim", json!({"root": root_s, "clipId": "V1-001", "mode": "trim", "edge": "out", "deltaMs": -600}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // 3) slip -300:内容平移 srcIn 21800→21500,时间线占位不变
+    //    (夹具无媒体文件,正向 slip 的素材末尾约束需 ffprobe 会 DEP_MISSING,故取负向)
+    let r = call("clip_trim", json!({"root": root_s, "clipId": "V1-002", "mode": "slip", "deltaMs": -300}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // 4) slide -600:V1-002[8000,14000)(左侧非贴合,间隙吸收;内容窗不变)
+    let r = call("clip_trim", json!({"root": root_s, "clipId": "V1-002", "mode": "slide", "deltaMs": -600}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // roll 无贴合邻居 → GUARD_FAILED(内核不变量经既有 Reject 码)
+    let r = call("clip_trim", json!({"root": root_s, "clipId": "V1-002", "mode": "roll", "edge": "out", "deltaMs": 100}));
+    assert_eq!(r["code"], json!("GUARD_FAILED"), "{r}");
+    // 5) clip_split_all @4000:V1-001[0,4000)+V1-003[4000,8000),单 Op
+    let r = call("clip_split_all", json!({"root": root_s, "tMs": 4000}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["opIds"].as_array().unwrap().len(), 1, "全轨分割单 Op");
+    // 6) clip_gap_delete(A2 头部 8400ms 空档;迁移器轨道 id=字母+下标,A1 是视频轨):A1-001 → [0,400)
+    let r = call("clip_gap_delete", json!({"root": root_s, "trackId": "A2", "tMs": 100}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // t 位于片段内部 → GUARD_FAILED
+    let r = call("clip_gap_delete", json!({"root": root_s, "trackId": "V1", "tMs": 1000}));
+    assert_eq!(r["code"], json!("GUARD_FAILED"), "{r}");
+    // 7) track_update:轨道属性进 IR 并回读可见(TrackPatch 按字段合并)
+    let r = call("track_update", json!({"root": root_s, "trackId": "V1",
+                 "patch": {"name": "主画面A4", "mute": true, "heightPx": 260, "color": "#3366CC"}}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let r = call("track_update", json!({"root": root_s, "trackId": "V1", "patch": {"heightPx": 260}}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["idempotent"], json!(true), "同值 patch 幂等回执");
+    // 8) clip_copy + clip_paste_at:带属性粘贴,新 id,rev 推进
+    let rev_before = call("project_get", json!({"root": root_s}))["data"]["rev"].clone();
+    let r = call("clip_copy", json!({"root": root_s, "clipId": "V1-003"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["clipboard"]["kind"], json!("video"));
+    let rev_after_copy = call("project_get", json!({"root": root_s}))["data"]["rev"].clone();
+    assert_eq!(rev_before, rev_after_copy, "clip_copy 不得升 rev");
+    // 跨 kind 粘贴拒绝(剪贴板来源 video → 音频轨)
+    let r = call("clip_paste_at", json!({"root": root_s, "trackId": "A2", "startMs": 15000}));
+    assert_eq!(r["code"], json!("GUARD_FAILED"), "{r}");
+    let r = call("clip_paste_at", json!({"root": root_s, "trackId": "V1", "startMs": 15000,
+                 "requestId": "conf-paste-1"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // 9) 投影面:全链结果逐项可见(契约链端到端)
+    let r = call("timeline_get", json!({"root": root_s}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let rows: Vec<&Value> = r["data"]["clips"].as_array().unwrap()
+        .iter().filter(|c| c["track"] == json!("V1")).collect();
+    assert!(rows.iter().any(|c| c["id"] == json!("V1-003") && c["startMs"] == json!(4000)));
+    let pasted = rows.iter().find(|c| c["id"] == json!("V1-004")).expect("粘贴片段必须在投影");
+    assert_eq!(pasted["startMs"], json!(15000));
+    assert_eq!(pasted["durationMs"], json!(4000), "粘贴保留时长(带属性)");
+    let pv = call("project_get", json!({"root": root_s}));
+    let v1 = pv["data"]["project"]["tracks"].as_array().unwrap().iter()
+        .find(|t| t["id"] == json!("V1")).unwrap();
+    assert_eq!(v1["name"], json!("主画面A4"));
+    assert_eq!(v1["mute"], json!(true));
+    assert_eq!(v1["heightPx"], json!(260));
+    assert_eq!(v1["color"], json!("#3366CC"));
+    // 10) undo 八步(roll/trim/slip/slide/split_all/gap_delete/track_update/paste)回到夹具原状
+    for _ in 0..8 {
+        let r = call("undo", json!({"root": root_s}));
+        assert_eq!(r["code"], json!("OK"), "{r}");
+    }
+    let r = call("timeline_get", json!({"root": root_s}));
+    let rows = r["data"]["clips"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "undo 后应回到夹具三片段: {rows:?}");
+    let v1 = call("project_get", json!({"root": root_s}))["data"]["project"]["tracks"].as_array().unwrap()
+        .iter().find(|t| t["id"] == json!("V1")).unwrap().clone();
+    assert!(v1.get("mute").is_none() && v1.get("heightPx").is_none(), "undo 后轨道属性字段消失");
+    assert_eq!(v1["clips"].as_array().unwrap()[0]["durationMs"], json!(8400));
     cutforge_io::fsutil::cleanup(&root);
 }

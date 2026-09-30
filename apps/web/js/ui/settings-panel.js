@@ -8,7 +8,7 @@ import { h, clear } from "./dom.js";
 import { openDialog } from "./dialog.js";
 import { exportTable, comboOf, findConflicts, rebind, resetAll, displayCombo } from "./keymap-registry.js";
 import { keyOf } from "./shortcuts.js";
-import { confirmBatch, setConfirmBatch } from "./prefs.js";
+import { confirmBatch, setConfirmBatch, pref, setPref } from "./prefs.js";
 import { toast } from "./toast.js";
 
 let listHost = null;
@@ -41,6 +41,15 @@ export function openSettings() {
       });
       /** @type {HTMLInputElement} */ (batch).checked = confirmBatch();
       body.appendChild(h("label", { class: "toggle" }, [batch, " 批量操作前先确认(如 OpLog 一键撤销)"]));
+      // 吸附强度档(T4.2:主开关 = 顶栏「磁吸」;档位决定候选源与半径)
+      const strength = h("select", { testid: "setting-snap-strength", "aria-label": "吸附强度" }, [
+        h("option", { value: "loose" }, ["松(仅帧网格)"]),
+        h("option", { value: "standard" }, ["标准(帧网格 + 片段边缘 + 播放头)"]),
+        h("option", { value: "strong" }, ["强(再加会话标记,半径 12px)"]),
+      ]);
+      strength.value = pref("snapStrength", "standard");
+      strength.addEventListener("change", () => setPref("snapStrength", strength.value));
+      body.appendChild(h("label", { class: "toggle" }, ["吸附强度 ", strength]));
       body.appendChild(h("div", { class: "dim" }, ["提示:按 ? 随时查看当前生效的全部快捷键。"]));
       renderList();
     },

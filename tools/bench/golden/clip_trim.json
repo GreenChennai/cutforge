@@ -1,0 +1,85 @@
+{
+ "tool": "clip_trim",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipId": "V1-002",
+    "mode": "trim",
+    "edge": "out",
+    "deltaMs": -1000
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-25"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipId": "V1-003",
+    "mode": "roll",
+    "edge": "out",
+    "deltaMs": 400
+   },
+   "response": {
+    "code": "GUARD_FAILED",
+    "data": {},
+    "message": "GUARD_FAILED: roll 需要 出点 侧贴合相邻片段(V1-003 的 out 边界无邻居)",
+    "ns": "core",
+    "ok": false
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipId": "V1-003",
+    "mode": "slip",
+    "deltaMs": 250
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-27"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipId": "V1-003",
+    "mode": "slide",
+    "deltaMs": 600
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-28"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

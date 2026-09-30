@@ -30,3 +30,50 @@
   background: var(--cf-menu-bg); color: var(--cf-accent-soft);
 }
 .set-bgm:hover { background: var(--cf-menu-hover); }
+
+/* ================= 册四 T4.1:缩略卡 / 过滤 chips / 搜索 / 代理徽标 ================= */
+
+/* 类型过滤 chips(会话态;aria-pressed + .on 双线索) */
+.media-filters { display: flex; gap: var(--cf-s1); margin-bottom: var(--cf-s2); flex-wrap: wrap; }
+.media-filters .chip {
+  font-size: var(--cf-fs-xs); padding: 1px var(--cf-s3);
+  border-radius: var(--cf-r-pill);
+  border: 1px solid var(--cf-btn-border);
+  background: var(--cf-menu-bg); color: var(--cf-dim);
+  cursor: pointer;
+  transition: color var(--cf-dur-fast) var(--cf-ease),
+              border-color var(--cf-dur-fast) var(--cf-ease),
+              background-color var(--cf-dur-fast) var(--cf-ease);
+}
+.media-filters .chip:hover { color: var(--cf-fg); border-color: var(--cf-line-strong); }
+.media-filters .chip.on {
+  color: var(--cf-fg-bright); background: var(--cf-btn-hover);
+  border-color: var(--cf-line-strong);
+}
+#media-search { width: 100%; box-sizing: border-box; margin-bottom: var(--cf-s2); }
+
+/* 缩略卡:缩略位 76×42(视频真图/图片直显/音频迷你波形;不可用回落图标) */
+.media-item { align-items: stretch; }
+.media-item .thumb { width: 76px; height: 42px; overflow: hidden; position: relative; }
+.media-item .thumb img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  border-radius: var(--cf-r-s);
+}
+.media-item .thumb canvas.thumb-wave {
+  width: 100%; height: 100%; display: block; border-radius: var(--cf-r-s);
+  background: var(--cf-panel-deep);
+  animation: cf-fade-in var(--cf-dur-base) var(--cf-ease-enter);
+}
+.media-item .media-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 代理徽标(视频卡;点击生成;ready 态反白) */
+.proxy-badge {
+  flex: 0 0 auto; font-size: var(--cf-fs-xs); padding: 1px var(--cf-s2);
+  border-radius: var(--cf-r-m); cursor: pointer;
+  border: 1px solid var(--cf-btn-border);
+  background: var(--cf-menu-bg); color: var(--cf-dim);
+  transition: color var(--cf-dur-fast) var(--cf-ease),
+              background-color var(--cf-dur-fast) var(--cf-ease);
+}
+.proxy-badge:hover { color: var(--cf-fg); border-color: var(--cf-line-strong); }
+.proxy-badge.ready { color: var(--cf-fg-bright); background: var(--cf-btn-hover); }

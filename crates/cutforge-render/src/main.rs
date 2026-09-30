@@ -24,6 +24,7 @@ fn main() {
     // T2.4 单帧模式:--frame <atMs> [--format png|jpeg];给了 --frame 即走单帧管线
     let mut frame_ms: Option<u64> = None;
     let mut fmt = cutforge_render::FrameFormat::Png;
+    let mut use_proxy = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -36,18 +37,20 @@ fn main() {
                         fmt = f;
                     }
             }
+            // 册四 T4.1 代理预览(显式 opt-in;缺失代理的片段回落原片)
+            "--use-proxy" => use_proxy = true,
             _ => {}
         }
         i += 1;
     }
     let Some(root) = root else {
-        eprintln!("用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>] [--frame <atMs> [--format png|jpeg]]");
+        eprintln!("用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>] [--frame <atMs> [--format png|jpeg]] [--use-proxy]");
         std::process::exit(3);
     };
     if let Some(at_ms) = frame_ms {
         // 单帧模式(T2.4):同步执行一帧,完成事件一行 + FRAME_OK <路径>
         match load_project_from_disk(&root).and_then(|p| {
-            cutforge_render::render_frame(&p, Path::new(&root), ass.as_deref(), at_ms, fmt)
+            cutforge_render::render_frame_opts(&p, Path::new(&root), ass.as_deref(), at_ms, fmt, use_proxy)
         }) {
             Ok(outcome) => {
                 cutforge_render::write_progress(cutforge_render::frame_done_event(&outcome));
@@ -68,7 +71,12 @@ fn main() {
             std::process::exit(if e.starts_with("SCHEMA_INVALID") { 2 } else { 3 });
         }
     };
-    match cutforge_render::render(&project, Path::new(&root), ass.as_deref(), &mut cutforge_render::write_progress) {
+    let outcome = if use_proxy {
+        cutforge_render::render_with(&project, Path::new(&root), ass.as_deref(), true, &mut cutforge_render::write_progress)
+    } else {
+        cutforge_render::render(&project, Path::new(&root), ass.as_deref(), &mut cutforge_render::write_progress)
+    };
+    match outcome {
         Ok(outcome) => {
             for (step, ok) in &outcome.steps {
                 cutforge_render::write_progress(serde_json::json!({"step": step, "ok": ok}));

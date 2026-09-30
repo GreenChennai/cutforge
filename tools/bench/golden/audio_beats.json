@@ -1,0 +1,66 @@
+{
+ "tool": "audio_beats",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/bgm.mp3",
+    "sensitivity": 0.5
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "beatCount": 13,
+     "beats": [
+      80,
+      480,
+      880,
+      1280,
+      1680,
+      2080,
+      2480,
+      2880,
+      3280,
+      3680,
+      4080,
+      4480,
+      4880
+     ],
+     "bpm": 150.0,
+     "confidence": 0.42,
+     "degraded": true,
+     "durationMs": 5000,
+     "engine": "onset-energy",
+     "hint": "纯计算不落盘不产 Op;标记落盘与素材卡点吸附是 FE 活(检测质量为启发式口径,不作硬验收)",
+     "onsetCount": 19,
+     "onsets": [
+      80,
+      280,
+      480,
+      880,
+      1180,
+      1480,
+      1780,
+      1980,
+      2180,
+      2480,
+      2880,
+      3080,
+      3380,
+      3580,
+      3780,
+      4080,
+      4480,
+      4680,
+      4880
+     ],
+     "sensitivity": 0.5,
+     "src": "01_原始素材/bgm.mp3"
+    },
+    "message": "节拍检测完成(启发式;置信度如实)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

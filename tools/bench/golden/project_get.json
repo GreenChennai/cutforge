@@ -72,7 +72,11 @@
        {
         "clips": [
          {
+          "denoise": "mid",
           "durationMs": 1800,
+          "huazi": {
+           "template": "hz.pop"
+          },
           "id": "V1-001",
           "motion": {
            "in": "zoomIn",
@@ -80,31 +84,57 @@
            "out": "fadeOut",
            "outMs": 260.0
           },
+          "pitch": -4.0,
           "sourceInMs": 0,
           "src": "01_原始素材/take1.mp4",
           "startMs": 0,
           "text": "第一句字幕",
+          "textStyle": {
+           "align": "topCenter",
+           "color": "#FFCC00",
+           "fontSize": 72.0
+          },
           "volume": 0.85
          },
          {
           "durationMs": 2000,
           "id": "V1-003",
-          "sourceInMs": 2000,
+          "sourceInMs": 2250,
           "src": "01_原始素材/take1.mp4",
-          "startMs": 12000,
+          "startMs": 10400,
           "volume": 1.0
          },
          {
-          "durationMs": 6000,
+          "durationMs": 3200,
           "id": "V1-002",
           "sourceInMs": 1000,
           "src": "01_原始素材/take1.mp4",
-          "startMs": 4000,
+          "startMs": 1800,
           "transition": {
            "durMs": 300.0,
            "reason": "topic",
            "type": "fade"
           }
+         },
+         {
+          "durationMs": 1800,
+          "id": "V1-004",
+          "sourceInMs": 4200,
+          "src": "01_原始素材/take1.mp4",
+          "startMs": 5000,
+          "transition": {
+           "durMs": 300.0,
+           "reason": "topic",
+           "type": "fade"
+          }
+         },
+         {
+          "durationMs": 2000,
+          "id": "V1-005",
+          "sourceInMs": 2250,
+          "src": "01_原始素材/take1.mp4",
+          "startMs": 15000,
+          "volume": 1.0
          }
         ],
         "id": "V1",
@@ -122,7 +152,9 @@
          }
         ],
         "id": "A1",
-        "kind": "audio"
+        "kind": "audio",
+        "mute": true,
+        "solo": false
        },
        {
         "clips": [
@@ -139,10 +171,35 @@
           "src": "01_原始素材/take1.mp4",
           "startMs": 1000,
           "volume": 0.0
+         },
+         {
+          "durationMs": 900,
+          "id": "T1-002",
+          "startMs": 0,
+          "text": "新文本",
+          "textStyle": {
+           "color": "#FFFFFF",
+           "fontSize": 64.0
+          }
+         },
+         {
+          "durationMs": 1000,
+          "id": "T1-003",
+          "startMs": 4000,
+          "text": "导入改一句"
+         },
+         {
+          "durationMs": 1000,
+          "id": "T1-004",
+          "startMs": 5000,
+          "text": "导入第二句"
          }
         ],
+        "color": "#22CC88",
+        "heightPx": 120,
         "id": "T1",
-        "kind": "text"
+        "kind": "text",
+        "name": "字幕轨"
        }
       ],
       "version": 1

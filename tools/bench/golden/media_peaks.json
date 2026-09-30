@@ -1,0 +1,49 @@
+{
+ "tool": "media_peaks",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/bgm.mp3",
+    "level": "coarse"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "buckets": 1000,
+     "cached": false,
+     "file": ".cutforge/peaks-cache/<MEDIA_CACHE>.json",
+     "hint": "波形绘制消费:GET /media?path=<file>;FE 拿 min/max 数组画多级分辨率波形",
+     "level": "coarse",
+     "media": ".cutforge/peaks-cache/<MEDIA_CACHE>.json",
+     "src": "01_原始素材/bgm.mp3"
+    },
+    "message": "peaks 已生成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/bgm.mp3",
+    "level": "coarse"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "buckets": 1000,
+     "cached": true,
+     "file": ".cutforge/peaks-cache/<MEDIA_CACHE>.json",
+     "hint": "波形绘制消费:GET /media?path=<file>;FE 拿 min/max 数组画多级分辨率波形",
+     "level": "coarse",
+     "media": ".cutforge/peaks-cache/<MEDIA_CACHE>.json",
+     "src": "01_原始素材/bgm.mp3"
+    },
+    "message": "peaks 缓存命中",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

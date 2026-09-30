@@ -61,13 +61,25 @@ export function mount(container) {
     + "标尺 scrub 自动吸附最近拍。会话态,刷新即失。",
   ]));
 
-  // 投影到达 → 回填工程 BGM 态(旧壳 refreshBgm 口径:每次 refresh 均回填)
+  // 投影到达 → 回填工程 BGM 态(旧壳 refreshBgm 口径:每次 refresh 均回填)。
+  // A4-L15 竞态根治(焦点守卫):上一笔 op 的 reproject 恰落在「填草稿 → 点应用」
+  // 窗口内时,fillFrom 曾以工程值覆盖输入框 → 草稿被清空 → 本笔点击发空值。
+  // 口径:草稿编辑中(面板任一控件持焦点)的投影回填跳过——草稿归用户,投影只回填
+  // 非编辑态;点应用后焦点移出控件,回填恢复,应用值照常进框。__reset__(切工程)
+  // 不守卫:旧工程草稿无保护价值,强制回填。
   projectStore.subscribe((patch, st) => {
-    if (patch.project !== undefined || patch.__reset__) fillFrom(st.project);
+    if (patch.__reset__ || (patch.project !== undefined && !userEditing())) fillFrom(st.project);
   });
   ephemeralStore.subscribe((patch) => { if (patch.beats !== undefined) renderBeats(); });
   fillFrom(projectStore.get().project);
   renderBeats();
+}
+
+/** 面板任一输入控件持焦点 = 用户草稿编辑中(fillFrom 不得覆盖)。 */
+function userEditing() {
+  const ae = document.activeElement;
+  return !!ae && (ae === srcInput || ae === gainField.input
+    || ae === duckT.input || ae === loopT.input);
 }
 
 function fillFrom(project) {

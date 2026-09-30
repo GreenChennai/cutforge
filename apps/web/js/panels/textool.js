@@ -3,8 +3,8 @@
  *
  * - 文本位置拖拽(画布所见即所得)在 render/preview-transform.js(与画中画变换同层);
  * - 花字消费:clip_update patch.huazi = {template, params}(整对象替换单 Op);
- *   huazi 无法经 clip_update 置空(Option None = 不改,内核口径)——「移除花字」以
- *   template 置空串实现渲染端诚实降级(纯文本 + WARN),登记「huazi 清除候 BE」;
+ *   「移除花字」= patch.huazi: null 显式清除(册四收口 BE 语义:显式 null 或 {} =
+ *   清除挂载,单 Op 可撤销;A4-L11 壳侧切换,空模板降级方案已废);
  * - ASS 色 &HAABBGGRR ↔ 网页色转换仅用于预览/取色控件,提交回传 ASS 原形。
  */
 import { h, clear } from "../ui/dom.js";
@@ -224,12 +224,12 @@ export function buildHuaziHost(rowOf) {
       },
     }, ["应用花字"]));
     bar.appendChild(h("button", {
-      class: "mini", testid: "huazi-clear", title: "渲染降级为纯文本(huazi 无法经 clip_update 置空,"
-        + "以空模板诚实降级;清除字段候 BE)",
+      class: "mini", testid: "huazi-clear", title: "patch.huazi: null 显式清除花字挂载"
+        + "(册四收口 BE 语义,null/{} = 清除,单 Op 可撤销)",
       onclick: () => {
         const row = rowOf();
         if (!row) return;
-        updateClip(row.id, { huazi: { template: "" } }, "花字已降级为纯文本(可撤销)");
+        updateClip(row.id, { huazi: null }, "花字已移除(可撤销)");
       },
     }, ["移除花字"]));
     host.appendChild(bar);

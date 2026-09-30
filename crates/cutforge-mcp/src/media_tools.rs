@@ -55,7 +55,15 @@ pub fn pcm_to_peaks(samples: &[i16], buckets: u32) -> Vec<(f32, f32)> {
     let per = samples.len().div_ceil(n);
     let mut out = Vec::with_capacity(n);
     for b in 0..n {
-        let slice = &samples[b * per..((b + 1) * per).min(samples.len())];
+        // 界守卫:短音频(len < buckets)时 per=1,b>=len 的轮次起点越界,
+        // 钳到样本末尾即空桶(与既有空桶分支同语义:恒零峰)。
+        let start = (b * per).min(samples.len());
+        let end = ((b + 1) * per).min(samples.len());
+        if start >= end {
+            out.push((0.0, 0.0));
+            continue;
+        }
+        let slice = &samples[start..end];
         if slice.is_empty() {
             out.push((0.0, 0.0));
             continue;
@@ -479,6 +487,68 @@ mod tests {
         assert_eq!(pcm_to_peaks(&[], 4), vec![(0.0, 0.0); 4], "空 PCM 恒零峰");
         // 确定性
         assert_eq!(pcm_to_peaks(&samples, 8), pcm_to_peaks(&samples, 8));
+    }
+
+    /// 短音频 × 高桶数:len < buckets 时 per=1,越界轮次不得 panic,
+    /// 末尾桶恒零峰(CI ubuntu 实证边界缺陷的回归测试)。
+    #[test]
+    fn pcm_to_peaks_short_audio_more_buckets_than_samples() {
+        let samples: Vec<i16> = vec![100, -200, 300, -400, 500]; // 5 样本
+        let peaks = pcm_to_peaks(&samples, 1000);
+        assert_eq!(peaks.len(), 1000, "桶数恒等于请求值");
+        for (mn, mx) in &peaks {
+            assert!(mn <= mx);
+            assert!(*mn >= -1.0 && *mx <= 1.0);
+        }
+        // 前 5 桶各含 1 样本(per=1),峰值逐样本对应
+        for (b, s) in samples.iter().enumerate() {
+            let expect = *s as f32 / 32768.0;
+            assert_eq!(peaks[b], (expect, expect), "桶 {b} 应为单样本峰");
+        }
+        // 末尾桶(样本耗尽)恒零峰
+        for (mn, mx) in &peaks[5..] {
+            assert_eq!(*mn, 0.0);
+            assert_eq!(*mx, 0.0);
+        }
+        // 恰好 len == buckets 也应整除无越界
+        let peaks = pcm_to_peaks(&samples, 5);
+        assert_eq!(peaks.len(), 5);
+        assert_eq!(peaks[0], (100.0 / 32768.0, 100.0 / 32768.0));
+    }
+
+    /// 空 PCM 既有路径保持:恒 n 个零峰(不动语义)。
+    #[test]
+    fn pcm_to_peaks_empty_samples_stays_flat() {
+        assert_eq!(pcm_to_peaks(&[], 1), vec![(0.0, 0.0)]);
+        assert_eq!(pcm_to_peaks(&[], 8), vec![(0.0, 0.0); 8]);
+        assert_eq!(pcm_to_peaks(&[], 4000), vec![(0.0, 0.0); 4000]);
+    }
+
+    /// 正常路径抽查:桶数正确 + 已知波形的峰值正确性(极值桶逐点核对)。
+    #[test]
+    fn pcm_to_peaks_normal_path_bucket_and_peak_correctness() {
+        // 9 样本分 3 桶:每桶 3 样本,极值可手算
+        let samples: Vec<i16> = vec![1000, -2000, 500, -3000, 4000, 0, -100, 200, 6000];
+        let peaks = pcm_to_peaks(&samples, 3);
+        assert_eq!(peaks.len(), 3);
+        assert_eq!(peaks[0], (-2000.0 / 32768.0, 1000.0 / 32768.0));
+        assert_eq!(peaks[1], (-3000.0 / 32768.0, 4000.0 / 32768.0));
+        assert_eq!(peaks[2], (-100.0 / 32768.0, 6000.0 / 32768.0));
+        // 整除余数:7 样本分 3 桶(per=3,尾样本并入末桶)
+        let samples: Vec<i16> = vec![1, -2, 3, -4, 5, -6, 7];
+        let peaks = pcm_to_peaks(&samples, 3);
+        assert_eq!(peaks.len(), 3);
+        assert_eq!(peaks[0], (-2.0 / 32768.0, 3.0 / 32768.0));
+        assert_eq!(peaks[1], (-6.0 / 32768.0, 5.0 / 32768.0));
+        assert_eq!(peaks[2], (7.0 / 32768.0, 7.0 / 32768.0), "尾样本并入末桶");
+        // 正弦:整体 min/max 应近满幅对极
+        let samples = sine(440.0, 1000);
+        let peaks = pcm_to_peaks(&samples, 50);
+        assert_eq!(peaks.len(), 50);
+        let mn = peaks.iter().map(|p| p.0).fold(0.0f32, f32::min);
+        let mx = peaks.iter().map(|p| p.1).fold(0.0f32, f32::max);
+        assert!(mn < -0.3, "正弦负峰应可见: {mn}");
+        assert!(mx > 0.3, "正弦正峰应可见: {mx}");
     }
 
     /// 周期点击轨(每 500ms 一个 40ms 窄脉冲)→ 120 BPM 网格。

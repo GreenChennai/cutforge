@@ -11,6 +11,7 @@ pub mod across;
 pub mod cache;
 pub mod catalog;
 pub mod frame;
+pub mod kf_expr;
 pub mod plan;
 pub mod segment;
 pub mod steps;
@@ -36,7 +37,10 @@ use std::process::Command;
 /// 6.0(册四 A4-BE3b):T4.7 文本片段 → 临时 ASS 烧录落地(ADR-0016;文本从
 /// 不可见变可见,旧缓存产物缺文本层,必须整体失效)+ T4.8 denoise/pitch 混音链 +
 /// track mute/solo/hidden 渲染联动收口 + T4.1 代理预览(useProxy)。
-pub const RENDERER_VERSION: &str = "cutforge-render-6.0";
+/// 7.0(册五 T5.1):关键帧引擎(IR v3)——五条表达式通路(rotate/zoompan/geq/
+/// overlay/volume)+ speed 关键帧展开 + fx 三态;旧缓存对关键帧 clip 自然分键
+/// (键含 clip JSON),版本位随行为面整体升版。
+pub const RENDERER_VERSION: &str = "cutforge-render-7.0";
 
 pub struct RenderOutcome {
     pub output: PathBuf,

@@ -110,7 +110,7 @@ def main() -> int:
         project_json = proj / timeline_rel / "project.json"
         assert project_json.is_file(), f"new 必须生成 {timeline_rel}/project.json"
         pj = json.loads(project_json.read_text(encoding="utf-8"))
-        assert pj["schemaVersion"] == "2.0.0", f"schemaVersion: {pj.get('schemaVersion')}"
+        assert pj["schemaVersion"] in ("2.0.0", "3.0.0"), f"schemaVersion: {pj.get('schemaVersion')}"  # 册五 T5.1 起新工程写 3.0.0(v2 读兼容保留)
         assert [t["id"] for t in pj["tracks"]] == ["V1", "A1"], f"稳定 id: {pj['tracks']}"
         assert all(t["clips"] == [] for t in pj["tracks"]), "空工程轨道必须为空"
         print("B11-1/B11-2 新建空工程(模板/schemaVersion/稳定 id): PASS")

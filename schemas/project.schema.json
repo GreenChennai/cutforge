@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "CutForge/CutFlow 项目 IR v2(毫秒级时间线;version 恒为 1 兼容旧读法,schemaVersion 表达契约演进)",
+  "title": "CutForge/CutFlow 项目 IR(毫秒级时间线;version 恒为 1 兼容旧读法,schemaVersion 表达契约演进;v3=关键帧引擎 T5.1)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -18,8 +18,11 @@
     },
     "schemaVersion": {
       "type": "string",
-      "const": "2.0.0",
-      "description": "schema 契约版本(semver);v1 工程由迁移器补齐"
+      "enum": [
+        "2.0.0",
+        "3.0.0"
+      ],
+      "description": "schema 契约版本(semver);v1 工程由迁移器补齐为 3.0.0。v3(册五 T5.1)新增 clip.keyframes;v2 工程读兼容:缺 keyframes 字段 = 无关键帧(与 v3 空集语义等价,零迁移成本,不强制改写);新工程与迁移产物一律写 3.0.0"
     },
     "slug": {
       "type": "string",
@@ -811,6 +814,58 @@
           "minimum": -12,
           "maximum": 12,
           "description": "保速变调半音档(册四 A4 T4.8):asetrate+aresample 升降采样率 ×2^(n/12),atempo 补偿保速;与 speed 组合链序 = 降噪→倒放→变调→变速(总时长恒 durationMs)"
+        },
+        "keyframes": {
+          "type": "array",
+          "minItems": 1,
+          "description": "关键帧(IR v3,册五 T5.1/ADR-0004 扩为正式 + ADR-0018 渲染路线):[{property,timeMs,value,interp,bezier}]。timeMs 相对片段起点(播放域毫秒);value 数值;interp 封闭枚举描述**本关键帧到下一关键帧**的缓动(linear 默认/hold/easeIn/easeOut/easeInOut/bezier+四参数控制柄)。渲染映射(ADR-0018 按属性分级):position.x/y→overlay 表达式、rotation→rotate 表达式、scale→zoompan 逐帧表达式、opacity→geq alpha、volume→volume 表达式(eval=frame)、speed→展开 speed_segments(B 级分段,与 speedCurve 同机制且互斥)、fx.<fxId>.<param>→按 fx-catalog 注册表三态(sendcmd|segment|static;static 打点诚实拒绝)。未知 property 整组 SCHEMA_INVALID(防静默丢);keyframed 属性逐帧覆盖静态值;求值单源 = cutforge-core 求值器,壳零插值(投影下发 keyframeSamples 采样点集)。整组替换(clip_update patch.keyframes)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "property",
+              "timeMs",
+              "value"
+            ],
+            "properties": {
+              "property": {
+                "type": "string",
+                "pattern": "^(position\\.x|position\\.y|scale|rotation|opacity|volume|speed|fx\\..+\\.[^.]+)$",
+                "description": "属性白名单:position.x/position.y/scale/rotation/opacity/volume/speed/fx.<fxId>.<param>(fxId 含自身 fx. 前缀,如 fx.fx.grain.strength;参数键按 fx-catalog 注册表校验,未注册或 static 态打点拒绝);白名单外属性(如 crop/textStyle)本期不打点(ADR-0018)"
+              },
+              "timeMs": {
+                "type": "number",
+                "minimum": 0,
+                "description": "关键帧时间(相对片段 startMs 的播放域毫秒);同属性序列必须 timeMs 严格递增(校验器裁决)"
+              },
+              "value": {
+                "type": "number",
+                "description": "关键帧值(数值;语义域随 property:position 为 0..1 画布相对坐标、scale 0.05..4、opacity 0..1、volume 0..2、speed 0.25..4、rotation 任意角度、fx 参数按目录 min/max 渲染端钳制)"
+              },
+              "interp": {
+                "enum": [
+                  "linear",
+                  "easeIn",
+                  "easeOut",
+                  "easeInOut",
+                  "bezier",
+                  "hold"
+                ],
+                "description": "插值(缺省 linear;ADR-0004 封闭枚举扩贝塞尔):本关键帧→下一关键帧区间的缓动;bezier 必须携带 bezier 四参数;hold = 值保持到下一关键帧;超出表达式表达能力的缓动由渲染端分段线性逼近(ADR-0018)"
+              },
+              "bezier": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "description": "贝塞尔四参数控制柄 [x1,y1,x2,y2](CSS cubic-bezier 同构;x∈[0,1]);interp=bezier 时必须给出,求值器按 de Casteljau/牛顿法精确求值(确定性)"
+              }
+            }
+          }
         }
       }
     }

@@ -169,6 +169,10 @@ pub struct Clip {
     /// 渲染端按 fx 目录(schemas/fx-catalog.json)解析为段滤镜链,未注册降级 WARN。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx: Option<FxSpec>,
+    /// 关键帧(IR v3,册五 T5.1):白名单属性动画载体,求值单源见
+    /// [`crate::keyframes`](模块级纪律);语义校验在 to_validated_value/from_value 钩子。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyframes: Option<Vec<crate::keyframes::Keyframe>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -357,7 +361,7 @@ pub struct Project {
 }
 
 fn default_schema_version() -> String {
-    "2.0.0".into()
+    "3.0.0".into()
 }
 fn default_backends() -> Vec<Backend> {
     vec![Backend::Ffmpeg]
@@ -367,11 +371,16 @@ fn default_notes_path() -> String {
 }
 
 impl Project {
-    /// 反序列化 + schema v2 校验(契约优先:没有 schema 支撑的字段不存在)。
+    /// 反序列化 + schema v3 校验 + 关键帧语义裁决(契约优先:没有 schema 支撑的
+    /// 字段不存在;关键帧白名单/互斥裁决见 [`crate::keyframes::validate_clip_keyframes`])。
     pub fn from_value(v: &Value) -> Result<Self, Vec<String>> {
         let p: Project = serde_json::from_value(v.clone())
             .map_err(|e| vec![format!("反序列化失败: {e}")])?;
         let errors = cutforge_schema::validate("project", v);
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        let errors = p.validate_keyframes();
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -385,7 +394,24 @@ impl Project {
         if !errors.is_empty() {
             return Err(errors);
         }
+        let errors = self.validate_keyframes();
+        if !errors.is_empty() {
+            return Err(errors);
+        }
         Ok(v)
+    }
+
+    /// 全工程关键帧语义校验(IR v3):任一 clip 违例整组 SCHEMA_INVALID。
+    pub fn validate_keyframes(&self) -> Vec<String> {
+        let mut errs = Vec::new();
+        for t in &self.tracks {
+            for c in &t.clips {
+                for e in crate::keyframes::validate_clip_keyframes(c) {
+                    errs.push(format!("clip {}: {e}", c.id));
+                }
+            }
+        }
+        errs
     }
 
     /// 按 id 找片段,返回 (轨道下标, 片段下标)。
@@ -464,11 +490,16 @@ pub fn migrate_from_value(v: &Value) -> Result<Project, Vec<String>> {
     Project::from_value(&migrated)
 }
 
-/// 时间线恒速段(timeline 恒速段;册四 A4 T4.4 的**单一真相源**):
+/// 时间线恒速段(timeline 恒速段;册四 A4 T4.4 的**单一真相源**,册五 T5.1 扩
+/// speed 关键帧入口):
 /// `(start_ms, end_ms, mean_speed)` 三元组,`mean_speed` 为该段渲染用的常速
 /// (区间两端点速度的算术平均 = 线性插值 speed 函数在区间上的积分均值)。
 ///
 /// 口径(投影与渲染共用本函数,红线 = 两边时长严格一致):
+/// - **speed 关键帧优先**(IR v3):clip.keyframes 含 speed 属性时,先经
+///   [`crate::keyframes::speed_keyframes_to_curve`] 合成为曲线(非线性缓动区间
+///   按求值器细分逼近),此后与本条 speedCurve 口径完全一致(与 speedCurve 互斥
+///   由校验器保证,此处不再判);
 /// - 无 speedCurve → 单段 `(0, duration_ms, speed.unwrap_or(1.0))`,与既有线性 speed 完全同形;
 /// - 有 speedCurve → 点按 atMs 升序(防御性排序),首点速度前延到 0、末点速度后延到
 ///   durationMs(端点常速外延);相邻点之间 speed 函数线性插值,渲染按区间
@@ -479,7 +510,18 @@ pub fn speed_segments(clip: &Clip) -> Vec<(u64, u64, f64)> {
     if dur == 0 {
         return Vec::new();
     }
-    let Some(points) = &clip.speed_curve else {
+    // speed 关键帧(IR v3):合成曲线后与 speedCurve 同路径(B 级分段常速逼近)
+    let speed_kf_curve = clip.keyframes.as_ref().and_then(|kfs| {
+        let pts: Vec<crate::keyframes::Keyframe> =
+            kfs.iter().filter(|k| k.property == "speed").cloned().collect();
+        if pts.is_empty() {
+            None
+        } else {
+            Some(crate::keyframes::speed_keyframes_to_curve(&pts))
+        }
+    });
+    let points = speed_kf_curve.as_ref().or(clip.speed_curve.as_ref());
+    let Some(points) = points else {
         return vec![(0, dur, clip.speed.unwrap_or(1.0))];
     };
     // 防御性归一:排序(乱序输入),钳到 [0, dur](越界点钳边)
@@ -524,6 +566,10 @@ pub fn source_read_ms(clip: &Clip) -> f64 {
         .map(|(a, b, s)| (*b - *a) as f64 * s)
         .sum()
 }
+
+#[cfg(test)]
+#[path = "fx_roundtrip_tests.rs"]
+mod fx_roundtrip_tests; // 册四 T4.6 fx 字段 roundtrip(纯移动拆分,行数红线 A1-3)
 
 #[cfg(test)]
 mod tests {
@@ -590,157 +636,14 @@ mod tests {
         v["tracks"][0].as_object_mut().unwrap().remove("id");
         v["tracks"][0]["clips"][0].as_object_mut().unwrap().remove("id");
         let p = migrate_from_value(&v).expect("迁移后必须合法");
-        assert_eq!(p.schema_version, "2.0.0");
+        assert_eq!(p.schema_version, "3.0.0", "v1 迁移目标随 IR v3(T5.1)");
         assert_eq!(p.tracks[0].id, "V1");
         assert_eq!(p.tracks[0].clips[0].id, "V1-001");
         assert_eq!(p.backends, vec![Backend::Ffmpeg]);
-    }
-
-    #[test]
-    fn overlap_detection() {
-        let p = Project::from_value(&sample()).unwrap();
-        assert!(Project::overlaps(&p.tracks[0]).is_empty());
-        let mut t = p.tracks[0].clone();
-        t.clips[1].start_ms = 100; // 与 V1-001 重叠
-        let ov = Project::overlaps(&t);
-        assert_eq!(ov, vec![("V1-001".to_string(), "V1-002".to_string())]);
-    }
-
-    #[test]
-    fn id_generation() {
-        let p = Project::from_value(&sample()).unwrap();
-        assert_eq!(Project::next_clip_id(&p.tracks[0]), "V1-003");
-        assert_eq!(p.next_track_id(TrackKind::Video), "V2");
-        assert_eq!(p.next_track_id(TrackKind::Text), "T1");
-    }
-
-    /// 册四 A4 T4.2:轨道新字段(locked/mute/solo/hidden/heightPx/color)必须被内核
-    /// 模型承接——"不加载 = 必丢"教训(册一 worked example:bgm.assetId 静默丢弃),
-    /// 每个新字段都要 roundtrip 测试证明读写不丢。
-    #[test]
-    fn track_fields_roundtrip_no_loss() {
-        let mut v = sample();
-        v["tracks"][0]["locked"] = json!(true);
-        v["tracks"][0]["mute"] = json!(false);
-        v["tracks"][0]["solo"] = json!(true);
-        v["tracks"][0]["hidden"] = json!(false);
-        v["tracks"][0]["heightPx"] = json!(220);
-        v["tracks"][0]["color"] = json!("#3D7EAF");
-        v["tracks"][0]["name"] = json!("主画面");
-        let p = Project::from_value(&v).expect("带轨道属性字段的工程必须通过 v2 校验");
-        let t = &p.tracks[0];
-        assert_eq!(t.locked, Some(true));
-        assert_eq!(t.mute, Some(false));
-        assert_eq!(t.solo, Some(true));
-        assert_eq!(t.hidden, Some(false));
-        assert_eq!(t.height_px, Some(220));
-        assert_eq!(t.color.as_deref(), Some("#3D7EAF"));
-        assert_eq!(t.name.as_deref(), Some("主画面"));
-        // 序列化回 Value:七个字段逐键在位(写不丢)
-        let back = p.to_validated_value().unwrap();
-        assert_eq!(back["tracks"][0]["locked"], json!(true));
-        assert_eq!(back["tracks"][0]["heightPx"], json!(220));
-        assert_eq!(back["tracks"][0]["color"], json!("#3D7EAF"));
-        // 再读入:语义相等(serde 往返无静默丢弃)
-        let p2 = Project::from_value(&back).unwrap();
+        // 迁移幂等
+        let v2 = p.to_validated_value().unwrap();
+        let p2 = migrate_from_value(&v2).unwrap();
         assert_eq!(p, p2);
-        // 旧工程(无这些字段)照常读写:缺省 None,不臆造落盘
-        let old = Project::from_value(&sample()).unwrap();
-        assert_eq!(old.tracks[0].locked, None);
-        let back_old = old.to_validated_value().unwrap();
-        assert!(back_old["tracks"][0].get("locked").is_none(), "缺省字段不得臆造");
-    }
-
-    /// 册四 A4 T4.4/T4.9:片段新字段(speedCurve/reverse/rotation/crop/flip)必须被内核
-    /// 模型承接——"不加载 = 必丢"教训(册一 worked example),逐字段 roundtrip 证明读写不丢。
-    #[test]
-    fn clip_time_transform_fields_roundtrip_no_loss() {
-        let mut v = sample();
-        v["tracks"][0]["clips"][0]["speedCurve"] = json!([
-            {"atMs": 0, "speed": 0.5}, {"atMs": 1000, "speed": 2.0}
-        ]);
-        v["tracks"][0]["clips"][0]["reverse"] = json!(true);
-        v["tracks"][0]["clips"][0]["rotation"] = json!(90.0);
-        v["tracks"][0]["clips"][0]["crop"] = json!({"x": 10, "y": 20, "w": 300, "h": 200});
-        v["tracks"][0]["clips"][0]["flip"] = json!("h");
-        let p = Project::from_value(&v).expect("带时间/变换字段的工程必须通过 v2 校验");
-        let c = &p.tracks[0].clips[0];
-        assert_eq!(c.speed_curve.as_ref().unwrap().len(), 2);
-        assert_eq!(c.speed_curve.as_ref().unwrap()[0], SpeedPoint { at_ms: 0, speed: 0.5 });
-        assert_eq!(c.speed_curve.as_ref().unwrap()[1], SpeedPoint { at_ms: 1000, speed: 2.0 });
-        assert_eq!(c.reverse, Some(true));
-        assert_eq!(c.rotation, Some(90.0));
-        assert_eq!(c.crop, Some(Crop { x: 10, y: 20, w: 300, h: 200 }));
-        assert_eq!(c.flip.as_deref(), Some("h"));
-        // 序列化回 Value:五字段逐键在位(写不丢)
-        let back = p.to_validated_value().unwrap();
-        let c0 = &back["tracks"][0]["clips"][0];
-        assert_eq!(c0["speedCurve"][1]["speed"], json!(2.0));
-        assert_eq!(c0["speedCurve"][1]["atMs"], json!(1000));
-        assert_eq!(c0["reverse"], json!(true));
-        assert_eq!(c0["rotation"], json!(90.0));
-        assert_eq!(c0["crop"]["w"], json!(300));
-        assert_eq!(c0["flip"], json!("h"));
-        // 再读入:语义相等(serde 往返无静默丢弃)
-        let p2 = Project::from_value(&back).unwrap();
-        assert_eq!(p, p2);
-        // 旧工程(无这些字段)照常读写:缺省 None,不臆造落盘
-        let old = Project::from_value(&sample()).unwrap();
-        let c = &old.tracks[0].clips[0];
-        assert!(c.speed_curve.is_none() && c.reverse.is_none() && c.rotation.is_none()
-            && c.crop.is_none() && c.flip.is_none());
-        let back_old = old.to_validated_value().unwrap();
-        let c0 = &back_old["tracks"][0]["clips"][0];
-        assert!(c0.get("speedCurve").is_none() && c0.get("reverse").is_none()
-            && c0.get("rotation").is_none() && c0.get("crop").is_none() && c0.get("flip").is_none(),
-            "缺省字段不得臆造");
-        // 契约边界:speed 越界(>4)在 schema 层拒
-        let mut bad = sample();
-        bad["tracks"][0]["clips"][0]["speedCurve"] = json!([{"atMs": 0, "speed": 8.0}]);
-        assert!(Project::from_value(&bad).is_err(), "曲线速度越界必须 SCHEMA_INVALID");
-    }
-
-    /// 册四 A4 T4.6:片段特效字段(fx.combo 叠加栈 + in/out 槽位)必须被内核模型
-    /// 承接——"不加载 = 必丢"教训,roundtrip 证明读写不丢(参数键序确定性)。
-    #[test]
-    fn clip_fx_field_roundtrip_no_loss() {
-        let mut v = sample();
-        v["tracks"][0]["clips"][0]["fx"] = json!({
-            "in": {"fx": "mo.fadeIn"},
-            "combo": [
-                {"fx": "fx.mono"},
-                {"fx": "fx.grain", "params": {"strength": 24}}
-            ]
-        });
-        let p = Project::from_value(&v).expect("带 fx 字段的工程必须通过 v2 校验");
-        let c = &p.tracks[0].clips[0];
-        let fx = c.fx.as_ref().unwrap();
-        assert_eq!(fx.in_.as_ref().unwrap().fx, "mo.fadeIn");
-        assert_eq!(fx.combo.as_ref().unwrap().len(), 2);
-        assert_eq!(fx.combo.as_ref().unwrap()[0].fx, "fx.mono");
-        assert_eq!(
-            fx.combo.as_ref().unwrap()[1].params.as_ref().unwrap()["strength"],
-            json!(24)
-        );
-        // 序列化回 Value:逐键在位(写不丢)
-        let back = p.to_validated_value().unwrap();
-        let f0 = &back["tracks"][0]["clips"][0]["fx"];
-        assert_eq!(f0["combo"][1]["params"]["strength"], json!(24));
-        assert_eq!(f0["in"]["fx"], json!("mo.fadeIn"));
-        // 再读入:语义相等(serde 往返无静默丢弃)
-        let p2 = Project::from_value(&back).unwrap();
-        assert_eq!(p, p2);
-        // 旧工程(无 fx 字段)照常读写:缺省 None,不臆造落盘
-        let old = Project::from_value(&sample()).unwrap();
-        assert!(old.tracks[0].clips[0].fx.is_none());
-        let back_old = old.to_validated_value().unwrap();
-        assert!(back_old["tracks"][0]["clips"][0].get("fx").is_none(), "缺省字段不得臆造");
-        // 契约边界:combo 上限 3,第 4 条在 schema 层拒
-        let mut bad = sample();
-        bad["tracks"][0]["clips"][0]["fx"] = json!({"combo": [
-            {"fx": "fx.mono"}, {"fx": "fx.blur"}, {"fx": "fx.grain"}, {"fx": "fx.vignette"}
-        ]});
-        assert!(Project::from_value(&bad).is_err(), "combo 超 3 条必须 SCHEMA_INVALID");
     }
 
     /// speed_segments:投影与渲染共用的段划分单一真相源(T4.4 红线的根基)。

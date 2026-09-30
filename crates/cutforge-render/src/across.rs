@@ -79,7 +79,15 @@ pub fn event_body(seg: &AudioSeg) -> String {
             body.push_str(&format!(",{t}"));
         }
     }
-    body.push_str(&format!(",volume={:.4}", seg.volume));
+    // volume 关键帧(IR v3)优先于静态音量(关键帧覆盖静态值;表达式在 atempo
+    // 之后,t 已是播放域子段局部秒);afade 淡变仍在其后叠加(组合顺序文档化:
+    // 关键帧包络 × 淡变包络相乘)。
+    if let Some(ve) = &seg.volume_expr {
+        body.push(',');
+        body.push_str(ve);
+    } else {
+        body.push_str(&format!(",volume={:.4}", seg.volume));
+    }
     if seg.fade_in_ms > 0.0 {
         body.push_str(&format!(",afade=t=in:st=0:d={:.3}", seg.fade_in_ms / 1000.0));
     }
@@ -342,6 +350,7 @@ mod tests {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
             volume: 0.8, speed: 2.0, reverse: true, denoise: None, pitch: 1.0,
             fade_in_ms: 100.0, fade_out_ms: 200.0,
+            volume_expr: None,
             clip_idx: None,
         };
         assert_eq!(
@@ -380,6 +389,7 @@ mod tests {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
             volume: 1.0, speed: 1.0, reverse: true, denoise: Some("mid".into()), pitch: 2.0,
             fade_in_ms: 0.0, fade_out_ms: 0.0,
+            volume_expr: None,
             clip_idx: None,
         };
         assert_eq!(
@@ -398,6 +408,7 @@ mod tests {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
             volume: 1.0, speed: 0.5, reverse: false, denoise: None, pitch: 2.0,
             fade_in_ms: 0.0, fade_out_ms: 0.0,
+            volume_expr: None,
             clip_idx: None,
         };
         let body = event_body(&seg);
@@ -408,6 +419,7 @@ mod tests {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
             volume: 1.0, speed: 2.0, reverse: false, denoise: Some("high".into()), pitch: 0.5,
             fade_in_ms: 0.0, fade_out_ms: 0.0,
+            volume_expr: None,
             clip_idx: None,
         };
         let body = event_body(&seg);

@@ -54,9 +54,8 @@ pub struct BgmPatch {
     pub loop_: Option<bool>,
 }
 
-/// 片段属性 patch(对应 MCP `clip_update`):只改出现的字段;
-/// 字段级 Op 的 before/after 由此派生。transition/motion 为嵌套子 patch:
-/// 外层 Some = 承接该对象,内部再按字段合并(None 不改)。
+/// 片段属性 patch(对应 MCP `clip_update`):只改出现的字段,字段级 Op 的
+/// before/after 由此派生;transition/motion 嵌套子 patch(Some 承接,内部按字段合并)。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipPatch {
@@ -97,16 +96,15 @@ pub struct ClipPatch {
     pub scale: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
-    /// 文本样式(册四 A4 T4.7):整对象替换(与 crop 同为原子样式操作;
-    /// 渲染端 ADR-0016 ASS 生成消费)。
+    /// 文本样式(册四 T4.7):整对象替换(渲染端 ADR-0016 ASS 生成消费)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_style: Option<crate::text_style::TextStyle>,
     /// 花字挂载(册四 T4.7):整对象替换(template+params)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub huazi: Option<crate::text_style::Huazi>,
-    /// 花字显式清除(册四收口):clip_update patch.huazi = null / {} 的承接位——
-    /// Option<Huazi> 表达不了「从有到无」,以独立布尔承载清除语义(serde default
-    /// 保证既有 oplog 回放零迁移);与 huazi 同现时清除胜出(派发层互斥构造)。
+    /// 花字显式清除(册四收口):patch.huazi = null 或空对象承接位——Option<Huazi>
+    /// 表达不了「从有到无」,独立布尔承载(serde default 保 oplog 回放零迁移);
+    /// 与 huazi 同现时清除胜出(派发层互斥构造)。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub huazi_clear: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,10 +113,12 @@ pub struct ClipPatch {
     pub transition: Option<TransitionPatch>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub motion: Option<MotionPatch>,
-    /// 片段特效(册四 A4 T4.6):整对象替换(与 crop 同为原子构图/风格操作;
-    /// combo 数组上限 3 在 schema 层界,数组顺序即应用顺序)。
+    /// 片段特效(册四 T4.6):整对象替换;combo 上限 3 在 schema 层界,顺序即应用序。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fx: Option<FxSpec>,
+    /// 关键帧(IR v3,T5.1):整组替换;白名单/互斥裁决 schema + 语义校验双闸。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyframes: Option<Vec<crate::keyframes::Keyframe>>,
 }
 
 impl ClipPatch {
@@ -206,8 +206,7 @@ impl TrackPatch {
     }
 }
 
-/// `clip_trim` 模式(册四 A4 T4.2):trim 单边伸缩 / roll 边界双边联动 /
-/// slip 内容平移 / slide 位置平移。
+/// `clip_trim` 模式(册四 A4 T4.2):trim 单边/roll 双边联动/slip 内容/slide 位置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrimMode {
     Trim,
@@ -228,9 +227,8 @@ impl BgmPatch {
         *self == Self::default()
     }
 
-    /// 应用到 doc.bgm 并返回字段级变更(指针相对工程根,即 /bgm/…)。
-    /// 工程尚无 bgm 时按 schema 默认值(gainDb=-18/ducking=true/loop=true)新建;
-    /// 是否"无 bgm 且无 src"的前置拒绝由 Engine::mutate 承接。
+    /// 应用到 doc.bgm 并返回字段级变更(指针 /bgm/…);无 bgm 时按 schema 默认值
+    /// 新建(gainDb=-18/ducking=true/loop=true);"无 bgm 无 src"拒绝在 Engine::mutate。
     pub fn apply_to(self, bgm: &mut Option<crate::model::Bgm>) -> Vec<FieldChange> {
         let mut changes: Vec<FieldChange> = Vec::new();
         let mut record = |name: &str, old: Value, new: Value| {
@@ -269,8 +267,7 @@ impl BgmPatch {
 }
 
 /// 高层命令(M2 集合;编排类命令 stage_run/render 等属于 MCP 层,不进内核)。
-// ClipPatch 携带九个可选字段导致变体尺寸差;命令按值传递、调用频率为人类编辑量级,
-// 装箱反而增加分配,故保留内联。
+// 变体尺寸差大,但命令按值传递、调用频率为人类编辑量级,装箱反而增分配,保留内联。
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
@@ -484,6 +481,15 @@ impl ClipPatch {
                 serde_json::to_value(fx).unwrap_or(Value::Null),
             );
         }
+        if let Some(v) = self.keyframes {
+            // 整组替换(IR v3 T5.1;数组整体一个值,merge 语义一致)
+            let old = clip.keyframes.replace(v.clone());
+            record(
+                "keyframes",
+                old.map(|ks| serde_json::to_value(ks).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                serde_json::to_value(v).unwrap_or(Value::Null),
+            );
+        }
         changes
     }
 }
@@ -552,6 +558,7 @@ mod tests {
             transition: Some(TransitionPatch { type_: Some("fade".into()), dur_ms: Some(300.0), ..Default::default() }),
             motion: Some(MotionPatch { in_: Some("fadeIn".into()), ..Default::default() }),
             fx: None,
+            keyframes: None,
         }
         .apply_to(&mut c);
         assert_eq!(changes.len(), 21);

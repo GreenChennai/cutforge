@@ -24,7 +24,7 @@ pub fn canvas_dim_allowed(v: u32) -> bool {
     (CANVAS_MIN_DIM..=CANVAS_MAX_DIM).contains(&v) && v.is_multiple_of(2)
 }
 
-/// 生成最小合法 IR(version 恒 1 + schemaVersion "2.0.0" + canvas/fps + 空轨道)。
+/// 生成最小合法 IR(version 恒 1 + schemaVersion "3.0.0"(IR v3,册五 T5.1)+ canvas/fps + 空轨道)。
 /// 轨道按 `track_kinds` 顺序确定性生成 id(V1/A1/T1…);clips 恒为空数组。
 /// 模板必须先过 v2 契约校验才允许落盘——"没有 schema 支撑的字段不存在"。
 pub fn new_project_value(
@@ -64,7 +64,7 @@ pub fn new_project_value(
     }
     let v = serde_json::json!({
         "version": 1,
-        "schemaVersion": "2.0.0",
+        "schemaVersion": "3.0.0",
         "slug": slug.trim(),
         "fps": fps,
         "canvas": {"width": width, "height": height},

@@ -8,6 +8,7 @@
 pub mod anchor;
 pub mod command;
 pub mod engine;
+pub mod keyframes;
 pub mod merge;
 pub mod model;
 pub mod notes;

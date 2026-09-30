@@ -19,23 +19,18 @@ use std::path::{Path, PathBuf};
 
 // ---------------- 派发 ----------------
 
-/// 命令通道统一派发:所有通道(stdio/HTTP/脚本宿主)都走这里。
-/// root(工程目录)由 args["root"] 提供——工具契约的第一参数。
-/// stdio/内嵌 HTTP/脚本宿主的改动归因 agent;编辑器数据面归因 user(见 dispatch_with_actor)。
+/// 命令通道统一派发(stdio/HTTP/脚本宿主共用);root=args["root"] 第一参数。
 pub fn dispatch(name: &str, args: &Value) -> Value {
     dispatch_with_actor(name, args, Actor::agent("cutforge-mcp"))
 }
 
-/// 带显式 actor 的派发。工作区数据面(编辑器壳)传 `Actor::user("editor")`,
-/// 让"人在编辑器里的手势"在 OpLog 上如实归因——RT-1 会话变更摘要
-/// (.cutforge/session-summary.json)按 actor=human 过滤的依据。
-/// 其余通道(stdio/内嵌 HTTP/脚本宿主)维持 agent 归因不变。
+/// 带显式 actor 的派发:编辑器壳传 `Actor::user("editor")`——人在编辑器里的手势
+/// 在 OpLog 上如实归因(RT-1 会话摘要按 actor=human 过滤);其余通道 agent 归因。
 pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     if tool_def(name).is_none() {
         return envelope(false, "INTERNAL", &format!("未知工具: {name}"), json!({}));
     }
-    // capability_matrix 是静态查询,不需要工程根
-    if name == "capability_matrix" {
+    if name == "capability_matrix" { // 静态查询,无需工程根
         return envelope(true, "OK", "能力对等矩阵(实码口径,单一真相源)", json!({
             "matrix": capability_matrix(),
         }));
@@ -64,7 +59,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         };
         return render_progress(run_id);
     }
-    // T2.4 单帧精确预览:同步出帧(帧缓存键含工作区指纹),免开工作区不持锁
+    // T2.4 单帧精确预览:同步出帧(帧缓存键含工作区指纹),不持锁
     if name == "render_frame" {
         return render_frame_tool(&ws_root, args);
     }
@@ -95,12 +90,9 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         ..Default::default()
     };
 
-    // 常驻同步守护(M9-2):外部改动 ≤1s 可见;幂等(每 root 一个线程)
-    let _ = cutforge_io::watcher::ensure_sync_daemon(&ws_root);
-    // 常驻工作区缓存(T1.8/AC-1.8 性能专项):指纹一致 → 复用已打开的 Workspace,
-    // 指纹不一致 → 重开(与既有的每笔无状态重开行为一致)。查询类仍只读零工程锁
-    // (readonly_query_holds_no_lock 铁律);写类经 open_for_write + apply 内部
-    // 临时全程锁,锁内 pre_write_sync 三路合并/冲突停写语义原样保留。
+    // 常驻同步守护(M9-2):外部改动 ≤1s 可见。常驻工作区缓存(T1.8):指纹一致 →
+    // 复用 Workspace。查询类只读零工程锁;写类 open_for_write + apply 内临时全程锁,
+    // pre_write_sync 三路合并/冲突停写语义原样保留。
     let readonly = is_readonly_tool(name);
     crate::resident::with_resident(root_str, &ws_root, readonly, |ws| match name {
         // ---------- 只读查询(E6-3:只读打开,不持排他锁) ----------
@@ -159,8 +151,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             Err(e) => envelope(false, "INTERNAL", &e.to_string(), json!({})),
         },
         "timeline_get" => {
-            // E2-2:扩投影——预览/检查器所需的逐 clip 字段全部由内核算好下放
-            // (endMs = start+duration 在服务端完成;壳只消费,不做时间线运算)。
+            // E2-2:投影由服务端算好下放(endMs 等);壳零时间线语义(kf 采样同此)
             envelope(true, "OK", "时间线投影", json!({
                 "clips": crate::edit_ops::timeline_projection(ws.project()),
                 "rev": ws.rev(),
@@ -169,8 +160,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
 
         // ---------- 写操作(全部经 Workspace 命令通道) ----------
         "clip_add" => {
-            // E3-1:素材导入/新建片段——内部走已存在的 Command::ClipInsert,不新增引擎逻辑;
-            // E3-2:durationMs 缺省时由 cutforge_io::probe 探测时长自动填(B12 接线)。
+            // E3-1/E3-2:走既有 Command::ClipInsert;durationMs 缺省由 probe 自动填。
             let (Some(track_id), Some(src), Some(start_ms)) = (
                 args["trackId"].as_str(), args["src"].as_str(), args["startMs"].as_u64(),
             ) else {
@@ -217,8 +207,8 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
             let p = &args["patch"];
-            // 册四 A4 T4.4/T4.9:速度曲线/倒放/旋转/裁剪/翻转(与 ClipPatch 字段面同 commit 同步;
-            // speedCurve 点集与 crop 整组替换,元素值越界由 schema 层 SCHEMA_INVALID 拒)
+            // 册四 T4.4/T4.9:速度曲线/倒放/旋转/裁剪/翻转(与 ClipPatch 字段面同 commit;
+            // speedCurve/crop 整组替换,越界由 schema SCHEMA_INVALID 拒)
             let speed_curve = p["speedCurve"].as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|pt| {
@@ -235,9 +225,8 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 w: p["crop"]["w"].as_u64().unwrap_or(0),
                 h: p["crop"]["h"].as_u64().unwrap_or(0),
             });
-            // 花字(册四 T4.7;收口置空语义):显式 null 或空对象 {} = 清除挂载
-            // (huazi_clear 承接,undo 可还原);非空对象 = 整对象替换,非法结构
-            // 显式拒绝(SCHEMA_INVALID,不做静默丢弃的幻觉面);字段缺席 = 不改。
+            // 花字(册四 T4.7 收口):null/{} = 清除(huazi_clear,undo 可还原);
+            // 非空对象 = 整替换;非法结构显式拒绝(零幻觉面);缺席 = 不改。
             let (huazi, huazi_clear) = match p.get("huazi") {
                 None => (None, false),
                 Some(Value::Null) => (None, true),
@@ -296,6 +285,20 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                         .map_err(|_| ())
                         .ok()
                 }),
+                // 关键帧(IR v3):整组替换;非法显式拒绝(与 textStyle/huazi 同口径)
+                keyframes: match p.get("keyframes") {
+                    None | Some(Value::Null) => None,
+                    Some(v) if v.is_array() => match serde_json::from_value(v.clone()) {
+                        Ok(kf) => Some(kf),
+                        Err(e) => {
+                            return envelope(false, "SCHEMA_INVALID",
+                                &format!("patch.keyframes 非法: {e}"), json!({}))
+                        }
+                    },
+                    Some(_) => {
+                        return envelope(false, "SCHEMA_INVALID", "patch.keyframes 必须是数组", json!({}))
+                    }
+                },
                 // 文本样式/花字(册四 T4.7):整对象替换;结构非法 → None 由
                 // SCHEMA_INVALID 面?不——此处静默丢弃是幻觉面,非法结构显式拒绝。
                 text_style: match p.get("textStyle") {
@@ -622,7 +625,7 @@ fn reject_to_envelope(msg: String) -> Value {
     envelope(false, code, &msg, json!({}))
 }
 
-/// 真相源文件读取(wordline/cutlist;`root` 已按 paths 双布局解析到具体文件)。
+/// 真相源文件读取(wordline/cutlist;root 已按 paths 双布局解析到具体文件)。
 fn read_truth(p: &Path, label: &str) -> Value {
     match std::fs::read_to_string(p) {
         Ok(text) => match serde_json::from_str::<Value>(&text) {
@@ -633,8 +636,7 @@ fn read_truth(p: &Path, label: &str) -> Value {
     }
 }
 
-/// E6-3/B14:查询类工具集合——只读打开(Workspace::open),不申请排他锁。
-/// 不在此列也不在免开工作区名单的工具 = 写操作,仍走 open_exclusive 全程锁。
+/// E6-3/B14 查询类:只读打开不排他锁;名单外写操作仍走 open_exclusive 全程锁。
 fn is_readonly_tool(name: &str) -> bool {
     matches!(name,
         "project_get" | "wordline_get" | "cutlist_get" | "notes_list"
@@ -753,15 +755,14 @@ fn merge_patch(mut target: Value, patch: &Value) -> Value {
     }
 }
 
-// ---------------- JSON-RPC 传输(两通道共用 handle_rpc) ----------------
+// ---------------- JSON-RPC 传输(两通道共用) ----------------
 
 /// 处理一条 JSON-RPC 请求;通知(无 id)返回 None。
 pub fn handle_rpc(req: &Value) -> Option<Value> {
     handle_rpc_as(req, Actor::agent("cutforge-mcp"))
 }
 
-/// 带显式 actor 的 JSON-RPC 处理:工作区数据面(编辑器壳)传 user,
-/// 使人在编辑器里的手势在 OpLog 上如实归因(RT-1 会话摘要的采集依据)。
+/// JSON-RPC 带 actor 处理:壳数据面传 user(OpLog 如实归因;RT-1 摘要采集依据)。
 pub fn handle_rpc_as(req: &Value, actor: Actor) -> Option<Value> {
     let method = req["method"].as_str()?;
     let id = req["id"].clone();

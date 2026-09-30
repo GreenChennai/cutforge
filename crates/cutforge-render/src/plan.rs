@@ -28,6 +28,10 @@ pub struct AudioSeg {
     pub pitch: f64,
     pub fade_in_ms: f64,
     pub fade_out_ms: f64,
+    /// volume 关键帧表达式(IR v3,T5.1):`volume='…':eval=frame` 完整滤镜串
+    /// (播放域子段局部 t,锚点已按子段起点平移;kf_expr 单源编译)。
+    /// 有值时代替静态 volume(关键帧优先,ADR-0018);afade 仍在其后叠加。
+    pub volume_expr: Option<String>,
     /// 所属视频片段下标(册四 T4.5 acrossfade 链的分组键;None = 音频轨事件,
     /// 恒走绝对落点 adelay,不经链)。
     pub clip_idx: Option<usize>,
@@ -314,6 +318,9 @@ fn audio_segs_of(project_dir: &Path, c: &Clip) -> Vec<AudioSeg> {
             pitch: crate::across::pitch_factor(c.pitch.unwrap_or(0.0)),
             fade_in_ms: if first { fade_in } else { 0.0 },
             fade_out_ms: if end >= play_end { fade_out } else { 0.0 },
+            // volume 关键帧(IR v3):表达式按子段起点平移(a = 片段播放域偏移);
+            // 无 volume 关键帧 → None(静态 volume 生效,与既有语义逐位一致)
+            volume_expr: crate::kf_expr::kf_volume_filter(c, a),
             clip_idx: None, // 归属由 RenderPlan::build 按轨道回填
         });
         x += span * s;

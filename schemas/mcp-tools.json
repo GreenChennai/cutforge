@@ -268,7 +268,7 @@
    "name": "clip_update",
    "kind": "write",
    "idempotent": true,
-   "description": "改片段属性(同 patch 重复应用结果一致);册四 T4.6 起 patch.fx 承接片段特效(整对象替换:combo 叠加栈上限 3 顺序即应用顺序 + in/out 槽位;目录 GET /catalogs)",
+   "description": "改片段属性(同 patch 重复应用结果一致);册四 T4.6 起 patch.fx 承接片段特效(整对象替换:combo 叠加栈上限 3 顺序即应用顺序 + in/out 槽位;目录 GET /catalogs);册五 T5.1 起 patch.keyframes 承接关键帧(整组替换,IR v3;投影 timeline_get 的 keyframeSamples 供壳曲线编辑器,壳零插值)",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -559,6 +559,55 @@
         "minimum": -12,
         "maximum": 12,
         "description": "保速变调半音档(册四 T4.8):asetrate+aresample ×2^(n/12),atempo(speed/k) 补偿保速;链序 = 降噪→倒放→变调→变速"
+       },
+       "keyframes": {
+        "type": "array",
+        "minItems": 1,
+        "description": "关键帧(IR v3,册五 T5.1/ADR-0004+ADR-0018):[{property,timeMs,value,interp?,bezier?}] 整组替换;property 白名单 = position.x/position.y/scale/rotation/opacity/volume/speed/fx.<fxId>.<param>(fx 参数按 fx-catalog 三态,static 打点拒绝);timeMs 相对片段起点且同属性严格递增;speed 关键帧与 speedCurve 互斥;未知 property 整组 SCHEMA_INVALID",
+        "items": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "property",
+          "timeMs",
+          "value"
+         ],
+         "properties": {
+          "property": {
+           "type": "string",
+           "pattern": "^(position\\.x|position\\.y|scale|rotation|opacity|volume|speed|fx\\..+\\.[^.]+)$"
+          },
+          "timeMs": {
+           "type": "number",
+           "minimum": 0
+          },
+          "value": {
+           "type": "number"
+          },
+          "interp": {
+           "enum": [
+            "linear",
+            "easeIn",
+            "easeOut",
+            "easeInOut",
+            "bezier",
+            "hold"
+           ],
+           "description": "缺省 linear;本帧→下一帧区间的缓动"
+          },
+          "bezier": {
+           "type": "array",
+           "minItems": 4,
+           "maxItems": 4,
+           "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+           },
+           "description": "cubic-bezier 四参数 [x1,y1,x2,y2];interp=bezier 时必给"
+          }
+         }
+        }
        }
       },
       "description": "改片段属性(按字段合并;textStyle/huazi/crop/fx 为整对象替换);册四 T4.7/T4.8 起 patch.textStyle/patch.huazi 承接文本样式与花字,patch.denoise/patch.pitch 承接降噪与变调;收口:patch.huazi 显式 null 或 {} = 清除花字挂载"

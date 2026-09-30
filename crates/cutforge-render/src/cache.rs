@@ -255,7 +255,8 @@ pub fn mix_spec(plan: &RenderPlan) -> Value {
     json!({
         "segs": plan.audio_segs.iter().map(|s| (
             s.src.to_string_lossy(), s.start_ms, s.duration_ms, s.source_in_ms,
-            s.volume, s.speed, s.reverse, s.denoise.clone(), s.pitch, s.fade_in_ms, s.fade_out_ms
+            s.volume, s.speed, s.reverse, s.denoise.clone(), s.pitch, s.fade_in_ms, s.fade_out_ms,
+            s.volume_expr.clone() // volume 关键帧表达式入键(IR v3;改关键帧必换键)
         )).collect::<Vec<_>>(),
         "bgm": plan.bgm,
         "total": plan.total_ms,
@@ -531,6 +532,83 @@ mod tests {
         ] {
             assert_ne!(base, key_of(extra), "新字段必须改变 seg 键: {extra}");
         }
+    }
+
+    /// IR v3(T5.1):seg 键对 clip JSON 全量哈希——keyframes 自动入键,且
+    /// **逐字段改键**:动任一关键帧的 property/timeMs/value/interp/bezier 或
+    /// 增删一条都必换键(陈旧复用零容忍;keyframed clip 渲染产物随曲线变)。
+    #[test]
+    fn seg_key_is_sensitive_to_keyframes_field_by_field() {
+        let mk = |kfs: &str| -> (RenderPlan, Clip) {
+            let raw = r#"{"version":1,"schemaVersion":"3.0.0","slug":"kf","fps":30,
+                    "canvas":{"width":1080,"height":1920},
+                    "tracks":[{"id":"V1","kind":"video","clips":[
+                        {"id":"V1-001","src":"a.mp4","startMs":0,"durationMs":2000@@KFS@@} ]}]}"#
+                .replace("@@KFS@@", kfs);
+            let v: Value = serde_json::from_str(&raw).unwrap();
+            let p: cutforge_core::model::Project = serde_json::from_value(v).unwrap();
+            let plan = RenderPlan::build(&p, Path::new("/w"), None);
+            (plan, p.tracks[0].clips[0].clone())
+        };
+        let key_of = |kfs: &str| {
+            let (plan, clip) = mk(kfs);
+            seg_key(&plan, &clip, 0.0)
+        };
+        let base = key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.5},
+            {"property":"position.x","timeMs":1000,"value":0.7,"interp":"linear"}]"#);
+        // property 变
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.y","timeMs":0,"value":0.5},
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "property 变必换键");
+        // timeMs 变
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":100,"value":0.5},
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "timeMs 变必换键");
+        // value 变
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.6},
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "value 变必换键");
+        // interp 变
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.5,"interp":"hold"},
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "interp 变必换键");
+        // bezier 控制柄变
+        assert_ne!(
+            key_of(r#", "keyframes":[
+                {"property":"position.x","timeMs":0,"value":0.5,"interp":"bezier","bezier":[0.3,0,0.7,1]},
+                {"property":"position.x","timeMs":1000,"value":0.7}]"#),
+            key_of(r#", "keyframes":[
+                {"property":"position.x","timeMs":0,"value":0.5,"interp":"bezier","bezier":[0.1,0,0.9,1]},
+                {"property":"position.x","timeMs":1000,"value":0.7}]"#),
+            "bezier 控制柄变必换键"
+        );
+        // 增删一条
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.5}]"#), "删一条必换键");
+        // 无关键帧与空差异照常(无 keyframes 字段的 clip 键与 v2 时点同形语义)
+        assert_ne!(base, key_of(""), "有关键帧 vs 无关键帧必不同键");
+    }
+
+    /// mix 键对 volume 关键帧敏感(IR v3:volume_expr 入键)。
+    #[test]
+    fn mix_key_is_sensitive_to_volume_keyframes() {
+        let mk = |kfs: &str| -> RenderPlan {
+            let raw = r#"{"version":1,"schemaVersion":"3.0.0","slug":"m","fps":30,
+                    "canvas":{"width":1080,"height":1920},
+                    "tracks":[{"id":"V1","kind":"video","clips":[
+                        {"id":"V1-001","src":"a.mp4","startMs":0,"durationMs":2000,
+                          "role":"voice","volume":1.0@@KFS@@} ]}]}"#
+                .replace("@@KFS@@", kfs);
+            let p: cutforge_core::model::Project = serde_json::from_str(&raw).unwrap();
+            RenderPlan::build(&p, Path::new("/w"), None)
+        };
+        assert_ne!(
+            mix_key(&mk(r#", "keyframes":[{"property":"volume","timeMs":0,"value":1.0},
+                {"property":"volume","timeMs":1000,"value":0.0}]"#)),
+            mix_key(&mk("")),
+            "volume 关键帧必须改变 mix 键"
+        );
     }
 
     /// mix 键对 reverse 敏感(倒放改变混音产物;T4.4)。

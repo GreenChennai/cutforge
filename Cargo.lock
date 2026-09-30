@@ -59,6 +59,7 @@ version = "0.5.0"
 dependencies = [
  "cutforge-core",
  "cutforge-io",
+ "cutforge-render",
  "cutforge-schema",
  "cutforge-script",
  "serde",

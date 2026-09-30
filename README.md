@@ -61,7 +61,7 @@ SSE 连接态徽标；e2e 扩至 **12 份** + `gate.py A3` 15 项全绿;决策�
 ADR-0014,台账见 [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md)。
 
 **册四(A4 · 核心工具与媒体管线)已完成**：决策 ADR-0015/0016/0017(画布 64–7680 偶数
-范围约束/文本 ASS 路线/音频分离延后册五评估);工具面 **42→56 = 13 查询+30 写+13 编排**——
+范围约束/文本 ASS 路线/音频分离延后册五评估);工具面 **42→61 = 15 查询+30 写+16 编排**(册五 T5.2/T5.3/T5.6 增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 五工具)——
 时间线编辑六工具(`clip_trim` 四件套 trim/roll/slip/slide、`clip_split_all`、
 `track_update` 七字段、`clip_gap_delete`、`clip_copy`/`clip_paste_at` 会话剪贴板)、
 speedCurve 分段积分曲线变速 + reverse + 变换链、**转场库 7→58**(五分类 ffmpeg 实测
@@ -78,7 +78,7 @@ motion 真实渲染 19 项、文本渲染(`textStyle` 14 字段→确定性 ASS 
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
 - **M2**:`cutforge-core`(领域模型/命令通道/撤销栈/OpLog/三路合并骨架/锚点,行覆盖 ≥80%,wasm32 可构建)+ `cutforge-io`(工程读写/原子写唯一落盘点/锁/备份/媒体探测/轮询 watcher)+ `cutforge-cli`(打开/查询/应用/撤销重做/OpLog + 门禁判定器)。
 - **M3**:双向同步全链——三路合并九行判定表零静默覆盖(12,000 组属性测试)、OpLog 回放等价(含 undo/redo 混入)、冲突三方快照落盘(`.cutforge/conflicts/`)、标注(notes.json)读写/结案回执绑定 opIds/锚点重定位(100 组场景零丢失)、阶段脏传播(改 IR 只标 S3+;改字幕只重烧 S8)、往返延迟基准(AI 可见 P95 ≤100ms,实测个位数毫秒)。
-- **M4**:MCP 层——单注册表(28 工具为 M4 时点;阶段二新增 clip_add/media_probe/media_browse/project_new,阶段三新增 transition_set/motion_set/bgm_set;册二 A2 新增 render_frame;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats 后为 **56 工具 = 13 查询+30 写+13 编排**,当前一律以 `schemas/mcp-tools.json` 为准),stdio 与内嵌 HTTP(127.0.0.1+token)双通道共用同一 dispatch;脚本宿主 `cutforge-script`(批式步骤+策略沙箱,六类逃逸零到达派发器);CutFlow 侧四个桥脚本(rs_editor/rs_notes/rs_oplog/rs_gate)入 doctor 体检与命令速查表。
+- **M4**:MCP 层——单注册表(28 工具为 M4 时点;阶段二新增 clip_add/media_probe/media_browse/project_new,阶段三新增 transition_set/motion_set/bgm_set;册二 A2 新增 render_frame;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at;册四 A4-BE3b(时点 56)新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats;册五 A5 新增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 后为 **61 工具 = 15 查询+30 写+16 编排**,当前一律以 `schemas/mcp-tools.json` 为准),stdio 与内嵌 HTTP(127.0.0.1+token)双通道共用同一 dispatch;脚本宿主 `cutforge-script`(批式步骤+策略沙箱,六类逃逸零到达派发器);CutFlow 侧四个桥脚本(rs_editor/rs_notes/rs_oplog/rs_gate)入 doctor 体检与命令速查表。
 
 ## 🚀 快速开始(编辑器,4 步)
 
@@ -109,11 +109,11 @@ motion 真实渲染 19 项、文本渲染(`textStyle` 14 字段→确定性 ASS 
 | `check-ui-fields` | 检查器可编辑字段 ⊆ 内核 `ClipPatch`(从实码解析,单一真相源) |
 | `check_doc_counts` | 文档里的工具数口径必须与 `schemas/mcp-tools.json` 一致,漂移点名到文件:行 |
 | `protocol_conformance` | MCP 注册表与 dispatch 逐一相等,stdio 与内嵌 HTTP 差异恒为 0 |
-| `tool_parity` | 56 工具黄金响应库逐键对拍,行为漂移即红(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56) |
+| `tool_parity` | 61 工具黄金响应库逐键对拍,行为漂移即红(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增八工具后 56;册五 A5 增调色/音频/队列五工具后 61) |
 | `cargo test` | 领域模型/合并/OpLog/渲染对拍(ffmpeg 实测矩阵)/脚手架/只读并发/HTTP 加固/缓存寻址 |
 | e2e × 15 | 编辑操作全链(Playwright)、预览(画面/声音/seek/像素非黑)、**从零剪**(新建→导入→改字段→导出+并发+会话摘要)、静态托管(穿越 100% 拒绝/ETag 304)、事件推送(SSE P95/长轮询降级)、UI 冒烟(data-testid 驱动/DOM 变更预算/selfTest/超时-401-降级)、播放生存(播放零中断)、时间线性能(1k clips 虚拟化+帧率,本机跑)、**拖拽手感**(P95/跟手 ≤1 帧/Esc 取消零 Op)、**键位体系**(45 条注册表遍历+实按+重绑定)、**可访问性**(键盘闭环+axe 扫描 0 critical/serious)、**性能预算**(首屏/页签/导出节奏/池有界)、**编辑全工具**(四件套恰一 Op+实渲逐差+锁定拒编辑)、**字幕编辑器**(SRT byte 级往返+帧证位置+卡拉OK+花字)、**媒体池千素材**(P95 63.3fps+懒加载+听觉存档)——册三新增四份、册四新增三份,帧率类本机跑 |
 | `gate.py A3`(册级) | UX/键位/可访问性册级聚合:**15 项全阻断**(纯度 v3 含 R5 色值/行数红线/tool_parity 42,时点口径/九份 e2e 聚合/pytest);负载敏感项本机册收官跑 |
-| `gate.py A4`(册级) | 核心工具与媒体管线册级聚合:**18 项全阻断**(A3 十五项一字不动全部继承 + editing_tools/subtitle_editor/media_perf 三份新 e2e;tool_parity 56);千素材帧率等负载敏感项本机册收官跑 |
+| `gate.py A4`(册级) | 核心工具与媒体管线册级聚合:**18 项全阻断**(A3 十五项一字不动全部继承 + editing_tools/subtitle_editor/media_perf 三份新 e2e;tool_parity 61);千素材帧率等负载敏感项本机册收官跑 |
 
 ```bash
 python tools/gates/gate.py M0 --json     # 统一门禁入口(结果协议见下)

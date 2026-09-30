@@ -219,8 +219,8 @@ pub fn render_frame_opts(
         ));
     }
     let (_rep_seg, seg_files, seg_keys, _hits, _misses) = crate::exec_segment(&plan, &mut idx)?;
-    let (_rep_c, composed, compose_key) = crate::exec_compose(&plan, &mut idx, &seg_files, &seg_keys)?;
-    let (_rep_o, base_video, _video_key) = crate::exec_overlay(&plan, &mut idx, &composed, &compose_key)?;
+    let (_rep_c, composed, compose_key, _cmds_c) = crate::exec_compose(&plan, &mut idx, &seg_files, &seg_keys)?;
+    let (_rep_o, base_video, _video_key, _cmds_o) = crate::exec_overlay(&plan, &mut idx, &composed, &compose_key)?;
 
     let rel = idx.record_with_ext(
         "frame",

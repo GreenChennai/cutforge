@@ -285,7 +285,8 @@ impl Engine {
                 let before = serde_json::to_value(&p.tracks).unwrap();
                 p.tracks.push(crate::model::Track {
                     id: id.clone(), kind, name: None, locked: None, mute: None,
-                    solo: None, hidden: None, height_px: None, color: None, clips: Vec::new(),
+                    solo: None, hidden: None, height_px: None, color: None,
+                    eq: None, dyn_: None, clips: Vec::new(),
                 });
                 let after = serde_json::to_value(&p.tracks).unwrap();
                 Ok((path, before, after, format!("track_add {id}"), OpKind::Insert))

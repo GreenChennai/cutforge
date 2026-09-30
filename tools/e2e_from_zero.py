@@ -243,12 +243,13 @@ def main() -> int:
 
             # 等渲染完成 → 产物对拍
             deadline = time.time() + 180
-            state_, output = "running", None
+            state_, output = "queued", None
             while time.time() < deadline:
                 s = rpc(port, token, "render_progress", {"root": root_s, "runId": run_id})
                 state_ = s["data"]["state"]
                 output = s["data"].get("output")
-                if state_ != "running":
+                # 册五 T5.6 队列化:queued 为合法暂态(入队→worker ≤50ms 派发),非终态
+                if state_ not in ("running", "queued"):
                     break
                 time.sleep(1)
             assert state_ == "ok", f"渲染未成功: {state_}"

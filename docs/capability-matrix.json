@@ -1,6 +1,6 @@
 {
  "version": 2,
- "updated": "2026-09-30(A4-BE3a:T4.5 转场库 7→58 目录直通 + acrossfade + T4.6 特效/动效库)",
+ "updated": "2026-09-30(册五 T5.2 调色/LUT/示波器数据 + T5.3 轨道 EQ/动态/响度计/ducking 参数化 + T5.6 编码参数面/bt709 标签/渲染队列)",
  "rule": "诚实口径:status 只认实码 + 对拍夹具(M8-5)。achieved=有专属夹具证据;partial=字段被契约接受但渲染端不完整消费;missing=契约字段存在、渲染零消费;optional=规划可选未启动。本文件是唯一真相源:docs/capability-matrix.md 与 MCP capability_matrix 工具均由它生成(M11-1 起 evidence 由 parity_matrix 夹具实测回填,ADR-0003)。",
  "items": [
   {
@@ -170,6 +170,134 @@
    "status": "achieved",
    "evidence": "A4-BE3a(T4.6):motion 目录 19 项(既有 6+4 首次全部真实渲染 + slideUp/Down/pop/bounce/spin);fadeIn 首帧亮度 + slideInLeft 黑底平移实渲夹具;不能真实渲染的动效不进目录(诚实纪律,3D 翻转等列遗留)",
    "target": null
+  },
+  {
+   "item": "调色一级校色(色温/色调/曝光/对比/高光阴影/饱和度/LGG)",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "clip.grade → colorbalance/eq/colorchannelmixer 链(grade.rs);parity 夹具 G1 LGG 色偏/G4 饱和度归零灰度断言",
+   "target": null
+  },
+  {
+   "item": "RGB/亮度曲线",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "grade.curves 点集 → curves 滤镜(master=亮度近似);parity 夹具 G2 曲线提亮亮度断言",
+   "target": null
+  },
+  {
+   "item": "LUT(.cube 导入/库/lut3d 应用)",
+   "jianying": "部分",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "lut_import 校验(parse_cube 3D 主格式)+ .cutforge/luts/ 库 + grade.lut lut3d 应用(内容哈希入段缓存键);parity 夹具 G3 前后帧差",
+   "target": null
+  },
+  {
+   "item": "HSL 限定器(选色范围调整)",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "missing",
+   "evidence": "IR 承载防丢(grade.hsl),渲染端登记降级 WARN(ffmpeg 简单滤镜不达选色;split+maskedmerge 路线重且脆,评估后明确降级)",
+   "target": "候后续册:选色引擎重评(split+maskedmerge/geq 掩膜路线或 LUT 化选色,须实渲对拍达标再改判 achieved)"
+  },
+  {
+   "item": "示波器(波形/矢量/直方图)",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "scope_data 工具(帧像素→三类数据 JSON,缓存内容寻址);壳 canvas 绘制是 FE 活;纯函数单测锁定",
+   "target": null
+  },
+  {
+   "item": "分屏对比/调色拷贝粘贴",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "分屏对比=纯壳活(登记);调色拷贝粘贴走 clip_update patch.grade 整对象替换(与 crop/fx 同模式)",
+   "target": null
+  },
+  {
+   "item": "轨道级 EQ(多段)",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "track.eq → per-track biquad 链(equalizer/lowshelf/highshelf);parity 夹具 A1 440Hz 频段能量衰减断言",
+   "target": null
+  },
+  {
+   "item": "轨道级动态(压缩/限幅)",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "track.dyn → acompressor 参数子集 + alimiter;parity 夹具 A2 压缩动态范围收窄断言",
+   "target": null
+  },
+  {
+   "item": "响度计/导出响度单参数化",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "audio_loudness 工具(loudnorm 测量)+ render loudnormTarget 选项;parity 夹具 A3 输出 LUFS 与目标偏差 ≤1LU(AC-5.3)",
+   "target": null
+  },
+  {
+   "item": "ducking 参数化(阈值/比例/启动/释放)",
+   "jianying": "支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "bgm.duck* 字段 → sidechaincompress 参数(缺省=既有常量,行为零变化);事件链单测锁定格式",
+   "target": null
+  },
+  {
+   "item": "硬件编码探测/优雅降级",
+   "jianying": "不支持",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "encode_probe(-encoders+试编可用)+ render encoder=hw 试编失败降级 libx264 WARN(AC-5.6);本机 AMD 无 nvenc 降级路径取证",
+   "target": null
+  },
+  {
+   "item": "编码参数面(crf/码率/GOP/像素格式/质量预设)",
+   "jianying": "部分",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "render 选项 crf/bitrate/gop/pixFmt/quality(fast/balanced/quality→crf+preset);缺省=现值零行为变化;encode.rs 单测锁定映射",
+   "target": null
+  },
+  {
+   "item": "输出色彩标签(bt709 基线,ADR-0020)",
+   "jianying": "部分",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "encode 步重编码写 color_primaries/trc/colorspace=bt709+range=tv,ffprobe 复验入渲染自检(RENDERER_VERSION 8.0)",
+   "target": null
+  },
+  {
+   "item": "渲染队列(排队/暂停/恢复/取消/重试)",
+   "jianying": "部分",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "render_run 入队 + render_queue(list/pause/resume/cancel/retry),并发上限 env 可配(缺省 1);暂停语义=终止+重入队(渲染缓存吸收重跑);状态事件接 render.progress",
+   "target": null
+  },
+  {
+   "item": "渲染日志(每步耗时/命令原文开关)",
+   "jianying": "部分",
+   "ffmpeg": "支持",
+   "status": "achieved",
+   "evidence": "progress 事件增 elapsedMs(恒开);verboseCmd 选项附命令原文(缺省关——安全);HDR 按 ADR-0020 明确暂缓(触发条件落档)",
+   "target": null
+  },
+  {
+   "item": "HDR(bt2020/PQ/HLG)",
+   "jianying": "部分",
+   "ffmpeg": "部分",
+   "status": "missing",
+   "evidence": "ADR-0020 明确暂缓:无素材无用例不做 tone mapping/bt2020 管线;触发条件=真实 HDR 交付用例(逐案 ADR 重开)",
+   "target": "ADR-0020 触发条件(真实 HDR 交付用例)出现时按逐案 ADR 重开;挂载点=输入归一层"
   }
  ]
 }

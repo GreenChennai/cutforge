@@ -27,11 +27,28 @@
 | 19 | 转场库 50+(目录化) | 支持 | 支持 | ✅ achieved(A4-BE3a/T4.5:58 项目录 tr.* 直通 + acrossfade) | 必达 | 五分类各 2 项实渲视频流零漂移;acrossfade 音频流零漂移 + 转场窗交叉淡变凹陷;GET /catalogs 下发;缩略帧生成器(docs/design/transitions/) |
 | 20 | 特效库(combo 叠加) | 支持 | 支持 | ✅ achieved(A4-BE3a/T4.6:fx 注册表 11 项 + combo 上限 3) | 必达 | mono 去色/vignette 角部衰减/grain 时变噪声/mosaic 块归并像素级夹具;未注册 fxId 逐项降级 WARN |
 | 21 | 动效库(入场/出场) | 支持 | 支持 | ✅ achieved(A4-BE3a/T4.6:motion 目录 19 项,既有 6+4 首次全部真实渲染) | 必达 | fadeIn 首帧亮度 + slideInLeft 黑底平移夹具;不能真实渲染的动效不进目录(诚实纪律) |
+| 22 | 调色一级校色(色温/色调/曝光/对比/高光阴影/饱和度/LGG) | 支持 | 支持 | ✅ achieved(册五 T5.2:clip.grade → colorbalance/eq/colorchannelmixer) | 必达 | parity 夹具 G1 LGG 色偏像素断言/G4 饱和度归零=灰度(fx.mono 同口径);grade 缺省链零变化 |
+| 23 | RGB/亮度曲线 | 支持 | 支持 | ✅ achieved(册五 T5.2:grade.curves 点集 → curves 滤镜,master=亮度近似) | 必达 | parity 夹具 G2 曲线提亮亮度断言;端点补全/乱序归一单测锁定 |
+| 24 | LUT(.cube 导入/库/应用) | 部分 | 支持 | ✅ achieved(册五 T5.2:lut_import 校验(parse_cube 3D 主格式)+ .cutforge/luts/ + grade.lut lut3d 应用) | 必达 | parity 夹具 G3 LUT 前后帧差;LUT 内容哈希入段缓存键(改文件必 miss) |
+| 25 | HSL 限定器 | 支持 | 支持 | ❌ missing(册五 T5.2:IR 承载防丢,渲染端登记降级 WARN) | 加分 | ffmpeg 简单滤镜不达选色(hue 无范围控制;split+maskedmerge 重且脆)——评估后明确降级,能力面诚实标注 |
+| 26 | 示波器(波形/矢量/直方图) | 支持 | 支持 | ✅ achieved(册五 T5.2:scope_data 数据后端,三类数据 JSON 缓存内容寻址) | 必达 | 纯函数单测锁定分桶/聚合;壳 canvas 绘制是 FE 活(登记) |
+| 27 | 分屏对比/调色拷贝粘贴 | 支持 | 支持 | ✅ achieved(册五 T5.2:拷贝粘贴走 clip_update patch.grade 整对象替换;分屏对比=纯壳活) | 加分 | 与 crop/fx 同模式(登记) |
+| 28 | 轨道级 EQ(多段) | 支持 | 支持 | ✅ achieved(册五 T5.3:track.eq → per-track biquad 链 equalizer/lowshelf/highshelf) | 必达 | parity 夹具 A1 440Hz 频段能量衰减断言(频域);无声明轨混音图零变化 |
+| 29 | 轨道级动态(压缩/限幅) | 支持 | 支持 | ✅ achieved(册五 T5.3:track.dyn → acompressor 参数子集 + alimiter) | 必达 | parity 夹具 A2 压缩动态范围收窄断言;dB↔线性换算单测锁定 |
+| 30 | 响度计/响度单参数化 | 支持 | 支持 | ✅ achieved(册五 T5.3:audio_loudness 工具 + render loudnormTarget 选项) | 必达 | parity 夹具 A3 输出 LUFS 与目标偏差 ≤1LU(AC-5.3 数值断言);缺省 -14/-1.0 逐字兼容 |
+| 31 | ducking 参数化 | 支持 | 支持 | ✅ achieved(册五 T5.3:bgm.duck* 四字段 → sidechaincompress 参数) | 加分 | 缺省=既有常量(threshold 0.03/ratio 8/attack 80/release 500),格式化去尾零逐字一致 |
+| 32 | 硬件编码探测/优雅降级 | 不支持 | 支持 | ✅ achieved(册五 T5.6:encode_probe(-encoders+试编)+ encoder=hw 试编失败降级 libx264 WARN) | 必达 | AC-5.6 降级断言;本机 AMD 无 nvenc 降级路径实测取证 |
+| 33 | 编码参数面 | 部分 | 支持 | ✅ achieved(册五 T5.6:crf/bitrate/gop/pixFmt/quality 预设映射) | 必达 | encode.rs 单测锁定映射;缺省=现值零行为变化 |
+| 34 | 输出色彩标签(bt709) | 部分 | 支持 | ✅ achieved(册五 T5.6/ADR-0020:encode 重编码写三枚举+tv range,ffprobe 复验入自检) | 必达 | RENDERER_VERSION 8.0;复验缺失 WARN 留痕不阻塞 |
+| 35 | 渲染队列 | 部分 | 支持 | ✅ achieved(册五 T5.6:render_run 入队 + render_queue list/pause/resume/cancel/retry,并发上限 env 可配) | 必达 | AC-5.6 排队场景;暂停语义=终止+重入队(缓存吸收重跑,诚实声明);状态事件接 render.progress |
+| 36 | 渲染日志(耗时/命令开关) | 部分 | 支持 | ✅ achieved(册五 T5.6:progress 事件 elapsedMs 恒开;verboseCmd 命令原文缺省关) | 加分 | 安全口径:命令原文含素材路径,缺省不上事件面 |
+| 37 | HDR(bt2020/PQ/HLG) | 部分 | 部分 | ❌ missing(ADR-0020 明确暂缓) | 可选 | 无素材无用例不做 tone mapping;触发条件=真实 HDR 交付用例(逐案 ADR 重开,挂载点=输入归一层) |
 
 ## 结论(M11-1 追平后口径)
 
 - 必达 13 项:**实码达成 13/13**(M8 止血后 7 项 → M11 补齐 变速/转场/ducking/punch-in/afade/overlay)
 - 册四 A4-BE3a 新增 3 项(#19/#20/#21)全部 achieved:转场库 58 项目录直通 + acrossfade 声画同步 / fx 注册表 11 项 combo 叠加 / motion 19 项真实渲染
+- 册五 T5.2/T5.3/T5.6 新增 16 项(#22–#37):13 项 achieved(调色一级/曲线/LUT/示波器数据/分屏与拷贝/轨道 EQ/动态/响度计/ducking 参数化/硬件编码降级/编码参数面/bt709 标签/渲染队列/渲染日志)、HSL 限定器登记降级 + HDR 按 ADR-0020 明确暂缓(missing=诚实标注,非未评估)
 - 可选 2 项:0 项实现(关键词 6、蒙版 10)
 - **整体 = 16/18 ≈ 89%**(M8 止血时 47%;V1 虚报 93.3% 的差值 = 可选两项;基线 15 项口径 87%,A4-BE3a 新增 3 项全达成分母加 3)
 - ~~旋转:契约无字段~~ 册四 A4(T4.9)起 rotation/crop/flip 入契约并渲染落地(#4/#16/#18,ADR-0015 画布范围同批)

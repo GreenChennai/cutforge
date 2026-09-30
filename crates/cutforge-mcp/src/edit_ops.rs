@@ -116,6 +116,7 @@ pub fn clip_split_all_tool(ws: &mut Workspace, args: &Value, actor: &Actor, opts
 
 /// track_update:轨道属性 patch(TrackPatch 按字段合并,None=不改);
 /// 静音/独奏的渲染混音联动候 BE3,本工具先保证契约链就位。
+/// 册五 T5.3:eq(整组替换)/ dyn(整对象替换);显式 null = 清除。
 pub fn track_update_tool(ws: &mut Workspace, args: &Value, actor: &Actor, opts: ApplyOpts) -> Value {
     let Some(track_id) = args["trackId"].as_str() else {
         return envelope(false, "PRECONDITION_FAILED", "缺 trackId", json!({}));
@@ -123,7 +124,28 @@ pub fn track_update_tool(ws: &mut Workspace, args: &Value, actor: &Actor, opts: 
     let p = &args["patch"];
     if !p.is_object() {
         return envelope(false, "PRECONDITION_FAILED",
-            "缺 patch(对象:name/locked/mute/solo/hidden/heightPx/color 按需给出)", json!({}));
+            "缺 patch(对象:name/locked/mute/solo/hidden/heightPx/color/eq/dyn 按需给出)", json!({}));
+    }
+    // eq/dyn 结构非法显式拒绝(零幻觉面);null = 清除(eqClear/dynClear 承接)
+    let mut parse_err: Option<String> = None;
+    let eq = p.get("eq").and_then(|v| {
+        if v.is_null() {
+            return None;
+        }
+        serde_json::from_value::<Vec<cutforge_core::model::EqBand>>(v.clone())
+            .map_err(|e| parse_err = Some(format!("patch.eq 非法: {e}")))
+            .ok()
+    });
+    let dyn_ = p.get("dyn").and_then(|v| {
+        if v.is_null() {
+            return None;
+        }
+        serde_json::from_value::<cutforge_core::model::TrackDyn>(v.clone())
+            .map_err(|e| parse_err = Some(format!("patch.dyn 非法: {e}")))
+            .ok()
+    });
+    if let Some(msg) = parse_err {
+        return envelope(false, "SCHEMA_INVALID", &msg, json!({}));
     }
     let patch = TrackPatch {
         name: p["name"].as_str().map(String::from),
@@ -133,10 +155,14 @@ pub fn track_update_tool(ws: &mut Workspace, args: &Value, actor: &Actor, opts: 
         hidden: p["hidden"].as_bool(),
         height_px: p["heightPx"].as_u64(),
         color: p["color"].as_str().map(String::from),
+        eq,
+        eq_clear: p.get("eq").map(Value::is_null).unwrap_or(false),
+        dyn_,
+        dyn_clear: p.get("dyn").map(Value::is_null).unwrap_or(false),
     };
     if patch.is_empty() {
         return envelope(false, "PRECONDITION_FAILED",
-            "patch 至少给 name/locked/mute/solo/hidden/heightPx/color 之一", json!({}));
+            "patch 至少给 name/locked/mute/solo/hidden/heightPx/color/eq/dyn 之一", json!({}));
     }
     crate::dispatch::finish_apply(ws.apply(Command::TrackUpdate { track_id: track_id.into(), patch }, actor.clone(), opts))
 }

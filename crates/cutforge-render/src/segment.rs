@@ -2,16 +2,18 @@
 //! 段提取纯函数(步 2 segment;册四 A4-BE2 自 steps.rs 纯移动成模块——行数红线
 //! A1-3,接口经 steps.rs `pub use` 保持 `steps::segment_*` 路径兼容)。
 //!
-//! 段剪辑链的**叠加顺序**(册四 T4.4/T4.9 + BE3a T4.5/T4.6 定案,链图):
+//! 段剪辑链的**叠加顺序**(册四 T4.4/T4.9 + BE3a T4.5/T4.6 定案,链图;册五 T5.2 增 grade):
 //!
 //! ```text
 //! [源] → crop(源像素域裁剪) → flip(h/v) → rotate(±任意角;±90=transpose 精确互换)
-//!      → scale+pad+fps(画幅归一) → punchIn(中心紧构图) → fx.combo(整段特效栈)
+//!      → scale+pad+fps(画幅归一) → punchIn(中心紧构图) → grade(一级/二级调色,LUT 收尾)
+//!      → fx.combo(整段特效栈)
 //!      → reverse(倒放,PTS 重盖) → 变速(单段 setpts / 曲线多段 trim·setpts·fps·concat)
 //!      → motion(入场/出场动画,播放域) → tpad(定格补长+转场尾帧)
 //! ```
 //!
-//! fx 在变换后/变速前(空间域特效与倒放/变速可交换);motion 在变速后/tpad 前
+//! fx 在变换后/变速前(空间域特效与倒放/变速可交换);grade 挂 fx 前(调色喂给
+//! 特效,链内序与定档理由见 grade 模块注释);motion 在变速后/tpad 前
 //! (入场/出场时窗按播放域计;定格克隆发生在动画完成之后)。
 //!
 //! 本文件**不启动任何进程**:全部函数只做输入 → ffmpeg 参数的映射,可在不装
@@ -112,8 +114,8 @@ fn punch_chain(plan: &RenderPlan, clip: &Clip) -> String {
 }
 
 /// 段剪辑链(简单形态:速度为单恒速段,即无曲线或单点曲线):
-/// 画幅归一(scale+pad+fps)→ punch-in → fx.combo → reverse → 变速 setpts
-/// → motion → 尾帧/定格 tpad。
+/// 画幅归一(scale+pad+fps)→ punch-in → grade(调色,T5.2)→ fx.combo → reverse
+/// → 变速 setpts → motion → 尾帧/定格 tpad。
 /// 无新字段时输出与拆分前的既有链**逐字一致**(parity 夹具锁定的兼容红线)。
 pub fn segment_filter(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> String {
     let fps = plan.fps;
@@ -125,6 +127,12 @@ pub fn segment_filter(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> String {
     }
     vf.push_str(&base_filters(plan));
     vf.push_str(&punch_chain(plan, clip));
+    // grade 调色(册五 T5.2):变换后、fx 前(链图定档见 grade 模块注释)
+    let (grade, _) = crate::grade::grade_chain(clip, &plan.project_dir);
+    if !grade.is_empty() {
+        vf.push(',');
+        vf.push_str(&grade);
+    }
     // fx.combo 整段特效栈(册四 T4.6):变换后/变速前(空间域,与 reverse 可交换)
     let (fx, _) = crate::catalog::fx_chain(clip, plan.canvas_w, plan.canvas_h, plan.fps);
     if !fx.is_empty() {
@@ -177,6 +185,12 @@ pub fn segment_filter_complex(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> O
     }
     head.push_str(&base_filters(plan));
     head.push_str(&punch_chain(plan, clip));
+    // grade 调色(册五 T5.2):归一后、split 前(作用于整段源流)
+    let (grade, _) = crate::grade::grade_chain(clip, &plan.project_dir);
+    if !grade.is_empty() {
+        head.push(',');
+        head.push_str(&grade);
+    }
     // fx.combo(册四 T4.6):归一后、split 前(作用于整段源流)
     let (fx, _) = crate::catalog::fx_chain(clip, plan.canvas_w, plan.canvas_h, plan.fps);
     if !fx.is_empty() {
@@ -253,6 +267,12 @@ pub fn segment_filter_complex_kf(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -
     if let Some(zp) = crate::kf_expr::kf_zoompan_filter(clip, plan) {
         head.push(',');
         head.push_str(&zp);
+    }
+    // grade 调色(册五 T5.2):变换后、fx 前(与简单链同位;静态逐像素,不占 kf 通道)
+    let (grade, _) = crate::grade::grade_chain(clip, &plan.project_dir);
+    if !grade.is_empty() {
+        head.push(',');
+        head.push_str(&grade);
     }
     // fx 链三形态:sendcmd 命令序列 / segment 分支重建(推迟到 head 落标签后)/ 静态既有链
     let (fx, _) = crate::catalog::fx_chain(clip, w, h, fps);

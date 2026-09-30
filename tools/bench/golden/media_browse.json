@@ -20,6 +20,13 @@
       },
       {
        "bytes": "<BYTES>",
+       "durationMs": null,
+       "kind": "image",
+       "name": "frame.png",
+       "path": "01_原始素材/frame.png"
+      },
+      {
+       "bytes": "<BYTES>",
        "durationMs": 1000,
        "kind": "audio",
        "name": "sfx.mp3",
@@ -33,7 +40,7 @@
        "path": "01_原始素材/take1.mp4"
       }
      ],
-     "total": 3,
+     "total": 4,
      "truncated": false
     },
     "message": "素材清单",

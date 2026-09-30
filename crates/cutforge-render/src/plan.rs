@@ -3,7 +3,7 @@
 //! 计划构建是纯函数(不碰 ffmpeg、不碰文件系统写入);每个渲染步骤由
 //! steps.rs 的纯函数生成命令行、lib.rs 的执行器调用,产出结构化 StepReport。
 
-use cutforge_core::model::{Bgm, Clip, Project, Role, TrackKind};
+use cutforge_core::model::{Bgm, Clip, EqBand, Project, Role, TrackDyn, TrackKind};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -32,6 +32,9 @@ pub struct AudioSeg {
     /// (播放域子段局部 t,锚点已按子段起点平移;kf_expr 单源编译)。
     /// 有值时代替静态 volume(关键帧优先,ADR-0018);afade 仍在其后叠加。
     pub volume_expr: Option<String>,
+    /// 所属轨道 id(册五 T5.3 轨道处理:混音链按 track_id 分组建流,per-track
+    /// EQ/动态链在组建流 amix 之后、进总线之前插入;None = 归属未知的既有路径)。
+    pub track_id: Option<String>,
     /// 所属视频片段下标(册四 T4.5 acrossfade 链的分组键;None = 音频轨事件,
     /// 恒走绝对落点 adelay,不经链)。
     pub clip_idx: Option<usize>,
@@ -120,6 +123,51 @@ pub struct RenderPlan {
     /// 代理预览开关(册四 T4.1):true 时 build 已把存在代理的素材 src 换写为
     /// 代理路径(显式 opt-in,不悄悄降质;缺代理的片段回落原片)。
     pub use_proxy: bool,
+    /// 轨道处理链(册五 T5.3):仅收录**有** eq/dyn 声明的音频承载轨
+    /// (video/audio),混音链 per-track 插入;空 = 既有路径零变化(parity 红线)。
+    pub track_proc: Vec<TrackProc>,
+    /// 主线视频片段的所属轨道(与 video_clips 同序;acrossfade 链模式的视频轨
+    /// 处理链归属判定:全部片段同轨且有处理声明才应用)。
+    pub video_track_of: Vec<String>,
+    /// 渲染选项(册五 T5.6):编码器/质量/CRF/码率/GOP/像素格式/响度目标/
+    /// 命令回显;Default = 现行为(零变化)。
+    pub opts: RenderOptions,
+}
+
+/// 轨道处理链(册五 T5.3):per-track EQ 段 + 动态(压缩/限幅),按 track_id
+/// 与混音事件关联。
+#[derive(Debug, Clone)]
+pub struct TrackProc {
+    pub track_id: String,
+    pub eq: Option<Vec<EqBand>>,
+    pub dyn_: Option<TrackDyn>,
+}
+
+impl TrackProc {
+    /// 是否声明了任一处理(EQ 段非空或动态非空)。
+    pub fn is_empty(&self) -> bool {
+        self.eq.as_ref().is_none_or(|b| b.is_empty()) && self.dyn_.as_ref().is_none_or(|d| d.is_empty())
+    }
+}
+
+/// 渲染选项(册五 T5.6;Default = 现行为逐位一致):
+/// - encoder:auto(缺省,当前解析为 libx264——确定性基线,文档声明)/
+///   hw(优先硬件,不可用优雅降级 libx264 并 WARN)/ sw(强制软件);
+/// - quality:fast/balanced/quality → (crf,preset) 映射(缺省 balanced=crf23);
+/// - crf/bitrate_kbps/gop/pix_fmt:显式覆盖(缺省 None = 既有值);
+/// - loudnorm_i/tp:响度目标(缺省 -14/-1.0 = 既有双 pass 参数);
+/// - verbose_cmd:进度事件附带命令原文(缺省关——安全)。
+#[derive(Debug, Clone, Default)]
+pub struct RenderOptions {
+    pub encoder: Option<String>,
+    pub quality: Option<String>,
+    pub crf: Option<u32>,
+    pub bitrate_kbps: Option<u64>,
+    pub gop: Option<u32>,
+    pub pix_fmt: Option<String>,
+    pub loudnorm_i: Option<f64>,
+    pub loudnorm_tp: Option<f64>,
+    pub verbose_cmd: bool,
 }
 
 impl RenderPlan {
@@ -132,6 +180,17 @@ impl RenderPlan {
     /// 代理替换在收集前完成:src 换写进 clip 副本 → seg/mix 键自动分叉
     /// (代理渲染与原片渲染不共享缓存条目)。
     pub fn build_opts(project: &Project, project_dir: &Path, ass_path: Option<&Path>, use_proxy: bool) -> RenderPlan {
+        Self::build_full(project, project_dir, ass_path, use_proxy, RenderOptions::default())
+    }
+
+    /// 同 [`RenderPlan::build_opts`],渲染选项显式给定(册五 T5.6;Default = 现行为)。
+    pub fn build_full(
+        project: &Project,
+        project_dir: &Path,
+        ass_path: Option<&Path>,
+        use_proxy: bool,
+        opts: RenderOptions,
+    ) -> RenderPlan {
         let out_dir = if cutforge_io::paths::is_legacy_layout(project_dir) {
             project_dir.join(cutforge_io::paths::LEGACY_OUTPUT)
         } else {
@@ -153,6 +212,9 @@ impl RenderPlan {
             boundary_durs_ms: Vec::new(),
             total_ms: 0,
             use_proxy,
+            track_proc: Vec::new(),
+            video_track_of: Vec::new(),
+            opts,
         };
         // 代理替换(use_proxy 且代理文件在位):对片段换 src(声画同源)。
         // 代理缺失回落原片——opt-in 预览语义下回落是升格而非降质,不告警。
@@ -162,6 +224,16 @@ impl RenderPlan {
         }
         let project = &owned;
         let solo_active = any_solo(project);
+        // 轨道处理链收集(册五 T5.3):有 eq/dyn 的音频承载轨;空集 = 混音链零变化
+        for t in &project.tracks {
+            if t.kind != TrackKind::Video && t.kind != TrackKind::Audio {
+                continue;
+            }
+            if t.eq.as_ref().is_none_or(|b| b.is_empty()) && t.dyn_.as_ref().is_none_or(|d| d.is_empty()) {
+                continue;
+            }
+            plan.track_proc.push(TrackProc { track_id: t.id.clone(), eq: t.eq.clone(), dyn_: t.dyn_.clone() });
+        }
         for t in &project.tracks {
             // 轨道级渲染联动(册四 BE3b 收口,BE1 欠账):
             // - solo 只作用**音频面**:任一轨 solo 活跃时,非 solo 轨的音频不进混音;
@@ -195,21 +267,22 @@ impl RenderPlan {
                         if !track_hidden {
                             let idx = plan.video_clips.len();
                             plan.video_clips.push(c.clone());
+                            plan.video_track_of.push(t.id.clone());
                             if audio_ok && clip_gain(c) > 0.0 {
                                 plan.audio_segs
-                                    .extend(audio_segs_of(project_dir, c).into_iter().map(|mut s| {
+                                    .extend(audio_segs_of(project_dir, t, c).into_iter().map(|mut s| {
                                         s.clip_idx = Some(idx);
                                         s
                                     }));
                             }
                         } else if audio_ok && clip_gain(c) > 0.0 {
                             // hidden 只作用视觉面(册四 BE3b 定义):画面不进合成,声音仍在
-                            plan.audio_segs.extend(audio_segs_of(project_dir, c));
+                            plan.audio_segs.extend(audio_segs_of(project_dir, t, c));
                         }
                     }
                     TrackKind::Audio => {
                         if audio_ok && clip_gain(c) > 0.0 {
-                            plan.audio_segs.extend(audio_segs_of(project_dir, c));
+                            plan.audio_segs.extend(audio_segs_of(project_dir, t, c));
                         }
                     }
                     // 文本轨:结构性锚点(字幕经 textass 生成 ASS 烧录链,ADR-0016);
@@ -290,7 +363,7 @@ pub fn clip_play_ms(c: &Clip) -> u64 {
 /// 倒放逐子段 areverse(全局倒放 = 分窗倒放的逐窗内容,两种切法内容逐帧一致,
 /// 故音频按子段独立 -ss/-t+areverse 与视频整段 reverse+分段消费完全同构);
 /// freezeMs 定格:定格点之后的曲线段不产生音频事件(画面冻结、声音静默)。
-fn audio_segs_of(project_dir: &Path, c: &Clip) -> Vec<AudioSeg> {
+fn audio_segs_of(project_dir: &Path, t: &cutforge_core::model::Track, c: &Clip) -> Vec<AudioSeg> {
     let play_end = clip_play_ms(c);
     let segs = cutforge_core::model::speed_segments(c);
     let mut out: Vec<AudioSeg> = Vec::new();
@@ -321,6 +394,7 @@ fn audio_segs_of(project_dir: &Path, c: &Clip) -> Vec<AudioSeg> {
             // volume 关键帧(IR v3):表达式按子段起点平移(a = 片段播放域偏移);
             // 无 volume 关键帧 → None(静态 volume 生效,与既有语义逐位一致)
             volume_expr: crate::kf_expr::kf_volume_filter(c, a),
+            track_id: Some(t.id.clone()),
             clip_idx: None, // 归属由 RenderPlan::build 按轨道回填
         });
         x += span * s;

@@ -209,6 +209,7 @@ fn track_patch_merges_by_field() {
         name: Some("主画面".into()), locked: Some(true), mute: Some(false),
         solo: Some(true), hidden: Some(false), height_px: Some(240),
         color: Some("#3D7EAF".into()),
+        ..Default::default()
     }
     .apply_to(&mut t);
     assert_eq!(changes.len(), 7);

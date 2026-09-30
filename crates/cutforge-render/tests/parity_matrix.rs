@@ -655,7 +655,13 @@ fn parity_matrix_full() {
             (f[i], f[i + 1], f[i + 2])
         };
         let (a, b) = (px(&f_mos, 20, 20), px(&f_mos, 27, 27));
-        assert_eq!(a, b, "马赛克:同块内像素应归并,实得 {a:?} vs {b:?}");
+        // 册五 T5.6:encode 步带 bt709 标签重编码(ADR-0020 决策 1),成片多一代
+        // x264 量化(默认 crf23)——块内断言从逐位相等放宽为 ±4 容差(块归并语义
+        // 不变:渐变域相邻像素差 ~10+ 级,量化漂移 ≤4 不可混淆)
+        let near = |x: (u8, u8, u8), y: (u8, u8, u8)| {
+            x.0.abs_diff(y.0) <= 4 && x.1.abs_diff(y.1) <= 4 && x.2.abs_diff(y.2) <= 4
+        };
+        assert!(near(a, b), "马赛克:同块内像素应归并(±4),实得 {a:?} vs {b:?}");
         assert_ne!(f_mos, f_base, "马赛克必须真实改变像素");
         achieved.push("23 特效库(册四 T4.6):mono 去色/vignette 角部衰减/grain 时变噪声/mosaic 块归并,像素级实渲断言");
     }
@@ -996,3 +1002,378 @@ fn parity_keyframes_matrix() {
     assert!(achieved.len() >= 6, "关键帧夹具:位置/缩放/淡入/响度/贝塞尔可区分 + 逐样本对拍");
 }
 
+// ---------------- 册五 T5.2 调色 + T5.3 音频工作站对拍矩阵(AC-5.2/AC-5.3) ----------------
+
+/// 带通道容差的像素近似(成片带 bt709 标签重编码,一代 x264 量化 ±4 内)。
+fn px_near(a: (u8, u8, u8), b: (u8, u8, u8), tol: i32) -> bool {
+    (a.0 as i32 - b.0 as i32).abs() <= tol
+        && (a.1 as i32 - b.1 as i32).abs() <= tol
+        && (a.2 as i32 - b.2 as i32).abs() <= tol
+}
+
+/// 频段 RMS(dB;T5.3 EQ 的频域断言:带通 → astats)。
+fn band_rms_db(p: &Path, from: f64, to: f64, lo: u32, hi: u32) -> f64 {
+    let fc = (lo + hi) as f64 / 2.0;
+    let (_o, err) = ff_out(&[
+        "-i", p.to_str().unwrap(),
+        // 双级 bandpass(0.2 oct)压泄漏:单级 12dB/oct 时邻频能量盖过深谷
+        "-af", &format!("atrim={from}:{to},bandpass=f={fc}:width_type=o:w=0.2,bandpass=f={fc}:width_type=o:w=0.2,astats=metadata=1"),
+        "-f", "null", "-",
+    ], Path::new("."));
+    let pos = err.rfind("RMS level dB:").expect(err.as_str());
+    err[pos + 13..].split_whitespace().next().unwrap().parse().unwrap()
+}
+
+/// 成片 LUFS(loudnorm 测量,与 audio_loudness 工具同源参数)。
+fn lufs_of(p: &Path) -> f64 {
+    let (_o, err) = ff_out(&[
+        "-hide_banner", "-nostats", "-i", p.to_str().unwrap(),
+        "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json", "-f", "null", "-",
+    ], Path::new("."));
+    let (s, e) = (err.rfind('{').expect(err.as_str()), err.rfind('}').expect(err.as_str()));
+    let m: Value = serde_json::from_str(&err[s..=e]).unwrap();
+    m["input_i"].as_str().unwrap().parse().unwrap()
+}
+
+/// 输出视频流色彩标签(ffprobe;ADR-0020 复验口径)。
+fn color_tags(p: &Path) -> (String, String, String) {
+    let o = Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-print_format", "json",
+               "-show_entries", "stream=color_primaries,color_transfer,color_space"])
+        .arg(p).output().expect("ffprobe 必须存在");
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let s = &v["streams"][0];
+    (
+        s["color_primaries"].as_str().unwrap_or("none").into(),
+        s["color_transfer"].as_str().unwrap_or("none").into(),
+        s["color_space"].as_str().unwrap_or("none").into(),
+    )
+}
+
+/// 生成 3D .cube(等式中性缩放:f(r,g,b) = (min(1, r×k), g, b);N=4 紧凑夹具)。
+fn write_scale_red_cube(dir: &Path, rel: &str, k: f64) {
+    let n = 4u32;
+    let mut text = String::from("TITLE \"parity scale-red\"\nLUT_3D_SIZE 4\n");
+    for b in 0..n {
+        for g in 0..n {
+            for r in 0..n {
+                let (fr, fg, fb) = (
+                    r as f64 / (n - 1) as f64,
+                    g as f64 / (n - 1) as f64,
+                    b as f64 / (n - 1) as f64,
+                );
+                text.push_str(&format!("{:.6} {fg:.6} {fb:.6}\n", (fr * k).min(1.0)));
+            }
+        }
+    }
+    let p = dir.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, text).unwrap();
+}
+
+/// T5.2 调色五夹具 + T5.3 音频三夹具(AC-5.2/AC-5.3):
+/// G1 LGG 色轮偏移(阴影红抬,像素色偏断言)+ 输出 bt709 标签复验;
+/// G2 曲线提亮(master 点集,亮度断言);G3 LUT 前后帧差(.cube 红增益);
+/// G4 饱和度归零=灰度(fx.mono 同断言口径);G5 grade×关键帧组合不冲突;
+/// A1 轨道 EQ 频段能量(440/1000 双音,频带 RMS 比值断言);
+/// A2 轨道压缩动态范围收窄(响/静双段 RMS 差断言);
+/// A3 响度单:loudnormTarget=-16 输出实测偏差 ≤1LU(AC-5.3 数值断言)。
+/// ffmpeg 缺失即失败,禁止跳过。
+#[test]
+fn parity_grade_audio_matrix() {
+    assert!(ffmpeg_ok(), "ffmpeg 不可用:调色/音频对拍是硬门禁,禁止跳过");
+    let mut achieved: Vec<&str> = Vec::new();
+    let w = 320usize;
+
+    // ---- G1 LGG 色轮偏移:lift=[0.3,0,0](阴影红抬)→ 暗灰源红通道抬升 ----
+    // (采样点选**阴影域暗像素**:colorbalance 的通道权重按像素亮度计,
+    //  纯饱和极值点(如纯蓝 0,0,255)是已知的钳制盲区——G5 的 gain 通路覆盖极值色)
+    {
+        let dir = workspace("grade-lgg");
+        make_two_tone(&dir, "dark.mp4", "0x202020", "0x202020", 2.0, 2.0);
+        let mk = |slug: &str, grade: Value| {
+            let mut c0 = json!({
+                "id": "V1-001", "src": "dark.mp4", "startMs": 0, "durationMs": 2000,
+                "sourceInMs": 0, "volume": 0
+            });
+            if !grade.is_null() {
+                c0["grade"] = grade;
+            }
+            let v = json!({
+                "version": 1, "schemaVersion": "3.0.0", "slug": slug, "fps": 30,
+                "canvas": {"width": 320, "height": 240},
+                "tracks": [{"id": "V1", "kind": "video", "clips": [c0]}]
+            });
+            write_project(&dir, slug, &v);
+            parse_project(v)
+        };
+        let base = cutforge_render::render(&mk("lgg-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let graded = cutforge_render::render(&mk("lgg-g", json!({"lift": [0.3, 0.0, 0.0]})), &dir, None, &mut |_| {}).unwrap();
+        let fb = frame_bytes(&base.output, 1.0);
+        let fg = frame_bytes(&graded.output, 1.0);
+        let (pb, pg) = (px(&fb, 160, 120, w), px(&fg, 160, 120, w));
+        assert!(pg.0 > pb.0 + 20, "LGG lift 红:暗像素红通道应抬升,基线 {pb:?} → 调色 {pg:?}");
+        assert!(
+            (pg.1 as i32 - pb.1 as i32).abs() <= 10 && (pg.2 as i32 - pb.2 as i32).abs() <= 10,
+            "绿蓝通道不动(纯红阴影抬升): 基线 {pb:?} → 调色 {pg:?}"
+        );
+        // ADR-0020:输出色彩标签复验(bt709 三枚举)
+        let (prim, trc, space) = color_tags(&graded.output);
+        assert_eq!(
+            (prim.as_str(), trc.as_str(), space.as_str()),
+            ("bt709", "bt709", "bt709"),
+            "输出必须携带 bt709 完整标签(ADR-0020 决策 1)"
+        );
+        achieved.push("G1 LGG 色轮偏移:lift 红抬暗像素色偏断言 + bt709 标签 ffprobe 复验");
+    }
+
+    // ---- G2 曲线提亮:master 0.5→0.8,灰源中点亮度 ~128→~204 ----
+    {
+        let dir = workspace("grade-curve");
+        make_two_tone(&dir, "gray.mp4", "gray", "gray", 2.0, 2.0);
+        let mk = |slug: &str, grade: Value| {
+            let mut c0 = json!({
+                "id": "V1-001", "src": "gray.mp4", "startMs": 0, "durationMs": 2000,
+                "sourceInMs": 0, "volume": 0
+            });
+            c0["grade"] = grade;
+            let v = json!({
+                "version": 1, "schemaVersion": "3.0.0", "slug": slug, "fps": 30,
+                "canvas": {"width": 320, "height": 240},
+                "tracks": [{"id": "V1", "kind": "video", "clips": [c0]}]
+            });
+            write_project(&dir, slug, &v);
+            parse_project(v)
+        };
+        let base = cutforge_render::render(&mk("curve-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let graded = cutforge_render::render(
+            &mk("curve-g", json!({"curves": {"master": [[0.0, 0.0], [0.5, 0.8], [1.0, 1.0]]}})),
+            &dir, None, &mut |_| {},
+        ).unwrap();
+        let lb = luma_avg(&frame_bytes(&base.output, 1.0), w, 11);
+        let lg = luma_avg(&frame_bytes(&graded.output, 1.0), w, 11);
+        assert!((lb - 128.0).abs() <= 12.0, "灰源基线中点应 ≈128: {lb}");
+        assert!(
+            lg > lb + 50.0 && (lg - 204.0).abs() <= 25.0,
+            "曲线 0.5→0.8 提亮:实测 {lg}(期望 ≈204,基线 {lb})"
+        );
+        achieved.push("G2 曲线提亮:master 点集编译 curves,中点亮度 128→≈204(±25)");
+    }
+
+    // ---- G3 LUT:红增益 .cube → 灰源红通道抬升且帧面改变(内容哈希入键) ----
+    {
+        let dir = workspace("grade-lut");
+        write_scale_red_cube(&dir, ".cutforge/luts/sr.cube", 1.5);
+        make_two_tone(&dir, "gray.mp4", "gray", "gray", 2.0, 2.0);
+        let mk = |slug: &str, grade: Value| {
+            let mut c0 = json!({
+                "id": "V1-001", "src": "gray.mp4", "startMs": 0, "durationMs": 2000,
+                "sourceInMs": 0, "volume": 0
+            });
+            c0["grade"] = grade;
+            let v = json!({
+                "version": 1, "schemaVersion": "3.0.0", "slug": slug, "fps": 30,
+                "canvas": {"width": 320, "height": 240},
+                "tracks": [{"id": "V1", "kind": "video", "clips": [c0]}]
+            });
+            write_project(&dir, slug, &v);
+            parse_project(v)
+        };
+        let base = cutforge_render::render(&mk("lut-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let graded = cutforge_render::render(
+            &mk("lut-g", json!({"lut": ".cutforge/luts/sr.cube"})),
+            &dir, None, &mut |_| {},
+        ).unwrap();
+        let fb = frame_bytes(&base.output, 1.0);
+        let fg = frame_bytes(&graded.output, 1.0);
+        assert_ne!(fb, fg, "LUT 应用后帧面必须改变");
+        let pb = px(&fb, 160, 120, w);
+        let pg = px(&fg, 160, 120, w);
+        assert!(
+            pg.0 > pb.0 + 20 && px_near((0, pg.1, pg.2), (0, pb.1, pb.2), 12),
+            "红增益 LUT:红通道抬升、绿蓝不动,基线 {pb:?} → LUT {pg:?}"
+        );
+        achieved.push("G3 LUT 应用:.cube 红增益帧差 + 分通道方向断言(lut3d)");
+    }
+
+    // ---- G4 饱和度归零 = 灰度(fx.mono 同断言口径:全帧 R==G==B) ----
+    {
+        let dir = workspace("grade-sat0");
+        make_left_red_right_blue(&dir, "lr_src.mp4", 2.0);
+        let v = json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "grade-sat0", "fps": 30,
+            "canvas": {"width": 320, "height": 240},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [{
+                "id": "V1-001", "src": "lr_src.mp4", "startMs": 0, "durationMs": 2000,
+                "sourceInMs": 0, "volume": 0,
+                "grade": {"saturation": 0}
+            }]}]
+        });
+        write_project(&dir, "grade-sat0", &v);
+        let out = cutforge_render::render(&parse_project(v), &dir, None, &mut |_| {}).unwrap();
+        let f = frame_bytes(&out.output, 1.0);
+        for (x, y) in [(40usize, 60usize), (160, 120), (280, 180)] {
+            let p = px(&f, x, y, w);
+            assert!(
+                p.0.abs_diff(p.1) <= 4 && p.1.abs_diff(p.2) <= 4,
+                "饱和度 0 → 灰度(R≈G≈B,±4 量化容差): ({x},{y}) = {p:?}"
+            );
+        }
+        achieved.push("G4 饱和度归零=灰度:红蓝源全采样点 R≈G≈B(fx.mono 同口径)");
+    }
+
+    // ---- G5 grade × 关键帧组合不冲突:opacity 淡入关键帧 + grade 同片段共存 ----
+    {
+        let dir = workspace("grade-kf");
+        make_two_tone(&dir, "gray.mp4", "gray", "gray", 2.0, 2.0);
+        let v = json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "grade-kf", "fps": 30,
+            "canvas": {"width": 320, "height": 240},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [{
+                "id": "V1-001", "src": "gray.mp4", "startMs": 0, "durationMs": 2000,
+                "sourceInMs": 0, "volume": 0,
+                "grade": {"gain": [1.0, 1.0, 2.0]},
+                "keyframes": [
+                    {"property": "opacity", "timeMs": 0, "value": 0.0},
+                    {"property": "opacity", "timeMs": 1000, "value": 1.0}
+                ]
+            }]}]
+        });
+        write_project(&dir, "grade-kf", &v);
+        let out = cutforge_render::render(&parse_project(v), &dir, None, &mut |_| {}).unwrap();
+        let f_head = frame_bytes(&out.output, 0.05);
+        let f_tail = frame_bytes(&out.output, 1.5);
+        let lh = luma_avg(&f_head, w, 11);
+        let lt = luma_avg(&f_tail, w, 11);
+        assert!(lh < 60.0, "淡入关键帧仍生效(起点近黑): {lh}");
+        // 灰(128)×蓝增益 bb=2 → (128,128,255):luma = (299·128+587·128+114·255)/1000 ≈ 142
+        assert!((lt - 142.0).abs() <= 12.0, "grade 蓝增益在 kf 段图内仍生效(末帧蓝抬): {lt}");
+        let pt = px(&f_tail, 160, 120, w);
+        assert!(pt.2 > pt.0 + 60, "蓝增益方向正确(gain bb=2): {pt:?}");
+        achieved.push("G5 grade×关键帧组合:kf 段图内调色链共存,淡入+蓝增益双生效");
+    }
+
+    // ---- A1 轨道 EQ:440Hz 谷(-18dB)→ 440/1000 频带 RMS 比值下降 ≥8dB ----
+    {
+        let dir = workspace("audio-eq");
+        make_media(&dir); // voice.mp4(画面用;volume 0 不进混音)
+        // 双音源:440 + 1000 等幅 amix(aac)
+        ff(&[
+            "-y", "-v", "error",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+            "-f", "lavfi", "-i", "sine=frequency=1000:duration=3",
+            "-filter_complex", "amix=inputs=2:normalize=0",
+            "-c:a", "aac", "tone2.m4a",
+        ], &dir);
+        let mk = |slug: &str, eq: Value| {
+            let v = json!({
+                "version": 1, "schemaVersion": "3.0.0", "slug": slug, "fps": 30,
+                "canvas": {"width": 320, "height": 240},
+                "tracks": [
+                    {"id": "V1", "kind": "video", "clips": [{
+                        "id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 3000,
+                        "sourceInMs": 0, "volume": 0
+                    }]},
+                    {"id": "A1", "kind": "audio", "eq": eq, "clips": [{
+                        "id": "A1-001", "src": "tone2.m4a", "startMs": 0, "durationMs": 3000,
+                        "volume": 1.0
+                    }]}
+                ]
+            });
+            write_project(&dir, slug, &v);
+            parse_project(v)
+        };
+        let base = cutforge_render::render(&mk("eq-base", json!(null)), &dir, None, &mut |e| eprintln!("BASE-EV {e}")).unwrap();
+        let cut = cutforge_render::render(
+            &mk("eq-cut", json!([{"type": "peaking", "freq": 440, "gain": -18, "q": 1.0}])),
+            &dir, None, &mut |e| eprintln!("CUT-EV {e}"),
+        ).map_err(|e| format!("EQ-CUT-FAIL: {e}")).unwrap();
+        let ratio = |o: &cutforge_render::RenderOutcome| {
+            // 窄带 ±25Hz(带通默认 12dB/oct,泄漏可忽略);q=1 的 peaking 在中心
+            // 频率处为全量 -18dB
+            band_rms_db(&o.output, 0.5, 2.5, 415, 465) - band_rms_db(&o.output, 0.5, 2.5, 975, 1025)
+        };
+        let (r0, r1) = (ratio(&base), ratio(&cut));
+        assert!(
+            r0 - r1 >= 8.0,
+            "EQ 440Hz -18dB:频带比应下降 ≥8dB,基线 {r0:.1} → EQ {r1:.1}"
+        );
+        achieved.push("A1 轨道 EQ:peaking 440Hz -18dB,440/1000 频带 RMS 比下降 ≥8dB(频域)");
+    }
+
+    // ---- A2 轨道压缩:响/静双段 RMS 差收窄 ≥3dB ----
+    {
+        let dir = workspace("audio-dyn");
+        make_media(&dir);
+        let mk = |slug: &str, dyn_: Value| {
+            let v = json!({
+                "version": 1, "schemaVersion": "3.0.0", "slug": slug, "fps": 30,
+                "canvas": {"width": 320, "height": 240},
+                "tracks": [
+                    {"id": "V1", "kind": "video", "clips": [{
+                        "id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 3000,
+                        "sourceInMs": 0, "volume": 0
+                    }]},
+                    // 响段 volume 1.5(正弦源峰值 -18dBFS → RMS ≈ -17.5,阈上 ~9.5dB)
+                    // 静段 volume 0.25(RMS ≈ -33,阈下 ~6dB)——压缩只折响段
+                    {"id": "A1", "kind": "audio", "dyn": dyn_, "clips": [
+                        {"id": "A1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 1500,
+                         "sourceInMs": 0, "role": "voice", "volume": 1.5},
+                        {"id": "A1-002", "src": "voice.mp4", "startMs": 1500, "durationMs": 1500,
+                         "sourceInMs": 0, "role": "voice", "volume": 0.25}
+                    ]}
+                ]
+            });
+            write_project(&dir, slug, &v);
+            parse_project(v)
+        };
+        let base = cutforge_render::render(&mk("dyn-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let comp = cutforge_render::render(
+            &mk("dyn-c", json!({"thresholdDb": -27, "ratio": 8, "attackMs": 5, "releaseMs": 100})),
+            &dir, None, &mut |_| {},
+        ).unwrap();
+        let spread = |o: &cutforge_render::RenderOutcome| {
+            rms_of_window(&o.output, 0.3, 1.3) - rms_of_window(&o.output, 1.8, 2.8)
+        };
+        let (s0, s1) = (spread(&base), spread(&comp));
+        assert!(s0 >= 8.0, "响/静段基线动态范围应 ≥8dB: {s0:.1}");
+        assert!(
+            s1 <= s0 - 3.0,
+            "压缩后动态范围应收窄 ≥3dB:基线 {s0:.1} → 压缩 {s1:.1}"
+        );
+        achieved.push("A2 轨道压缩:thresholdDb -27/ratio 8,响静段动态范围收窄 ≥3dB");
+    }
+
+    // ---- A3 响度单:loudnormTarget=-16 → 输出 LUFS 偏差 ≤1LU(AC-5.3) ----
+    {
+        let dir = workspace("audio-lufs");
+        make_media(&dir);
+        let v = json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "audio-lufs", "fps": 30,
+            "canvas": {"width": 320, "height": 240},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [{
+                "id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 3000,
+                "sourceInMs": 0, "role": "voice", "volume": 1.0
+            }]}]
+        });
+        write_project(&dir, "audio-lufs", &v);
+        let p = parse_project(v);
+        let out = cutforge_render::render_with_opts(
+            &p, &dir, None, false,
+            cutforge_render::plan::RenderOptions { loudnorm_i: Some(-16.0), ..Default::default() },
+            &mut |_| {},
+        ).unwrap();
+        let lufs = lufs_of(&out.output);
+        assert!(
+            (lufs - (-16.0)).abs() <= 1.0,
+            "AC-5.3:目标 -16 的输出实测 {lufs:.2} LUFS,偏差必须 ≤1LU"
+        );
+        achieved.push("A3 响度单:loudnormTarget=-16 输出实测偏差 ≤1LU(AC-5.3 数值断言)");
+    }
+
+    println!("T5.2/T5.3 调色+音频 parity achieved {} 项:", achieved.len());
+    for a in &achieved {
+        println!("  OK {a}");
+    }
+    assert!(achieved.len() >= 8, "调色五夹具 + 音频三夹具全数落档");
+}

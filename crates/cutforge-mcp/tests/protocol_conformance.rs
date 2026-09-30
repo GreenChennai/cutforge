@@ -99,22 +99,23 @@ fn protocol_conformance() {
     //  册二 A2 新增 render_frame → 42;册四 A4 新增 clip_trim/clip_split_all/
     //  track_update/clip_gap_delete/clip_copy/clip_paste_at → 48;册四 A4-BE3b 增
     //  text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/
-    //  media_thumbnail/media_proxy/audio_beats → 56)
+    //  media_thumbnail/media_proxy/audio_beats → 56;册五 A5 增 lut_import/
+    //  scope_data/audio_loudness/encode_probe/render_queue → 61)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 56, "B7 口径:工具数以 schemas/mcp-tools.json 为准");
+    assert_eq!(names.len(), 61, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册五 A5 增 lut_import/scope_data/audio_loudness/encode_probe/render_queue)");
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);
         assert!(t["outputSchema"].is_object(), "{} 缺 outputSchema", t["name"]);
     }
-    // kind 口径:13 查询 + 30 写 + 13 编排(与 _doc 同句;册四 BE3b 48→56)
+    // kind 口径:15 查询 + 30 写 + 16 编排(与 _doc 同句;册五 A5 56→61)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds.entry(t["kind"].as_str().unwrap().to_string()).or_insert(0usize) += 1;
     }
-    assert_eq!(kinds.get("query"), Some(&13), "查询 13:{kinds:?}");
+    assert_eq!(kinds.get("query"), Some(&15), "查询 15:{kinds:?}");
     assert_eq!(kinds.get("write"), Some(&30), "写 30:{kinds:?}");
-    assert_eq!(kinds.get("orchestrate"), Some(&13), "编排 13:{kinds:?}");
+    assert_eq!(kinds.get("orchestrate"), Some(&16), "编排 16:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
     // 实现分支,不得出现"已注册但未实现"。统一以缺 root 空参探针:所有工具(capability_matrix

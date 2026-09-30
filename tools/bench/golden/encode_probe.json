@@ -1,0 +1,26 @@
+{
+ "tool": "encode_probe",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "trial": false
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "autoDefault": "libx264",
+     "encoders": {
+      "amf": "<HW_PROBE>",
+      "nvenc": "<HW_PROBE>",
+      "qsv": "<HW_PROBE>"
+     },
+     "note": "auto/缺省 = libx264 确定性基线;hw = 优先硬件,试编失败优雅降级(AC-5.6)"
+    },
+    "message": "编码器探测",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

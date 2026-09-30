@@ -8,7 +8,6 @@
 
 use crate::plan::{OverlaySeg, RenderPlan};
 use cutforge_core::model::{Clip, Transition};
-use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 // ---- 步 2 segment(实现在 segment.rs;路径兼容再导出,册四 A4-BE2) ----
@@ -178,6 +177,8 @@ pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_ou
 
 /// mix pass A 命令行:主时间线有视频转场时走 acrossfade 链(册四 T4.5,M11-R1;
 /// 见 [`crate::across`] 模块注释),否则既有逐段落点路径(参数逐字一致,parity 红线)。
+/// 册五 T5.3:有轨道处理声明(plan.track_proc 非空)时按轨组建流,per-track
+/// EQ/动态链在组建流 amix 之后、进总线之前插入;无声明 = 既有图零变化。
 pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
     if crate::across::chain_active(plan) {
         return crate::across::mix_pass_a_chain_args(plan, mixed_raw_out);
@@ -186,11 +187,11 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
     let total_ms = plan.total_ms;
     let mut args: Vec<String> = vec!["-y".into(), "-v".into(), "error".into()];
     let mut filters: Vec<String> = Vec::new();
-    let mut labels: Vec<String> = Vec::new();
     if audio_segs.is_empty() && plan.bgm.is_none() {
         args.extend(["-f".into(), "lavfi".into(), "-i".into(), "anullsrc=r=48000:cl=stereo".into()]);
     }
     let mut input_idx = 0usize;
+    let mut event_refs: Vec<String> = Vec::new();
     for seg in audio_segs {
         let read_ms = (seg.duration_ms as f64 * seg.speed).ceil();
         args.extend([
@@ -200,22 +201,39 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
         ]);
         let chain_body = crate::across::event_body(seg);
         filters.push(format!("[{input_idx}:a]{chain_body},adelay={}:all=1[a{input_idx}]", seg.start_ms));
-        labels.push(format!("[a{input_idx}]"));
+        event_refs.push(format!("[a{input_idx}]"));
         input_idx += 1;
+    }
+    if !audio_segs.is_empty() {
+        if plan.track_proc.is_empty() {
+            // 既有路径:逐事件标签直接进总线 amix(参数逐字一致)
+            filters.push(format!(
+                "{}amix=inputs={}:duration=longest:normalize=0[bus]",
+                event_refs.join(""),
+                audio_segs.len()
+            ));
+        } else {
+            // 轨道组建流(册五 T5.3):有处理声明的轨 amix 建流 → per-track 链 → 单标签
+            let (group_parts, labels) = crate::across::grouped_bus_labels(
+                plan,
+                &audio_segs.iter().collect::<Vec<_>>(),
+                &event_refs,
+            );
+            filters.extend(group_parts);
+            filters.push(format!(
+                "{}amix=inputs={}:duration=longest:normalize=0[bus]",
+                labels.join(""),
+                labels.len()
+            ));
+        }
     }
     // 总线([bus] 恒存在:bgm-only 工程用 anullsrc 占位)
     if audio_segs.is_empty() && plan.bgm.is_some() {
         args.extend(["-f".into(), "lavfi".into(), "-i".into(), "anullsrc=r=48000:cl=stereo".into()]);
         filters.push(format!("[{input_idx}:a]anull[bus]"));
         input_idx += 1;
-    } else if !audio_segs.is_empty() {
-        filters.push(format!(
-            "{}amix=inputs={}:duration=longest:normalize=0[bus]",
-            labels.join(""),
-            audio_segs.len()
-        ));
     }
-    // BGM(循环铺满 + gain + ducking 侧链)
+    // BGM(循环铺满 + gain + ducking 侧链,参数化 T5.3)
     if let Some(bgm) = &plan.bgm {
         let bgm_path = plan.project_dir.join(&bgm.src);
         args.extend([
@@ -232,9 +250,7 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
             // [bus] 需被 sidechain(key)与 amix 各消费一次 → asplit 分流
             // (本地 ffmpeg 容忍重复 label,CI 严格报 Invalid stream specifier)
             filters.push("[bus]asplit=2[busA][busB]".into());
-            filters.push(
-                "[bgmg][busA]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]".into(),
-            );
+            filters.push(format!("[bgmg][busA]{}[bgmc]", crate::across::ducking_filter(bgm)));
             filters.push("[busB][bgmc]amix=inputs=2:duration=first:normalize=0[mixout]".into());
         } else {
             filters.push("[bus][bgmg]amix=inputs=2:duration=first:normalize=0[mixout]".into());
@@ -254,60 +270,12 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
     args
 }
 
-/// loudnorm 测量 pass 命令行(测量输出在 stderr 的 JSON)。
-pub fn mix_measure_args(mixed_raw: &Path) -> Vec<String> {
-    [
-        "-hide_banner", "-nostats", "-i", &mixed_raw.to_string_lossy(),
-        "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json",
-        "-f", "null", "-",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
-}
-
-/// 由测量结果构造 linear=true 的 loudnorm 滤镜串(先测后编)。
-pub fn mix_linear_filter(measured: &Value) -> String {
-    format!(
-        "loudnorm=I=-14:TP=-1.0:measured_I={}:measured_TP={}:measured_LRA={}:measured_thresh={}:linear=true",
-        measured["input_i"].as_str().unwrap_or("-14"),
-        measured["input_tp"].as_str().unwrap_or("-1"),
-        measured["input_lra"].as_str().unwrap_or("0"),
-        measured["input_thresh"].as_str().unwrap_or("-30"),
-    )
-}
-
-/// mix pass B(有响度测量值)命令行。
-pub fn mix_pass_b_args(measured: &Value, mixed_raw: &Path, mix_out: &Path) -> Vec<String> {
-    [
-        "-y", "-v", "error", "-i", &mixed_raw.to_string_lossy(),
-        "-af", &mix_linear_filter(measured),
-        "-c:a", "aac", &mix_out.to_string_lossy(),
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
-}
-
-/// mix pass B(静音总线)命令行:原样转封装,无需归一。
-/// (数字静音 -inf 遇 linear=true 的 measured 值,ffmpeg 报 "Result too large" 直接失败。)
-pub fn mix_pass_b_silent_args(mixed_raw: &Path, mix_out: &Path) -> Vec<String> {
-    [
-        "-y", "-v", "error", "-i", &mixed_raw.to_string_lossy(),
-        "-c:a", "copy", &mix_out.to_string_lossy(),
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
-}
-
-/// 测量 JSON 中 input_i 是否需要走 linear=true(静音/-inf/缺失 → false)。
-pub fn mix_measured_is_loud(measured: &Value) -> bool {
-    matches!(
-        measured["input_i"].as_str().and_then(|s| s.parse::<f64>().ok()),
-        Some(v) if v.is_finite() && v > -70.0
-    )
-}
+// ---- loudnorm 测量/双 pass(实现在 across.rs,册五 T5.3 纯移动——行数红线
+// A1-3;`pub use` 保持 `steps::mix_*` 路径兼容) ----
+pub use crate::across::{
+    mix_linear_filter, mix_linear_filter_t, mix_measure_args, mix_measure_args_t,
+    mix_measured_is_loud, mix_pass_b_args, mix_pass_b_silent_args,
+};
 
 // ---------------- 步 6 subtitle(最后叠) ----------------
 
@@ -394,7 +362,7 @@ pub fn fmt_f64(v: f64) -> String {
 mod tests {
     use super::*;
     use cutforge_core::model::Overlay;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::path::PathBuf;
 
     /// 测试计划:fake 路径(纯函数不触 IO)。
@@ -658,37 +626,6 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
         let args = mix_pass_a_args(&plan, Path::new("/c/mix/r.m4a"));
         assert!(!args.iter().any(|a| a.contains("filter_complex") || a.contains("amix")), "无 filter_complex");
         assert!(args.iter().any(|a| a.contains("anullsrc")));
-    }
-
-    #[test]
-    fn mix_measure_and_pass_b_args() {
-        let measured = json!({
-            "input_i": "-14.5", "input_tp": "-1.2", "input_lra": "3.1", "input_thresh": "-24.5"
-        });
-        assert!(mix_measured_is_loud(&measured));
-        assert_eq!(
-            mix_linear_filter(&measured),
-            "loudnorm=I=-14:TP=-1.0:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true"
-        );
-        let raw = Path::new("/c/mix/r.m4a");
-        assert_eq!(
-            strv(&mix_measure_args(raw)),
-            ["-hide_banner", "-nostats", "-i", "/c/mix/r.m4a",
-             "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json", "-f", "null", "-"]
-        );
-        assert_eq!(
-            strv(&mix_pass_b_args(&measured, raw, Path::new("/c/mix/o.m4a"))),
-            ["-y", "-v", "error", "-i", "/c/mix/r.m4a", "-af",
-             "loudnorm=I=-14:TP=-1.0:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true",
-             "-c:a", "aac", "/c/mix/o.m4a"]
-        );
-        // 静音:input_i = -inf → 不走 linear,转封装
-        let silent = json!({"input_i": "-inf", "input_tp": "-inf", "input_lra": "0", "input_thresh": "-70"});
-        assert!(!mix_measured_is_loud(&silent));
-        assert_eq!(
-            strv(&mix_pass_b_silent_args(raw, Path::new("/c/mix/o.m4a"))),
-            ["-y", "-v", "error", "-i", "/c/mix/r.m4a", "-c:a", "copy", "/c/mix/o.m4a"]
-        );
     }
 
     #[test]

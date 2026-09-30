@@ -260,6 +260,7 @@ fn track_update_field_merge_and_guards() {
     let r = eng.apply(Command::TrackUpdate { track_id: "V1".into(), patch: TrackPatch {
         name: Some("主画面".into()), locked: Some(true), mute: Some(false),
         solo: Some(true), hidden: Some(false), height_px: Some(240), color: Some("#3D7EAF".into()),
+        ..Default::default()
     }}, agent(), ApplyOpts::default()).unwrap();
     assert_eq!(r.rev, 1);
     match eng.query(Query::Track { id: "V1".into() }) {

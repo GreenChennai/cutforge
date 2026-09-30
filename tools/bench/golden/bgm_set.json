@@ -23,6 +23,28 @@
     "ns": "ok",
     "ok": true
    }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "duckThreshold": 0.05,
+    "duckRatio": 6,
+    "duckAttackMs": 40,
+    "duckReleaseMs": 300
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-37"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
   }
  ]
 }

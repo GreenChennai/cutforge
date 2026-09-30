@@ -6,7 +6,7 @@ use crate::edit_ops;
 use crate::subtitle_ops;
 use crate::orchestrate::orchestrate;
 use crate::progress::{existing_rel, render_cutforge_sync, render_frame_tool, render_progress, render_run_async};
-use crate::registry::{capability_matrix, envelope, registry, tool_def};
+use crate::registry::{capability_matrix, envelope, tool_def};
 use crate::tools_nolock::{media_browse_tool, media_probe_tool, project_new_tool, render_probe_tool, stage_status_tool};
 use cutforge_core::anchor::{Anchor, AnchorKind};
 use cutforge_core::command::{BgmPatch, ClipPatch, Command, MotionPatch, TransitionPatch};
@@ -42,16 +42,20 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
 
     // E5/B6:render 按 backend 分派——cutforge 后端调用本地 cutforge-render 子进程,
     // 全程不打开工作区(渲染不持排他锁);ffmpeg 后端(默认)走 CutFlow 编排,维持原路径。
-    // render_run / render_progress 同理不持锁(E5-3 异步渲染 + 轮询进度)。
+    // render_run / render_progress 同理不持锁(E5-3 异步渲染 + 轮询进度;册五 T5.6
+    // 队列化:render_run 入队,render_queue 查询/暂停/恢复/取消/重试)。
     // ass 过滤在服务端:壳无文件系统能力(壳纯度),ass 路径不存在时不烧录而非整单失败。
     // 册四 T4.1 代理预览:useProxy 显式 opt-in(默认 false,不悄悄降质),
     // 透传给 cutforge-render --use-proxy(缺失代理的片段回落原片)。
+    // 册五 T5.6 渲染选项:encoder/quality/crf/bitrate/gop/pixFmt/loudnormTarget/
+    // verboseCmd → cutforge-render CLI(缺省不产旗标 = 现行为零变化)。
     let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
+    let render_extra = crate::progress::build_render_extra(args);
     if name == "render" && args["backend"].as_str() == Some("cutforge") {
-        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy);
+        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, &render_extra);
     }
     if name == "render_run" {
-        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy);
+        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, render_extra);
     }
     if name == "render_progress" {
         let Some(run_id) = args["runId"].as_str() else {
@@ -62,6 +66,10 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     // T2.4 单帧精确预览:同步出帧(帧缓存键含工作区指纹),不持锁
     if name == "render_frame" {
         return render_frame_tool(&ws_root, args);
+    }
+    // 册五 T5.6 渲染队列(免开工作区;任务表为服务进程内存态)
+    if name == "render_queue" {
+        return crate::progress::render_queue_tool(&ws_root, args);
     }
 
     // ---- 免开工作区的工具(E6-3/B14:只读/创建类不持排他锁) ----
@@ -76,6 +84,11 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "media_thumbnail" => return crate::media_tools::media_thumbnail_tool(&ws_root, args),
         "media_proxy" => return crate::media_tools::media_proxy_tool(&ws_root, args),
         "audio_beats" => return crate::media_tools::audio_beats_tool(&ws_root, args),
+        // 册五 T5.2/T5.3/T5.6:调色 LUT/示波器/响度计/编码探测(同口径免锁)
+        "lut_import" => return crate::grade_tools::lut_import_tool(&ws_root, args),
+        "scope_data" => return crate::grade_tools::scope_data_tool(&ws_root, args),
+        "audio_loudness" => return crate::grade_tools::audio_loudness_tool(&ws_root, args),
+        "encode_probe" => return crate::grade_tools::encode_probe_tool(&ws_root, args),
         _ => {}
     }
 
@@ -299,6 +312,28 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                         return envelope(false, "SCHEMA_INVALID", "patch.keyframes 必须是数组", json!({}))
                     }
                 },
+                // 片段调色(册五 T5.2):整对象替换;null/{} = 清除(与 huazi 同模式)
+                grade: match p.get("grade") {
+                    None | Some(Value::Null) => None,
+                    Some(v) if v.is_object() => {
+                        if v.as_object().is_some_and(|o| o.is_empty()) {
+                            None
+                        } else {
+                            match serde_json::from_value::<cutforge_core::model::Grade>(v.clone()) {
+                                Ok(g) => Some(g),
+                                Err(e) => {
+                                    return envelope(false, "SCHEMA_INVALID",
+                                        &format!("patch.grade 非法: {e}"), json!({}))
+                                }
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        return envelope(false, "SCHEMA_INVALID", "patch.grade 必须是对象", json!({}))
+                    }
+                },
+                grade_clear: matches!(p.get("grade"), Some(Value::Null))
+                    || p.get("grade").and_then(|v| v.as_object()).is_some_and(|o| o.is_empty()),
                 // 文本样式/花字(册四 T4.7):整对象替换;结构非法 → None 由
                 // SCHEMA_INVALID 面?不——此处静默丢弃是幻觉面,非法结构显式拒绝。
                 text_style: match p.get("textStyle") {
@@ -374,10 +409,15 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 gain_db: args["gainDb"].as_f64(),
                 ducking: args["ducking"].as_bool(),
                 loop_: args["loop"].as_bool(),
+                // ducking 侧链参数(册五 T5.3):缺省 = 既有常量,不给即行为零变化
+                duck_threshold: args["duckThreshold"].as_f64(),
+                duck_ratio: args["duckRatio"].as_f64(),
+                duck_attack_ms: args["duckAttackMs"].as_f64(),
+                duck_release_ms: args["duckReleaseMs"].as_f64(),
             };
             if patch.is_empty() {
                 return envelope(false, "PRECONDITION_FAILED",
-                    "bgm_set 至少给 src/gainDb/ducking/loop 之一(清除背景乐用 src:null)", json!({}));
+                    "bgm_set 至少给 src/gainDb/ducking/loop/duck* 之一(清除背景乐用 src:null)", json!({}));
             }
             // 音源路径与 clip_add 同一校验(不建并行实现)
             if let Some(src) = patch.src.as_deref()
@@ -636,29 +676,8 @@ fn read_truth(p: &Path, label: &str) -> Value {
     }
 }
 
-/// E6-3/B14 查询类:只读打开不排他锁;名单外写操作仍走 open_exclusive 全程锁。
-fn is_readonly_tool(name: &str) -> bool {
-    matches!(name,
-        "project_get" | "wordline_get" | "cutlist_get" | "notes_list"
-        | "oplog_tail" | "conflict_list" | "timeline_get"
-        // 册四 T4.7:字幕导出只读工程(产物落 06_成片输出,不产 Op 不改 IR)
-        | "subtitle_export")
-}
-
-/// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。
-/// 排除:只读查询、免开工作区的静态/编排类、工程创建(不产 rev)、
-/// clip_copy(会话态剪贴板写入,不产 Op 不升 rev)。
-pub(crate) fn produces_rev_mutation(name: &str) -> bool {
-    !(is_readonly_tool(name)
-        || matches!(name,
-            "capability_matrix" | "project_new" | "render" | "render_run" | "render_progress"
-            | "render_frame"
-            | "media_probe" | "media_browse" | "render_probe" | "stage_status"
-            | "clip_copy"
-            // 册四 A4 T4.1/T4.8:派生物缓存与纯计算工具(产物非 IR,不升 rev)
-            | "media_peaks" | "media_thumbnail" | "media_proxy" | "audio_beats"
-            | "subtitle_export"))
-}
+// E6-3/B14 查询类名单(实现在 rpc.rs 同域纯移动——行数红线 A1-3)
+pub(crate) use crate::rpc::{is_readonly_tool, produces_rev_mutation};
 
 /// E2-1 的 canonicalize 校验函数化:/media、/media/browse、clip_add、media_probe、
 /// media_browse 共用同一份校验(相对路径、拒 `..`、canonicalize 后仍在工程根内),
@@ -755,46 +774,6 @@ fn merge_patch(mut target: Value, patch: &Value) -> Value {
     }
 }
 
-// ---------------- JSON-RPC 传输(两通道共用) ----------------
-
-/// 处理一条 JSON-RPC 请求;通知(无 id)返回 None。
-pub fn handle_rpc(req: &Value) -> Option<Value> {
-    handle_rpc_as(req, Actor::agent("cutforge-mcp"))
-}
-
-/// JSON-RPC 带 actor 处理:壳数据面传 user(OpLog 如实归因;RT-1 摘要采集依据)。
-pub fn handle_rpc_as(req: &Value, actor: Actor) -> Option<Value> {
-    let method = req["method"].as_str()?;
-    let id = req["id"].clone();
-    if id.is_null() {
-        return None; // 通知:不回应
-    }
-    let result = match method {
-        "initialize" => json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "cutforge-mcp", "version": env!("CARGO_PKG_VERSION")}
-        }),
-        "ping" => json!({}),
-        "tools/list" => json!({"tools": registry().iter().map(|t| json!({
-            "name": t["name"], "description": t["description"],
-            "inputSchema": t["inputSchema"],
-        })).collect::<Vec<_>>()}),
-        "tools/call" => {
-            let name = req["params"]["name"].as_str().unwrap_or("");
-            let args = req["params"]["arguments"].clone();
-            let env = dispatch_with_actor(name, &args, actor);
-            json!({
-                "content": [{"type": "text", "text": env.to_string()}],
-                "isError": env["ok"] != json!(true),
-            })
-        }
-        other => {
-            return Some(json!({
-                "jsonrpc": "2.0", "id": id,
-                "error": {"code": -32601, "message": format!("method not found: {other}")}
-            }))
-        }
-    };
-    Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
-}
+// JSON-RPC 传输面(册五 T5.2 拆分自本文件——行数红线 A1-3,纯移动;
+// `pub use` 保持 `cutforge_mcp::dispatch::handle_rpc*` 路径逐字不变)
+pub use crate::rpc::{handle_rpc, handle_rpc_as};

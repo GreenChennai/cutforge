@@ -60,6 +60,36 @@ pub struct Bgm {
     pub ducking: bool,
     #[serde(default = "yes", rename = "loop")]
     pub loop_: bool,
+    /// ducking 侧链参数(册五 T5.3;缺省 = 既有常量,行为零变化):
+    /// threshold 为线性域(0..1,sidechaincompress 同域),ratio 1..20,
+    /// attack/release 毫秒。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duck_threshold: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duck_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duck_attack_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duck_release_ms: Option<f64>,
+}
+
+impl Bgm {
+    /// 侧链阈值(线性域;缺省 = 既有常量 0.03,与拆分前逐字一致)。
+    pub fn duck_threshold(&self) -> f64 {
+        self.duck_threshold.unwrap_or(0.03).clamp(0.001, 1.0)
+    }
+    /// 侧链比例(缺省 = 既有常量 8)。
+    pub fn duck_ratio(&self) -> f64 {
+        self.duck_ratio.unwrap_or(8.0).clamp(1.0, 20.0)
+    }
+    /// 侧链启动毫秒(缺省 = 既有常量 80)。
+    pub fn duck_attack_ms(&self) -> f64 {
+        self.duck_attack_ms.unwrap_or(80.0).clamp(1.0, 1000.0)
+    }
+    /// 侧链释放毫秒(缺省 = 既有常量 500)。
+    pub fn duck_release_ms(&self) -> f64 {
+        self.duck_release_ms.unwrap_or(500.0).clamp(10.0, 5000.0)
+    }
 }
 
 fn default_gain() -> f64 {
@@ -173,6 +203,11 @@ pub struct Clip {
     /// [`crate::keyframes`](模块级纪律);语义校验在 to_validated_value/from_value 钩子。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyframes: Option<Vec<crate::keyframes::Keyframe>>,
+    /// 片段调色(册五 T5.2):一级校色(色温/色调/曝光/对比/高光阴影/饱和度/
+    /// Lift/Gamma/Gain)+ 二级(曲线/LUT;HSL 限定器登记降级)。整对象替换
+    /// (与 crop/fx 同模式);渲染链序见 cutforge-render::grade 模块注释(链图)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<Grade>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -278,6 +313,10 @@ pub struct Overlay {
 fn one_f() -> f64 {
     1.0
 }
+
+fn default_factor() -> f64 {
+    1.4
+}
 fn is_one_f(v: &f64) -> bool {
     *v == 1.0
 }
@@ -300,9 +339,9 @@ pub struct PunchIn {
     pub source: Option<String>,
 }
 
-fn default_factor() -> f64 {
-    1.4
-}
+// 调色/轨道处理 IR(册五 T5.2/T5.3;实现在 grade_ir 模块,纯移动——行数红线 A1-3;
+// 本模块 `pub use` 保持 `crate::model::Grade` 等路径逐字不变)
+pub use crate::grade_ir::{CurvePoint, EqBand, Grade, GradeCurves, GradeHsl, TrackDyn};
 
 /// 轨道:同类型元素的容器;`id`(如 V1)首次生成后写回并不再变。
 /// 轨道级属性字段(册四 A4 T4.2):Option + skip_serializing_if,旧工程缺省即
@@ -326,6 +365,14 @@ pub struct Track {
     pub height_px: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// 轨道 EQ(册五 T5.3):多段参数均衡,混音链 per-track biquad 链
+    /// (equalizer/lowshelf/highshelf);上限 8 段(schema 界),整组替换。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eq: Option<Vec<EqBand>>,
+    /// 轨道动态(册五 T5.3):acompressor 参数子集 + alimiter;整对象替换。
+    /// serde 键名 "dyn"(Rust 关键字规避)。
+    #[serde(default, rename = "dyn", skip_serializing_if = "Option::is_none")]
+    pub dyn_: Option<TrackDyn>,
     #[serde(default)]
     pub clips: Vec<Clip>,
 }

@@ -201,7 +201,8 @@ pub fn ensure_dirs(cache_root: &Path) -> Result<(), String> {
 use crate::plan::{OverlaySeg, RenderPlan};
 use cutforge_core::model::Clip;
 
-/// seg 层输入 spec:clip JSON + 尾帧扩展 + 画幅 + fps。
+/// seg 层输入 spec:clip JSON + 尾帧扩展 + 画幅 + fps(+ LUT 内容哈希,册五 T5.2:
+/// clip JSON 只含 grade.lut **路径**,文件内容被替换时必须 miss)。
 /// 尾帧来自**下一 clip 的转场**,必须入键——旧键(仅 clip 自身 JSON)漏掉它,
 /// 改转场时长会陈旧复用前一段的 tpad(R2 的实体案例)。
 pub fn seg_spec(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> Value {
@@ -211,6 +212,7 @@ pub fn seg_spec(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> Value {
         "fps": plan.fps,
         "clip": serde_json::to_string(clip).unwrap_or_default(),
         "tailMs": tail_ms,
+        "lutHash": crate::grade::lut_content_hash(clip, &plan.project_dir),
     })
 }
 
@@ -251,16 +253,24 @@ pub fn overlay_key(base_key: &str, overlays: &[OverlaySeg]) -> String {
 /// 链由边界决定,改转场时长必须换键)。**画幅无关** → 多画幅变体共享一份
 /// (真分叉判据,与拆分前同构)。册四 T4.4:段元组并入 reverse(倒放改变混音产物)。
 /// 册四 T4.8:段元组并入 denoise/pitch(降噪/变调改变混音产物)。
+/// 册五 T5.3:段元组并入 track_id + 全局 trackProc(轨道 EQ/动态改变混音产物,
+/// 且事件跨轨移动时同键复用会陈旧——track_id 必须逐段入键)。
 pub fn mix_spec(plan: &RenderPlan) -> Value {
     json!({
         "segs": plan.audio_segs.iter().map(|s| (
             s.src.to_string_lossy(), s.start_ms, s.duration_ms, s.source_in_ms,
             s.volume, s.speed, s.reverse, s.denoise.clone(), s.pitch, s.fade_in_ms, s.fade_out_ms,
-            s.volume_expr.clone() // volume 关键帧表达式入键(IR v3;改关键帧必换键)
+            s.volume_expr.clone(), // volume 关键帧表达式入键(IR v3;改关键帧必换键)
+            s.track_id.clone(),    // 轨道归属入键(T5.3 分组建流;跨轨移动必换键)
         )).collect::<Vec<_>>(),
         "bgm": plan.bgm,
         "total": plan.total_ms,
         "trn": plan.boundary_durs_ms.iter().map(|d| crate::steps::fmt_f64(*d)).collect::<Vec<_>>(),
+        "trackProc": plan.track_proc.iter().map(|p| json!({
+            "trackId": p.track_id, "eq": p.eq, "dyn": p.dyn_,
+        })).collect::<Vec<_>>(),
+        // 响度目标入键(册五 T5.6 loudnormTarget:改目标必换键,pass B 产物不同)
+        "lnTarget": [plan.opts.loudnorm_i, plan.opts.loudnorm_tp],
         "v": crate::RENDERER_VERSION,
     })
 }

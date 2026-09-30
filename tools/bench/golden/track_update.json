@@ -47,6 +47,44 @@
     "ns": "ok",
     "ok": true
    }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "trackId": "A1",
+    "patch": {
+     "eq": [
+      {
+       "type": "peaking",
+       "freq": 200,
+       "gain": -6,
+       "q": 1.0
+      },
+      {
+       "type": "highshelf",
+       "freq": 8000,
+       "gain": 3
+      }
+     ],
+     "dyn": {
+      "thresholdDb": -24,
+      "ratio": 4
+     }
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-36"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
   }
  ]
 }

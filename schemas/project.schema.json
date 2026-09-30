@@ -135,6 +135,19 @@
             "type": "string",
             "description": "轨道标识色(壳时间线轨道条着色;建议 #RRGGBB 形态,契约层不锁格式)"
           },
+          "eq": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/$defs/eqBand"
+            },
+            "description": "轨道 EQ(册五 T5.3):多段参数均衡,渲染端混音链 per-track biquad 链(equalizer/lowshelf/highshelf,链内序 = 数组序)。整组替换(track_update patch.eq);显式清除 patch.eq=null"
+          },
+          "dyn": {
+            "$ref": "#/$defs/trackDyn",
+            "description": "轨道动态(册五 T5.3):压缩(acompressor 参数子集)+ 限幅(alimiter);threshold/limit 以 dB 表达(渲染端转线性域)。整对象替换(track_update patch.dyn);显式清除 patch.dyn=null。链内序 = EQ 全段之后接压缩、压缩之后接限幅"
+          },
           "clips": {
             "type": "array",
             "items": {
@@ -166,6 +179,30 @@
         "loop": {
           "type": "boolean",
           "default": true
+        },
+        "duckThreshold": {
+          "type": "number",
+          "minimum": 0.001,
+          "maximum": 1,
+          "description": "ducking 侧链阈值(册五 T5.3;线性域 0..1,sidechaincompress 同域;缺省 0.03 = 既有常量,行为零变化)"
+        },
+        "duckRatio": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "ducking 侧链比例(缺省 8 = 既有常量)"
+        },
+        "duckAttackMs": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "ducking 启动毫秒(缺省 80 = 既有常量)"
+        },
+        "duckReleaseMs": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 5000,
+          "description": "ducking 释放毫秒(缺省 500 = 既有常量)"
         }
       }
     },
@@ -248,6 +285,271 @@
     }
   },
   "$defs": {
+    "curvePoint": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      },
+      "description": "曲线点 [x,y](归一域 0..1;渲染端编译为 ffmpeg curves 点串)"
+    },
+    "gradeCurves": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "RGB/亮度曲线组(册五 T5.2):每通道独立点集(升序),缺通道 = 恒等;master = 亮度近似(RGB 同步)。整组替换(随 clip.grade 整对象)",
+      "properties": {
+        "master": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/curvePoint"
+          }
+        },
+        "red": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/curvePoint"
+          }
+        },
+        "green": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/curvePoint"
+          }
+        },
+        "blue": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/curvePoint"
+          }
+        }
+      }
+    },
+    "gradeHsl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hueCenter",
+        "hueWidth"
+      ],
+      "description": "HSL 限定器(册五 T5.2 二级;登记降级:ffmpeg 简单滤镜链不达达芬奇级选色,渲染端不产滤镜并 WARN 留痕,IR 先行承载防丢——同 A4-L1 fx.in/out 槽位口径;能力矩阵诚实标注「登记不渲染」)",
+      "properties": {
+        "hueCenter": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 360,
+          "description": "选色中心 hue(度)"
+        },
+        "hueWidth": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 180,
+          "description": "选色 hue 半宽(度)"
+        },
+        "satMin": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "饱和度下界(缺省 0)"
+        },
+        "satMax": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "饱和度上界(缺省 1=不限)"
+        },
+        "hueShift": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180,
+          "description": "范围内 hue 偏移(度)"
+        },
+        "satGain": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 4,
+          "description": "范围内饱和度倍率(1=不变)"
+        },
+        "valGain": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 4,
+          "description": "范围内明度倍率(1=不变)"
+        }
+      }
+    },
+    "grade": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "片段调色(册五 T5.2;clip.grade,整对象替换,与 crop/fx 同模式)。一级校色:色温/色调/曝光/对比/高光阴影/饱和度/Lift/Gamma/Gain(每轮 RGB 三值);二级:RGB/亮度曲线 + LUT(.cube,lut_import 拷入 .cutforge/luts/ 后引用)+ HSL 限定器(登记降级)。渲染链序(ADR-0020 bt709 域):colorbalance(色温/色调/高光阴影/Lift)→ curves(曲线)→ eq(曝光/对比/饱和度/Gamma)→ colorchannelmixer(Gain)→ lut3d(LUT 最后);挂载位置 = 画幅归一与 punchIn 之后、fx.combo 之前(调色喂给特效,胶片颗粒等 fx 叠在调色后的画面上);None 字段 = 不调整,grade 缺省 = 链零变化(parity 红线)",
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "色温 -100..100(暖+;colorbalance 红升蓝降,±100 → ±0.35 归一强度)"
+        },
+        "tint": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "色调 -100..100(品红+;colorbalance 绿反向)"
+        },
+        "exposure": {
+          "type": "number",
+          "minimum": -3,
+          "maximum": 3,
+          "description": "曝光 -3..3 档(eq brightness,±3 档 → ±0.5)"
+        },
+        "contrast": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "对比 -100..100(eq contrast,-100..100 → -1..1)"
+        },
+        "highlights": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "高光 -100..100(colorbalance highlights 三通道同调,±100 → ±0.6)"
+        },
+        "shadows": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "阴影 -100..100(colorbalance shadows 三通道同调)"
+        },
+        "saturation": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "饱和度 0..3(1=不变;0=灰度,与 fx.mono 同断言口径)"
+        },
+        "lift": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "description": "Lift [r,g,b] 每值 -1..1(0=不变;colorbalance shadows 分通道)"
+        },
+        "gamma": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number",
+            "minimum": 0.2,
+            "maximum": 5
+          },
+          "description": "Gamma [r,g,b] 每值 0.2..5(1=不变;eq gamma_r/g/gamma_b)"
+        },
+        "gain": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "description": "Gain [r,g,b] 每值 0..4(1=不变;colorchannelmixer 对角增益)"
+        },
+        "curves": {
+          "$ref": "#/$defs/gradeCurves"
+        },
+        "hsl": {
+          "$ref": "#/$defs/gradeHsl"
+        },
+        "lut": {
+          "type": "string",
+          "description": "LUT 引用:.cube 相对路径(工程根;经 lut_import 拷入 .cutforge/luts/ 并校验 33³ 主流格式);渲染端 lut3d 应用,文件内容哈希入段缓存键(改 LUT 文件必 miss)"
+        }
+      }
+    },
+    "eqBand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "freq",
+        "gain"
+      ],
+      "description": "轨道 EQ 频段(册五 T5.3):type=peaking(等峰)/lowshelf(低架)/highshelf(高架);渲染端 biquad 族链式应用(链内序 = 数组序)",
+      "properties": {
+        "type": {
+          "enum": [
+            "peaking",
+            "lowshelf",
+            "highshelf"
+          ]
+        },
+        "freq": {
+          "type": "number",
+          "minimum": 20,
+          "maximum": 20000,
+          "description": "中心/拐点频率 Hz"
+        },
+        "gain": {
+          "type": "number",
+          "minimum": -24,
+          "maximum": 24,
+          "description": "增益 dB"
+        },
+        "q": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 16,
+          "description": "Q 值(缺省 1.0;shelf 忽略)"
+        }
+      }
+    },
+    "trackDyn": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "轨道动态(册五 T5.3):压缩(acompressor 参数子集)+ 限幅(alimiter);threshold/limit 以 dB 表达,渲染端转线性域(acompressor/alimiter 线性域参数);缺省字段用各自默认值",
+      "properties": {
+        "thresholdDb": {
+          "type": "number",
+          "minimum": -60,
+          "maximum": 0,
+          "description": "压缩阈值 dB(缺省不压缩)"
+        },
+        "ratio": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "压缩比(缺省 4)"
+        },
+        "attackMs": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 500,
+          "description": "启动毫秒(缺省 25)"
+        },
+        "releaseMs": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 5000,
+          "description": "释放毫秒(缺省 250)"
+        },
+        "limitDb": {
+          "type": "number",
+          "minimum": -24,
+          "maximum": 0,
+          "description": "限幅电平 dB(缺省不限幅;alimiter limit = 10^(dB/20))"
+        }
+      }
+    },
     "fxEntry": {
       "type": "object",
       "additionalProperties": false,
@@ -866,6 +1168,9 @@
               }
             }
           }
+        },
+        "grade": {
+          "$ref": "#/$defs/grade"
         }
       }
     }

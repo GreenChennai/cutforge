@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -144,7 +145,17 @@ RE_FRAME_FILE = re.compile(r"render-cache/frame/[0-9a-f]{16}(\.png|\.jpe?g)")
 RE_FRAME_KEY = re.compile(r"[0-9a-f]{16}")
 # A4-BE3b:媒体派生物缓存文件名内嵌内容键(mtime 入键,run 间必变)→ 占位
 RE_MEDIA_CACHE_FILE = re.compile(
-    r"\.cutforge/((?:peaks-cache|thumb-cache|proxy)/)[0-9a-f]{16}\.(json|png|mp4)")
+    r"\.cutforge/((?:peaks-cache|thumb-cache|proxy|scope-cache)/)[0-9a-f]{16}\.(json|png|mp4)")
+# 册五 A5:响度测量键(audio_loudness;probe_mode 下 0.5LU 量化)+ 硬件探测键
+LUFS_KEYS = {"inputI", "inputTp", "inputLra", "inputThresh", "target", "deviation"}
+HW_KEYS = {"nvenc", "qsv", "amf"}
+
+
+def _fmt_half(f: float) -> str:
+    """0.5LU 量化 + 去尾零(与 Rust 侧 fmt_num 同风格;跨机 golden 稳定)。"""
+    q = round(f * 2) / 2
+    t = f"{q:.6f}".rstrip("0").rstrip(".")
+    return t if t not in ("", "-0") else "0"
 
 
 def _fwd(p: str) -> str:
@@ -176,8 +187,30 @@ class Normalizer:
         self.subs = sorted(subs, key=lambda kv: -len(kv[0]))
 
     def _s(self, s: str, probe_mode: bool = False) -> str:
-        # 0) JSON-in-JSON 结构化:能整体解析为对象/数组的字符串先解析、递归归一、
-        #    定形重序列化(键序固定,跨机可比);解析失败按普通字符串走
+        # 0b) JSON-Lines 串(render 工具的 stdout 字段:多行进度事件拼接):
+        #     逐行尽力解析——JSON 对象行递归归一(elapsedMs 等),非 JSON 行
+        #     (RENDER_OK 等)走标量归一路径,按行重拼接
+        nl = chr(10)
+        if nl in s:
+            lines = s.split(nl)
+            out_lines = []
+            hit = 0
+            for l in lines:
+                obj = None
+                if l.strip():
+                    try:
+                        cand = json.loads(l)
+                        if isinstance(cand, dict):
+                            obj = cand
+                    except ValueError:
+                        obj = None
+                if obj is not None:
+                    out_lines.append(json.dumps(self(obj, probe_mode), ensure_ascii=False, sort_keys=True))
+                    hit += 1
+                else:
+                    out_lines.append(self(l, probe_mode))
+            if hit:
+                return nl.join(out_lines)
         if s.lstrip()[:1] in ("{", "["):
             try:
                 obj = json.loads(s)
@@ -219,6 +252,15 @@ class Normalizer:
                     out[k] = "<BYTES>"
                 elif k == "durationMs" and probe_mode and isinstance(val, (int, float)):
                     out[k] = int(round(val / 100.0) * 100)  # ffprobe 口径:就近 100ms
+                elif k in LUFS_KEYS and probe_mode and isinstance(val, str):
+                    # 响度测量值(跨 ffmpeg build 有 0.x LU 漂移)→ 0.5LU 量化
+                    try:
+                        f = float(val)
+                        out[k] = _fmt_half(f) if math.isfinite(f) else val
+                    except ValueError:
+                        out[k] = val  # "-inf" 等原样
+                elif k in HW_KEYS and probe_mode and isinstance(val, dict):
+                    out[k] = "<HW_PROBE>"  # 硬件在位/可用随机器与驱动变化 → 占位
                 else:
                     out[k] = self(val, probe_mode)
             return out
@@ -354,12 +396,25 @@ def make_media(ws: Path) -> None:
         (["-f", "lavfi", "-i", "sine=frequency=880:duration=1",
           "-c:a", "libmp3lame", "-b:a", "64k"],
          src_dir / "sfx.mp3"),
+        # 册五 T5.2:平色帧(scope_data 三类数据跨机确定性;4x3x0xNN 域无渐变)
+        (["-f", "lavfi", "-i", "color=c=0x4080C0:size=64x48",
+          "-frames:v", "1"],
+         src_dir / "frame.png"),
     ]
     for extra, out in jobs:
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *extra, str(out)],
                            capture_output=True, text=True)
         if r.returncode != 0 or not out.is_file():
             raise ParityError(f"FAIL: ffmpeg 生成夹具失败({out.name}): {r.stderr[-200:]}", 2)
+    # 册五 T5.2:3D .cube 夹具(4³ 主格式;LUT_3D_SIZE 4 + 64 数据行)
+    rows = []
+    for b in range(4):
+        for g in range(4):
+            for r_ in range(4):
+                fr, fg, fb = r_ / 3, g / 3, b / 3
+                rows.append(f"{min(1, fr * 1.5):.6f} {fg:.6f} {fb:.6f}")
+    (src_dir / "test.cube").write_text(
+        'TITLE "parity lut"\nLUT_3D_SIZE 4\n' + "\n".join(rows) + "\n", encoding="utf-8")
 
 
 def write_subtitle_fixture(ws: Path) -> None:
@@ -511,6 +566,22 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         ("media_proxy", {"root": "{MAIN}", "src": "01_原始素材/take1.mp4"}, True),
         ("media_proxy", {"root": "{MAIN}", "src": "01_原始素材/take1.mp4", "generate": False}, True),
         ("audio_beats", {"root": "{MAIN}", "src": "01_原始素材/bgm.mp3", "sensitivity": 0.5}, True),
+        # -- 阶段 C4:册五 T5.2/T5.3/T5.6(调色 LUT/示波器/响度计/编码探测 + 新 IR 面) --
+        ("lut_import", {"root": "{MAIN}", "src": "01_原始素材/test.cube"}, False),
+        ("clip_update", {"root": "{MAIN}", "clipId": "V1-001",
+                         "patch": {"grade": {"lift": [0.2, 0.0, -0.1], "saturation": 1.2,
+                                             "curves": {"master": [[0.0, 0.0], [0.5, 0.7], [1.0, 1.0]]},
+                                             "lut": ".cutforge/luts/test.cube"}}},
+         False),
+        ("track_update", {"root": "{MAIN}", "trackId": "A1",
+                          "patch": {"eq": [{"type": "peaking", "freq": 200, "gain": -6, "q": 1.0},
+                                           {"type": "highshelf", "freq": 8000, "gain": 3}],
+                                    "dyn": {"thresholdDb": -24, "ratio": 4}}}, False),
+        ("bgm_set", {"root": "{MAIN}", "duckThreshold": 0.05, "duckRatio": 6,
+                     "duckAttackMs": 40, "duckReleaseMs": 300}, False),
+        ("scope_data", {"root": "{MAIN}", "src": "01_原始素材/frame.png"}, False),
+        ("audio_loudness", {"root": "{MAIN}", "src": "01_原始素材/bgm.mp3", "target": -14}, True),
+        ("encode_probe", {"root": "{MAIN}", "trial": False}, True),
         # -- 阶段 D:写后查询(投影面) --
         ("project_get", {"root": "{MAIN}"}, False),
         ("timeline_get", {"root": "{MAIN}"}, False),
@@ -524,6 +595,8 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         ("render", {"root": "{MAIN}", "backend": "cutforge"}, False),
         # -- 阶段 E2:T2.4 单帧精确预览(整片渲后 video 链全命中,只做抽帧) --
         ("render_frame", {"root": "{MAIN}", "atMs": 1500}, False),
+        # -- 阶段 E3:册五 T5.6 渲染队列(整片渲已完成 → 终态快照确定) --
+        ("render_queue", {"root": "{MAIN}", "action": "list"}, False),
         # -- 阶段 F:编排(CUTFLOW_REPO 桩;锁派发/参数透传/stdout 透传行为) --
         ("render", {"root": "{MAIN}", "backend": "ffmpeg"}, False),
         ("export_jianying", {"root": "{MAIN}", "name": "parity-成片"}, False),

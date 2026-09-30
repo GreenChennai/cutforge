@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。56 工具 = 13 查询 + 30 写 + 13 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42,编排 7→8;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48,轨道属性字段 locked/mute/solo/hidden/heightPx/color 同批进 IR/TrackPatch/ui-fields)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace(写)+ subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats(编排/纯计算/产物面) → 48→56,并承接 clip.textStyle/clip.huazi(textStyle/huazi 入 ClipPatch 整对象替换)与 clip.denoise/clip.pitch 渲染链",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。61 工具 = 15 查询 + 30 写 + 16 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42,编排 7→8;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48,轨道属性字段 locked/mute/solo/hidden/heightPx/color 同批进 IR/TrackPatch/ui-fields)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace(写)+ subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats(编排/纯计算/产物面) → 48→56,并承接 clip.textStyle/clip.huazi(textStyle/huazi 入 ClipPatch 整对象替换)与 clip.denoise/clip.pitch 渲染链;册五 A5 新增 lut_import/scope_data(编排/派生物)+ audio_loudness/encode_probe(查询/探测)+ render_queue(编排/队列) → 56→61,并承接 clip.grade(整对象替换,含 LUT 引用)与 track.eq/track.dyn(轨道处理)与 bgm.duck*(侧链参数化),渲染端 RENDERER_VERSION 8.0(grade 链/轨道组建流/bt709 encode)",
  "channels": [
   "stdio",
   "embedded-http"
@@ -608,6 +608,10 @@
           }
          }
         }
+       },
+       "grade": {
+        "type": "object",
+        "description": "片段调色(册五 T5.2;整对象替换,null/{}=清除):一级校色 temperature/tint(-100..100)/exposure(-3..3)/contrast/highlights/shadows(-100..100)/saturation(0..3)/lift(-1..1 三值)/gamma(0.2..5 三值)/gain(0..4 三值);二级 curves(master/red/green/blue 点集)与 lut(.cube 相对路径,lut_import 登记);hsl 登记降级。渲染链 colorbalance→curves→eq→colorchannelmixer→lut3d(挂画幅归一后、fx 前)"
        }
       },
       "description": "改片段属性(按字段合并;textStyle/huazi/crop/fx 为整对象替换);册四 T4.7/T4.8 起 patch.textStyle/patch.huazi 承接文本样式与花字,patch.denoise/patch.pitch 承接降噪与变调;收口:patch.huazi 显式 null 或 {} = 清除花字挂载"
@@ -1369,6 +1373,52 @@
      "ass": {
       "type": "string",
       "description": "字幕 ass 相对路径(仅 cutforge 后端;烧录字幕用)"
+     },
+     "encoder": {
+      "type": "string",
+      "enum": [
+       "auto",
+       "hw",
+       "sw"
+      ],
+      "description": "编码器(auto/缺省=libx264 确定性基线;hw=优先硬件,试编失败优雅降级 libx264 并 WARN,AC-5.6;sw=强制软件)"
+     },
+     "quality": {
+      "type": "string",
+      "enum": [
+       "fast",
+       "balanced",
+       "quality"
+      ],
+      "description": "质量预设(fast=crf28/veryfast,balanced=crf23/medium,quality=crf18/slow;硬件各自映射)"
+     },
+     "crf": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 51,
+      "description": "恒定质量(覆盖预设)"
+     },
+     "bitrate": {
+      "type": "integer",
+      "minimum": 100,
+      "description": "视频码率 kbps(给值时 crf 让位)"
+     },
+     "gop": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "关键帧间隔(帧)"
+     },
+     "pixFmt": {
+      "type": "string",
+      "description": "像素格式(缺省 yuv420p)"
+     },
+     "loudnormTarget": {
+      "type": "string",
+      "description": "响度目标 \"I[:TP]\"(如 \"-16:-1.5\";缺省 -14:-1.0)"
+     },
+     "verboseCmd": {
+      "type": "boolean",
+      "description": "进度事件附命令原文(缺省 false——安全)"
      }
     },
     "required": [
@@ -1491,6 +1541,52 @@
      "ass": {
       "type": "string",
       "description": "字幕 ass 相对路径(烧录字幕用)"
+     },
+     "encoder": {
+      "type": "string",
+      "enum": [
+       "auto",
+       "hw",
+       "sw"
+      ],
+      "description": "编码器(auto/缺省=libx264 确定性基线;hw=优先硬件,试编失败优雅降级 libx264 并 WARN,AC-5.6;sw=强制软件)"
+     },
+     "quality": {
+      "type": "string",
+      "enum": [
+       "fast",
+       "balanced",
+       "quality"
+      ],
+      "description": "质量预设(fast=crf28/veryfast,balanced=crf23/medium,quality=crf18/slow;硬件各自映射)"
+     },
+     "crf": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 51,
+      "description": "恒定质量(覆盖预设)"
+     },
+     "bitrate": {
+      "type": "integer",
+      "minimum": 100,
+      "description": "视频码率 kbps(给值时 crf 让位)"
+     },
+     "gop": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "关键帧间隔(帧)"
+     },
+     "pixFmt": {
+      "type": "string",
+      "description": "像素格式(缺省 yuv420p)"
+     },
+     "loudnormTarget": {
+      "type": "string",
+      "description": "响度目标 \"I[:TP]\"(如 \"-16:-1.5\";缺省 -14:-1.0)"
+     },
+     "verboseCmd": {
+      "type": "boolean",
+      "description": "进度事件附命令原文(缺省 false——安全)"
      }
     },
     "required": [
@@ -1554,6 +1650,52 @@
      "ass": {
       "type": "string",
       "description": "字幕 ass 相对路径(在帧上烧录字幕;缺省不烧)"
+     },
+     "encoder": {
+      "type": "string",
+      "enum": [
+       "auto",
+       "hw",
+       "sw"
+      ],
+      "description": "编码器(auto/缺省=libx264 确定性基线;hw=优先硬件,试编失败优雅降级 libx264 并 WARN,AC-5.6;sw=强制软件)"
+     },
+     "quality": {
+      "type": "string",
+      "enum": [
+       "fast",
+       "balanced",
+       "quality"
+      ],
+      "description": "质量预设(fast=crf28/veryfast,balanced=crf23/medium,quality=crf18/slow;硬件各自映射)"
+     },
+     "crf": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 51,
+      "description": "恒定质量(覆盖预设)"
+     },
+     "bitrate": {
+      "type": "integer",
+      "minimum": 100,
+      "description": "视频码率 kbps(给值时 crf 让位)"
+     },
+     "gop": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "关键帧间隔(帧)"
+     },
+     "pixFmt": {
+      "type": "string",
+      "description": "像素格式(缺省 yuv420p)"
+     },
+     "loudnormTarget": {
+      "type": "string",
+      "description": "响度目标 \"I[:TP]\"(如 \"-16:-1.5\";缺省 -14:-1.0)"
+     },
+     "verboseCmd": {
+      "type": "boolean",
+      "description": "进度事件附命令原文(缺省 false——安全)"
      }
     },
     "required": [
@@ -1882,6 +2024,30 @@
      },
      "expectRev": {
       "type": "integer"
+     },
+     "duckThreshold": {
+      "type": "number",
+      "minimum": 0.001,
+      "maximum": 1,
+      "description": "ducking 侧链阈值(线性域;缺省 0.03=既有常量)"
+     },
+     "duckRatio": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 20,
+      "description": "ducking 比例(缺省 8)"
+     },
+     "duckAttackMs": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 1000,
+      "description": "ducking 启动毫秒(缺省 80)"
+     },
+     "duckReleaseMs": {
+      "type": "number",
+      "minimum": 10,
+      "maximum": 5000,
+      "description": "ducking 释放毫秒(缺省 500)"
      }
     },
     "required": [
@@ -2019,6 +2185,20 @@
        },
        "color": {
         "type": "string"
+       },
+       "eq": {
+        "type": [
+         "array",
+         "null"
+        ],
+        "description": "轨道 EQ(册五 T5.3;整组替换,null=清除):[{type: peaking|lowshelf|highshelf, freq 20..20000, gain -24..24, q 0.1..16}] ≤8 段;渲染 = per-track biquad 链"
+       },
+       "dyn": {
+        "type": [
+         "object",
+         "null"
+        ],
+        "description": "轨道动态(册五 T5.3;整对象替换,null=清除):{thresholdDb -60..0, ratio 1..20, attackMs, releaseMs, limitDb -24..0};渲染 = acompressor + alimiter"
        }
       }
      },
@@ -2435,6 +2615,154 @@
     "required": [
      "root",
      "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "lut_import",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "导入 3D LUT(.cube,册五 T5.2):结构合法性校验(3D 主格式,33³ 格)后拷入 .cutforge/luts/(同名同内容幂等覆盖,同名异内容追加序号);返回相对路径供 clip.grade.lut 引用(段缓存键含 LUT 内容哈希)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "src": {
+      "type": "string",
+      "description": ".cube 源文件(工程内相对路径)"
+     }
+    },
+    "required": [
+     "root",
+     "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "scope_data",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "示波器数据后端(册五 T5.2):帧像素 → 亮度波形列采样 / UV 矢量散点聚合(64×64)/ RGB 直方图(64 桶)三类数据 JSON;缓存 .cutforge/scope-cache/(内容寻址);壳 canvas 绘制是 FE 活,本工具只供数据",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "src": {
+      "type": "string",
+      "description": "帧/视频(工程内相对路径;视频配 atMs 抽帧)"
+     },
+     "atMs": {
+      "type": "integer",
+      "description": "视频抽帧时间点毫秒(缺省 0)"
+     },
+     "width": {
+      "type": "integer",
+      "description": "采样面宽(64..512,缺省 256)"
+     },
+     "waveCols": {
+      "type": "integer",
+      "description": "波形列数(16..512,缺省 128)"
+     }
+    },
+    "required": [
+     "root",
+     "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "audio_loudness",
+   "kind": "query",
+   "idempotent": true,
+   "description": "响度计(册五 T5.3):ffmpeg loudnorm 测量成片/段落的 LUFS/TP/LRA/阈值 → JSON(与导出双 pass 同源);可给 target 得 deviation/within1LU(AC-5.3 的 ≤1LU 判定);只读不持锁",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "src": {
+      "type": "string",
+      "description": "音频/成片(工程内相对路径)"
+     },
+     "target": {
+      "type": "number",
+      "description": "响度目标 LUFS(缺省 -14;给值即算偏差)"
+     }
+    },
+    "required": [
+     "root",
+     "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "encode_probe",
+   "kind": "query",
+   "idempotent": true,
+   "description": "硬件编码探测(册五 T5.6):ffmpeg -encoders 清单(nvenc/qsv/amf 编译期在位)+ 试编可用性(驱动/会话真可用);auto 缺省 = libx264 确定性基线,hw 试编失败优雅降级(AC-5.6);只读不持锁",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "trial": {
+      "type": "boolean",
+      "description": "是否试编探测(缺省 true;false 只查清单)"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "render_queue",
+   "kind": "orchestrate",
+   "idempotent": false,
+   "description": "渲染队列操作(册五 T5.6):list 查询全队列 / pause 暂停(queued/running;运行中=终止子进程转 paused)/ resume 恢复排队 / cancel 取消 / retry 重试(fail/canceled/ok → 重新排队,渲染缓存吸收重跑成本);并发上限 env CUTFORGE_RENDER_CONCURRENCY(缺省 1);状态事件接既有 render.progress 事件面",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "action": {
+      "type": "string",
+      "description": "list|pause|resume|cancel|retry(缺省 list)"
+     },
+     "runId": {
+      "type": "string",
+      "description": "目标任务(render_run 返回;list 不需要)"
+     }
+    },
+    "required": [
+     "root"
     ]
    },
    "outputSchema": {

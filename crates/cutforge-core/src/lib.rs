@@ -7,10 +7,12 @@
 
 pub mod anchor;
 pub mod command;
+mod grade_ir;
 pub mod engine;
 pub mod keyframes;
 pub mod merge;
 pub mod model;
+mod patch_apply;
 pub mod notes;
 pub mod oplog;
 pub mod text_style;

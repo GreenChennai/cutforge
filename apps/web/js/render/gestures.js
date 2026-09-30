@@ -12,7 +12,7 @@ import { selectClip, insertMedia } from "../core/commands.js";
 import { toast } from "../ui/toast.js";
 import { renderTimelineView } from "./timeline-view.js";
 import { trackLockedOf, onClipPointerDown } from "./clip-gestures.js";
-import { runGesture, snapAt, fmtSec, showBubble, hideBubble, edgeScroll } from "./gesture-kit.js";
+import { runGesture, snapAt, snapBeatScrub, fmtSec, showBubble, hideBubble, edgeScroll } from "./gesture-kit.js";
 
 /* ---------------- 轨道行手势(点空白取消选中 / 空白拉框多选) ---------------- */
 
@@ -126,16 +126,22 @@ export function mountRulerGestures(seekFn) {
     e.preventDefault();
     let raf = 0;
     let pendingMs = null;
+    // scrub 吸附:帧网格(旧口径)优先级最低;已检测节拍(audio_beats)时优先就近节拍
+    // (T4.8 播放头吸附节拍;无节拍会话 = 行为零变化,e2e 兼容红线)
+    const snapped = (ms) => {
+      const beat = snapBeatScrub(ms);
+      return beat !== null ? Math.round(beat) : snapAt(ms);
+    };
     const scrub = (ms) => { // 连续 seek 合帧:预览抽帧至多 60Hz
       pendingMs = ms;
       if (!raf) {
         raf = requestAnimationFrame(() => {
           raf = 0;
-          seekFn(snapAt(pendingMs));
+          seekFn(snapped(pendingMs));
         });
       }
     };
-    seekFn(snapAt(msOf(e))); // 按下即跳(不经阈值)
+    seekFn(snapped(msOf(e))); // 按下即跳(不经阈值)
     runGesture(ruler, e, {
       move: (ev) => {
         showBubble(ev.clientX, ev.clientY + 14, fmtSec(msOf(ev)));

@@ -89,9 +89,13 @@ jobs:
         run: python tools/e2e_hotkeys.py --bin target/debug/cutforge-mcp
       - name: A3 可访问性 e2e(键盘编辑闭环 rev/OpLog 断言;axe-core 4 全页扫描 0 新增 critical/serious)
         run: python tools/e2e_a11y.py --bin target/debug/cutforge-mcp
-      # A2/A3 负载敏感 e2e 不进 CI:e2e_perf_timeline / e2e_drag_perf(帧率阈值 --min-fps 55)、
-      # e2e_perf_budget(真实导出+媒体池 200 轮导航)——共享 runner 抖动会假红;本地册收官
-      # 在安静时段跑(python tools/gates/gate.py A3)。
+      - name: A4 时间线编辑全工具 e2e(四件套手势恰一 Op/split_all/gap_delete/paste/实渲对拍/锁定拒编辑)
+        run: python tools/e2e_editing_tools.py --bin target/debug/cutforge-mcp
+      - name: A4 字幕编辑器全流程 e2e(SRT 往返/批量替换/帧证文字位置/卡拉OK/花字)
+        run: python tools/e2e_subtitle_editor.py --bin target/debug/cutforge-mcp
+      # A2/A3/A4 负载敏感 e2e 不进 CI:e2e_perf_timeline / e2e_drag_perf(帧率阈值 --min-fps 55)、
+      # e2e_perf_budget(真实导出+媒体池 200 轮导航)、e2e_media_perf(千素材滚动帧率 +min-fps 55,
+      # 共享 runner 抖动会假红)——本地册收官在安静时段跑(python tools/gates/gate.py A4)。
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

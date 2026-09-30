@@ -1,47 +1,23 @@
-/* 检查器(T2.5):分组字段由 /ui-fields 单一真相源驱动(壳不读文件)。
- * 行为与旧壳对拍:基础三字段沿用旧 id(insp-start/insp-dur/insp-vol,e2e 兼容红线);
- * 转场/动效按 v0.6 口径展开为子字段控件;readonly 面如实标注「内核未承接」。
- * 交互模式:暂存草稿、点「应用」才发 clip_update(与 e2e fill→apply 流程对齐)。
+/* 检查器(T2.5;册四 FE2 重构):分组字段由 /ui-fields 单一真相源驱动(壳不读文件),
+ * 控件形态与组级附加面见 insp-groups.js(本文件只留装配/草稿/应用流)。
+ * 行为红线不变:基础三字段沿用旧 id(insp-start/insp-dur/insp-vol,e2e 兼容);
+ * 交互模式 = 暂存草稿、点「应用」才发 clip_update(fill→apply 流程对齐)。
+ * 整对象字段口径:textStyle/crop 带点草稿 → 现值克隆 + 草稿覆盖后整对象替换
+ * (内核 Option 语义:局部对象会整替,必须带全量);transition/motion 维持按字段合并。
  */
 import { $, h, clear } from "../ui/dom.js";
 import { projectStore, timelineStore, selectionStore, uiStore } from "../core/store.js";
 import { nestedGet } from "../core/model.js";
 import { updateClip, duplicateSelectedToPlayhead, addTrack, selectClip } from "../core/commands.js";
 import { batchUpdateClips } from "../core/edit-commands.js";
-import { numberField, textField, selectField, collapseGroup } from "../ui/controls.js";
+import { buildGroup, WHOLE_OBJECT_PARENTS, META } from "./insp-groups.js";
+import { collapseGroup } from "../ui/controls.js";
 import { toast } from "../ui/toast.js";
-
-// 展示元数据:仅输入控件形态(step/min 等),字段全集与分组以 ui-fields 为准(旧壳口径)
-const FIELD_META = {
-  startMs: { type: "number", step: 1, min: 0, legacy: "insp-start" },
-  durationMs: { type: "number", step: 1, min: 1, legacy: "insp-dur" },
-  sourceInMs: { type: "number", step: 1, min: 0 },
-  speed: { type: "number", step: 0.05, min: 0.25, max: 4 },
-  volume: { type: "number", step: 0.1, min: 0, max: 2, legacy: "insp-vol" },
-  opacity: { type: "number", step: 0.05, min: 0, max: 1 },
-  scale: { type: "number", step: 0.05, min: 0 },
-  text: { type: "text" },
-  freezeMs: { type: "number", step: 1, min: 0 },
-};
-// v0.6 NLE 化:枚举下拉与嵌套对象字段(转场/动效)。label=人话;enum=下拉选项;
-// 值写入 clip_update 的嵌套 patch(transition/motion)。
-const FIELD_META_V2 = {
-  "transition.type": { type: "select", label: "转场类型",
-    enum: [["", "(无)"], ["fade", "叠化"], ["wipeleft", "左划"], ["wipeup", "上划"],
-      ["slideleft", "左滑"], ["circleopen", "圆形展开"], ["cut", "硬切"], ["none", "关闭"]] },
-  "transition.durMs": { type: "number", label: "转场时长(ms)", step: 10, min: 0 },
-  "transition.fx": { type: "text", label: "转场 fx(效果目录 id,可空)" },
-  "motion.in": { type: "select", label: "入场",
-    enum: [["", "(无)"], ["fadeIn", "淡入"], ["slideInLeft", "左侧滑入"], ["slideInRight", "右侧滑入"],
-      ["scaleIn", "缩放入场"], ["zoomIn", "推近入场"]] },
-  "motion.inMs": { type: "number", label: "入场时长(ms)", step: 50, min: 0 },
-  "motion.out": { type: "select", label: "出场",
-    enum: [["", "(无)"], ["fadeOut", "淡出"], ["slideOutLeft", "左滑出"], ["slideOutRight", "右滑出"]] },
-  "motion.outMs": { type: "number", label: "出场时长(ms)", step: 50, min: 0 },
-};
 
 /** field 名 → 控件实例 */
 const fields = new Map();
+/** 组级附加面(自持草稿编辑器/提示;fillFromSelection 时 __cfRefresh(row)) */
+const extras = [];
 let groupsHost = null;
 let fieldsInfo = null;
 let readonlyBox = null;
@@ -83,57 +59,40 @@ export function mount(container) {
 function buildGroups(uiFields) {
   clear(groupsHost);
   fields.clear();
+  extras.length = 0;
   if (!uiFields || !uiFields.editable) {
     fieldsInfo.textContent = "ui-fields 下发失败:检查器退化为空分组";
     return;
   }
+  const ctx = {
+    rowOf: () => {
+      const id = selectionStore.get().clipId;
+      return id ? timelineStore.get().clips.find((c) => c.id === id) || null : null;
+    },
+  };
   for (const [group, list] of Object.entries(uiFields.editable)) {
-    const controls = [];
-    for (const f of list) {
-      // 后端对嵌套对象(transition/motion)下发收敛后的对象键——展开为子字段控件
-      const subs = Object.keys(FIELD_META_V2).filter((k) => k.startsWith(`${f}.`));
-      if (!FIELD_META_V2[f] && subs.length) {
-        for (const k of subs) controls.push(buildField(k, FIELD_META_V2[k]));
-        continue;
-      }
-      const v2 = FIELD_META_V2[f];
-      if (v2) {
-        controls.push(buildField(f, v2));
-        continue;
-      }
-      const meta = FIELD_META[f] || { type: "text" };
-      controls.push(buildField(f, meta));
+    const { controls, extras: groupExtras } = buildGroup(group, list, ctx);
+    for (const control of controls) fields.set(control.field, control);
+    const nodes = controls.map((c) => wrapField(c));
+    for (const ex of groupExtras) {
+      extras.push(ex);
+      nodes.push(ex);
     }
-    groupsHost.appendChild(collapseGroup(group, controls.map((c) => wrapField(c, c.field)), { testid: `insp-group-${group}` }));
+    groupsHost.appendChild(collapseGroup(group, nodes, { testid: `insp-group-${group}` }));
   }
   fillFromSelection();
 }
 
-function buildField(f, meta) {
-  const testid = `field-${f.replace(/\./g, "-")}`;
-  let control;
-  if (meta.type === "select") {
-    control = selectField({ id: `insp-f-${f}`, testid, options: meta.enum });
-  } else if (meta.type === "text") {
-    control = textField({ id: meta.legacy || `insp-f-${f}`, testid: meta.legacy || testid });
-  } else {
-    control = numberField({
-      id: meta.legacy || `insp-f-${f}`, testid: meta.legacy || testid,
-      step: meta.step, min: meta.min, max: meta.max,
-    });
-  }
-  control.field = f;
-  control.meta = meta;
-  fields.set(f, control);
-  return control;
-}
-
-function wrapField(control, f) {
-  const label = h("label", { class: control.meta && control.meta.type === "select" ? "v2-field" : null, "data-tip": f }, [
-    control.meta && control.meta.label ? control.meta.label : f,
-    control.root,
-  ]);
-  return label;
+function wrapField(control) {
+  const meta = control.meta || {};
+  // 开关控件自带 wrapping label(toggleField),不得再嵌套 label(label 嵌套会使
+  // 关联失效 → axe label critical;册四 FE2 axe 实测)
+  if (meta.type === "toggle") return control.root;
+  const label = meta.label || control.field;
+  return h("label", {
+    class: meta.type === "select" || meta.type === "slider" ? "v2-field" : null,
+    "data-tip": control.field,
+  }, [label, control.root]);
 }
 
 function selectedRow() {
@@ -144,6 +103,9 @@ function selectedRow() {
 
 function fillFromSelection() {
   const row = selectedRow();
+  for (const ex of extras) {
+    if (typeof ex.__cfRefresh === "function") ex.__cfRefresh(row);
+  }
   if (!row) {
     fieldsInfo.textContent = "未选中片段:点击时间线片段,或从左侧素材面板双击插入";
     readonlyBox.hidden = true;
@@ -186,47 +148,47 @@ function renderReadonly(row) {
   readonlyBox.textContent = "只读(内核 ClipPatch 暂未承接,E4-3):" + vals.join("  ");
 }
 
-/** 应用:草稿 → patch(只含变更字段;带点字段收拢为嵌套对象)→ clip_update。
- * T4.2 批量口径:框选多选(clipIds>1)时,只取「与锚点行(主选中)现值不同的字段」
- * = 用户明确改动的字段,逐片段按本行现值过滤后提交(已等于目标值的行跳过,免无谓 Op)。
- * 后端无批量工具(已登记遗留),每片段一笔 Op,toast 明示「撤销需逐笔」;
- * 操作前自动打历史快照标记(batchUpdateClips 内)。 */
+/** 应用:草稿 → patch(只含变更字段)→ clip_update。批量口径不变(T4.2)。 */
 async function applyInspector() {
   const row = selectedRow();
   if (!row) return;
   const selIds = selectionStore.get().clipIds || [];
   if (selIds.length > 1) {
-    const done = await batchUpdateClips(selIds, (r) => computePatch(r, row));
+    const done = await batchUpdateClips(selIds, (r) => computePatch(r, row).patch);
     if (!done) toast("选中片段已等于目标值,无改动");
     return;
   }
-  const patch = computePatch(row, null);
+  const { patch, warning } = computePatch(row, null);
+  if (warning) toast(warning, false);
   if (!Object.keys(patch).length) {
-    toast("无改动");
+    if (!warning) toast("无改动");
     return;
   }
   await updateClip(row.id, patch, `已应用 ${Object.keys(patch).join("/")}(可撤销)`);
 }
 
-/** 草稿字段 → patch。anchor=null(单选):与本行现值比对,只提交变更;
- * anchor=锚点行(批量):只提交「与锚点不同」的字段(用户意图),再按本行现值过滤。 */
+/** 草稿字段 → patch。anchor=null(单选):与本行现值比对只提交变更;
+ * anchor=锚点行(批量):只提交「与锚点不同」的字段。
+ * 返回 { patch, warning? }:warning = 前端拦截(裁剪缺 w/h)说明,不阻塞其余字段。 */
 function computePatch(row, anchor = null) {
   const patch = {};
+  let warning = "";
   const flat = [];
   for (const [f, control] of fields) {
     const v = control.get();
-    if (f.indexOf(".") >= 0 || v !== "") flat.push([f, control, v]);
+    const isToggle = control.meta && control.meta.type === "toggle";
+    // 开关恒参与(关→开/开→关都要可比对);其余空串 = 未填,不参与
+    if (f.indexOf(".") >= 0 || isToggle || v !== "") flat.push([f, control, v]);
   }
-  /** 该字段是否为「用户意图改动」:批量时相对锚点行判定;单选恒真。 */
   const isIntent = (f, raw, meta) => {
     if (!anchor) return true;
     const cur = nestedGet(anchor, f);
     const curN = (cur === undefined || cur === null) ? null : cur;
-    return meta.type === "number"
-      ? Number(raw) !== Number(curN ?? NaN)
-      : String(raw) !== String(curN ?? "");
+    if (meta.type === "number" || meta.type === "slider") return Number(raw) !== Number(curN ?? NaN);
+    if (meta.type === "toggle") return Boolean(raw) !== Boolean(curN);
+    return String(raw) !== String(curN ?? "");
   };
-  // 带点字段收拢:patch.transition / patch.motion(空串/无效 → 显式 null 清空)
+  // 带点字段:textStyle/crop = 整对象(现值克隆+覆盖);transition/motion = 按字段合并(null=不改)
   for (const [f, control, raw] of flat) {
     const dot = f.indexOf(".");
     if (dot < 0) continue;
@@ -234,38 +196,61 @@ function computePatch(row, anchor = null) {
     const key = f.slice(dot + 1);
     const meta = control.meta || {};
     let v = null;
-    if (meta.type === "select") {
-      if (raw !== "") v = raw;
-    } else if (raw !== "") {
-      v = Number(raw);
-      if (Number.isNaN(v)) v = null;
+    if (meta.type === "select") v = raw !== "" ? raw : null;
+    else if (meta.type === "toggle") v = Boolean(raw);
+    else if (meta.type === "align") v = raw !== "" ? raw : null;
+    else if (raw !== "" && raw !== false) {
+      v = meta.type === "number" || meta.type === "slider" ? Number(raw) : raw;
+      if (typeof v === "number" && Number.isNaN(v)) v = null;
     }
     if (!isIntent(f, raw, meta)) continue;
-    patch[obj] = patch[obj] || {};
-    patch[obj][key] = v;
+    if (WHOLE_OBJECT_PARENTS.includes(obj)) {
+      const base = row[obj] && typeof row[obj] === "object" ? { ...row[obj] } : {};
+      if (v === null || v === "" || v === undefined) delete base[key];
+      else base[key] = meta.type === "number" || meta.type === "slider" ? Number(v) : v;
+      patch[obj] = base;
+    } else {
+      patch[obj] = patch[obj] || {};
+      patch[obj][key] = v;
+    }
   }
   for (const obj of Object.keys(patch)) {
     if (!Object.keys(patch[obj]).length) delete patch[obj];
   }
-  // 平字段:与本行现值比对,只提交变更(批量时还需先过 isIntent)
+  // 裁剪前端拦截:w/h 必填(schema required);缺 → 丢弃 crop 并说明
+  if (patch.crop && (!patch.crop.w || !patch.crop.h)) {
+    delete patch.crop;
+    warning = "裁剪需要宽与高(源像素):两个字段都填后应用,本次未含 crop";
+  }
+  // 平字段:与本行现值比对,只提交变更
   for (const [f, control, raw] of flat) {
     if (f.indexOf(".") >= 0) continue;
     const meta = control.meta || {};
-    if (raw === "") continue;
+    if (raw === "" && meta.type !== "toggle") continue;
     if (!isIntent(f, raw, meta)) continue;
-    const v = meta.type === "number" ? Number(raw) : raw;
-    if (Number.isNaN(v)) continue;
+    let v = raw;
+    if (meta.type === "number" || meta.type === "slider") {
+      v = Number(raw);
+      if (Number.isNaN(v)) continue;
+    } else if (meta.type === "toggle") {
+      v = Boolean(raw);
+    }
     const cur = row[f];
     const curN = (cur === undefined || cur === null) ? null : cur;
-    const differs = meta.type === "number"
-      ? Number(v) !== Number(curN ?? NaN)
-      : String(v) !== String(curN ?? "");
+    const differs = typeof v === "number"
+      ? v !== Number(curN ?? NaN)
+      : meta.type === "toggle"
+        ? Boolean(v) !== Boolean(curN)
+        : String(v) !== String(curN ?? "");
     if (differs) patch[f] = v;
   }
-  return patch;
+  return { patch, warning };
 }
 
 /** 供 main 装配:取消选中走这里(保持旧壳「点空白即取消」文案一致性)。 */
 export function inspectorDeselectHint() {
   selectClip(null);
 }
+
+// META 仅供调试/对表(e2e 可经控制台读);防 tree-shake 语义导出
+export { META };

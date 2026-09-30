@@ -236,6 +236,9 @@ pub(crate) fn timeline_projection(project: &cutforge_core::model::Project) -> Ve
                 // 册四 A4 T4.7/T4.8:文本样式/花字/降噪/变调随投影下放(壳检查器消费;
                 // textStyle/huazi/denoise/pitch 均已入 ClipPatch,可编辑非只读)
                 "textStyle": c.text_style, "huazi": c.huazi, "font": c.font,
+                // 册四收口(候 BE 了断):特效栈随投影下放——壳侧 projector.js 的
+                // withFxReadback 只读桥自此退化(投影含 fx 键后合并恒空操作)
+                "fx": c.fx,
                 "denoise": c.denoise, "pitch": c.pitch,
                 // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
                 // (transition/motion 已于 ClipPatch 扩展后承接,不再列只读)
@@ -258,5 +261,33 @@ pub(crate) fn count_sfx_near(project: &cutforge_core::model::Project, t_ms: u64,
             c.start_ms <= t_ms + window && t_ms <= end + window
         })
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 册四收口(候 BE 了断):投影必须含 fx 键——挂了特效的片段下发整对象,
+    /// 未挂的下发 null(键恒在;壳侧 withFxReadback 桥据此自然退化为空操作)。
+    #[test]
+    fn timeline_projection_carries_fx_key_always() {
+        let project: cutforge_core::model::Project = serde_json::from_value(json!({
+            "version": 1, "schemaVersion": "2.0.0", "slug": "proj-fx", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "startMs": 0, "durationMs": 2000,
+                 "fx": {"combo": [{"fx": "fx.blur", "params": {"radius": 4}}]}},
+                {"id": "V1-002", "startMs": 2000, "durationMs": 2000}
+            ]}]
+        })).expect("夹具必须过 v2 校验");
+        let rows = timeline_projection(&project);
+        assert_eq!(rows.len(), 2);
+        let with = rows.iter().find(|r| r["id"] == json!("V1-001")).unwrap();
+        let without = rows.iter().find(|r| r["id"] == json!("V1-002")).unwrap();
+        assert_eq!(with["fx"]["combo"].as_array().unwrap().len(), 1, "挂特效必须整对象下放");
+        assert_eq!(with["fx"]["combo"][0]["fx"], json!("fx.blur"));
+        assert_eq!(without["fx"], json!(Value::Null), "未挂特效 fx 键必须为 null(键不可缺席)");
+    }
 }
 

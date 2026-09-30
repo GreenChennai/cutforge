@@ -3,13 +3,15 @@
  * 独立成模块原因:commands.js 行数红线(≤400);复用其串行队列(enqueue 导出),
  * 保证与 undo/redo 连点不交错。单向流不变:意图 → api → reproject。
  * 批量原子性诚实口径:后端无批量 patch 工具(56 工具逐笔),多选批量 = 逐笔 Op,
- * toast 明示「每片段一笔,撤销需逐笔」;已登记「批量候 BE」遗留。 */
+ * toast 明示「每片段一笔,撤销需逐笔」;已登记「批量候 BE」遗留。
+ * 册四 FE2 增(T4.4~T4.9):transition_set / motion(clip_update)/ text_add /
+ * subtitle_* / audio_beats。 */
 import { call } from "./api.js";
 import { ephemeralStore, timelineStore, projectStore } from "./store.js";
 import { reproject } from "./projector.js";
 import { messageOf } from "./errors.js";
 import { toast } from "../ui/toast.js";
-import { enqueue } from "./commands.js";
+import { selectClip, enqueue } from "./commands.js";
 
 function report(env, name, okMsg) {
   if (!env.ok) toast(messageOf(env, name), false);
@@ -146,4 +148,187 @@ export function noteRecentMedia(path) {
   if (!path) return;
   const cur = (ephemeralStore.get().recentMedia || []).filter((p) => p !== path);
   ephemeralStore.set({ recentMedia: [path, ...cur].slice(0, 12) });
+}
+
+/* ---------------- 转场(T4.5;transition_set) ---------------- */
+
+/**
+ * 应用目录转场:全量 58 项目录走 fx="tr.<id>" 直通(type="fade" 与之并存,以 fx 为准);
+ * durMs 缺省沿用现值。移除转场用 clearTransition。
+ * @param {string} clipId
+ * @param {{ id: string, durMs?: number }} t
+ */
+export function applyTransition(clipId, t) {
+  return enqueue(async () => {
+    const args = { clipId, type: "fade", fx: `tr.${t.id}` };
+    if (t.durMs !== undefined && !Number.isNaN(t.durMs)) args.durMs = Math.max(0, Math.round(t.durMs));
+    const env = await call("transition_set", args);
+    if (env.ok) {
+      await reproject();
+      toast(`转场 ${t.id} 已应用(可撤销)`);
+    }
+    return report(env, "transition_set");
+  });
+}
+
+/** 关闭转场(type="none";显式关闭语义,可撤销)。 */
+export function clearTransition(clipId) {
+  return enqueue(async () => {
+    const env = await call("transition_set", { clipId, type: "none" });
+    if (env.ok) {
+      await reproject();
+      toast("转场已关闭(可撤销)");
+    }
+    return report(env, "transition_set");
+  });
+}
+
+/* ---------------- 动效(T4.6;clip_update.motion 按字段合并) ---------------- */
+
+/** @param {string} clipId @param {{in?:string,inMs?:number,out?:string,outMs?:number}} patch */
+export function applyMotion(clipId, patch) {
+  return enqueue(async () => {
+    const env = await call("clip_update", { clipId, patch: { motion: patch } });
+    if (env.ok) await reproject();
+    return report(env, "clip_update");
+  });
+}
+
+/**
+ * mo.<id> 直通别名(motion_set inFx/outFx;优先于枚举,未注册渲染降级 WARN)。
+ * @param {string} clipId @param {"in"|"out"} side
+ */
+export function applyMotionAlias(clipId, side, alias) {
+  return enqueue(async () => {
+    const arg = side === "in" ? "inFx" : "outFx";
+    const env = await call("motion_set", { clipId, [arg]: alias });
+    if (env.ok) await reproject();
+    return report(env, "motion_set");
+  });
+}
+
+/* ---------------- 文本与字幕(T4.7;text_add / subtitle_*) ---------------- */
+
+/**
+ * 播放头处加文本(text_add;响应带 clipId → 壳自动选中)。
+ * @param {{ text: string, atMs: number, durationMs?: number, trackId?: string,
+ *          textStyle?: Object, huazi?: Object }} a
+ */
+export function textAdd(a) {
+  return enqueue(async () => {
+    const env = await call("text_add", {
+      text: a.text, atMs: Math.max(0, Math.round(a.atMs)),
+      ...(a.durationMs ? { durationMs: Math.round(a.durationMs) } : {}),
+      ...(a.trackId ? { trackId: a.trackId } : {}),
+      ...(a.textStyle ? { textStyle: a.textStyle } : {}),
+      ...(a.huazi ? { huazi: a.huazi } : {}),
+      requestId: `ui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    });
+    if (env.ok) {
+      await reproject();
+      const cid = env.data && env.data.clipId;
+      if (cid) selectClip(cid);
+      toast(`文本已添加${cid ? `(${cid})` : ""}(可撤销)`);
+    }
+    return report(env, "text_add");
+  });
+}
+
+/** 字幕文本修改(subtitle_set;单 Op)。 */
+export function subtitleSetText(clipId, text) {
+  return enqueue(async () => {
+    const env = await call("subtitle_set", { clipId, text });
+    if (env.ok) await reproject();
+    return report(env, "subtitle_set");
+  });
+}
+
+/** 字幕时间微调(subtitle_retime;单 Op;startMs/durationMs 至少给一)。 */
+export function subtitleRetime(clipId, startMs, durationMs) {
+  return enqueue(async () => {
+    const args = { clipId };
+    if (startMs !== undefined && startMs !== null) args.startMs = Math.max(0, Math.round(startMs));
+    if (durationMs !== undefined && durationMs !== null) args.durationMs = Math.max(1, Math.round(durationMs));
+    const env = await call("subtitle_retime", args);
+    if (env.ok) await reproject();
+    return report(env, "subtitle_retime");
+  });
+}
+
+/** 批量替换(subtitle_replace;find 为字面量;trackId 缺省=全部文本轨)。 */
+export function subtitleReplace(find, replace, trackId) {
+  return enqueue(async () => {
+    const args = { find, replace };
+    if (trackId) args.trackId = trackId;
+    const env = await call("subtitle_replace", args);
+    if (env.ok) {
+      await reproject();
+      const n = env.data && (env.data.changed ?? env.data.count);
+      toast(`批量替换完成${typeof n === "number" ? `:${n} 条` : ""}(可撤销)`);
+    }
+    return report(env, "subtitle_replace");
+  });
+}
+
+/** 字幕导入(subtitle_import;SRT/ASS 自动识别;src 工程内相对路径)。 */
+export function subtitleImport(src, trackId) {
+  return enqueue(async () => {
+    const args = { src, requestId: `ui-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+    if (trackId) args.trackId = trackId;
+    const env = await call("subtitle_import", args);
+    if (env.ok) {
+      await reproject();
+      const n = env.data && (env.data.count ?? (env.data.clips || []).length);
+      toast(`字幕已导入${typeof n === "number" ? ` ${n} 条` : ""}(整批单 Op,可撤销)`);
+    }
+    return report(env, "subtitle_import");
+  });
+}
+
+/** 字幕导出(subtitle_export;format srt/ass;out 缺省走服务端缺省路径)。 */
+export function subtitleExport(format, out, trackId) {
+  return enqueue(async () => {
+    const args = { format };
+    if (out) args.out = out;
+    if (trackId) args.trackId = trackId;
+    const env = await call("subtitle_export", args);
+    if (env.ok) {
+      const f = env.data && (env.data.file || env.data.out || env.data.path);
+      toast(`字幕已导出${f ? `:${f}` : ""}`);
+    }
+    return report(env, "subtitle_export");
+  });
+}
+
+/* ---------------- 卡点(T4.8;audio_beats 纯计算 + 会话节拍) ---------------- */
+
+/**
+ * 节拍检测(audio_beats;纯计算不落盘不产 Op):结果写 ephemeral.beats(会话态),
+ * 供吸附候选(standard 档)与标尺 scrub 吸附。启发式 engine=onset-energy,诚实标注。
+ * @param {string} src 工程内相对路径
+ * @param {number} [sensitivity] 0..1
+ */
+export function detectBeats(src, sensitivity) {
+  return enqueue(async () => {
+    const args = { src };
+    if (sensitivity !== undefined && !Number.isNaN(sensitivity)) args.sensitivity = sensitivity;
+    const env = await call("audio_beats", args);
+    if (env.ok && env.data) {
+      ephemeralStore.set({
+        beats: {
+          src, bpm: env.data.bpm, beats: env.data.beats || [],
+          confidence: env.data.confidence, degraded: env.data.degraded !== false,
+          at: Date.now(),
+        },
+      });
+      toast(`节拍检测完成:BPM ${env.data.bpm} · ${env.data.beatCount ?? (env.data.beats || []).length} 拍`
+        + `(启发式,置信度 ${(env.data.confidence ?? 0) * 100 | 0}%)`);
+    }
+    return report(env, "audio_beats");
+  });
+}
+
+/** 清除会话节拍(不落盘,刷新即失;按钮显式清除用)。 */
+export function clearBeats() {
+  ephemeralStore.set({ beats: null });
 }

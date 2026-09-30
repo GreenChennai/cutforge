@@ -15,10 +15,13 @@ let canvas = null;
 let preciseBtn = null;
 let preciseImg = null;
 let preciseHint = null;
+let canvasInfo = null;
 
 export function mount(container) {
   canvas = h("canvas", { id: "pv-canvas", testid: "preview-canvas", width: 1080, height: 1920 });
   container.appendChild(h("div", { id: "pv-stage", testid: "preview-stage" }, [canvas]));
+  canvasInfo = h("div", { class: "pv-hint", testid: "pv-canvas-info" }, ["画幅 -"]);
+  container.appendChild(canvasInfo);
   container.appendChild(h("div", { class: "pv-hint" }, [
     "预览为画质代理:不含转场 / 特效 / 字幕烧录的最终效果;成片请用右侧导出(E2-6 诚实标注)。",
     "「精确预览」调内核逐帧渲染当前帧。",
@@ -48,6 +51,12 @@ export function mount(container) {
       if (cv && (canvas.width !== cv.width || canvas.height !== cv.height)) {
         canvas.width = cv.width;
         canvas.height = cv.height;
+      }
+      // 画布信息(诚实口径):画幅创建时定死(project_new),已建工程无修改工具(候 BE)
+      if (canvasInfo) {
+        canvasInfo.textContent = cv
+          ? `画幅 ${cv.width}×${cv.height} · ${st.project.fps ?? "?"}fps(画幅在新建工程时设定;已建工程暂无修改工具,候 BE)`
+          : "画幅 -";
       }
     }
   });

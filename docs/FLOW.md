@@ -51,9 +51,9 @@ cutforge/
 │   ├── cutforge-cli/           CLI(lib+bin):查询/命令/撤销/OpLog/标注/冲突 + cache(缓存治理)/doctor(环境诊断) + check-write-paths/check-deps 判定器
 │   ├── cutforge-mcp/           MCP 层:单注册表(数量以 schemas/mcp-tools.json 为准),registry/dispatch/workspace_svc + transport/{stdio,http,events,static_files};stdio 主通道 + 内嵌 HTTP 辅通道(127.0.0.1+token)共用同一 dispatch
 │   └── cutforge-script/        脚本宿主:cutforge-script-v1 批式步骤 + 策略沙箱(白名单/路径/步数/超时,逃逸面结构性为零)
-├── apps/web/                   壳:core/render/panels/ui 四层无构建 ESM(SSE 主通道 + 长轮询断线降级;data-testid 锚点登记 TESTIDS.md;旧壳 legacy/ 已于册三收尾删除,回退期结束;ADR-0011~0014)
+├── apps/web/                   壳:core/render/panels/ui 四层无构建 ESM(SSE 主通道 + 长轮询断线降级;data-testid 锚点登记 TESTIDS.md;旧壳 legacy/ 已于册三收尾删除,回退期结束;ADR-0011~0017)
 ├── tools/
-│   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1/A2/A3 已注册,决策 D-A2)
+│   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1–A4 已注册,决策 D-A2)
 │   ├── bench/bench.py          性能基准(T1.8;--check 阈值判定,基线 docs/bench/baseline.json)
 │   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;数量以 schemas/mcp-tools.json 为准)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
@@ -229,12 +229,12 @@ cargo 测试与 e2e 脚本形式存在,由 `cargo test --workspace` 与 CI 的 w
 |---|---|
 | M8 渲染管线 | `cutforge-render` 单元/集成测试(`cargo test -p cutforge-render`) |
 | M9 主链路(合并/快照/守护) | `cutforge-io` m9_tests(`conflict_real_repro_and_stop_writes` 等)、`external_edit_visible_within_1s` |
-| M10 编辑器 e2e | `tools/e2e_edit_ops.py`(M10-1/M10-2/M10-3)、`tools/e2e_preview.py`、`tools/e2e_from_zero.py`(册二起三份迁 `data-testid` 选择器;另新增 `e2e_ui_smoke.py` / `e2e_playback_survival.py` / `e2e_perf_timeline.py`,载体见册级 A2;册三再增 `e2e_drag_perf.py` / `e2e_hotkeys.py` / `e2e_a11y.py` / `e2e_perf_budget.py`,载体见册级 A3) |
+| M10 编辑器 e2e | `tools/e2e_edit_ops.py`(M10-1/M10-2/M10-3)、`tools/e2e_preview.py`、`tools/e2e_from_zero.py`(册二起三份迁 `data-testid` 选择器;另新增 `e2e_ui_smoke.py` / `e2e_playback_survival.py` / `e2e_perf_timeline.py`,载体见册级 A2;册三再增 `e2e_drag_perf.py` / `e2e_hotkeys.py` / `e2e_a11y.py` / `e2e_perf_budget.py`,载体见册级 A3;册四再增 `e2e_editing_tools.py` / `e2e_subtitle_editor.py` / `e2e_media_perf.py`,载体见册级 A4) |
 | M11 渲染矩阵 | `crates/cutforge-render/tests/parity_matrix.rs`(九项实渲对拍)、`capability-matrix.json` 同源断言 |
 | M12/M13 | ADR-0005 暂缓决议 + 发布验收(ACCEPTANCE.md);无自动化门禁 |
 
 即:**V2 里程碑的完成判定 = `cargo test --workspace` 全绿 + 三份 e2e 全绿(V2 时点口径;
-此后册一/册二/册三把 e2e 面扩至十二份)+ gate.py M0/M1**;
+此后册一至册四把 e2e 面扩至十五份)+ gate.py M0/M1**;
 不新增 gate.py 里程碑注册(避免双份判定器漂移,与"工具数量以 schemas/mcp-tools.json 为准"同一纪律)。
 
 **册级门禁注册制(册一起,D-A2)**:多册计划的验收以 `gate.py A<n>` 聚合注册,避免六册后
@@ -249,8 +249,20 @@ e2e_events / e2e_static / e2e_ui_smoke / e2e_playback_survival / e2e_perf_timeli
 cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/ pytest / tool_parity(42,时点口径)/
 e2e_static / e2e_events / e2e_ui_smoke / e2e_playback_survival / e2e_drag_perf(`--min-fps 55`,
 安静时段复跑口径)/ e2e_hotkeys / e2e_a11y(axe 扫描,登记违规见脚本)/ e2e_perf_budget /
-e2e_perf_timeline(负载敏感项均不进 CI);载体 tools/e2e_{drag_perf,hotkeys,a11y,perf_budget}.py。CI 只跑 M0/M1 + web-e2e(含册二 ui_smoke/playback_survival + 册三 hotkeys/a11y 四步;perf/拖拽帧率负载敏感不进 CI),A<n> 本机册收官跑;台账见 [A1-PROGRESS.md](A1-PROGRESS.md) /
-[A2-PROGRESS.md](A2-PROGRESS.md) / [A3-PROGRESS.md](A3-PROGRESS.md)。
+e2e_perf_timeline(负载敏感项均不进 CI);载体 tools/e2e_{drag_perf,hotkeys,a11y,perf_budget}.py。
+已注册 **`gate.py A4`**(册四,核心工具与媒体管线),**18 项全阻断**(A3 十五项一字不动
+全部继承,另纳册四三份新 e2e):cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/
+pytest / tool_parity(56,时点口径)/ e2e_static / e2e_events / e2e_ui_smoke /
+e2e_playback_survival / e2e_drag_perf(`--min-fps 55`)/ e2e_hotkeys / e2e_a11y /
+e2e_perf_budget / e2e_perf_timeline / **e2e_editing_tools**(四件套恰一 Op+实渲逐差+
+锁定轨拒编辑)/ **e2e_subtitle_editor**(SRT byte 级往返+帧证位置+卡拉OK+花字)/
+**e2e_media_perf**(千素材 P95 ≥55fps+懒加载+AC-4.6 听觉存档;负载敏感不进 CI);
+载体 tools/e2e_{editing_tools,subtitle_editor,media_perf}.py。
+CI 只跑 M0/M1 + web-e2e(含册二 ui_smoke/playback_survival + 册三 hotkeys/a11y +
+册四 editing_tools/subtitle_editor 共六步;perf/拖拽/千素材帧率负载敏感不进 CI),
+A<n> 本机册收官跑;台账见 [A1-PROGRESS.md](A1-PROGRESS.md) /
+[A2-PROGRESS.md](A2-PROGRESS.md) / [A3-PROGRESS.md](A3-PROGRESS.md) /
+[A4-PROGRESS.md](A4-PROGRESS.md)。
 
 ## 八、观察项与已知占位(诚实清单)
 

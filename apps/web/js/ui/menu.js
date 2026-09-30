@@ -11,6 +11,7 @@ import {
 import {
   updateTrack, gapDelete, splitAllAt, copyClip, pasteClipAt, markHistory,
 } from "../core/edit-commands.js";
+import { updateClip } from "../core/commands.js";
 import { selectAllClips } from "../core/nav.js";
 import { toggleTrackVisible } from "../render/timeline-view.js";
 import { trackColorChoices } from "../render/track-head.js";
@@ -135,6 +136,13 @@ export function openClipContextMenu(x, y) {
     { sep: true },
     { label: "删除", keys: keys("edit.delete", "Del"), fn: () => deleteSelected(false), disabled: !has, why: !has ? "未选中片段" : null },
     { label: "波纹删除", keys: keys("edit.rippleDelete", "Shift+Del"), fn: () => deleteSelected(true), disabled: !has, why: !has ? "未选中片段" : null },
+    { sep: true },
+    // 定格帧(T4.9):freezeMs = 片段末帧定格时长;0 = 取消(Some(0) 可写回,与 None=不改区分)
+    row && row.freezeMs > 0
+      ? { label: `取消定格(当前 ${row.freezeMs}ms)`, fn: () => updateClip(clipId, { freezeMs: 0 }, "已取消定格(可撤销)"),
+          why: "freezeMs=0 关闭末帧定格(单 Op)" }
+      : { label: "定格帧(末帧定格 1s)", keys: "右键", fn: () => updateClip(clipId, { freezeMs: 1000 }, "末帧定格 1s(可撤销)"),
+          disabled: !has, why: !has ? "未选中片段" : "freezeMs:片段末帧定格 1 秒(变速/时长语义见内核 speed 投影)" },
   ]);
 }
 

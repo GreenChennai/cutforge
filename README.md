@@ -57,8 +57,22 @@ HTTP 连接加固（ADR-0009）、错误码命名空间 + `doctor` 诊断、`ben
 **45 条可重绑定快捷键**（冲突检测 + 「?」帮助面板全表搜索）、dev 性能面板（Shift+D）
 + 媒体池 POOL_MAX=24 有界、可访问性（键盘编辑闭环 + axe 全页扫描 0 critical/serious）、
 新手路径脚本盲测三流程零卡点；顺带收口 `apps/web/legacy/` 整树删除、net 错误横幅 +
-SSE 连接态徽标；e2e 扩至 **12 份** + `gate.py A3` 15 项注册（主控终验待跑）;决策见
+SSE 连接态徽标；e2e 扩至 **12 份** + `gate.py A3` 15 项全绿;决策见
 ADR-0014,台账见 [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md)。
+
+**册四(A4 · 核心工具与媒体管线)已完成**：决策 ADR-0015/0016/0017(画布 64–7680 偶数
+范围约束/文本 ASS 路线/音频分离延后册五评估);工具面 **42→56 = 13 查询+30 写+13 编排**——
+时间线编辑六工具(`clip_trim` 四件套 trim/roll/slip/slide、`clip_split_all`、
+`track_update` 七字段、`clip_gap_delete`、`clip_copy`/`clip_paste_at` 会话剪贴板)、
+speedCurve 分段积分曲线变速 + reverse + 变换链、**转场库 7→58**(五分类 ffmpeg 实测
+枚举 + acrossfade 音频转场,顺手修转场 offset 截断虫)、fx 注册表 11 特效(combo≤3)+
+motion 真实渲染 19 项、文本渲染(`textStyle` 14 字段→确定性 ASS 所见即所得)+ 花字 12
+模板 + 卡拉OK、字幕工作流四工具(SRT 往返 byte 级相等)、音频降噪四档/保速变调/卡点、
+媒体缩略图/代理/peaks;前端媒体池缩略懒加载 + 波形、四件套手势(一次手势恰一 Op)、
+轨道头七字段、**历史面板**、转场/特效/文本/字幕/音频工具面板、画布五档预设、曲线点集
+编辑器;三份新 e2e(×12→**15**)+ 听觉存档四样本([docs/design/audio-samples/](docs/design/audio-samples/));
+`gate.py A4` **18 项全绿**;决策见 ADR-0015/0016/0017,台账见
+[docs/A4-PROGRESS.md](docs/A4-PROGRESS.md)。
 
 - **M0**:ARL-1.0 混合授权三件套、命名核查存档、工具链 pin(与上游一致)、统一门禁入口、CI 骨架。
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
@@ -72,7 +86,7 @@ ADR-0014,台账见 [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md)。
 
 1. **启动**:`cutforge-cli serve --open`(推荐;无参数时交互选择工程,回车 = 最近工程),或 `cutforge-mcp serve --root <工程目录> --open`(无 --root 同样交互选择)。Windows 也可双击仓库根的 [start-editor.cmd](start-editor.cmd)。
 2. **浏览器**:带 `--open` 自动打开;否则手动访问控制台打印的 `http://127.0.0.1:<端口>/?token=<T>`。
-3. **编辑与导出**:素材面板双击/拖拽导入(时长自动探测)、时间线精确拖拽(ghost 跟手、Esc 取消、trim 时长气泡)、分割 / 波纹删,预览(画质代理,空格播放、←/→ 逐帧;「精确预览」按钮按播放头出单帧最终效果图,走 `render_frame`),分组检查器(字段集由 `schemas/ui-fields.json` 单一真相源约束),标注,差异面板;**45 条快捷键全部可重绑定**(按「?」查全表 + 搜索;J/K/L 倍速、I/O 入出点、B 切割),**Shift+D 性能面板**(帧率/预算逐行可视,默认关);导出选 `cutforge` 后端即由本机内核出片,不依赖 CutFlow,亦可一键导出剪映草稿。
+3. **编辑与导出**:素材面板双击/拖拽导入(时长自动探测)、时间线精确拖拽(ghost 跟手、Esc 取消、trim 时长气泡)、四件套微调(Alt=slip/Ctrl=slide/Shift+边缘=roll,一次手势一个可撤销 Op)、分割 / 波纹删,预览(画质代理,空格播放、←/→ 逐帧;「精确预览」按钮按播放头出单帧最终效果图,走 `render_frame`),**转场库 58 + 特效栈 + 动效/曲线变速**、**文本工具与字幕编辑器**(SRT 导入导出、花字、卡拉OK,画布拖位置所见即所得)、**音频降噪/变调/卡点**、**历史面板**(回跳 N 笔撤销),分组检查器(字段集由 `schemas/ui-fields.json` 单一真相源约束),标注,差异面板;**45 条快捷键全部可重绑定**(按「?」查全表 + 搜索;J/K/L 倍速、I/O 入出点、B 切割),**Shift+D 性能面板**(帧率/预算逐行可视,默认关);导出选 `cutforge` 后端即由本机内核出片,不依赖 CutFlow,亦可一键导出剪映草稿。
 4. **从零新建**:编辑器顶部「＋ 新建工程」向导,或命令行 `cutforge-cli new <目录> --slug 名字 --fps 30 --track video,audio` 生成空工程后 `serve` 打开——对没有任何 CutFlow 工程的目录同样成立。
 
 要点:服务仅监听 127.0.0.1;数据面(/rpc /media /session)经 Bearer token 鉴权,重启服务会换新 token;改动经 `/events` SSE 实时推送(断线自动转长轮询降级),静态资源由 `/assets/*` 目录托管(前端新增文件零 Rust 改动);退出 = 在服务窗口按 Ctrl+C。启动自检(`cutforge-cli doctor`)逐项报告工程 / ffmpeg / ffprobe / Web 资源 / 缓存目录 / 端口的就绪状态与可复制执行的补救命令。画质代理预览不含转场 / 特效 / 字幕烧录的最终效果(单帧最终效果用「精确预览」),成片请用导出。
@@ -97,8 +111,9 @@ ADR-0014,台账见 [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md)。
 | `protocol_conformance` | MCP 注册表与 dispatch 逐一相等,stdio 与内嵌 HTTP 差异恒为 0 |
 | `tool_parity` | 56 工具黄金响应库逐键对拍,行为漂移即红(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56) |
 | `cargo test` | 领域模型/合并/OpLog/渲染对拍(ffmpeg 实测矩阵)/脚手架/只读并发/HTTP 加固/缓存寻址 |
-| e2e × 12 | 编辑操作全链(Playwright)、预览(画面/声音/seek/像素非黑)、**从零剪**(新建→导入→改字段→导出+并发+会话摘要)、静态托管(穿越 100% 拒绝/ETag 304)、事件推送(SSE P95/长轮询降级)、UI 冒烟(data-testid 驱动/DOM 变更预算/selfTest/超时-401-降级)、播放生存(播放零中断)、时间线性能(1k clips 虚拟化+帧率,本机跑)、**拖拽手感**(P95/跟手 ≤1 帧/Esc 取消零 Op)、**键位体系**(45 条注册表遍历+实按+重绑定)、**可访问性**(键盘闭环+axe 扫描 0 critical/serious)、**性能预算**(首屏/页签/导出节奏/池有界)——册三新增四份与帧率类本机跑 |
-| `gate.py A3`(册级) | UX/键位/可访问性册级聚合:**15 项全阻断**(纯度 v3 含 R5 色值/行数红线/tool_parity 42/九份 e2e 聚合/pytest);负载敏感项本机册收官跑,主控终验待跑 |
+| e2e × 15 | 编辑操作全链(Playwright)、预览(画面/声音/seek/像素非黑)、**从零剪**(新建→导入→改字段→导出+并发+会话摘要)、静态托管(穿越 100% 拒绝/ETag 304)、事件推送(SSE P95/长轮询降级)、UI 冒烟(data-testid 驱动/DOM 变更预算/selfTest/超时-401-降级)、播放生存(播放零中断)、时间线性能(1k clips 虚拟化+帧率,本机跑)、**拖拽手感**(P95/跟手 ≤1 帧/Esc 取消零 Op)、**键位体系**(45 条注册表遍历+实按+重绑定)、**可访问性**(键盘闭环+axe 扫描 0 critical/serious)、**性能预算**(首屏/页签/导出节奏/池有界)、**编辑全工具**(四件套恰一 Op+实渲逐差+锁定拒编辑)、**字幕编辑器**(SRT byte 级往返+帧证位置+卡拉OK+花字)、**媒体池千素材**(P95 63.3fps+懒加载+听觉存档)——册三新增四份、册四新增三份,帧率类本机跑 |
+| `gate.py A3`(册级) | UX/键位/可访问性册级聚合:**15 项全阻断**(纯度 v3 含 R5 色值/行数红线/tool_parity 42,时点口径/九份 e2e 聚合/pytest);负载敏感项本机册收官跑 |
+| `gate.py A4`(册级) | 核心工具与媒体管线册级聚合:**18 项全阻断**(A3 十五项一字不动全部继承 + editing_tools/subtitle_editor/media_perf 三份新 e2e;tool_parity 56);千素材帧率等负载敏感项本机册收官跑 |
 
 ```bash
 python tools/gates/gate.py M0 --json     # 统一门禁入口(结果协议见下)
@@ -115,9 +130,13 @@ python tools/e2e_drag_perf.py --min-fps 55       # 册三新增(拖拽手感;负
 python tools/e2e_hotkeys.py                      # 册三新增(键位注册表遍历+实按+重绑定)
 python tools/e2e_a11y.py                         # 册三新增(键盘闭环+axe 扫描)
 python tools/e2e_perf_budget.py                  # 册三新增(首屏/页签/导出节奏/池有界;含真实导出)
+python tools/e2e_editing_tools.py                # 册四新增(四件套恰一 Op+实渲逐差+锁定拒编辑)
+python tools/e2e_subtitle_editor.py              # 册四新增(SRT byte 级往返+帧证位置+卡拉OK+花字)
+python tools/e2e_media_perf.py --min-fps 55      # 册四新增(千素材 P95+懒加载+听觉存档;负载敏感,本机跑)
 python tools/gates/gate.py A1 --json     # 册级门禁(clippy/≤800 行红线/tool_parity/e2e/bench 聚合)
 python tools/gates/gate.py A2 --json     # 册二册级门禁(12 项:壳行数/纯度 v2/e2e 面;1 观察)
 python tools/gates/gate.py A3 --json     # 册三册级门禁(15 项全阻断:纯度 v3 含 R5/拖拽/键位/可访问性/性能预算)
+python tools/gates/gate.py A4 --json     # 册四册级门禁(18 项全阻断:继承 A3 + 编辑工具/字幕/千素材三份新 e2e)
 ```
 
 结果协议:`{"ok":bool,"code":str,"message":str,"data":object}`;退出码 `0`=通过、`2`=门禁失败、`3`=前置/环境缺失、`4`=内部错误。
@@ -134,11 +153,11 @@ cutforge/
 │   ├── cutforge-mcp/       # MCP server:registry/dispatch + transport/{stdio,HTTP,SSE,/assets 静态托管}
 │   ├── cutforge-cli/       # CLI:serve/new/查询/应用/撤销重做/cache/doctor/门禁判定器
 │   └── cutforge-script/    # 脚本宿主(批式步骤+策略沙箱)
-├── apps/web/               # 薄壳:core/render/panels/ui 四层无构建 ESM(模块化结构见 ADR-0011~0014;锚点登记 TESTIDS.md;旧壳 legacy/ 已删)
+├── apps/web/               # 薄壳:core/render/panels/ui 四层无构建 ESM(模块化结构见 ADR-0011~0017;锚点登记 TESTIDS.md;旧壳 legacy/ 已删)
 ├── schemas/                # mcp-tools.json(工具契约唯一真相源)/ui-fields.json/project.schema.json
-├── tools/                  # gates/gate.py 门禁入口 + bench(基准/黄金对拍)+ e2e × 12 + 夹具生成器 + 文档对拍
+├── tools/                  # gates/gate.py 门禁入口 + bench(基准/黄金对拍)+ e2e × 15 + 夹具生成器 + 文档对拍
 ├── tests/                  # 跨仓桥测试(四桥冒烟/剪映出口对拍)
-└── docs/                   # FLOW.md 工作区地图 / V2-PROGRESS·A1·A2·A3-PROGRESS 台账 / adr/ 决策记录 / bench/ 基准 / design/ 设计口径与录屏
+└── docs/                   # FLOW.md 工作区地图 / V2-PROGRESS·A1~A4-PROGRESS 台账 / adr/ 决策记录 / bench/ 基准 / design/ 设计口径与录屏
 ```
 
 ## 🔗 与 CutFlow 的双向闭环
@@ -186,6 +205,7 @@ python tools/gates/gate.py M4 --json
 python tools/gates/gate.py A1 --json   # 册级门禁(每册一个 A<n> 入口,决策 D-A2)
 python tools/gates/gate.py A2 --json   # 册二册级门禁(壳行数红线/纯度 v2/e2e 面,11 阻断+1 观察)
 python tools/gates/gate.py A3 --json   # 册三册级门禁(UX/键位/可访问性,15 项全阻断)
+python tools/gates/gate.py A4 --json   # 册四册级门禁(核心工具与媒体管线,18 项全阻断)
 ```
 
 参与贡献前请读 [CONTRIBUTING.md](CONTRIBUTING.md)。

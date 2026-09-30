@@ -18,6 +18,7 @@ import { openHelpPanel } from "./help-panel.js";
 import { openSettings } from "./settings-panel.js";
 import { togglePerfPanel } from "./perf-panel.js";
 import { openClipContextMenu } from "./menu.js";
+import * as textool from "../panels/textool.js";
 
 /* ---- 播放链(J/L 倍速 ×2,上限 8x;K/空格复位 1x)---- */
 const SPEED_MAX = 8;
@@ -102,6 +103,7 @@ const RUN = {
   "mode.select": () => nav.setTool("select"),
   "mode.blade": () => nav.setTool(uiStore.get().tool === "blade" ? "select" : "blade"),
   "mode.trim": () => nav.setTool(uiStore.get().tool === "trim" ? "select" : "trim"),
+  "text.add": () => textool.addTextAtPlayhead(),
   "clip.split": () => commands.splitSelected(),
   "clip.splitAll": () => edit.splitAllAt(commands.playheadMs()),
   "edit.delete": () => commands.deleteSelected(uiStore.get().ripple),
@@ -153,10 +155,11 @@ function defineAll() {
   d("mark.marker", "标记", "添加/移除标记(会话级)", "m");
   d("mark.prev", "标记", "上一个标记", "arrowup");
   d("mark.next", "标记", "下一个标记", "arrowdown");
-  // ---- 编辑(23)----
+  // ---- 编辑(24;T4.7 起 T = 文本工具,裁剪模式迁 V)----
   d("mode.select", "编辑", "选择模式(A)", "a");
   d("mode.blade", "编辑", "切割模式(B;点击片段即分割)", "b");
-  d("mode.trim", "编辑", "裁剪模式(T;点片段边缘拖动修剪)", "t");
+  d("mode.trim", "编辑", "裁剪模式(V;点片段边缘拖动修剪)", "v");
+  d("text.add", "编辑", "播放头处添加文本(T;text_add)", "t");
   d("clip.split", "编辑", "分割(播放头处)", "s");
   d("clip.splitAll", "编辑", "全轨分割(播放头处所有轨,单 Op)", "shift+s");
   d("edit.delete", "编辑", "删除选中片段", "delete");

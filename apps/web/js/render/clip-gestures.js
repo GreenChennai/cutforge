@@ -10,8 +10,9 @@
  * | 边缘拖(无修饰)     | trim  | clip_trim trim   edge + deltaMs |
  * | 边缘拖 + Shift     | roll  | clip_trim roll   edge + deltaMs |
  * | 切割模式(B)点主体   | 分割   | clip_split                     |
- * | T 工具主体按下      | 就近边 trim(前 40% 入点/后 40% 出点)|
+ * | V 工具主体按下      | 就近边 trim(前 40% 入点/后 40% 出点)|
  * 锁定轨拒绝一切编辑手势(toast + lane 抖动;视觉 .lane-locked)。
+ * (T4.7 起 T 键 = 文本工具,裁剪模式迁 V;注册表/keymap 帮助表同步。)
  */
 import { $ } from "../ui/dom.js";
 import { ephemeralStore, timelineStore, uiStore, projectStore } from "../core/store.js";
@@ -96,7 +97,7 @@ export function onClipPointerDown(e) {
       : mod === "ctrl" ? { kind: "slide", side: "in" }
         : tool === "trim" ? planTrimFromBody(e)
           : { kind: "move", side: "in" };
-  if (!plan) { toast("T 裁剪工具:点片段边缘裁剪;普通移动切回 A 选择(A 键)", false); return; }
+  if (!plan) { toast("V 裁剪工具:点片段边缘裁剪;普通移动切回 A 选择(A 键)", false); return; }
   if (plan.kind === "move") { runMove(el, e, row); return; }
   runTrimFamily(el, e, row, plan);
 }

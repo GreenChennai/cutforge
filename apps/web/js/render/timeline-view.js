@@ -79,7 +79,7 @@ function mountToolBadges() {
   const trimBadge = h("span", {
     class: "blade-badge", testid: "trim-mode", hidden: true,
     "aria-live": "polite",
-  }, ["⇱ 裁剪模式:点片段边缘拖动修剪(T 或 A 退出)"]);
+  }, ["⇱ 裁剪模式:点片段边缘拖动修剪(V 或 A 退出)"]);
   const toolbar = $("toolbar");
   if (toolbar) { toolbar.appendChild(badge); toolbar.appendChild(trimBadge); }
   uiStore.subscribe((patch, st) => {

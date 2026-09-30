@@ -530,13 +530,11 @@
        "huazi": {
         "type": "object",
         "additionalProperties": false,
-        "description": "花字挂载(册四 T4.7):整对象替换;{template: hz.<id>(目录 GET /catalogs), params? 覆写模板默认};未注册渲染降级纯文本 + WARN",
-        "required": [
-         "template"
-        ],
+        "description": "花字挂载(册四 T4.7;收口置空语义):非空对象 = 整对象替换 {template: hz.<id>(目录 GET /catalogs), params? 覆写模板默认},未注册渲染降级纯文本 + WARN;显式 null 或空对象 {} = 清除挂载(单 Op,undo 可还原);字段缺席 = 不改",
         "properties": {
          "template": {
-          "type": "string"
+          "type": "string",
+          "description": "花字模板 id(非空对象时必填;整对象为空 = 清除语义)"
          },
          "params": {
           "type": "object"
@@ -560,7 +558,7 @@
         "description": "保速变调半音档(册四 T4.8):asetrate+aresample ×2^(n/12),atempo(speed/k) 补偿保速;链序 = 降噪→倒放→变调→变速"
        }
       },
-      "description": "改片段属性(按字段合并;textStyle/huazi/crop/fx 为整对象替换);册四 T4.7/T4.8 起 patch.textStyle/patch.huazi 承接文本样式与花字,patch.denoise/patch.pitch 承接降噪与变调"
+      "description": "改片段属性(按字段合并;textStyle/huazi/crop/fx 为整对象替换);册四 T4.7/T4.8 起 patch.textStyle/patch.huazi 承接文本样式与花字,patch.denoise/patch.pitch 承接降噪与变调;收口:patch.huazi 显式 null 或 {} = 清除花字挂载"
      },
      "summary": {
       "type": "string"

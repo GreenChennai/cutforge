@@ -189,7 +189,7 @@ T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeC
 | `track-visibility-<id>`(保留) | button | 眼睛(ephemeral 视图隐藏,语义不变) |
 | `track-lane-<id>`(保留) | div | 新增状态类:`.lane-locked`(拒绝编辑)/`.lane-muted`(波形灰化)/`.lane-soloed` |
 | `.lane-grip` | span | 轨道高度拖拽把手(松手一笔 track_update.heightPx,[28,160]px) |
-| `trim-mode` | span(toolbar) | 裁剪模式徽标(T 键;hidden 切换;wrap 挂 .trim-mode) |
+| `trim-mode` | span(toolbar) | 裁剪模式徽标(V 键;T4.7 起 T 让位文本工具;hidden 切换;wrap 挂 .trim-mode) |
 | `clip`(保留) | div.clip | 新增:`.overlay` 画中画视觉(虚线边 + `.clip-pip` 角标);T 模式 wrap.classList=`trim-mode` |
 
 ### 导出面板(T4.1 代理)
@@ -208,4 +208,73 @@ T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeC
 ### 设置面板(T4.2 吸附)
 | testid | 元素 | 说明 |
 |---|---|---|
-| `setting-snap-strength` | select | 吸附强度档:loose(仅帧)/standard(+边缘+播放头,8px)/strong(+标记,12px);主开关仍为顶栏「磁吸」 |
+| `setting-snap-strength` | select | 吸附强度档:loose(仅帧)/standard(+边缘+播放头+节拍,8px)/strong(+标记,12px);主开关仍为顶栏「磁吸」 |
+
+
+## 八、册四 A4-FE2 新增 testid(T4.4~T4.9 转场/特效/文本字幕/音频/画布变换)
+
+### 静态骨架(index.html)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `tab-transitions` / `tab-fx` / `tab-subtitles` | button | 新页签「转场库 / 特效 / 字幕」 |
+| `panel-transitions` / `panel-fx` / `panel-subtitles` | div | 三个次级页容器(#tab-transitions/#tab-fx/#tab-subtitles) |
+| `text-add` | button(toolbar) | 「T 文本」按钮:播放头处 text_add,响应 clipId 自动选中 |
+
+### 键位变更(T4.7)
+`text.add` = T(播放头处添加文本);`mode.trim` 由 T 迁至 **V**(裁剪模式;无 e2e 依赖,注册表/帮助表同步)。
+
+### 转场库(T4.5;js/panels/transitions.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `trans-status` / `trans-search` / `trans-fav-chip` | div/input/button | 目录加载态 / 搜索 / 只看收藏(localStorage) |
+| `trans-grid` / `trans-card` / `trans-fav` | div/div/button | 分类分组网格(58 项,/assets/transitions 懒加载)/ 卡片(点击或拖到片段应用;`.applied`=当前片段已应用)/ 收藏星标 |
+| `trans-empty` | div | 搜索/收藏空态 |
+| `trans-dur-presets` / `trans-clear` | div/button(检查器·转场组) | 时长预设 250/500/1000(草稿预填)/ 关闭转场(type=none) |
+| `insp-transition-clamp` | div(检查器·转场组) | 钳制提示:durMs > 片段时长时显示「后端将钳制」(不阻塞) |
+| `field-transition-type/-durMs/-fx` | select/slider/input | 转场子字段(durMs 升滑杆+预设) |
+
+### 特效库与特效栈(T4.6;js/panels/fxlib.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `fx-status` / `fx-grid` / `fx-card` | div/div/div | 目录态 / 分类网格(11 项)/ 卡片(点击挂载到选中片段,≤3 前端拦截) |
+| `fx-stack` / `fx-stack-item` / `fx-stack-empty` | div(检查器·特效组) | 已挂 combo 栈:调参(schema 滑杆,松手一笔 Op)/↑↓排序/✕移除 / 空态 |
+| `fx-param-<参数名>` | input | fx 参数控件(越界前端钳制+提示) |
+
+### 曲线变速(T4.4;js/panels/curve.js,检查器·变速组附加面)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `curve-editor` / `curve-plot` / `curve-rows` | div/canvas/div | 编辑器宿主 / 折线小图(token 取色)/ 点表 |
+| `curve-add` / `curve-apply` / `curve-reset` | button | 加点 / 应用曲线(整组替换单 Op)/ 重置匀速(单点曲线≡常速) |
+| `speed-presets` | div(检查器·变速组) | 0.5/1/2/4x 草稿预填(「应用」提交) |
+| `field-speed` / `field-reverse` / `field-crop-x…h` / `field-rotation` / `field-flip` | 控件 | 画面/变速人话控件(滑杆/开关/整对象 crop) |
+
+### 文本与字幕(T4.7;js/panels/textool.js + subtitles.js + insp-groups.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `huazi-picker` / `huazi-card` / `huazi-apply` / `huazi-clear` | div(检查器·文本组)/button | 花字库(12 模板 CSS 近似预览,标注「以渲染为准」)/ 应用(patch.huazi 整对象)/ 移除(空模板诚实降级;真清除候 BE) |
+| `field-textStyle-*` | 控件 | 14 样式字段人话控件(fontFamily/fontSize/color/outlineColor/outlineWidth/borderStyle/backColor/shadow/align 九宫格/lineSpacing/opacity/x/y/karaoke;textStyle 整对象替换) |
+| `sub-count` / `sub-rows` / `sub-row` / `sub-text` | div(字幕页签) | 计数 / 列表(文本轨片段投影逐条)/ 行(点击选中)/ 文本(双击内联编辑 → subtitle_set) |
+| `sub-start` / `sub-dur` / `sub-karaoke` | input/button(行内) | 时间微调(change 即 subtitle_retime)/ 卡拉OK开关(textStyle.karaoke) |
+| `sub-find` / `sub-replace` / `sub-track` / `sub-replace-run` | 输入/下拉/button | 批量替换(subtitle_replace;find 字面量) |
+| `sub-import-src` / `sub-import-run` / `sub-export-format` / `sub-export-out` / `sub-export-run` | — | SRT/ASS 导入(路径手输,浏览器无 fs 诚实标注)/ 导出(返回工程内相对路径) |
+| `sub-card-name` / `sub-card-save` / `sub-cards` / `sub-card` | — | 样式卡(textStyle 存 localStorage;套用选中/全部;全部=逐笔 Op 明示) |
+
+### 音频工具(T4.8;js/panels/bgm.js + insp-groups.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `bgm-beats` / `beats-clear` / `beats-sensitivity` | button(背景乐面板) | audio_beats 检测 / 清除会话节拍 / 灵敏度 0–1 |
+| `beats-box` / `beats-summary` / `beats-list` / `beats-chip` / `beats-empty` | div/span | 节拍展示(BPM/拍数/置信度 + 启发式 onset-energy 诚实标注;前 16 拍时间) |
+| `field-denoise` / `field-pitch` | select/slider(检查器·音频组) | 降噪四档人话下拉(off/low/mid/high)/ 变调 ±12 半音滑杆(0 居中) |
+| `field-motion-aliasIn` / `field-motion-aliasOut` / `motion-alias-apply` / `motion-alias-advanced` | input/button/fieldset(检查器·动效组) | mo.* 直通别名(高级可折叠;motion_set inFx/outFx;只写无回读) |
+| `field-motion-in/-inMs/-out/-outMs` | select/input | 动效下拉升级:/catalogs motion 真实渲染目录(19 项),legacy 枚举保留 |
+
+### 画布与变换(T4.9;js/panels/wizard.js + render/preview-transform.js + preview.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `wiz-ratio`(升级)/ `wiz-cust` / `wiz-cust-w` / `wiz-cust-h` / `wiz-cust-hint` | select/div/input | 预设六档+自定义;自定义 64–7680 偶数前端拦截(画幅创建时定死,已建工程无修改工具 = 勘察诚实口径,候 BE) |
+| `pv-canvas-info` | div(预览面板) | 当前画幅/帧率 + 「画幅在新建工程时设定」诚实标注 |
+| `pv-transform-hud` | div(预览下方) | 选中片段变换摘要(position 只读标注;flip/crop 渲染链不呈现代理) |
+| `pv-handle-scale` / `pv-handle-rot` | div(画布把手层) | 角柄缩放 / 顶柄旋转(松手各一笔 clip_update;仅 overlay/有变换片段出现) |
+| `pv-text-ghost` | div | 文本拖位置 ghost(textStyle.x/y,PlayRes=画布像素经预览缩放比换算) |
+| `pv-text-dragzone` | div(画布把手层) | 文本选中态全画布拖拽面(图层空置时 CSS :empty 断接,故文本态显式铺面;点选不拖不产 Op) |
+| 片段右键「定格帧」/「取消定格」 | 菜单项 | freezeMs=1000 / 0(单 Op) |

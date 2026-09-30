@@ -396,3 +396,39 @@ fn trim_undo_roundtrip_via_projection() {
     assert_eq!(after_redo["startMs"], json!(1200));
     assert_eq!(after_redo["sourceInMs"], json!(13200));
 }
+
+// ---------------- 册四收口:clip_update patch.huazi 显式清除(候 BE 了断) ----------------
+
+/// huazi_clear 显式清除语义:从有到无记录 before/after(before=对象 / after=null),
+/// 幂等重放(已无 huazi 再清)不产变更;serde 缺省 false(既有 oplog 回放零迁移)。
+#[test]
+fn huazi_clear_removes_mount_and_records_change() {
+    use cutforge_core::command::ClipPatch;
+    use cutforge_core::model::Clip;
+
+    let mut c: Clip = serde_json::from_value(json!({
+        "id": "V1-001", "startMs": 0, "durationMs": 8400, "volume": 1.0
+    })).unwrap();
+    // 先挂花字
+    ClipPatch {
+        huazi: Some(cutforge_core::text_style::Huazi { template: "hz.pop".into(), params: None }),
+        ..Default::default()
+    }
+    .apply_to(&mut c);
+    assert!(c.huazi.is_some());
+    // 清除:恰一条变更,/huazi before=模板对象 after=null;clip.huazi 归 None
+    let changes = ClipPatch { huazi_clear: true, ..Default::default() }.apply_to(&mut c);
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].0, "/huazi");
+    assert_eq!(changes[0].1["template"], json!("hz.pop"), "before 须可撤销还原");
+    assert_eq!(changes[0].2, serde_json::Value::Null);
+    assert!(c.huazi.is_none());
+    // 幂等重放:已无花字再清 → 零变更
+    let changes = ClipPatch { huazi_clear: true, ..Default::default() }.apply_to(&mut c);
+    assert!(changes.is_empty(), "重复清除不得产变更");
+    // serde 往返:huaziClear=true 保留;缺字段反序列化 = false(旧 oplog 零迁移)
+    let back: ClipPatch = serde_json::from_value(json!({"huaziClear": true})).unwrap();
+    assert!(back.huazi_clear);
+    let plain: ClipPatch = serde_json::from_value(json!({"volume": 0.5})).unwrap();
+    assert!(!plain.huazi_clear, "缺省反序列化必须为 false(旧 oplog 回放零迁移)");
+}

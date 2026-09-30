@@ -141,11 +141,14 @@ export const uiStore = createStore("ui", {
   conflicts: 0,
   internalErrors: 0,
   uiFields: null,
+  catalogs: null,  // 册四 T4.5~T4.7:GET /catalogs 目录(转场/fx/motion/花字;派生面可重建)
 });
 
 /** 临时投影(ADR-0013):拖拽 ghost/吸附线/轨头视图隐藏/会话标记。物理隔离 + 强制前缀。
  * T4.1/T4.3 增:recentMedia(素材最近使用,会话序)/ historyMarks(历史快照标记)。
- * T4.2 增:trimLineMs(roll/slide 边界拖拽指示线,ephemeral 不落盘)。 */
+ * T4.2 增:trimLineMs(roll/slide 边界拖拽指示线,ephemeral 不落盘)。
+ * T4.8 增:beats(audio_beats 会话节拍 {src,bpm,beats[],confidence,at};不落盘,
+ * 吸附候选源之一 + 标尺旗标;刷新即失,重按「检测节拍」再生)。 */
 export const ephemeralStore = createStore("ephemeral", {
   dragGhost: null,   // {clipId, trackId, startMs, durationMs, trim:"l"|"r"|null}
   snapMs: null,      // 吸附指示线位置(ms)
@@ -154,6 +157,7 @@ export const ephemeralStore = createStore("ephemeral", {
   markers: [],       // 会话标记 ms 列表(T3.4:M 键;ephemeral 不落盘不进 IR)
   recentMedia: [],   // 最近使用素材 path 序(插入即前插;会话态)
   historyMarks: [],  // 历史面板快照标记 [{rev,label,t}](导出/批量前自动打标)
+  beats: null,       // audio_beats 会话节拍 {src,bpm,beats[],confidence,degraded}
 }, { ephemeral: true });
 
 /** 调试面:全局 patch 记录(测试断言 ephemeral.* 前缀纪律用)。 */

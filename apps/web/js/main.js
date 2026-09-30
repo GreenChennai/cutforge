@@ -26,6 +26,12 @@ import * as history from "./panels/history.js";
 import * as notes from "./panels/notes.js";
 import * as diff from "./panels/diff.js";
 import * as conflicts from "./panels/conflicts.js";
+import * as transitions from "./panels/transitions.js";
+import * as fxlib from "./panels/fxlib.js";
+import * as subtitles from "./panels/subtitles.js";
+import * as textool from "./panels/textool.js";
+import { mountPreviewTransform } from "./render/preview-transform.js";
+import { ensureCatalogs } from "./core/catalogs.js";
 import { openWizard } from "./panels/wizard.js";
 import { mountOnboarding } from "./ui/onboarding.js";
 import { mountWave3Wiring, measuredSwitchTab } from "./ui/wire-wave3.js";
@@ -43,6 +49,9 @@ async function boot() {
   preview.mount($("preview")); mediaPanel.mount($("media-panel")); inspector.mount($("inspector"));
   bgm.mount($("bgm-panel")); expanel.mount($("export"));
   history.mount($("tab-history")); notes.mount($("tab-notes")); diff.mount($("tab-diff")); conflicts.mount($("tab-conflicts"));
+  transitions.mount($("tab-transitions")); fxlib.mountFxPanel($("tab-fx")); subtitles.mount($("tab-subtitles"));
+  mountPreviewTransform(); // 画布变换把手层(缩放/旋转/文本拖位置;T4.9)
+  textool.mountToolbarButton(); // 工具栏「T 文本」按钮(键位 T 见 keymap)
   mountMediaPool(); // 宿主 #pv-media 由 preview 面板提供,此处只做绑定校验
   mountPreviewLoop(); // 媒体池对齐 + 预览循环(播放解耦核心)
   bindChrome(); installEditorShortcuts(); wireEvents();
@@ -66,6 +75,7 @@ async function boot() {
   await reproject();         // 投影 → store → 增量渲染(#rev 翻牌,e2e 就绪锚点)
   await refreshConflicts();
   await mediaPanel.initialMediaBrowse();
+  ensureCatalogs();          // 转场/特效/花字目录预热(面板各自也会 ensure,幂等)
   startEvents(sess.token);
   window.__cutforgeSelfTest = selfTestRebuild; // T2.2 重建铁律自测入口(TESTIDS.md §五)
   recordBoot(performance.now() - tBoot); // T3.5 首屏可交互预算(投影+素材首览完成)
@@ -118,9 +128,13 @@ const switchTab = measuredSwitchTab(switchTabNow);
 function switchTabNow(tab) {
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === tab));
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.id === `tab-${tab}`));
+  // 回时间线页签必重渲一次:隐藏期(clientWidth=0)的投影变化没有 scroll/resize 事件
+  // 可消费,不重渲会呈现过期片段面(增量渲染只碰变化节点,开销可忽略)。
+  if (tab === "timeline") renderTimelineView();
   if (tab === "history") history.refresh();
   if (tab === "notes") notes.refresh();
   if (tab === "diff") diff.refresh();
   if (tab === "conflicts") conflicts.refresh();
+  if (tab === "subtitles") subtitles.refresh();
 }
 boot();

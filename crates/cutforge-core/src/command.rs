@@ -104,6 +104,11 @@ pub struct ClipPatch {
     /// 花字挂载(册四 T4.7):整对象替换(template+params)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub huazi: Option<crate::text_style::Huazi>,
+    /// 花字显式清除(册四收口):clip_update patch.huazi = null / {} 的承接位——
+    /// Option<Huazi> 表达不了「从有到无」,以独立布尔承载清除语义(serde default
+    /// 保证既有 oplog 回放零迁移);与 huazi 同现时清除胜出(派发层互斥构造)。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub huazi_clear: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freeze_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -409,6 +414,15 @@ impl ClipPatch {
                 serde_json::to_value(v).unwrap_or(Value::Null),
             );
         }
+        if self.huazi_clear {
+            // 显式清除(册四收口;huazi_clear 与 huazi 同现时清除胜出,replay 稳健)
+            let old = clip.huazi.take();
+            record(
+                "huazi",
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                Value::Null,
+            );
+        }
         if let Some(v) = self.freeze_ms {
             let old = clip.freeze_ms;
             clip.freeze_ms = Some(v);
@@ -533,6 +547,7 @@ mod tests {
             text: Some("字幕".into()),
             text_style: Some(crate::text_style::TextStyle { color: Some("#FFCC00".into()), ..Default::default() }),
             huazi: Some(crate::text_style::Huazi { template: "hz.pop".into(), params: None }),
+            huazi_clear: false,
             freeze_ms: Some(300),
             transition: Some(TransitionPatch { type_: Some("fade".into()), dur_ms: Some(300.0), ..Default::default() }),
             motion: Some(MotionPatch { in_: Some("fadeIn".into()), ..Default::default() }),

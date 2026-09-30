@@ -138,10 +138,11 @@ export function edgeScroll(wrap) {
   };
 }
 
-/* ---------------- 吸附体系(T4.2 统一候选源)----------------
- * 候选源:帧网格(既有)/ 片段边缘 / 播放头 / 会话标记;主开关 = 磁吸 checkbox;
- * 强度档(prefs snapStrength):loose=仅帧网格,standard=+播放头/片段边缘(8px),
- * strong=+标记(12px)。优先级:播放头 > 标记 > 片段边缘 > 帧网格。 */
+/* ---------------- 吸附体系(T4.2 统一候选源;T4.8 增节拍)----------------
+ * 候选源:帧网格(既有)/ 片段边缘 / 播放头 / 会话标记 / 会话节拍(audio_beats);
+ * 主开关 = 磁吸 checkbox;强度档(prefs snapStrength):loose=仅帧网格,
+ * standard=+播放头/片段边缘/节拍(8px),strong=+标记(12px)。
+ * 优先级:播放头 > 标记 > 节拍 > 片段边缘 > 帧网格。 */
 import { pref } from "../ui/prefs.js";
 
 export const SNAP_RADIUS_PX = 8;      // standard 档吸附半径
@@ -152,9 +153,22 @@ export function snapRadiusPx() {
   return pref("snapStrength", "standard") === "strong" ? SNAP_RADIUS_STRONG_PX : SNAP_RADIUS_PX;
 }
 
+/** 就近节拍(standard 档候选;无节拍/未开磁吸返回 null)。 */
+function beatCandidate(ms, radius) {
+  const beats = ephemeralStore.get().beats;
+  if (!beats || !Array.isArray(beats.beats) || !beats.beats.length) return null;
+  let best = null;
+  let bestDist = radius;
+  for (const b of beats.beats) {
+    const d = Math.abs(msAdd(ms, -b));
+    if (d <= bestDist) { bestDist = d; best = b; }
+  }
+  return best;
+}
+
 /**
- * 统一吸附候选(T4.2):@param excludeIds 排除自身片段(拖拽中的 clip 边缘不作候选)。
- * @returns {{ ms: number, playhead: boolean, source: string }} source ∈ frame|edge|playhead|marker
+ * 统一吸附候选(T4.2/T4.8):@param excludeIds 排除自身片段(拖拽中的 clip 边缘不作候选)。
+ * @returns {{ ms: number, playhead: boolean, source: string }} source ∈ frame|edge|playhead|marker|beat
  */
 export function snapCandidateEx(ms, excludeIds = []) {
   if (!uiStore.get().magnet) return { ms: Math.max(0, Math.round(ms)), playhead: false, source: "frame" };
@@ -173,7 +187,12 @@ export function snapCandidateEx(ms, excludeIds = []) {
       }
     }
   }
-  // 3) 片段边缘(全部投影行的 start/end;排除拖拽自身与隐藏轨)
+  // 3) 会话节拍(standard 档;audio_beats 会话结果,吸附体系合并口)
+  if (strength !== "loose") {
+    const beat = beatCandidate(ms, radius);
+    if (beat !== null) return { ms: Math.max(0, Math.round(beat)), playhead: false, source: "beat" };
+  }
+  // 4) 片段边缘(全部投影行的 start/end;排除拖拽自身与隐藏轨)
   if (strength !== "loose") {
     const hidden = new Set(ephemeralStore.get().hiddenTracks || []);
     const rows = timelineStore.get().clips || [];
@@ -188,7 +207,7 @@ export function snapCandidateEx(ms, excludeIds = []) {
     }
     if (best !== null) return { ms: Math.max(0, Math.round(best)), playhead: false, source: "edge" };
   }
-  // 4) 帧网格(旧缺省)
+  // 5) 帧网格(旧缺省)
   return { ms: Math.max(0, snapAt(ms)), playhead: false, source: "frame" };
 }
 
@@ -196,6 +215,16 @@ export function snapCandidateEx(ms, excludeIds = []) {
 export function snapCandidate(ms) {
   const c = snapCandidateEx(ms, []);
   return { ms: c.ms, playhead: c.source === "playhead" };
+}
+
+/**
+ * 标尺 scrub 专用节拍吸附(播放头吸附节拍;仅磁吸开 + 非 loose + 已检测节拍时生效;
+ * 不引入边缘候选,标尺旧口径零漂移,e2e 兼容红线)。无命中返回 null。
+ */
+export function snapBeatScrub(ms) {
+  if (!uiStore.get().magnet) return null;
+  if (pref("snapStrength", "standard") === "loose") return null;
+  return beatCandidate(ms, snapRadiusPx() / PX_PER_MS);
 }
 
 /** 对齐脉冲(磁性提示):吸附值变化时 80ms 一次;限频防频闪。 */

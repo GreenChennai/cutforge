@@ -235,6 +235,29 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 w: p["crop"]["w"].as_u64().unwrap_or(0),
                 h: p["crop"]["h"].as_u64().unwrap_or(0),
             });
+            // 花字(册四 T4.7;收口置空语义):显式 null 或空对象 {} = 清除挂载
+            // (huazi_clear 承接,undo 可还原);非空对象 = 整对象替换,非法结构
+            // 显式拒绝(SCHEMA_INVALID,不做静默丢弃的幻觉面);字段缺席 = 不改。
+            let (huazi, huazi_clear) = match p.get("huazi") {
+                None => (None, false),
+                Some(Value::Null) => (None, true),
+                Some(v) if v.is_object() => {
+                    if v.as_object().is_some_and(|o| o.is_empty()) {
+                        (None, true)
+                    } else {
+                        match serde_json::from_value::<cutforge_core::text_style::Huazi>(v.clone()) {
+                            Ok(h) => (Some(h), false),
+                            Err(e) => {
+                                return envelope(false, "SCHEMA_INVALID",
+                                    &format!("patch.huazi 非法: {e}"), json!({}))
+                            }
+                        }
+                    }
+                }
+                Some(_) => {
+                    return envelope(false, "SCHEMA_INVALID", "patch.huazi 必须是对象", json!({}))
+                }
+            };
             let patch = ClipPatch {
                 start_ms: p["startMs"].as_u64(),
                 duration_ms: p["durationMs"].as_u64(),
@@ -287,16 +310,9 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                         return envelope(false, "SCHEMA_INVALID", "patch.textStyle 必须是对象", json!({}))
                     }
                 },
-                huazi: match p.get("huazi") {
-                    None | Some(Value::Null) => None,
-                    Some(v) if v.is_object() => match serde_json::from_value(v.clone()) {
-                        Ok(h) => Some(h),
-                        Err(e) => {
-                            return envelope(false, "SCHEMA_INVALID", &format!("patch.huazi 非法: {e}"), json!({}))
-                        }
-                    },
-                    Some(_) => return envelope(false, "SCHEMA_INVALID", "patch.huazi 必须是对象", json!({})),
-                },
+                // 花字语义已在上方 (huazi, huazi_clear) 解出:null/{} = 清除,非空对象 = 整替换
+                huazi,
+                huazi_clear,
             };
             finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
         }

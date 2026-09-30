@@ -27,8 +27,9 @@ const READONLY = new Set([
 
 /** 数据面 GET 白名单(壳内 fetch 只允许这些路径 + /rpc)。
  * /media(T4.1):缩略图 PNG / peaks JSON 等缓存产物的加载通道(后端同一端点,
- * 媒体元素 src 亦走它;壳侧仍经本文件唯一收口)。 */
-const DATA_GET_WHITELIST = new Set(["/session", "/ui-fields", "/events", "/media"]);
+ * 媒体元素 src 亦走它;壳侧仍经本文件唯一收口)。
+ * /catalogs(册四 T4.5~T4.7):转场/特效/动效/花字目录(编译期嵌入,GET 下发)。 */
+const DATA_GET_WHITELIST = new Set(["/session", "/ui-fields", "/events", "/media", "/catalogs"]);
 
 const RETRY_MAX = 3;
 const RETRY_BASE_MS = 300;

@@ -5,11 +5,13 @@
 ## 未发行(Unreleased)
 
 > 册一「内核重构与架构加固」批次(128856c / 3ce2884 / 7157178)+ 册二「前端壳重写」
-> 批次(7f02955 之后的未提交工作面)+ 册三「UX 动效/键位/可访问性」批次;版本号待发行时定
-> (沿用仓库惯例:发行时才把本段改为版本号。此前的 v0.6 批次——编辑器 NLE 化、
-> schema v2 M14 双仓同步——发行时一并补记)。
+> 批次(7f02955 之后的未提交工作面)+ 册三「UX 动效/键位/可访问性」批次 +
+> 册四「核心工具与媒体管线」批次(a2ba870~77cade5 已提交;FE2/收口波为未提交工作面);
+> 版本号待发行时定(沿用仓库惯例:发行时才把本段改为版本号。此前的 v0.6 批次——
+> 编辑器 NLE 化、schema v2 M14 双仓同步——发行时一并补记)。
 > 册二台账见 [docs/A2-PROGRESS.md](docs/A2-PROGRESS.md);册三台账见
-> [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md)。
+> [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md);册四台账见
+> [docs/A4-PROGRESS.md](docs/A4-PROGRESS.md)。
 
 ### 新增
 
@@ -98,6 +100,39 @@
   `e2e_perf_budget`(首屏/页签/导出节奏/池有界,结果落 `docs/bench/perf-a3.json`);
   CI web-e2e 增 hotkeys/a11y 两步(drag/perf/budget 负载敏感不进 CI);
   `gate.py A3` 册级门禁注册(**15 项全阻断**)。
+- **时间线编辑全工具(册四 A4-BE1)**:`clip_trim` 四件套(trim/roll/slip/slide,
+  碰撞守护)、`clip_split_all`、`track_update`(七字段)、`clip_gap_delete`、
+  `clip_copy` + `clip_paste_at`(会话剪贴板);Track 字段进 IR + merge 承接 +
+  roundtrip 证明;工具 42→**48 = 13 查询 + 27 写 + 8 编排**;parity golden 48 重录。
+  决策见 ADR-0015/0016/0017(画布范围约束/文本 ASS 路线/音频分离延后评估)。
+- **曲线变速与画布扩宽(册四 A4-BE2)**:`speedCurve` 分段积分曲线变速(单一真相源
+  `speed_segments`,投影/渲染时长一致三道对拍)+ `reverse`(areverse,先于变速)+
+  变换链 crop→flip→rotate + 定格组合;画布自定义扩为 **64–7680 偶数**范围约束 +
+  推荐集(双端 multipleOf 对拍;ADR-0015);parity 夹具 9→14 全绿。
+- **转场/特效/动效库(册四 A4-BE3a)**:转场库 **7→58**(ffmpeg 实测枚举五分类,
+  目录 `tr.*` 直通;`GET /catalogs` 下发 + 缩略图生成器)+ `acrossfade` 音频转场
+  (构造性零漂移);fx 注册表 **11** 特效(combo ≤3,未注册 fxId 逐项降级 WARN);
+  motion 真实渲染 **19** 项(不能真实渲染的不进目录,诚实纪律)。
+- **文本渲染与字幕/音频工具(册四 A4-BE3b)**:`textStyle` 14 字段 → 确定性 ASS
+  复用烧录链(PlayRes=画布,所见即所得;ADR-0016)+ 花字 12 模板 + 卡拉OK `\kf`;
+  字幕工作流 `text_add` / `subtitle_import` / `subtitle_replace` / `subtitle_export`
+  (SRT 往返 **byte 级相等**,批量替换单 Op 原子);音频 `denoise` 四档(afftdn)/
+  `pitch` 保速变调 / `audio_beats` 启发式卡点(诚实标注);track mute/solo/hidden
+  渲染联动;媒体缩略图/代理/peaks(mtime+size 内容寻址)+ `useProxy` 显式 opt-in;
+  工具 48→**56 = 13 查询 + 30 写 + 13 编排**。
+- **编辑器前端工具面板(册四 FE1/FE2)**:媒体池缩略卡懒加载(视口外零请求)+
+  音频波形密度档 + 代理开关;A/B/T 工具模式 + 四件套手势(Alt=slip/Ctrl=slide/
+  Shift+边缘=roll,一次手势恰一 Op)+ 轨道头七字段 + **历史面板**(回跳 N 笔撤销/
+  快照标记);转场库 58 网格 + 特效栈编辑器 + 动画选择器 + 文本工具(画布拖位置,
+  渲染帧字节随动)+ 花字库 + 字幕编辑器全流程 + 音频工具 UI + 画布五档预设 +
+  PiP 变换把手 + 曲线点集编辑器。
+- **e2e 体系扩容(册四,×12→×15)**:新增 `e2e_editing_tools`(四件套恰一 Op +
+  实渲时长语义逐差 + 锁定轨拒编辑零 Op)、`e2e_subtitle_editor`(SRT byte 级往返 +
+  帧证文字位置 + 卡拉OK推进 + 花字)、`e2e_media_perf`(1000 素材 P95 63.3fps +
+  懒加载 + AC-4.6 听觉存档四样本落 `docs/design/audio-samples/`);CI web-e2e 增
+  editing_tools/subtitle_editor 两步(media_perf 负载敏感不进 CI);
+  `gate.py A4` 册级门禁注册(**18 项全阻断**);台账见
+  [docs/A4-PROGRESS.md](docs/A4-PROGRESS.md)。
 
 ### 变更
 
@@ -120,6 +155,13 @@
   内联几何(宽度/位移)残留在 DOM——重投影按 meta 比对不会重写同值节点;取消路径
   统一把内联几何复位回投影值(`apps/web/js/render/gestures.js`),e2e_drag_perf
   断言取消后盘面几何与投影一致。
+- **转场 offset 截断虫(册四 A4-BE3a)**:尾帧扩展时长误入累计,转场点越靠后累计
+  偏移越大,致转场后段整段丢失;旧夹具被容器时长骗过未暴露——夹具升级为容器与
+  视频流双 4.000s + 120 帧锁断言防回归(`crates/cutforge-render/tests/parity_matrix.rs`)。
+- **变调听觉存档链 atempo 方向反写(册四收口)**:存档生成器把 `atempo` 写成变速比
+  k 而非 1/k,变调样本时长漂移、与「保速变调」语义相反;改为 1/k 减速拉回,并加
+  「源 4s 处理后仍 4s」保速断言把守(`tools/e2e_media_perf.py`;滤镜映射与内核
+  `across.rs` 逐字一致)。
 
 ## 0.5.0(2026-09-25)
 

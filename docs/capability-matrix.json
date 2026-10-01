@@ -1,6 +1,6 @@
 {
  "version": 3,
- "updated": "2026-09-30(册六 T6.3 导出矩阵 + T6.2 素材库/剪映随包收编;重构图诚实降级)",
+ "updated": "2026-09-30(册七 T7.6 .cfpkg 打包/解包;T7.1 Editor API 版本化面 /api/v1 + OpenAPI/TS SDK 生成物)",
  "rule": "诚实口径:status 只认实码 + 对拍夹具(M8-5)。achieved=有专属夹具证据;partial=字段被契约接受但渲染端不完整消费;missing=契约字段存在、渲染零消费;optional=规划可选未启动。本文件是唯一真相源:docs/capability-matrix.md 与 MCP capability_matrix 工具均由它生成(M11-1 起 evidence 由 parity_matrix 夹具实测回填,ADR-0003)。",
  "items": [
   {
@@ -410,6 +410,14 @@
    "status": "missing",
    "evidence": "ADR-0023 明确不做(非待办):体积(模型数百 MB 起)/速度(CPU 推理分钟级/分钟素材)/维护面三指标全不达标且无用例;上游转写件(wordline.json)直读已覆盖真实工作流",
    "target": "触发条件=无网环境批量长素材的真实用例;届时逐案 ADR"
+  },
+  {
+   "item": ".cfpkg 工程打包/解包(单文件分享搬运)",
+   "jianying": "不适用",
+   "ffmpeg": "不适用",
+   "status": "achieved",
+   "evidence": "册七 T7.6/ADR-0026:project_package/project_unpackage 两写工具(zip store 形零依赖,zipstore 单一实现);容器 = manifest + project 真相源(v3 契约名)+ oplog 随包(撤销链保留)+ media 引用素材(缺文件记 missing 不阻断)+ 可选 exports;解包防 zip-slip/拒绝覆盖;打包→解包→再打包 byte 语义等价(manifest 时间戳归一)",
+   "target": null
   }
  ]
 }

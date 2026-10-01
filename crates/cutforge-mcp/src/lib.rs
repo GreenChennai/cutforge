@@ -33,6 +33,7 @@ mod media_tools;
 mod pro_ops;
 mod subtitle_ops;
 mod orchestrate;
+mod pkg_tools;
 mod progress;
 mod registry;
 mod rpc;

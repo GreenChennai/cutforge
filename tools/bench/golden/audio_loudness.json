@@ -10,13 +10,13 @@
    "response": {
     "code": "OK",
     "data": {
-     "deviation": 8.45,
+     "deviation": "8.5",
      "inputI": "-22.5",
      "inputLra": "0",
      "inputThresh": "-32.5",
      "inputTp": "-18.5",
      "src": "01_原始素材/bgm.mp3",
-     "target": -14.0,
+     "target": "-14",
      "within1LU": false
     },
     "message": "响度测量",

@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。76 工具 = 18 查询 + 38 写 + 20 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats 后 48→56;册五 A5 新增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 后 56→61,A5-BE3 新增 compound_create/compound_unbind/multicam_cut/scene_detect/multicam_sync/otio_export/otio_import 后 61→68;册六 A6 T6.1 新增 migrate_layout/library_manage/library_recover(写)+ library_list(查询)后 68→72;T6.3/T6.2 新增 export_preflight/media_library(查询)+ media_import(写)+ export_all_variants(编排)后 72→76,render/render_run 同批扩导出预设参数面(format/preset/qualityTier/bitrateTier/inMs/outMs/videoOnly;新增 gif/纯音频/png 序列/frame-png 出口),当前一律以本文件 tools 数组为准)",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。78 工具 = 18 查询 + 40 写 + 20 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats 后 48→56;册五 A5 新增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 后 56→61,A5-BE3 新增 compound_create/compound_unbind/multicam_cut/scene_detect/multicam_sync/otio_export/otio_import 后 61→68;册六 A6 T6.1 新增 migrate_layout/library_manage/library_recover(写)+ library_list(查询)后 68→72;T6.3/T6.2 新增 export_preflight/media_library(查询)+ media_import(写)+ export_all_variants(编排)后 72→76,render/render_run 同批扩导出预设参数面(format/preset/qualityTier/bitrateTier/inMs/outMs/videoOnly;新增 gif/纯音频/png 序列/frame-png 出口);册七 A7 T7.6 新增 project_package/project_unpackage(写)后 76→78,当前一律以本文件 tools 数组为准)",
  "channels": [
   "stdio",
   "embedded-http"
@@ -3583,6 +3583,65 @@
     },
     "required": [
      "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "project_package",
+   "kind": "write",
+   "idempotent": false,
+   "description": "工程打包为 .cfpkg 单文件容器(册七 T7.6):manifest + project 真相源(v3 契约名)+ oplog + media 引用素材(includeMedia 缺省 true;引用在、文件缺记 missing 不阻断)+ 可选 exports(includeExports 缺省 false);out 缺省 <root>/<slug>.cfpkg;解包走 project_unpackage;容器语义见 docs/PROJECT-FORMAT.md",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "out": {
+      "type": "string",
+      "description": "容器输出路径(缺省 <root>/<slug>.cfpkg)"
+     },
+     "includeMedia": {
+      "type": "boolean",
+      "description": "按引用收集素材(project.json 全部 clips 含复合子时间线与 bgm.src;缺省 true)"
+     },
+     "includeExports": {
+      "type": "boolean",
+      "description": "产物目录入包(缺省 false)"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "project_unpackage",
+   "kind": "write",
+   "idempotent": false,
+   "description": "解包 .cfpkg 到新工程目录(册七 T7.6):真相源落 v3 契约位、素材原位还原(src 相对路径零改写)、OpLog 随包恢复(撤销链保留);root = 新工程目录(必须不存在或为空,拒绝覆盖);清单校验 format/formatVersion/project 真相源,条目名防 zip-slip(穿越/绝对路径/反斜杠拒绝)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "解包目标新工程目录(必须不存在或为空)"
+     },
+     "src": {
+      "type": "string",
+      "description": ".cfpkg 容器路径(绝对)"
+     }
+    },
+    "required": [
+     "root",
+     "src"
     ]
    },
    "outputSchema": {

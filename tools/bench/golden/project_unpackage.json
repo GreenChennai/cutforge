@@ -1,0 +1,26 @@
+{
+ "tool": "project_unpackage",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/wsmig-restored",
+    "src": "<TMP>/wsmig-pkg.cfpkg"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "dest": "<TMP>/wsmig-restored",
+     "files": 1,
+     "hint": "打开:cutforge-cli serve <TMP>/wsmig-restored 或 cutforge-mcp serve --root <TMP>/wsmig-restored",
+     "media": 0,
+     "missing": [],
+     "name": "parity-mig",
+     "sourceLayout": "v3"
+    },
+    "message": "解包完成(v3 布局)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

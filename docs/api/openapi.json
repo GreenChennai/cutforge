@@ -1,0 +1,6886 @@
+{
+ "openapi": "3.1.0",
+ "info": {
+  "title": "CutForge Editor API",
+  "version": "1.0.0",
+  "description": "URL 版本化 Editor API(册七 T7.1/ADR-0025)。工具统一入口 `POST /api/v1/tools/<tool>`;常用查询 GET 别名;事件流 `/api/v1/events`。本文件是**生成物**(tools/gen_openapi.py ← schemas/mcp-tools.json 单一真相源,禁止手改);所有工具返回 `{ok, code, ns, message, data}` envelope,HTTP 状态码 由 code 确定性映射。鉴权:Bearer token(serve 启动时落盘 .cutforge/session),仅监听 127.0.0.1;CORS 默认关闭。旧 `/rpc` 保留别名至少两册(册七/册八)。工具数以契约文件实时为准(本文件生成时点:78)。",
+  "x-contract-version": 2,
+  "x-adrs": [
+   "docs/adr/0025",
+   "docs/adr/0009",
+   "docs/adr/0003"
+  ]
+ },
+ "servers": [
+  {
+   "url": "http://127.0.0.1:{port}",
+   "description": "本地工作区服务(cutforge-mcp serve --root <工程>;端口见 .cutforge/session)",
+   "variables": {
+    "port": {
+     "default": "8765"
+    }
+   }
+  }
+ ],
+ "tags": [
+  {
+   "name": "查询",
+   "description": "只读查询工具(GET 别名与 POST 入口等价)"
+  },
+  {
+   "name": "写",
+   "description": "写工具(经 Workspace::apply 唯一写入口,OpLog 全留痕)"
+  },
+  {
+   "name": "编排",
+   "description": "编排/渲染/导出工具(免锁面或子进程编排)"
+  },
+  {
+   "name": "API",
+   "description": "API 自描述端点(清单/事件流)"
+  }
+ ],
+ "components": {
+  "securitySchemes": {
+   "bearerAuth": {
+    "type": "http",
+    "scheme": "bearer"
+   }
+  },
+  "schemas": {
+   "envelope": {
+    "type": "object",
+    "required": [
+     "ok",
+     "code",
+     "message",
+     "data"
+    ],
+    "properties": {
+     "ok": {
+      "type": "boolean"
+     },
+     "code": {
+      "enum": [
+       "OK",
+       "CONFLICT",
+       "SCHEMA_INVALID",
+       "PRECONDITION_FAILED",
+       "GUARD_FAILED",
+       "JIANYING_RUNNING",
+       "NO_CONFIG",
+       "DEP_MISSING",
+       "GREEN_SCREEN_INPUT",
+       "INTERNAL"
+      ]
+     },
+     "message": {
+      "type": "string"
+     },
+     "data": {
+      "type": "object"
+     }
+    }
+   },
+   "fxEntry": {
+    "type": "object",
+    "required": [
+     "fx"
+    ],
+    "properties": {
+     "fx": {
+      "type": "string",
+      "description": "fxId(目录 GET /catalogs → fx.*)"
+     },
+     "params": {
+      "type": "object",
+      "description": "透传注册表;未声明键按默认值裁决"
+     }
+    }
+   }
+  }
+ },
+ "paths": {
+  "/api/v1/tools/project_get": {
+   "post": {
+    "operationId": "project_get",
+    "summary": "工程视图(可按轨道/时间窗裁剪)",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "view": {
+          "enum": [
+           "full",
+           "timeline"
+          ]
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/wordline_get": {
+   "post": {
+    "operationId": "wordline_get",
+    "summary": "字级时间轴+校准痕迹(唯一时间来源)",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "range_": {
+          "type": "object",
+          "description": "{fromMs,toMs} 时间窗"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/cutlist_get": {
+   "post": {
+    "operationId": "cutlist_get",
+    "summary": "粗剪决策+guard 结果",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "applied": {
+          "type": "boolean",
+          "description": "true 读 cutlist.applied.json"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/notes_list": {
+   "post": {
+    "operationId": "notes_list",
+    "summary": "标注清单(含锚点与状态)",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "state": {
+          "enum": [
+           "open",
+           "resolved",
+           "rejected",
+           "orphan"
+          ]
+         },
+         "author": {
+          "enum": [
+           "user",
+           "agent"
+          ]
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/stage_status": {
+   "post": {
+    "operationId": "stage_status",
+    "summary": "CutFlow 阶段状态(_内部状态/S*.json 存在性;0.4.x 旧布局 _state 兼容)",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/oplog_tail": {
+   "post": {
+    "operationId": "oplog_tail",
+    "summary": "OpLog tail(AI 感知用户改动的入口)",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "sinceRev": {
+          "type": "integer"
+         },
+         "actor": {
+          "enum": [
+           "user",
+           "agent",
+           "script"
+          ]
+         },
+         "limit": {
+          "type": "integer"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/conflict_list": {
+   "post": {
+    "operationId": "conflict_list",
+    "summary": "当前冲突与三方快照引用",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/render_probe": {
+   "post": {
+    "operationId": "render_probe",
+    "summary": "成片输出目录(06_成片输出;旧布局 06_output 兼容)产物清单+媒体信息",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/capability_matrix": {
+   "post": {
+    "operationId": "capability_matrix",
+    "summary": "后端能力对等矩阵(ADR-0038)",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {}
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_update": {
+   "post": {
+    "operationId": "clip_update",
+    "summary": "改片段属性(同 patch 重复应用结果一致);册四 T4.6 起 patch.fx 承接片段特效(整对象替换:combo 叠加栈上限 3 顺序即应用顺序 + in/out 槽位;目录 GET /catalogs);册五 T5.1 起 patch.keyframes 承接关键帧(整组替换,IR v3;投影 timeline_get 的 keyframeSamples 供壳曲线编辑器,壳零插值)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string"
+         },
+         "patch": {
+          "type": "object",
+          "properties": {
+           "startMs": {
+            "type": "integer"
+           },
+           "durationMs": {
+            "type": "integer"
+           },
+           "sourceInMs": {
+            "type": "integer"
+           },
+           "speed": {
+            "type": "number"
+           },
+           "volume": {
+            "type": "number"
+           },
+           "opacity": {
+            "type": "number"
+           },
+           "scale": {
+            "type": "number"
+           },
+           "text": {
+            "type": "string"
+           },
+           "freezeMs": {
+            "type": "integer"
+           },
+           "speedCurve": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+             "type": "object",
+             "additionalProperties": false,
+             "required": [
+              "atMs",
+              "speed"
+             ],
+             "properties": {
+              "atMs": {
+               "type": "integer",
+               "minimum": 0
+              },
+              "speed": {
+               "type": "number",
+               "minimum": 0.25,
+               "maximum": 4
+              }
+             }
+            },
+            "description": "分段速度曲线(册四 A4 T4.4):点集 {atMs,speed},atMs 相对片段起点;有值时优先于 speed;整组替换"
+           },
+           "reverse": {
+            "type": "boolean",
+            "description": "倒放开关(册四 A4 T4.4):reverse 先于变速;ffmpeg reverse 整段缓冲,长片段内存风险,长素材先切短再倒"
+           },
+           "rotation": {
+            "type": "number",
+            "description": "旋转角度(度;册四 A4 T4.9):任意值,渲染端 mod 360 归一;±90 走 transpose 精确互换宽高,其余角度画布内旋转出界裁切"
+           },
+           "crop": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+             "w",
+             "h"
+            ],
+            "properties": {
+             "x": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "y": {
+              "type": "integer",
+              "minimum": 0
+             },
+             "w": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+             },
+             "h": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+             }
+            },
+            "description": "源域裁剪矩形(册四 A4 T4.9):源素材像素坐标;整对象替换"
+           },
+           "flip": {
+            "type": "string",
+            "enum": [
+             "none",
+             "h",
+             "v"
+            ],
+            "description": "翻转(册四 A4 T4.9):h=水平镜像 v=垂直镜像"
+           },
+           "transition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+             "type": {
+              "type": "string",
+              "enum": [
+               "fade",
+               "wipeleft",
+               "wipeup",
+               "slideleft",
+               "circleopen",
+               "cut",
+               "none"
+              ]
+             },
+             "durMs": {
+              "type": "number"
+             },
+             "reason": {
+              "type": "string",
+              "enum": [
+               "jumpcut",
+               "topic"
+              ]
+             },
+             "fx": {
+              "type": "string"
+             }
+            },
+            "description": "转场子 patch(按字段合并,None 不改);独立工具 transition_set 的同参通道"
+           },
+           "motion": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+             "in": {
+              "type": "string"
+             },
+             "inMs": {
+              "type": "number"
+             },
+             "out": {
+              "type": "string"
+             },
+             "outMs": {
+              "type": "number"
+             }
+            },
+            "description": "动效子 patch(按字段合并,None 不改);独立工具 motion_set 的同参通道"
+           },
+           "fx": {
+            "type": "object",
+            "description": "片段特效(整对象替换):combo=[{fx,params}…] 上限 3 顺序即应用顺序;in/out 槽位登记待渲染(册五);未注册 fxId 渲染端逐项降级 WARN(fxDegraded)",
+            "properties": {
+             "in": {
+              "$ref": "#/components/schemas/fxEntry"
+             },
+             "out": {
+              "$ref": "#/components/schemas/fxEntry"
+             },
+             "combo": {
+              "type": "array",
+              "maxItems": 3,
+              "items": {
+               "$ref": "#/components/schemas/fxEntry"
+              }
+             }
+            },
+            "additionalProperties": false
+           },
+           "textStyle": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "文本样式(册四 T4.7):整对象替换;字段 fontFamily/fontSize(8-500)/color/outlineColor/outlineWidth(0-20)/borderStyle(1|3)/backColor/shadow(0-20)/align(九宫格)/lineSpacing/opacity(0-1)/x/y(画布像素,锚点=align)/karaoke;渲染按 ADR-0016 生成临时 ASS",
+            "properties": {
+             "fontFamily": {
+              "type": "string"
+             },
+             "fontSize": {
+              "type": "number",
+              "minimum": 8,
+              "maximum": 500
+             },
+             "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"
+             },
+             "outlineColor": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"
+             },
+             "outlineWidth": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20
+             },
+             "borderStyle": {
+              "type": "integer",
+              "enum": [
+               1,
+               3
+              ]
+             },
+             "backColor": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"
+             },
+             "shadow": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 20
+             },
+             "align": {
+              "type": "string",
+              "enum": [
+               "topLeft",
+               "topCenter",
+               "topRight",
+               "middleLeft",
+               "center",
+               "middleRight",
+               "bottomLeft",
+               "bottomCenter",
+               "bottomRight"
+              ]
+             },
+             "lineSpacing": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 200
+             },
+             "opacity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+             },
+             "x": {
+              "type": "number",
+              "minimum": 0
+             },
+             "y": {
+              "type": "number",
+              "minimum": 0
+             },
+             "karaoke": {
+              "type": "boolean"
+             }
+            }
+           },
+           "huazi": {
+            "type": [
+             "object",
+             "null"
+            ],
+            "additionalProperties": false,
+            "description": "花字挂载(册四 T4.7;收口置空语义):非空对象 = 整对象替换 {template: hz.<id>(目录 GET /catalogs), params? 覆写模板默认},未注册渲染降级纯文本 + WARN;显式 null 或空对象 {} = 清除挂载(单 Op,undo 可还原);字段缺席 = 不改。A4-L12:null 形态显式入 schema(文档级,后端语义册四收口已就位)",
+            "properties": {
+             "template": {
+              "type": "string",
+              "description": "花字模板 id(非空对象时必填;整对象为空 = 清除语义)"
+             },
+             "params": {
+              "type": "object"
+             }
+            }
+           },
+           "denoise": {
+            "type": "string",
+            "enum": [
+             "off",
+             "low",
+             "mid",
+             "high"
+            ],
+            "description": "降噪档(册四 T4.8):afftdn 参数映射;混音链位置 = aformat 后、倒放/变速前"
+           },
+           "pitch": {
+            "type": "number",
+            "minimum": -12,
+            "maximum": 12,
+            "description": "保速变调半音档(册四 T4.8):asetrate+aresample ×2^(n/12),atempo(speed/k) 补偿保速;链序 = 降噪→倒放→变调→变速"
+           },
+           "keyframes": {
+            "type": "array",
+            "minItems": 1,
+            "description": "关键帧(IR v3,册五 T5.1/ADR-0004+ADR-0018):[{property,timeMs,value,interp?,bezier?}] 整组替换;property 白名单 = position.x/position.y/scale/rotation/opacity/volume/speed/fx.<fxId>.<param>(fx 参数按 fx-catalog 三态,static 打点拒绝);timeMs 相对片段起点且同属性严格递增;speed 关键帧与 speedCurve 互斥;未知 property 整组 SCHEMA_INVALID",
+            "items": {
+             "type": "object",
+             "additionalProperties": false,
+             "required": [
+              "property",
+              "timeMs",
+              "value"
+             ],
+             "properties": {
+              "property": {
+               "type": "string",
+               "pattern": "^(position\\.x|position\\.y|scale|rotation|opacity|volume|speed|fx\\..+\\.[^.]+)$"
+              },
+              "timeMs": {
+               "type": "number",
+               "minimum": 0
+              },
+              "value": {
+               "type": "number"
+              },
+              "interp": {
+               "enum": [
+                "linear",
+                "easeIn",
+                "easeOut",
+                "easeInOut",
+                "bezier",
+                "hold"
+               ],
+               "description": "缺省 linear;本帧→下一帧区间的缓动"
+              },
+              "bezier": {
+               "type": "array",
+               "minItems": 4,
+               "maxItems": 4,
+               "items": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+               },
+               "description": "cubic-bezier 四参数 [x1,y1,x2,y2];interp=bezier 时必给"
+              }
+             }
+            }
+           },
+           "grade": {
+            "type": "object",
+            "description": "片段调色(册五 T5.2;整对象替换,null/{}=清除):一级校色 temperature/tint(-100..100)/exposure(-3..3)/contrast/highlights/shadows(-100..100)/saturation(0..3)/lift(-1..1 三值)/gamma(0.2..5 三值)/gain(0..4 三值);二级 curves(master/red/green/blue 点集)与 lut(.cube 相对路径,lut_import 登记);hsl 登记降级。渲染链 colorbalance→curves→eq→colorchannelmixer→lut3d(挂画幅归一后、fx 前)"
+           }
+          },
+          "description": "改片段属性(按字段合并;textStyle/huazi/crop/fx 为整对象替换);册四 T4.7/T4.8 起 patch.textStyle/patch.huazi 承接文本样式与花字,patch.denoise/patch.pitch 承接降噪与变调;收口:patch.huazi 显式 null 或 {} = 清除花字挂载"
+         },
+         "summary": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "expectRev": {
+          "type": "integer"
+         }
+        },
+        "required": [
+         "root",
+         "clipId"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_split": {
+   "post": {
+    "operationId": "clip_split",
+    "summary": "在时间点切分片段(已切则幂等返回)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string"
+         },
+         "tMs": {
+          "type": "integer"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "clipId",
+         "tMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_delete": {
+   "post": {
+    "operationId": "clip_delete",
+    "summary": "删除片段",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "clipId"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/cut_apply": {
+   "post": {
+    "operationId": "cut_apply",
+    "summary": "应用粗剪决策(RFC7386 merge-patch 到 cutlist.json)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "patch": {
+          "type": "object"
+         },
+         "summary": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "root",
+         "patch"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/subtitle_set": {
+   "post": {
+    "operationId": "subtitle_set",
+    "summary": "改字幕卡文本(text 轨片段的 text 字段)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string"
+         },
+         "text": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "clipId",
+         "text"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/subtitle_retime": {
+   "post": {
+    "operationId": "subtitle_retime",
+    "summary": "改字幕卡时间(受卡时间余量规则约束)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string"
+         },
+         "startMs": {
+          "type": "integer"
+         },
+         "durationMs": {
+          "type": "integer"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "clipId"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/overlay_add": {
+   "post": {
+    "operationId": "overlay_add",
+    "summary": "新增叠加元素(贴图/卡片/Logo;需 requestId 去重)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "trackId": {
+          "type": "string"
+         },
+         "element": {
+          "type": "object",
+          "required": [
+           "src",
+           "atMs",
+           "durationMs"
+          ],
+          "properties": {
+           "src": {
+            "type": "string"
+           },
+           "atMs": {
+            "type": "integer"
+           },
+           "durationMs": {
+            "type": "integer"
+           },
+           "overlay": {
+            "type": "object",
+            "properties": {
+             "x": {
+              "type": "integer"
+             },
+             "y": {
+              "type": "integer"
+             },
+             "w": {
+              "type": "integer"
+             },
+             "h": {
+              "type": "integer"
+             },
+             "opacity": {
+              "type": "number"
+             }
+            }
+           }
+          }
+         },
+         "requestId": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "trackId",
+         "element"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/sfx_add": {
+   "post": {
+    "operationId": "sfx_add",
+    "summary": "加音效落点(密度 ≤2 个/15s;需 requestId 去重)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "tMs": {
+          "type": "integer"
+         },
+         "src": {
+          "type": "string"
+         },
+         "volume": {
+          "type": "number"
+         },
+         "requestId": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "tMs",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/notes_add": {
+   "post": {
+    "operationId": "notes_add",
+    "summary": "创建标注(AI 反向提问走 author=agent)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "anchor": {
+          "type": "object",
+          "required": [
+           "kind",
+           "tMs"
+          ],
+          "properties": {
+           "kind": {
+            "enum": [
+             "clip",
+             "track",
+             "time",
+             "word",
+             "subtitleCard"
+            ]
+           },
+           "ref": {
+            "type": [
+             "string",
+             "null"
+            ]
+           },
+           "tMs": {
+            "type": "integer"
+           }
+          }
+         },
+         "body": {
+          "type": "string"
+         },
+         "author": {
+          "enum": [
+           "user",
+           "agent"
+          ]
+         },
+         "tags": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "requestId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "root",
+         "anchor",
+         "body"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/notes_resolve": {
+   "post": {
+    "operationId": "notes_resolve",
+    "summary": "结案标注(reply + opIds 回执)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "noteId": {
+          "type": "string"
+         },
+         "reply": {
+          "type": "string"
+         },
+         "opIds": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "noteId",
+         "reply",
+         "opIds"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/notes_reject": {
+   "post": {
+    "operationId": "notes_reject",
+    "summary": "否决标注",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "noteId": {
+          "type": "string"
+         },
+         "reason": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "root",
+         "noteId",
+         "reason"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_move": {
+   "post": {
+    "operationId": "clip_move",
+    "summary": "移动片段(改 startMs;可跨同 kind 轨道;同轨重叠 GUARD_FAILED)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "requestId": {
+          "type": "string",
+          "description": "非幂等写操作去重键"
+         },
+         "clipId": {
+          "type": "string"
+         },
+         "startMs": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "toTrack": {
+          "type": "string",
+          "description": "可选目标轨道 id(须同 kind)"
+         }
+        },
+        "required": [
+         "root",
+         "clipId",
+         "startMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_duplicate": {
+   "post": {
+    "operationId": "clip_duplicate",
+    "summary": "复制片段(新 id,放到同轨指定起点;粘贴 = 复制+落点)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "requestId": {
+          "type": "string",
+          "description": "非幂等写操作去重键"
+         },
+         "clipId": {
+          "type": "string"
+         },
+         "startMs": {
+          "type": "integer",
+          "minimum": 0
+         },
+         "toTrack": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "root",
+         "clipId",
+         "startMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/track_add": {
+   "post": {
+    "operationId": "track_add",
+    "summary": "新增空轨道(kind: video|audio|text,id 确定性生成)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "requestId": {
+          "type": "string",
+          "description": "非幂等写操作去重键"
+         },
+         "kind": {
+          "type": "string",
+          "enum": [
+           "video",
+           "audio",
+           "text"
+          ]
+         }
+        },
+        "required": [
+         "root",
+         "kind"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/undo": {
+   "post": {
+    "operationId": "undo",
+    "summary": "撤销(可按 actor 批量撤销 AI 改动)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "batch": {
+          "type": "integer",
+          "description": "连续撤销 N 步"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/redo": {
+   "post": {
+    "operationId": "redo",
+    "summary": "重做",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "batch": {
+          "type": "integer"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/stage_run": {
+   "post": {
+    "operationId": "stage_run",
+    "summary": "调 rs_run.py --only <stage>",
+    "description": "kind: orchestrate · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "stage": {
+          "enum": [
+           "S0",
+           "S1",
+           "S2",
+           "S3",
+           "S4",
+           "S5",
+           "S6",
+           "S7",
+           "S8",
+           "S9",
+           "S10",
+           "S11"
+          ]
+         },
+         "params": {
+          "type": "object"
+         }
+        },
+        "required": [
+         "root",
+         "stage"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/stage_rebuild": {
+   "post": {
+    "operationId": "stage_rebuild",
+    "summary": "调对应目录 rebuild.py",
+    "description": "kind: orchestrate · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "dir": {
+          "description": "阶段目录(目录契约 0.5 中文;0.4.x 旧英文名兼容)",
+          "enum": [
+           "03_创作素材/artboard",
+           "04_粗剪决策",
+           "05_时间线工程",
+           "06_成片输出",
+           "03_assets/artboard",
+           "04_cut",
+           "05_ir",
+           "06_output"
+          ]
+         }
+        },
+        "required": [
+         "root",
+         "dir"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/verify_run": {
+   "post": {
+    "operationId": "verify_run",
+    "summary": "调 rs_verify.py 分级自检",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "level": {
+          "enum": [
+           "L0",
+           "L1",
+           "L2"
+          ]
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/sync_check": {
+   "post": {
+    "operationId": "sync_check",
+    "summary": "调 rs_sync.py(对齐断言/音频闸/QC)",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "video": {
+          "type": "string"
+         },
+         "qc": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "root",
+         "video"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/render": {
+   "post": {
+    "operationId": "render",
+    "summary": "调 rs_render.py(backend=ffmpeg,默认)或 cutforge-render(backend=cutforge,B6 已接线)",
+    "description": "kind: orchestrate · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "backend": {
+          "enum": [
+           "ffmpeg",
+           "cutforge"
+          ]
+         },
+         "ratio": {
+          "enum": [
+           "9x16",
+           "3x4",
+           "16x9"
+          ]
+         },
+         "allVariants": {
+          "type": "boolean"
+         },
+         "ass": {
+          "type": "string",
+          "description": "字幕 ass 相对路径(仅 cutforge 后端;烧录字幕用)"
+         },
+         "encoder": {
+          "type": "string",
+          "enum": [
+           "auto",
+           "hw",
+           "sw"
+          ],
+          "description": "编码器(auto/缺省=libx264 确定性基线;hw=优先硬件,试编失败优雅降级 libx264 并 WARN,AC-5.6;sw=强制软件)"
+         },
+         "quality": {
+          "type": "string",
+          "enum": [
+           "fast",
+           "balanced",
+           "quality"
+          ],
+          "description": "质量预设(fast=crf28/veryfast,balanced=crf23/medium,quality=crf18/slow;硬件各自映射)"
+         },
+         "crf": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 51,
+          "description": "恒定质量(覆盖预设)"
+         },
+         "bitrate": {
+          "type": "integer",
+          "minimum": 100,
+          "description": "视频码率 kbps(给值时 crf 让位)"
+         },
+         "gop": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "关键帧间隔(帧)"
+         },
+         "pixFmt": {
+          "type": "string",
+          "description": "像素格式(缺省 yuv420p)"
+         },
+         "loudnormTarget": {
+          "type": "string",
+          "description": "响度目标 \"I[:TP]\"(如 \"-16:-1.5\";缺省 -14:-1.0)"
+         },
+         "verboseCmd": {
+          "type": "boolean",
+          "description": "进度事件附命令原文(缺省 false——安全)"
+         },
+         "format": {
+          "type": "string",
+          "enum": [
+           "mp4-h264",
+           "mp4-h265",
+           "mov",
+           "gif",
+           "m4a",
+           "mp3",
+           "png-seq",
+           "frame-png"
+          ],
+          "description": "导出格式(册六 T6.3;缺省 mp4-h264 与既有渲染同出口;gif=palettegen/paletteuse 两段 fps12;frame-png=单帧 PNG 走 render_frame 管线)"
+         },
+         "preset": {
+          "type": "string",
+          "enum": [
+           "vertical",
+           "horizontal",
+           "square",
+           "9x16",
+           "16x9",
+           "1x1",
+           "3x4",
+           "4x5"
+          ],
+          "description": "画幅预设(vertical=1080x1920/horizontal=1920x1080/square=1080x1080;缺省=工程画幅)"
+         },
+         "qualityTier": {
+          "type": "string",
+          "enum": [
+           "1080p",
+           "720p",
+           "480p"
+          ],
+          "description": "清晰度档(短边缩放偶数取整:1080p 竖屏=1080x1920,横屏=1920x1080)"
+         },
+         "bitrateTier": {
+          "type": "string",
+          "enum": [
+           "high",
+           "medium",
+           "low"
+          ],
+          "description": "码率档(估算值:1080p 基准 12000/8000/4000 kbps 按高度折算;显式 bitrate 覆盖)"
+         },
+         "inMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "区域导出入点 ms(输出时间轴平移到 0;配 outMs 定窗口)"
+         },
+         "outMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "区域导出出点 ms(缺省=到片尾)"
+         },
+         "videoOnly": {
+          "type": "boolean",
+          "description": "仅视频(音轨静音+BGM 摘除,静音轨保留)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/export_jianying": {
+   "post": {
+    "operationId": "export_jianying",
+    "summary": "调 rs_jy_draft.py(前置:剪映未运行)",
+    "description": "kind: orchestrate · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "name": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "root",
+         "name"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/timeline_get": {
+   "post": {
+    "operationId": "timeline_get",
+    "summary": "时间线投影(逐 clip 全字段:id/track/trackKind/src/startMs/endMs/durationMs/sourceInMs/speed/volume/opacity/scale/position/overlay/motion/text/freezeMs/transition/fade/punchIn/role;endMs 由内核计算,壳禁时间线语义;后四者为 E4-3 只读展示面)",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/media_probe": {
+   "post": {
+    "operationId": "media_probe",
+    "summary": "媒体元信息(E3-2/B12 probe 接线):durationMs/分辨率/是否含音轨;src 为工程内相对路径;ffprobe 不可用如实 DEP_MISSING",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "媒体相对路径(工程根内;拒绝 .. 与绝对路径)"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/media_browse": {
+   "post": {
+    "operationId": "media_browse",
+    "summary": "素材浏览(E3-3):列工程内可导入媒体(name/path/bytes/kind;前 64 个附 durationMs)。壳素材面板与 Agent 共用;路径校验与 /media 同一 canonicalize 实现",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "dir": {
+          "type": "string",
+          "description": "浏览起始目录(工程内相对路径;缺省 = 工程根)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/render_run": {
+   "post": {
+    "operationId": "render_run",
+    "summary": "异步启动 cutforge-render(E5-3):立即返回 runId;进度用 render_progress 轮询;不持 workspace 锁",
+    "description": "kind: orchestrate · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "ass": {
+          "type": "string",
+          "description": "字幕 ass 相对路径(烧录字幕用)"
+         },
+         "encoder": {
+          "type": "string",
+          "enum": [
+           "auto",
+           "hw",
+           "sw"
+          ],
+          "description": "编码器(auto/缺省=libx264 确定性基线;hw=优先硬件,试编失败优雅降级 libx264 并 WARN,AC-5.6;sw=强制软件)"
+         },
+         "quality": {
+          "type": "string",
+          "enum": [
+           "fast",
+           "balanced",
+           "quality"
+          ],
+          "description": "质量预设(fast=crf28/veryfast,balanced=crf23/medium,quality=crf18/slow;硬件各自映射)"
+         },
+         "crf": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 51,
+          "description": "恒定质量(覆盖预设)"
+         },
+         "bitrate": {
+          "type": "integer",
+          "minimum": 100,
+          "description": "视频码率 kbps(给值时 crf 让位)"
+         },
+         "gop": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "关键帧间隔(帧)"
+         },
+         "pixFmt": {
+          "type": "string",
+          "description": "像素格式(缺省 yuv420p)"
+         },
+         "loudnormTarget": {
+          "type": "string",
+          "description": "响度目标 \"I[:TP]\"(如 \"-16:-1.5\";缺省 -14:-1.0)"
+         },
+         "verboseCmd": {
+          "type": "boolean",
+          "description": "进度事件附命令原文(缺省 false——安全)"
+         },
+         "format": {
+          "type": "string",
+          "enum": [
+           "mp4-h264",
+           "mp4-h265",
+           "mov",
+           "gif",
+           "m4a",
+           "mp3",
+           "png-seq",
+           "frame-png"
+          ],
+          "description": "导出格式(册六 T6.3;缺省 mp4-h264 与既有渲染同出口;gif=palettegen/paletteuse 两段 fps12;frame-png=单帧 PNG 走 render_frame 管线)"
+         },
+         "preset": {
+          "type": "string",
+          "enum": [
+           "vertical",
+           "horizontal",
+           "square",
+           "9x16",
+           "16x9",
+           "1x1",
+           "3x4",
+           "4x5"
+          ],
+          "description": "画幅预设(vertical=1080x1920/horizontal=1920x1080/square=1080x1080;缺省=工程画幅)"
+         },
+         "qualityTier": {
+          "type": "string",
+          "enum": [
+           "1080p",
+           "720p",
+           "480p"
+          ],
+          "description": "清晰度档(短边缩放偶数取整:1080p 竖屏=1080x1920,横屏=1920x1080)"
+         },
+         "bitrateTier": {
+          "type": "string",
+          "enum": [
+           "high",
+           "medium",
+           "low"
+          ],
+          "description": "码率档(估算值:1080p 基准 12000/8000/4000 kbps 按高度折算;显式 bitrate 覆盖)"
+         },
+         "inMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "区域导出入点 ms(输出时间轴平移到 0;配 outMs 定窗口)"
+         },
+         "outMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "区域导出出点 ms(缺省=到片尾)"
+         },
+         "videoOnly": {
+          "type": "boolean",
+          "description": "仅视频(音轨静音+BGM 摘除,静音轨保留)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/render_progress": {
+   "post": {
+    "operationId": "render_progress",
+    "summary": "查询 render_run 的进度:state(running/ok/fail)+ 最近 JSON 行进度 + 产物路径",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "runId": {
+          "type": "string",
+          "description": "render_run 返回的任务 id"
+         }
+        },
+        "required": [
+         "root",
+         "runId"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/render_frame": {
+   "post": {
+    "operationId": "render_frame",
+    "summary": "渲染指定时间点的一帧合成画面(A2/T2.4 精确预览):含转场/叠加/字幕烧录的真实效果;同步返回不持工程锁;缓存键=工作区指纹+atMs(100ms 量化)+画幅+渲染版本,改一笔即 miss;落盘 .cutforge/render-cache/frame/,壳经 /media 以返回的 media 相对路径加载",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "atMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "时间线时间点(毫秒;按 100ms 网格量化,响应回传量化后的实际抽帧点)"
+         },
+         "format": {
+          "enum": [
+           "png",
+           "jpeg"
+          ],
+          "description": "输出图片格式(缺省 png)"
+         },
+         "ass": {
+          "type": "string",
+          "description": "字幕 ass 相对路径(在帧上烧录字幕;缺省不烧)"
+         },
+         "encoder": {
+          "type": "string",
+          "enum": [
+           "auto",
+           "hw",
+           "sw"
+          ],
+          "description": "编码器(auto/缺省=libx264 确定性基线;hw=优先硬件,试编失败优雅降级 libx264 并 WARN,AC-5.6;sw=强制软件)"
+         },
+         "quality": {
+          "type": "string",
+          "enum": [
+           "fast",
+           "balanced",
+           "quality"
+          ],
+          "description": "质量预设(fast=crf28/veryfast,balanced=crf23/medium,quality=crf18/slow;硬件各自映射)"
+         },
+         "crf": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 51,
+          "description": "恒定质量(覆盖预设)"
+         },
+         "bitrate": {
+          "type": "integer",
+          "minimum": 100,
+          "description": "视频码率 kbps(给值时 crf 让位)"
+         },
+         "gop": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "关键帧间隔(帧)"
+         },
+         "pixFmt": {
+          "type": "string",
+          "description": "像素格式(缺省 yuv420p)"
+         },
+         "loudnormTarget": {
+          "type": "string",
+          "description": "响度目标 \"I[:TP]\"(如 \"-16:-1.5\";缺省 -14:-1.0)"
+         },
+         "verboseCmd": {
+          "type": "boolean",
+          "description": "进度事件附命令原文(缺省 false——安全)"
+         }
+        },
+        "required": [
+         "root",
+         "atMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_add": {
+   "post": {
+    "operationId": "clip_add",
+    "summary": "素材导入/新建片段(E3-1):内部走 Command::ClipInsert;durationMs 缺省由 ffprobe 探测自动填(E3-2);src 须为工程内相对路径;非幂等写,需 requestId 去重",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "requestId": {
+          "type": "string",
+          "description": "非幂等写操作去重键"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "目标轨道 id(如 V1)"
+         },
+         "src": {
+          "type": "string",
+          "description": "素材相对路径(工程根内;拒绝 .. 与绝对路径)"
+         },
+         "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "时间线落点(毫秒;同轨重叠 → GUARD_FAILED)"
+         },
+         "durationMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "片段时长;缺省 = ffprobe 探测的媒体时长 - sourceInMs"
+         },
+         "sourceInMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "素材入点(缺省 0)"
+         },
+         "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "音量(缺省自然音量)"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "trackId",
+         "src",
+         "startMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/project_new": {
+   "post": {
+    "operationId": "project_new",
+    "summary": "新建空工程(B11):最小 IR(canvas/fps/schemaVersion/稳定 id 空轨道);与 CLI `new` 子命令同走 cutforge_io::scaffold;工程已存在拒绝覆盖",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "目标工程目录(绝对路径;05_时间线工程/project.json 将创建于此)"
+         },
+         "slug": {
+          "type": "string",
+          "description": "工程标识;缺省取目录名"
+         },
+         "fps": {
+          "type": "integer",
+          "enum": [
+           24,
+           25,
+           30,
+           50,
+           60
+          ],
+          "description": "帧率(契约枚举;缺省 30)"
+         },
+         "canvasW": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 7680,
+          "multipleOf": 2,
+          "description": "画幅边长(ADR-0015:64–7680 且偶数;缺省宽 1080/高 1920)"
+         },
+         "canvasH": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 7680,
+          "multipleOf": 2,
+          "description": "画幅边长(ADR-0015:64–7680 且偶数;缺省宽 1080/高 1920)"
+         },
+         "tracks": {
+          "type": "array",
+          "items": {
+           "enum": [
+            "video",
+            "audio",
+            "text"
+           ]
+          },
+          "description": "初始空轨道(缺省 [video, audio] → V1+A1)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/transition_set": {
+   "post": {
+    "operationId": "transition_set",
+    "summary": "设置片段转场(clip.transition):type 必给(基础枚举 fade/wipeleft/wipeup/slideleft/circleopen/cut/none;cut/none=显式硬切或关闭);durMs/fx/reason 可选,按字段合并不覆盖未给字段;全量转场目录(ffmpeg xfade 58 项实测)走 fx=\"tr.<id>\"(目录 GET /catalogs),未注册 fxId 渲染端降级 type 并 WARN;枚举外 type 由 schema 层拒绝(SCHEMA_INVALID)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string",
+          "description": "目标片段 id(转场语义=与前一片段之间)"
+         },
+         "type": {
+          "enum": [
+           "fade",
+           "wipeleft",
+           "wipeup",
+           "slideleft",
+           "circleopen",
+           "cut",
+           "none"
+          ],
+          "description": "转场类型;cut/none=显式硬切/关闭"
+         },
+         "durMs": {
+          "type": "number",
+          "description": "转场时长(毫秒),缺省沿用现值"
+         },
+         "fx": {
+          "type": "string",
+          "description": "转场 fxId(CutFlow 分册04 §3.3);与 type 同给以 fx 为准"
+         },
+         "reason": {
+          "enum": [
+           "jumpcut",
+           "topic"
+          ],
+          "description": "转场语法制"
+         },
+         "summary": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "expectRev": {
+          "type": "integer"
+         }
+        },
+        "required": [
+         "root",
+         "clipId",
+         "type"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/motion_set": {
+   "post": {
+    "operationId": "motion_set",
+    "summary": "设置片段入场/出场动效(clip.motion):in/inMs/out/outMs/inFx/outFx 至少给一,按字段合并不覆盖未给字段;册四 T4.6 枚举扩至真实渲染目录(schemas/fx-catalog.json motion.*);inFx/outFx=mo.<id> 直通别名优先于枚举;枚举外值由 schema 层拒绝(SCHEMA_INVALID)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string",
+          "description": "目标片段 id"
+         },
+         "in": {
+          "enum": [
+           "none",
+           "fadeIn",
+           "slideInLeft",
+           "slideInRight",
+           "slideInUp",
+           "slideInDown",
+           "scaleIn",
+           "zoomIn",
+           "popIn",
+           "bounceIn",
+           "spinIn"
+          ],
+          "description": "入场动效类型"
+         },
+         "inMs": {
+          "type": "number",
+          "description": "入场时长(毫秒),缺省沿用现值"
+         },
+         "out": {
+          "enum": [
+           "none",
+           "fadeOut",
+           "slideOutLeft",
+           "slideOutRight",
+           "slideOutUp",
+           "slideOutDown",
+           "zoomOut",
+           "popOut",
+           "bounceOut",
+           "spinOut"
+          ],
+          "description": "出场动效类型"
+         },
+         "outMs": {
+          "type": "number",
+          "description": "出场时长(毫秒),缺省沿用现值"
+         },
+         "summary": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "expectRev": {
+          "type": "integer"
+         },
+         "inFx": {
+          "type": "string",
+          "description": "入场直通别名 mo.<id>(目录 GET /catalogs → fx.motion.in);优先于 in 枚举"
+         },
+         "outFx": {
+          "type": "string",
+          "description": "出场直通别名 mo.<id>(目录 GET /catalogs → fx.motion.out);优先于 out 枚举"
+         }
+        },
+        "required": [
+         "root",
+         "clipId"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/bgm_set": {
+   "post": {
+    "operationId": "bgm_set",
+    "summary": "设置工程级背景乐(doc.bgm):src 为工程内相对路径(设置/合并;工程尚无 bgm 时必给);src 显式 null=清除背景乐;gainDb/ducking/loop 可选按字段合并,新建时落 schema 默认(gainDb=-18/ducking=true/loop=true)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": [
+           "string",
+           "null"
+          ],
+          "description": "背景乐音频路径(工程内相对路径);显式 null=清除"
+         },
+         "gainDb": {
+          "type": "number",
+          "description": "增益(分贝),缺省沿用现值(新建默认 -18)"
+         },
+         "ducking": {
+          "type": "boolean",
+          "description": "人声闪避开关(新建默认 true)"
+         },
+         "loop": {
+          "type": "boolean",
+          "description": "循环播放开关(新建默认 true)"
+         },
+         "summary": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "expectRev": {
+          "type": "integer"
+         },
+         "duckThreshold": {
+          "type": "number",
+          "minimum": 0.001,
+          "maximum": 1,
+          "description": "ducking 侧链阈值(线性域;缺省 0.03=既有常量)"
+         },
+         "duckRatio": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "ducking 比例(缺省 8)"
+         },
+         "duckAttackMs": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "ducking 启动毫秒(缺省 80)"
+         },
+         "duckReleaseMs": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 5000,
+          "description": "ducking 释放毫秒(缺省 500)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_trim": {
+   "post": {
+    "operationId": "clip_trim",
+    "summary": "片段修剪四模式(册四 T4.2):trim=单边伸缩(edge 必给,startMs/durationMs/sourceInMs 联动);roll=相邻边界双边联动(总时长不变,无贴合邻居 GUARD_FAILED);slip=内容平移(sourceInMs 平移,时间线占位不变,越素材末尾 GUARD_FAILED,需 ffprobe);slide=位置平移(贴合邻居让位/压缩)。硬约束(时长>0/不越 0/无重叠)违反 GUARD_FAILED",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string"
+         },
+         "mode": {
+          "type": "string",
+          "enum": [
+           "trim",
+           "roll",
+           "slip",
+           "slide"
+          ]
+         },
+         "edge": {
+          "type": "string",
+          "enum": [
+           "in",
+           "out"
+          ],
+          "description": "作用边;trim/roll 必给,slip/slide 无需"
+         },
+         "deltaMs": {
+          "type": "integer",
+          "description": "有符号变化量(毫秒);0 拒绝"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "clipId",
+         "mode",
+         "deltaMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_split_all": {
+   "post": {
+    "operationId": "clip_split_all",
+    "summary": "播放头处所有轨命中的片段一次全分割(单 Op,undo 一刀还原);切点在片段内部才切,无命中幂等回执",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "tMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "播放头时间(毫秒)"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "tMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/track_update": {
+   "post": {
+    "operationId": "track_update",
+    "summary": "轨道属性 patch(按字段合并,None=不改):name/locked/mute/solo/hidden/heightPx/color;静音/独奏的渲染混音联动候 BE3(字段与命令链本册就位);heightPx 低于 schema 允许集 SCHEMA_INVALID",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "轨道 id(如 V1)"
+         },
+         "patch": {
+          "type": "object",
+          "properties": {
+           "name": {
+            "type": "string"
+           },
+           "locked": {
+            "type": "boolean"
+           },
+           "mute": {
+            "type": "boolean"
+           },
+           "solo": {
+            "type": "boolean"
+           },
+           "hidden": {
+            "type": "boolean"
+           },
+           "heightPx": {
+            "type": "integer",
+            "minimum": 16
+           },
+           "color": {
+            "type": "string"
+           },
+           "eq": {
+            "type": [
+             "array",
+             "null"
+            ],
+            "description": "轨道 EQ(册五 T5.3;整组替换,null=清除):[{type: peaking|lowshelf|highshelf, freq 20..20000, gain -24..24, q 0.1..16}] ≤8 段;渲染 = per-track biquad 链"
+           },
+           "dyn": {
+            "type": [
+             "object",
+             "null"
+            ],
+            "description": "轨道动态(册五 T5.3;整对象替换,null=清除):{thresholdDb -60..0, ratio 1..20, attackMs, releaseMs, limitDb -24..0};渲染 = acompressor + alimiter"
+           }
+          }
+         },
+         "summary": {
+          "type": "string"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "trackId",
+         "patch"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_gap_delete": {
+   "post": {
+    "operationId": "clip_gap_delete",
+    "summary": "删除指定轨上包含 tMs 的间隙,后继片段整体左移闭合(单 Op 原子);首段前空档亦视作间隙;tMs 位于片段内部或全部片段之后 GUARD_FAILED",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "轨道 id(如 V1)"
+         },
+         "tMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "定位间隙的时间点(毫秒)"
+         },
+         "causedBy": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "root",
+         "trackId",
+         "tMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_copy": {
+   "post": {
+    "operationId": "clip_copy",
+    "summary": "复制片段到服务端会话态剪贴板(不产 Op、不升 rev、不可撤销;重开工作区即清空);配合 clip_paste_at 使用",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "root",
+         "clipId"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/clip_paste_at": {
+   "post": {
+    "operationId": "clip_paste_at",
+    "summary": "带属性粘贴剪贴板内容到指定轨+时间点(volume/speed/transition 等原样携带,id 在目标轨重分配);跨 kind GUARD_FAILED;落点重叠 GUARD_FAILED;剪贴板为空 PRECONDITION_FAILED;非幂等写,需 requestId 去重",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "requestId": {
+          "type": "string",
+          "description": "非幂等写操作去重键"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "目标轨道 id(须与剪贴板来源同 kind)"
+         },
+         "startMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "粘贴落点(毫秒)"
+         }
+        },
+        "required": [
+         "root",
+         "trackId",
+         "startMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/text_add": {
+   "post": {
+    "operationId": "text_add",
+    "summary": "新建文本片段到文本轨(册四 T4.7;单 Op;atMs=播放头毫秒由壳传值;text 之后即可 clip_update 再改;渲染经 ADR-0016 生成临时 ASS 烧录,目录 GET /catalogs 的 huazi 模板可挂)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "text": {
+          "type": "string",
+          "description": "文本内容(非空)"
+         },
+         "atMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "起点毫秒(播放头)"
+         },
+         "durationMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "时长毫秒,缺省 3000"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "目标文本轨;缺省 = 第一文本轨(无则 PRECONDITION_FAILED 提示 track_add)"
+         },
+         "textStyle": {
+          "type": "object",
+          "description": "文本样式(clip.textStyle 同构:fontFamily/fontSize/color/outlineColor/outlineWidth/borderStyle/backColor/shadow/align/lineSpacing/opacity/x/y/karaoke);整对象"
+         },
+         "huazi": {
+          "type": "object",
+          "description": "花字挂载 {template: hz.<id>, params?};目录 GET /catalogs"
+         },
+         "requestId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "root",
+         "text",
+         "atMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/subtitle_import": {
+   "post": {
+    "operationId": "subtitle_import",
+    "summary": "SRT/ASS 字幕导入 → 批量文本片段(册四 T4.7;整批单 Op 原子——任一落点重叠整批拒绝;解析/导出同一纯函数层,往返零丢失)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "字幕文件(工程内相对路径;SRT/ASS 自动识别)"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "目标文本轨;缺省 = 第一文本轨"
+         },
+         "textStyle": {
+          "type": "object",
+          "description": "导入批次统一文本样式(可选)"
+         },
+         "huazi": {
+          "type": "object",
+          "description": "导入批次统一花字挂载(可选)"
+         },
+         "requestId": {
+          "type": "string"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/subtitle_export": {
+   "post": {
+    "operationId": "subtitle_export",
+    "summary": "文本轨 → SRT/ASS 导出(册四 T4.7;派生物产物,不产 Op 不改 IR;缺省落 06_成片输出/subtitles_<轨>.<格式>;media 相对路径可经 /media 加载)",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "文本轨;缺省 = 第一文本轨"
+         },
+         "format": {
+          "type": "string",
+          "enum": [
+           "srt",
+           "ass"
+          ]
+         },
+         "out": {
+          "type": "string",
+          "description": "导出路径(工程内相对路径;缺省 06_成片输出/subtitles_<轨>.<格式>)"
+         }
+        },
+        "required": [
+         "root",
+         "format"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/subtitle_replace": {
+   "post": {
+    "operationId": "subtitle_replace",
+    "summary": "文本轨批量查找替换(册四 T4.7;单 Op 原子;trackId 缺省 = 全部文本轨;零匹配幂等零 Op)",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "find": {
+          "type": "string",
+          "minLength": 1,
+          "description": "查找串(字面量,非正则)"
+         },
+         "replace": {
+          "type": "string",
+          "description": "替换串(清空用空串)"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "限定文本轨;缺省 = 全部文本轨"
+         }
+        },
+        "required": [
+         "root",
+         "find",
+         "replace"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/media_peaks": {
+   "post": {
+    "operationId": "media_peaks",
+    "summary": "波形 peaks 生成(册四 T4.8;ffmpeg 解单声道 PCM → 多级分辨率 min/max 桶 JSON,落 .cutforge/peaks-cache/ 内容寻址 = 路径+mtime+size+桶数档,改素材即 miss;时间线波形绘制是 FE 活)",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "素材(工程内相对路径)"
+         },
+         "level": {
+          "type": "string",
+          "enum": [
+           "coarse",
+           "standard",
+           "fine"
+          ],
+          "description": "分辨率档(1000/2000/4000 桶),缺省 standard"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/media_thumbnail": {
+   "post": {
+    "operationId": "media_thumbnail",
+    "summary": "抽帧缩略图(册四 T4.1;ffmpeg 单帧 → PNG 落 .cutforge/thumb-cache/,内容寻址 = 路径+mtime+size+atMs+宽度;atMs 缺省 = 时长 10%)",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "素材(工程内相对路径)"
+         },
+         "atMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "抽帧点毫秒(缺省时长 10%)"
+         },
+         "width": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 1280,
+          "description": "缩略宽度,缺省 320"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/media_proxy": {
+   "post": {
+    "operationId": "media_proxy",
+    "summary": "1/2 分辨率代理生成/查询(册四 T4.1;.cutforge/proxy/ 内容寻址;渲染端 render/render_frame 的 useProxy 显式 opt-in 消费同一目录——预览走代理,导出走原片)",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "素材(工程内相对路径)"
+         },
+         "generate": {
+          "type": "boolean",
+          "description": "缺失时是否生成,缺省 true;false = 仅查询状态"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/audio_beats": {
+   "post": {
+    "operationId": "audio_beats",
+    "summary": "节拍检测(册四 T4.8;onset-energy 启发式:RMS 包络 → 半波整流差分 → 自相关 BPM + 相位网格;degraded=true 诚实标注,置信度随产出;纯计算不落盘不产 Op,标记落盘与吸附是 FE 活)",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "音频素材(工程内相对路径)"
+         },
+         "sensitivity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "灵敏度(0 稀疏..1 密集),缺省 0.5"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/lut_import": {
+   "post": {
+    "operationId": "lut_import",
+    "summary": "导入 3D LUT(.cube,册五 T5.2):结构合法性校验(3D 主格式,33³ 格)后拷入 .cutforge/luts/(同名同内容幂等覆盖,同名异内容追加序号);返回相对路径供 clip.grade.lut 引用(段缓存键含 LUT 内容哈希)",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": ".cube 源文件(工程内相对路径)"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/scope_data": {
+   "post": {
+    "operationId": "scope_data",
+    "summary": "示波器数据后端(册五 T5.2):帧像素 → 亮度波形列采样 / UV 矢量散点聚合(64×64)/ RGB 直方图(64 桶)三类数据 JSON;缓存 .cutforge/scope-cache/(内容寻址);壳 canvas 绘制是 FE 活,本工具只供数据",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "帧/视频(工程内相对路径;视频配 atMs 抽帧)"
+         },
+         "atMs": {
+          "type": "integer",
+          "description": "视频抽帧时间点毫秒(缺省 0)"
+         },
+         "width": {
+          "type": "integer",
+          "description": "采样面宽(64..512,缺省 256)"
+         },
+         "waveCols": {
+          "type": "integer",
+          "description": "波形列数(16..512,缺省 128)"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/audio_loudness": {
+   "post": {
+    "operationId": "audio_loudness",
+    "summary": "响度计(册五 T5.3):ffmpeg loudnorm 测量成片/段落的 LUFS/TP/LRA/阈值 → JSON(与导出双 pass 同源);可给 target 得 deviation/within1LU(AC-5.3 的 ≤1LU 判定);只读不持锁",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "音频/成片(工程内相对路径)"
+         },
+         "target": {
+          "type": "number",
+          "description": "响度目标 LUFS(缺省 -14;给值即算偏差)"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/encode_probe": {
+   "post": {
+    "operationId": "encode_probe",
+    "summary": "硬件编码探测(册五 T5.6):ffmpeg -encoders 清单(nvenc/qsv/amf 编译期在位)+ 试编可用性(驱动/会话真可用);auto 缺省 = libx264 确定性基线,hw 试编失败优雅降级(AC-5.6);只读不持锁",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "trial": {
+          "type": "boolean",
+          "description": "是否试编探测(缺省 true;false 只查清单)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/render_queue": {
+   "post": {
+    "operationId": "render_queue",
+    "summary": "渲染队列操作(册五 T5.6):list 查询全队列 / pause 暂停(queued/running;运行中=终止子进程转 paused)/ resume 恢复排队 / cancel 取消 / retry 重试(fail/canceled/ok → 重新排队,渲染缓存吸收重跑成本);并发上限 env CUTFORGE_RENDER_CONCURRENCY(缺省 1);状态事件接既有 render.progress 事件面",
+    "description": "kind: orchestrate · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "action": {
+          "type": "string",
+          "description": "list|pause|resume|cancel|retry(缺省 list)"
+         },
+         "runId": {
+          "type": "string",
+          "description": "目标任务(render_run 返回;list 不需要)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/compound_create": {
+   "post": {
+    "operationId": "compound_create",
+    "summary": "复合片段打包(册五 T5.4/ADR-0019):选中多片段打包为一个复合片段(单 Op 原子;原片段移除,子时间线=选中片段局部时间域)。守卫:≥2 片段/全部视频轨/两两不重叠且首尾相接/不得含复合片段(深度上限两级)。编辑复合内部=解包→改→重打包",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipIds": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          },
+          "minItems": 2,
+          "description": "选中片段 id 数组(≥2)"
+         },
+         "toTrack": {
+          "type": "string",
+          "description": "目标视频轨"
+         },
+         "startMs": {
+          "type": "number",
+          "description": "复合片段落点毫秒"
+         },
+         "requestId": {
+          "type": "string",
+          "description": "幂等去重键"
+         }
+        },
+        "required": [
+         "root",
+         "clipIds",
+         "toTrack",
+         "startMs"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/compound_unbind": {
+   "post": {
+    "operationId": "compound_unbind",
+    "summary": "复合片段解包(册五 T5.4/ADR-0019):还原为子片段落回所在轨(单 Op 原子;局部时间域平移回主时间线,id 重新确定性分配;打包的逆操作)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "clipId": {
+          "type": "string",
+          "description": "复合片段 id"
+         },
+         "requestId": {
+          "type": "string",
+          "description": "幂等去重键"
+         }
+        },
+        "required": [
+         "root",
+         "clipId"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/multicam_sync": {
+   "post": {
+    "operationId": "multicam_sync",
+    "summary": "多机位同步分析(册五 T5.4/ADR-0019):同源多角度素材数组 → 音频包络互相关对齐 → 各素材偏移 ms(angles[0]=基准,offset 恒 0;offset 语义=角度源时间轴相对基准的滞后)。engine=envelope-xcorr,degraded=true 启发式诚实标注;纯计算不落盘不产 Op",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "angles": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          },
+          "minItems": 2,
+          "description": "同源多角度素材(工程内相对路径;angles[0]=基准)"
+         },
+         "windowMs": {
+          "type": "number",
+          "description": "搜索窗 ±毫秒(缺省 5000,上限 30000)"
+         }
+        },
+        "required": [
+         "root",
+         "angles"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/multicam_cut": {
+   "post": {
+    "operationId": "multicam_cut",
+    "summary": "多机位切换序列展开(册五 T5.4/ADR-0019:多机位=序列不是实体):切换点列表 → 展开为普通片段序列落同一条轨(单 Op 原子;sourceInMs 已含同步偏移)。angles[i].offsetMs 接 multicam_sync 输出",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "trackId": {
+          "type": "string",
+          "description": "目标视频轨"
+         },
+         "startMs": {
+          "type": "number",
+          "description": "序列起点毫秒(绝对)"
+         },
+         "durationMs": {
+          "type": "number",
+          "description": "序列总时长毫秒"
+         },
+         "angles": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "src": {
+             "type": "string"
+            },
+            "offsetMs": {
+             "type": "number"
+            }
+           },
+           "required": [
+            "src"
+           ]
+          },
+          "description": "角度清单([{src, offsetMs}];offsetMs 缺省 0)"
+         },
+         "switches": {
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "tMs": {
+             "type": "number"
+            },
+            "angle": {
+             "type": "integer"
+            }
+           },
+           "required": [
+            "tMs",
+            "angle"
+           ]
+          },
+          "description": "切换点列表(tMs 相对 startMs,严格递增,首点必须为 0)"
+         },
+         "requestId": {
+          "type": "string",
+          "description": "幂等去重键"
+         }
+        },
+        "required": [
+         "root",
+         "trackId",
+         "startMs",
+         "durationMs",
+         "angles",
+         "switches"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/scene_detect": {
+   "post": {
+    "operationId": "scene_detect",
+    "summary": "场景剪切检测(册五 T5.4):抽帧差分(灰度 64x36 @sampleFps)→ 自适应阈值局部极大 → 剪切点列表(engine=frame-diff,degraded=true 启发式诚实标注);autoSplit.trackId 给定时按切点自动切段(Command::TrackSplitAt 单 Op 原子;切点不在片段内部时 GUARD 拒绝)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "素材(工程内相对路径)"
+         },
+         "sampleFps": {
+          "type": "number",
+          "description": "抽帧采样率(缺省 5,1..15)"
+         },
+         "sensitivity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "灵敏度(0 稀疏..1 密集),缺省 0.5"
+         },
+         "autoSplit": {
+          "type": "object",
+          "properties": {
+           "trackId": {
+            "type": "string"
+           }
+          },
+          "required": [
+           "trackId"
+          ],
+          "description": "自动切段目标轨(缺省只检测不切)"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/otio_export": {
+   "post": {
+    "operationId": "otio_export",
+    "summary": "互操作导出(册五 T5.5/ADR-0019 手写最小子集):format=otio → OTIO JSON(Timeline/Track(Video/Audio)/Clip(source_range+相对路径)/Gap/Marker/Transition 基础型/Stack(复合↔嵌套 Stack);子集外轨型 WARN 留痕)或 format=edl → EDL CMX3600 文本(视频轨逐事件 C/D,转场映射 D 溶解;生成器与版本写头注释)。派生物产物,不产 Op 不改 IR;缺省落 06_成片输出/<slug>.<ext>",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "format": {
+          "type": "string",
+          "enum": [
+           "otio",
+           "edl"
+          ],
+          "description": "缺省 otio"
+         },
+         "out": {
+          "type": "string",
+          "description": "导出路径(工程内相对路径;缺省 06_成片输出/<slug>.<ext>)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/otio_import": {
+   "post": {
+    "operationId": "otio_import",
+    "summary": "OTIO 导入(册五 T5.5/ADR-0019):OTIO JSON → 新工程(从零起步,project_new 同类免锁创建;目标 root 须不存在,拒绝覆盖)。子集外元素(未知轨型/效果栈/时间变形等)WARN 留痕不静默丢;Track kind 仅 Video/Audio,未知转场类型降级 fade 并 WARN",
+    "description": "kind: orchestrate · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "目标工程目录绝对路径(必须不存在,拒绝覆盖)"
+         },
+         "src": {
+          "type": "string",
+          "description": "OTIO 文件路径(任意可读;导出产物可经 /media 加载)"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/migrate_layout": {
+   "post": {
+    "operationId": "migrate_layout",
+    "summary": "工程布局迁移(册六 T6.1/ADR-0021):V1(0.4.x 英文目录)/V2(中文阶段目录)→ V3 扁平布局(media/ + 真相源在根 + exports/);一次性到位,幂等(v3 工程 = NOOP),映射目标已存在整体拒绝(CONFLICT,盘面不动);目录级搬运,OpLog/rev/notes/.cutforge 随工程根原地不动,完整性零影响",
+    "description": "kind: write · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "to": {
+          "type": "string",
+          "enum": [
+           "v3"
+          ],
+          "description": "目标布局(当前唯一目标 v3;v2/v1 兼容读写冻结,不做回迁)"
+         }
+        },
+        "required": [
+         "root",
+         "to"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/library_manage": {
+   "post": {
+    "operationId": "library_manage",
+    "summary": "工程库管理(册六 T6.1;T6.4 增 export_cfproj):action=new(新建,scaffold 同源,layout v2/v3)/rename/copy/archive/unarchive/delete/export_cfproj(.cfproj 工程描述快照,serve 关联打开面);root=库根(env CUTFORGE_PROJECTS,缺省 %USERPROFILE%\\CutForge\\Projects);操作=目录级移动/复制,OpLog 完整性不动;活进程持锁的工程拒绝移动;delete 移入 .trash/(可捞回)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "库根目录绝对路径"
+         },
+         "action": {
+          "type": "string",
+          "enum": [
+           "new",
+           "rename",
+           "copy",
+           "archive",
+           "unarchive",
+           "delete",
+           "export_cfproj"
+          ],
+          "description": "库操作(export_cfproj=导出 .cfproj 工程描述)"
+         },
+         "name": {
+          "type": "string",
+          "description": "库内工程名(new/rename/copy/archive/unarchive/delete/export_cfproj 必填)"
+         },
+         "to": {
+          "type": "string",
+          "description": "目标名(rename/copy 必填)"
+         },
+         "out": {
+          "type": "string",
+          "description": "export_cfproj 的描述文件落点(缺省 <库根>/<名>.cfproj)"
+         },
+         "layout": {
+          "type": "string",
+          "enum": [
+           "v2",
+           "v3"
+          ],
+          "description": "action=new 的布局(过渡期缺省 v2,ADR-0021)"
+         },
+         "slug": {
+          "type": "string",
+          "description": "action=new 的工程标识(缺省=工程名)"
+         },
+         "fps": {
+          "type": "integer",
+          "enum": [
+           24,
+           25,
+           30,
+           50,
+           60
+          ],
+          "description": "action=new;缺省 30"
+         },
+         "canvasW": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 7680,
+          "multipleOf": 2,
+          "description": "action=new;缺省宽 1080"
+         },
+         "canvasH": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 7680,
+          "multipleOf": 2,
+          "description": "action=new;缺省高 1920"
+         },
+         "tracks": {
+          "type": "array",
+          "items": {
+           "enum": [
+            "video",
+            "audio",
+            "text",
+            "adjust"
+           ]
+          },
+          "description": "action=new 初始轨道(缺省 [video, audio])"
+         }
+        },
+        "required": [
+         "root",
+         "action"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/library_list": {
+   "post": {
+    "operationId": "library_list",
+    "summary": "工程库清单(册六 T6.1):卡片元数据从 project.json 轻量派生(slug/fps/画幅/时长=IR 投影 max endMs/rev/修改时间/缩略图=.cutforge/thumb-cache 最新产物);不逐工程 ffprobe(列表成本可控);query 子串过滤 name/slug(大小写不敏感);includeArchived 并入 .archives 归档区;坏工程如实标 valid=false",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "库根目录绝对路径"
+         },
+         "query": {
+          "type": "string",
+          "description": "搜索子串(过滤 name/slug;缺省不过滤)"
+         },
+         "includeArchived": {
+          "type": "boolean",
+          "description": "是否并入归档区(缺省 false)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/library_recover": {
+   "post": {
+    "operationId": "library_recover",
+    "summary": "崩溃恢复(册六 T6.1/AC-6.1):action=list 列库内可恢复工程(.cutforge/lock 在盘且 pid 已死/锁龄超阈;附会话摘要证据 revFrom/revTo);action=recover+name 对指定工程执行恢复(清残留锁 + OpLog 一致性校验:半行截断/rev 对账/规范形落盘,复用 Workspace::open_for_write 既有语义)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "库根目录绝对路径"
+         },
+         "action": {
+          "type": "string",
+          "enum": [
+           "list",
+           "recover"
+          ],
+          "description": "list=恢复清单(缺省);recover=执行恢复"
+         },
+         "name": {
+          "type": "string",
+          "description": "action=recover 的库内工程名"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/export_preflight": {
+   "post": {
+    "operationId": "export_preflight",
+    "summary": "导出前检查清单(册六 T6.3;轻探测不渲全片):缺失素材/黑帧风险(首末帧亮度,源域抽帧)/静音段(声轨覆盖间隙+逐段源 RMS 启发式)/时长(窗口裁剪后)/响度预估(audio_loudness 复用:最新成片在位则实测,否则 null);启发式面如实打 heuristic 标注;只读不持锁",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "inMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "检查窗口入点 ms(与导出窗口同参)"
+         },
+         "outMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "检查窗口出点 ms(缺省=到片尾)"
+         },
+         "target": {
+          "type": "number",
+          "description": "响度目标 LUFS(缺省 -14;仅成片在位实测时算偏差)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/export_all_variants": {
+   "post": {
+    "operationId": "export_all_variants",
+    "summary": "多画幅批量导出(册六 T6.3):action=run(缺省)一次排队 outputs 全变体任务(ratios 缺省取工程 outputs,再缺省 9x16/16x9/1x1;逐变体 runId 走渲染队列,进度/取消/重试复用 render_queue);action=status 按 parentRunId 聚合子任务状态(ok/fail/running)",
+    "description": "kind: orchestrate · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "编排"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "action": {
+          "type": "string",
+          "description": "run|status(缺省 run)"
+         },
+         "ratios": {
+          "type": "array",
+          "items": {
+           "enum": [
+            "vertical",
+            "horizontal",
+            "square",
+            "9x16",
+            "16x9",
+            "1x1",
+            "3x4",
+            "4x5"
+           ]
+          },
+          "description": "画幅变体清单(action=run;缺省=工程 outputs,再缺省 9x16/16x9/1x1)"
+         },
+         "format": {
+          "type": "string",
+          "enum": [
+           "mp4-h264",
+           "mp4-h265",
+           "mov",
+           "gif",
+           "m4a",
+           "mp3",
+           "png-seq",
+           "frame-png"
+          ],
+          "description": "导出格式(册六 T6.3;缺省 mp4-h264 与既有渲染同出口;gif=palettegen/paletteuse 两段 fps12;frame-png=单帧 PNG 走 render_frame 管线)"
+         },
+         "qualityTier": {
+          "type": "string",
+          "enum": [
+           "1080p",
+           "720p",
+           "480p"
+          ],
+          "description": "清晰度档(短边缩放偶数取整:1080p 竖屏=1080x1920,横屏=1920x1080)"
+         },
+         "bitrateTier": {
+          "type": "string",
+          "enum": [
+           "high",
+           "medium",
+           "low"
+          ],
+          "description": "码率档(估算值:1080p 基准 12000/8000/4000 kbps 按高度折算;显式 bitrate 覆盖)"
+         },
+         "inMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "区域导出入点 ms(输出时间轴平移到 0;配 outMs 定窗口)"
+         },
+         "outMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "区域导出出点 ms(缺省=到片尾)"
+         },
+         "videoOnly": {
+          "type": "boolean",
+          "description": "仅视频(音轨静音+BGM 摘除,静音轨保留)"
+         },
+         "ass": {
+          "type": "string",
+          "description": "字幕 ass 相对路径(逐变体烧录)"
+         },
+         "useProxy": {
+          "type": "boolean",
+          "description": "代理预览渲染(缺省 false)"
+         },
+         "parentRunId": {
+          "type": "string",
+          "description": "父任务 id(action=status 必填)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/media_import": {
+   "post": {
+    "operationId": "media_import",
+    "summary": "素材拷贝导入(册六 T6.2;FE1 拷贝导入通道欠账收口):src=绝对路径或素材库相对引用(libraryRoot 缺省 CUTFORGE_MEDIA/默认根),拷入工程布局感知落点(v3=media/,v2=01_原始素材/,v1=01_materials/);同名同内容幂等覆盖、异内容追加序号;tmp+rename 原子落盘;不产 Op 不改 IR(返回 src 可直接喂 clip_add/bgm_set)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "src": {
+          "type": "string",
+          "description": "素材源(绝对路径,或素材库相对引用)"
+         },
+         "libraryRoot": {
+          "type": "string",
+          "description": "素材库根(缺省 env CUTFORGE_MEDIA,再缺省 %USERPROFILE%\\CutForge\\Media)"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/media_library": {
+   "post": {
+    "operationId": "media_library",
+    "summary": "本地素材库 manifest(册六 T6.2;库根 library.json:类型/标签/时长/引用):action=list(缺省)扫描合并(在位文件↔条目按引用对齐,标签持久,派生索引幂等落盘)+ kind/tag/query 过滤;action=tag 改条目标签(entry+tags);root=素材库根(env CUTFORGE_MEDIA 缺省面同源);只读工程不持锁",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "素材库根目录绝对路径"
+         },
+         "action": {
+          "type": "string",
+          "description": "list|tag(缺省 list)"
+         },
+         "kind": {
+          "type": "string",
+          "enum": [
+           "video",
+           "audio",
+           "image",
+           "lut",
+           "text"
+          ],
+          "description": "类型过滤(list)"
+         },
+         "tag": {
+          "type": "string",
+          "description": "标签过滤(list;entry.tags 含即命中)"
+         },
+         "query": {
+          "type": "string",
+          "description": "名称/引用子串过滤(list)"
+         },
+         "entry": {
+          "type": "string",
+          "description": "素材库相对引用(action=tag 必填)"
+         },
+         "tags": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          },
+          "description": "标签全集(action=tag;整组替换)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/project_package": {
+   "post": {
+    "operationId": "project_package",
+    "summary": "工程打包为 .cfpkg 单文件容器(册七 T7.6):manifest + project 真相源(v3 契约名)+ oplog + media 引用素材(includeMedia 缺省 true;引用在、文件缺记 missing 不阻断)+ 可选 exports(includeExports 缺省 false);out 缺省 <root>/<slug>.cfpkg;解包走 project_unpackage;容器语义见 docs/PROJECT-FORMAT.md",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "工程目录绝对路径"
+         },
+         "out": {
+          "type": "string",
+          "description": "容器输出路径(缺省 <root>/<slug>.cfpkg)"
+         },
+         "includeMedia": {
+          "type": "boolean",
+          "description": "按引用收集素材(project.json 全部 clips 含复合子时间线与 bgm.src;缺省 true)"
+         },
+         "includeExports": {
+          "type": "boolean",
+          "description": "产物目录入包(缺省 false)"
+         }
+        },
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/project_unpackage": {
+   "post": {
+    "operationId": "project_unpackage",
+    "summary": "解包 .cfpkg 到新工程目录(册七 T7.6):真相源落 v3 契约位、素材原位还原(src 相对路径零改写)、OpLog 随包恢复(撤销链保留);root = 新工程目录(必须不存在或为空,拒绝覆盖);清单校验 format/formatVersion/project 真相源,条目名防 zip-slip(穿越/绝对路径/反斜杠拒绝)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "root": {
+          "type": "string",
+          "description": "解包目标新工程目录(必须不存在或为空)"
+         },
+         "src": {
+          "type": "string",
+          "description": ".cfpkg 容器路径(绝对)"
+         }
+        },
+        "required": [
+         "root",
+         "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools": {
+   "get": {
+    "operationId": "list_tools",
+    "summary": "工具清单(名/kind/描述;schemas/mcp-tools.json 单一真相源)",
+    "tags": [
+     "API"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "envelope(data.tools = 工具清单)",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/project": {
+   "get": {
+    "operationId": "get_project",
+    "summary": "工程视图(可按轨道/时间窗裁剪)(GET 别名 → project_get 同参转发)",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "view",
+      "in": "query",
+      "description": "",
+      "schema": {
+       "enum": [
+        "full",
+        "timeline"
+       ]
+      },
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/timeline": {
+   "get": {
+    "operationId": "get_timeline",
+    "summary": "时间线投影(逐 clip 全字段:id/track/trackKind/src/startMs/endMs/durationMs/sourceInMs/speed/volume/opacity/scale/position/overlay/motion/text/freezeMs/transition/fade/punchIn/role;endMs 由内核计算,壳禁时间线语义;后四者为 E4-3 只读展示面)(GET 别名 → timeline_get 同参转发)",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "parameters": [],
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/notes": {
+   "get": {
+    "operationId": "get_notes",
+    "summary": "标注清单(含锚点与状态)(GET 别名 → notes_list 同参转发)",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "state",
+      "in": "query",
+      "description": "",
+      "schema": {
+       "enum": [
+        "open",
+        "resolved",
+        "rejected",
+        "orphan"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "author",
+      "in": "query",
+      "description": "",
+      "schema": {
+       "enum": [
+        "user",
+        "agent"
+       ]
+      },
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/oplog": {
+   "get": {
+    "operationId": "get_oplog",
+    "summary": "OpLog tail(AI 感知用户改动的入口)(GET 别名 → oplog_tail 同参转发)",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "sinceRev",
+      "in": "query",
+      "description": "",
+      "schema": {
+       "type": "integer"
+      },
+      "required": false
+     },
+     {
+      "name": "actor",
+      "in": "query",
+      "description": "",
+      "schema": {
+       "enum": [
+        "user",
+        "agent",
+        "script"
+       ]
+      },
+      "required": false
+     },
+     {
+      "name": "limit",
+      "in": "query",
+      "description": "",
+      "schema": {
+       "type": "integer"
+      },
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/cutlist": {
+   "get": {
+    "operationId": "get_cutlist",
+    "summary": "粗剪决策+guard 结果(GET 别名 → cutlist_get 同参转发)",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "applied",
+      "in": "query",
+      "description": "true 读 cutlist.applied.json",
+      "schema": {
+       "type": "boolean"
+      },
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/wordline": {
+   "get": {
+    "operationId": "get_wordline",
+    "summary": "字级时间轴+校准痕迹(唯一时间来源)(GET 别名 → wordline_get 同参转发)",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "range_",
+      "in": "query",
+      "description": "{fromMs,toMs} 时间窗",
+      "schema": {
+       "type": "object"
+      },
+      "required": false
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/capabilities": {
+   "get": {
+    "operationId": "get_capabilities",
+    "summary": "后端能力对等矩阵(ADR-0038)(GET 别名 → capability_matrix 同参转发)",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "parameters": [],
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/events": {
+   "get": {
+    "operationId": "events",
+    "summary": "工作区事件流(workspace/notes/cutlist.changed + render.progress)",
+    "description": "`Accept: text/event-stream` → SSE 单向流(id:/event:/data: 帧,Last-Event-ID 续传,滚出窗口发 resync);旧客户端不带该头 → 长轮询降级(≤900ms 内有新事件即回,负载 ok/code/event/seq)。工作区通道绑定根免 root;辅通道 root 查询参数必给。",
+    "tags": [
+     "API"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "parameters": [
+     {
+      "name": "Accept",
+      "in": "header",
+      "schema": {
+       "type": "string"
+      },
+      "description": "text/event-stream = SSE"
+     },
+     {
+      "name": "since",
+      "in": "query",
+      "schema": {
+       "type": "integer",
+       "minimum": 0
+      },
+      "description": "长轮询起点 seq"
+     },
+     {
+      "name": "root",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "工程目录(仅辅通道必给;工作区通道绑定根)"
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "SSE 流(text/event-stream)或长轮询 JSON",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "properties": {
+          "ok": {
+           "type": "boolean"
+          },
+          "code": {
+           "type": "string"
+          },
+          "event": {
+           "type": "string"
+          },
+          "seq": {
+           "type": "integer"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

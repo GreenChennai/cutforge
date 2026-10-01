@@ -156,9 +156,14 @@ pub(crate) fn publish_render(root: &Path, run_id: &str, state: &str) {
 }
 
 /// watcher 事件 → SSE 事件名分类(路径一律转成工程内相对、正斜杠形态)。
+/// 三态布局全认(册六 V3 扁平布局补齐——册七 SDK 冒烟实测暴露的缺口):
+/// V1 `05_ir/project.json` / V2 `05_时间线工程/project.json` / V3 `project.json`。
 fn classify(abs: &Path, root: &Path) -> Option<(&'static str, String)> {
     let rel = abs.strip_prefix(root).ok()?.to_string_lossy().replace('\\', "/");
-    let name = if rel == paths::PROJECT_REL || rel == paths::LEGACY_PROJECT_REL {
+    let name = if rel == paths::PROJECT_REL
+        || rel == paths::LEGACY_PROJECT_REL
+        || rel == paths::V3_PROJECT_REL
+    {
         "workspace.changed"
     } else if rel == paths::NOTES_REL {
         "notes.changed"
@@ -166,6 +171,8 @@ fn classify(abs: &Path, root: &Path) -> Option<(&'static str, String)> {
         || rel == paths::CUTLIST_APPLIED_REL
         || rel == paths::LEGACY_CUTLIST_REL
         || rel == paths::LEGACY_CUTLIST_APPLIED_REL
+        || rel == paths::V3_CUTLIST_REL
+        || rel == paths::V3_CUTLIST_APPLIED_REL
     {
         "cutlist.changed"
     } else {
@@ -259,9 +266,12 @@ mod tests {
         let mk = |rel: &str| root.join(rel.replace('/', "\\"));
         assert_eq!(classify(&mk(paths::PROJECT_REL), root).unwrap().0, "workspace.changed");
         assert_eq!(classify(&mk(paths::LEGACY_PROJECT_REL), root).unwrap().0, "workspace.changed");
+        // 册七补口:V3 扁平布局(SDK 冒烟实测暴露——v3 工程此前不发 workspace.changed)
+        assert_eq!(classify(&mk(paths::V3_PROJECT_REL), root).unwrap().0, "workspace.changed");
         assert_eq!(classify(&mk(paths::NOTES_REL), root).unwrap().0, "notes.changed");
         assert_eq!(classify(&mk(paths::CUTLIST_REL), root).unwrap().0, "cutlist.changed");
         assert_eq!(classify(&mk(paths::LEGACY_CUTLIST_REL), root).unwrap().0, "cutlist.changed");
+        assert_eq!(classify(&mk(paths::V3_CUTLIST_REL), root).unwrap().0, "cutlist.changed");
         assert!(classify(&mk("01_原始素材/take1.mp4"), root).is_none());
         assert!(classify(&mk(".cutforge/bases/b1.json"), root).is_none());
     }

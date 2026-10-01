@@ -112,6 +112,10 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         // 不产 Op 不改 IR,与 lut_import 同类写面)
         "media_library" => return crate::media_library::media_library_tool(&ws_root, args),
         "media_import" => return crate::media_library::media_import_tool(&ws_root, args),
+        // 册七 T7.6:.cfpkg 工程打包/解包(免开工作区;打包持锁在 io 层自持,
+        // 解包写全新目录拒绝覆盖——目录级写面,不产 Op 不改 IR)
+        "project_package" => return crate::pkg_tools::project_package_tool(&ws_root, args),
+        "project_unpackage" => return crate::pkg_tools::project_unpackage_tool(&ws_root, args),
         _ => {}
     }
 

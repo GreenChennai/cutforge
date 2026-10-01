@@ -7,6 +7,7 @@
 use crate::dispatch::handle_rpc;
 use crate::registry::tool_names;
 use crate::transport::events;
+use cutforge_core::oplog::Actor;
 use serde_json::{json, Value};
 use std::io::Write as _;
 use std::path::Path;
@@ -213,7 +214,12 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
     let first_line = req.first_line().to_string();
     let authorized = req.head.contains(&format!("Authorization: Bearer {token}"));
     let is_rpc = first_line.starts_with("POST /rpc");
-    let is_events = first_line.starts_with("GET /events");
+    // 册七 T7.1:/api/v1 REST 面(ADR-0025);事件流别名并入既有 /events 分支(SSE 单一实现)
+    let raw_path = first_line.split(' ').nth(1).unwrap_or("");
+    let (api_path, api_query) = raw_path.split_once('?').unwrap_or((raw_path, ""));
+    let is_events = crate::transport::rest::is_events_path(api_path);
+    // events 别名不进 rest 面(SSE/长轮询单一实现;rest 管其余 /api/v1/*)
+    let is_api_v1 = !is_events && crate::transport::rest::is_api_v1(api_path);
     if !authorized {
         let _ = write!(stream, "{RESP_UNAUTHORIZED}");
         return Ok(());
@@ -222,7 +228,7 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
         && req.header("accept").is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"))
     {
         // SSE:root 仍走查询参数(辅通道无绑定工程);起点语义同工作区通道
-        let query = first_line.split(' ').nth(1).unwrap_or("").split_once('?').map(|(_, q)| q).unwrap_or("");
+        let query = api_query;
         let root_p = query.split('&').find_map(|kv| {
             let mut it = kv.split('=');
             match (it.next(), it.next()) {
@@ -241,11 +247,20 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
             }
         };
     }
-    let resp_body = if is_rpc {
-        match serde_json::from_str::<Value>(&req.body) {
+    let (resp_status, resp_body): (&str, String) = if is_rpc {
+        ("200 OK", match serde_json::from_str::<Value>(&req.body) {
             Ok(req) => handle_rpc(&req).map(|r| r.to_string()).unwrap_or_default(),
             Err(e) => json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": format!("parse error: {e}")}}).to_string(),
-        }
+        })
+    } else if is_api_v1 {
+        // 册七 T7.1:/api/v1 版本化 REST 面(ADR-0025;辅通道无绑定工程,root 须由
+        // 参数/查询串显式给出;actor=agent 与本通道 /rpc 同归因);状态码随 envelope
+        let resp = crate::transport::rest::handle_api_v1(
+            api_path, api_query, first_line.starts_with("POST"), &req.body, None,
+            Actor::agent("cutforge-mcp"),
+        );
+        let body = String::from_utf8_lossy(&resp.body).into_owned();
+        (resp.status, body)
     } else if is_events {
         // 长轮询:/events?root=<工程目录>&since=<seq>;≤1s 内有新事件立即返回。
         // A1-R2:此降级路径兼容旧壳,册二完成后移除(SSE 为新壳唯一事件面)。
@@ -261,23 +276,24 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
             }
         }
         if root_p.is_empty() {
-            // T1.7 三面同码:事件面错误也带 ns(加法字段;code 取值不变)
-            json!({"ok": false, "code": "PRECONDITION_FAILED",
-                "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": "缺 root"}).to_string()
+            ("200 OK", json!({"ok": false, "code": "PRECONDITION_FAILED",
+                "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": "缺 root"}).to_string())
         } else {
             let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(&root_p));
             let wait = Duration::from_millis(900);
-            match hub.wait_since(since, wait) {
+            let body = match hub.wait_since(since, wait) {
                 Some(seq) => json!({"ok": true, "code": "OK", "event": "workspace.changed", "seq": seq}).to_string(),
                 None => json!({"ok": true, "code": "OK", "event": "none", "seq": hub.current()}).to_string(),
-            }
+            };
+            ("200 OK", body)
         }
     } else {
-        json!({"service": "cutforge-mcp", "tools": tool_names().len()}).to_string()
+        ("200 OK", json!({"service": "cutforge-mcp", "tools": tool_names().len()}).to_string())
     };
     let _ = write!(
         stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        resp_status,
         resp_body.len(),
         resp_body
     );

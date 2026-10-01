@@ -218,10 +218,37 @@
 - 所有 MCP/HTTP 工具返回 `{ok, code, message, data}` + 加法字段 `ns`;code 取值限于
   5.4 表(OK/CONFLICT/SCHEMA_INVALID/PRECONDITION_FAILED/GUARD_FAILED/
   JIANYING_RUNNING/NO_CONFIG/DEP_MISSING/GREEN_SCREEN_INPUT/INTERNAL)。
-- 工具集单一真相源 = `schemas/mcp-tools.json`(册六 A6 后 **72 = 16 查询 + 37 写 +
-  19 编排**);`_doc` 口径句与 tools 数组机械对拍(`check_doc_counts`)。
+- 工具集单一真相源 = `schemas/mcp-tools.json`(册七 A7 起 **78 = 18 查询 + 40 写 +
+  20 编排**);`_doc` 口径句与 tools 数组机械对拍(`check_doc_counts`)。
 - 写通道唯一入口 `Workspace::apply`(八步);工程级文档变更经 `record_change`
   (先文件后记账);渲染/同步分析/导出为免锁面(不产 Op 不改 IR)。
+
+## 十二、`.cfpkg` 工程打包容器(册七 T7.6/ADR-0026)
+
+`.cfpkg` = 工程 + OpLog + 引用素材(+ 可选产物)的**单文件 zip 容器**(store 形,
+零依赖手写原语 `cutforge_io::zipstore`,与 doctor 诊断包单一实现);"时间错开的多机
+搬运/分享"形态——多实例双写协作按 ADR-0026 明确暂缓,打包/解包即现实协作答案。
+工具面:`project_package`(写)/ `project_unpackage`(写);单一实现在
+`cutforge_io::cfpkg`,dispatch 只做参数接线。
+
+**容器布局**(zip 条目名恒正斜杠):
+
+| 条目前缀 | 内容 | 语义 |
+|---|---|---|
+| `manifest.json` | 格式自描述 | `{format:"cfpkg", formatVersion:1, name(slug), schemaVersion, rev, createdAt, sourceLayout(v1/v2/v3), generator, includeMedia, includeExports, counts{project,oplog,media,exports}, missing[]}` |
+| `project/` | 五真相源文件 | **一律按 v3 契约名存放**(`project.json`/`wordline.json`/`cutlist.json`/`cutlist.applied.json`/`notes.json`);v1/v2 源工程上提到 v3 名,内容零字节改动(与迁移器同纪律) |
+| `oplog/` | `.cutforge/oplog/*.jsonl` | append-only 原样随包,撤销链/OpLog 完整性保留;rev 取 OpLog 最大 `Op.rev` |
+| `media/<工程内相对路径>` | 引用素材 | 打包**按引用收集**(project.json 全部 clips(含复合子时间线)与 bgm.src),条目名 = 工程内相对路径原样 → 解包原位还原,src 相对路径零改写;引用在、文件缺 → 记 `manifest.missing` 不阻断(缺素材警告) |
+| `exports/` | 产物目录 | `includeExports`(缺省 false)时源布局产物目录整体入包,解包落 v3 `exports/` |
+
+**打包纪律**:持工程锁(与 migrate 同先例,防撕裂快照);输出原子写(缺省
+`<root>/<slug>.cfpkg`,`out` 可指定)。**解包纪律**:目标必须不存在(或为空目录,
+拒绝覆盖,`project_new`/`otio_import` 同纪律);清单校验(format/formatVersion/
+project 真相源齐备);条目名防 zip-slip(拒绝对外穿越/绝对路径/反斜杠,未知前缀
+拒收);真相源落 v3 契约位(任意源布局解出即 v3 可打开工程),media 原位还原。
+安全面:只认本仓写出的 store 形 zip(deflate 显式拒绝),CRC-32 逐条目复验。
+**往返语义**:打包→解包→再打包 byte 语义等价(manifest 仅 `createdAt` 归一,
+`cfpkg::semantic_entries` 单测锁定)。
 
 ——本文以 `git grep -n "compound\|adjust" schemas/project.schema.json` 与
 `cargo test -p cutforge-core interop` 为最低验收;册六独立化时按本文逐节复核。

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """T1.1/AC-1.2 门禁:MCP 工具黄金响应库(golden 响应对拍;册一建 41,册二 A2 增
 render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,册四 A4-BE3b 增文本/字幕/媒体
-八工具后 56,册五 A5 增专业编辑/互操作七工具后 68,册六 A6 增布局迁移/工程库四工具后 72、导出矩阵/素材库四工具后 76,数量口径以 schemas/mcp-tools.json 为准)。
+八工具后 56,册五 A5 增专业编辑/互操作七工具后 68,册六 A6 增布局迁移/工程库四工具后 72、导出矩阵/素材库四工具后 76,册七 A7 增 .cfpkg 打包/解包两工具后 78,数量口径以 schemas/mcp-tools.json 为准)。
 
     python tools/bench/tool_parity.py                  # 对比模式:重跑采集,与 golden 逐字段对拍
     python tools/bench/tool_parity.py --update-golden  # 采集模式:重建 tools/bench/golden/*.json
@@ -344,12 +344,15 @@ class Normalizer:
                         out[k] = [int(round(x / 100.0) * 100) for x in val]
                     else:
                         out[k] = self(val, probe_mode)
-                elif k in LUFS_KEYS and probe_mode and isinstance(val, str):
-                    # 响度测量值(跨 ffmpeg build 有 0.x LU 漂移)→ 0.5LU 量化
+                elif k in LUFS_KEYS and probe_mode and isinstance(val, (str, int, float))                         and not isinstance(val, bool):
+                    # 响度测量值(跨 ffmpeg build 有 0.x LU 漂移)→ 0.5LU 量化。
+                    # 册七补口:audio_loudness 回字符串、export_preflight 的
+                    # loudness.data.deviation 回数值——两形同量化(此前数值形漏网,
+                    # 夹具重生成时 0.x LU 漂移直接 DRIFT,实测 1.02 vs 1.11)
                     try:
                         f = float(val)
                         out[k] = _fmt_half(f) if math.isfinite(f) else val
-                    except ValueError:
+                    except (ValueError, TypeError):
                         out[k] = val  # "-inf" 等原样
                 elif k in HW_KEYS and probe_mode and isinstance(val, dict):
                     out[k] = "<HW_PROBE>"  # 硬件在位/可用随机器与驱动变化 → 占位
@@ -844,6 +847,12 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         # recover:清单为空(无残留锁,确定性);recover 缺 name 拒绝面
         ("library_recover", {"root": "{LIB}", "action": "list"}, False),
         ("library_recover", {"root": "{LIB}", "action": "recover"}, False),
+        # -- 阶段 H:册七 T7.6(.cfpkg 打包/解包;78 收口) --
+        # pack:v3 迁移后的 MIG 工程(真相源上提 v3 名 + oplog 随包;空工程零媒体引用,
+        # counts 如实 0);unpack:还原到新目录(v3 布局;manifest 校验与 zip-slip 防线
+        # 的负例面由 protocol_conformance 的 dispatch 级闭环锁定)
+        ("project_package", {"root": "{MIG}", "out": "{MIGPKG}"}, False),
+        ("project_unpackage", {"root": "{MIGRESTORE}", "src": "{MIGPKG}"}, False),
     ]
 
 
@@ -854,6 +863,8 @@ def resolve_placeholders(args: dict, ctx: dict, main_ws: Path, new_ws: Path,
         if isinstance(v, str):
             v = (v.replace("{MAIN}", str(main_ws)).replace("{NEW}", str(new_ws))
                   .replace("{NEW2}", str(import_ws)).replace("{MIG}", str(mig_ws))
+                  .replace("{MIGPKG}", str(mig_ws) + "-pkg.cfpkg")
+                  .replace("{MIGRESTORE}", str(mig_ws) + "-restored")
                   .replace("{LIB}", str(lib_root)).replace("{MEDLIB}", str(medlib))
                   .replace("@OP_OF_CAUSED_UPDATE@", ctx.get("caused_update_op", ""))
                   .replace("@RUN_ID@", ctx.get("run_id", ""))
@@ -959,6 +970,17 @@ def product_assert(name: str, args: dict, resp: dict, ctx: dict) -> None:
     elif name == "media_library" and args.get("tag") == "calm":
         if data.get("total") != 1 or data["entries"][0].get("tags") != ["calm"]:
             raise ParityError(f"FAIL: 标签过滤必须命中打了 calm 标的条目: {data}", 2)
+    elif name == "project_package":
+        c = data.get("counts", {})
+        total = sum(c.get(k, 0) for k in ("project", "oplog", "media", "exports")) + 1
+        if data.get("files") != total or not Path(data.get("out", "")).is_file():
+            raise ParityError(f"FAIL: .cfpkg 容器必须落盘且 files 计数自洽(manifest+四段): {data}", 2)
+    elif name == "project_unpackage":
+        dest = Path(args.get("root", ""))
+        if not (dest / "project.json").is_file():
+            raise ParityError(f"FAIL: 解包必须还原 v3 契约位 project.json: {data}", 2)
+        if data.get("media") != 0 or data.get("missing") != []:
+            raise ParityError(f"FAIL: 空迁移体解包必须 media=0 且无缺素材: {data}", 2)
 
 
 # ---------------- serve 生命周期 ----------------
@@ -1113,7 +1135,7 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
             if update:
                 gpath.write_text(json.dumps({"tool": name, "calls": calls},
                                             ensure_ascii=False, indent=1) + "\n",
-                                 encoding="utf-8")
+                                 encoding="utf-8", newline="\n")  # LF 落盘(Windows 默认 CRLF 会污染全文件)
                 report.add(name, "PASS", f"golden 已重建({len(calls)} 次调用)")
                 continue
             if not gpath.exists():

@@ -42,7 +42,9 @@ pub(crate) fn produces_rev_mutation(name: &str) -> bool {
             | "migrate_layout" | "library_manage" | "library_recover"
             // 册六 T6.3/T6.2:导出矩阵编排/预检与素材导入(拷贝落盘不产 Op;
             // 多画幅批量 = 渲染队列入队,不升 rev)
-            | "export_preflight" | "export_all_variants" | "media_library" | "media_import"))
+            | "export_preflight" | "export_all_variants" | "media_library" | "media_import"
+            // 册七 T7.6:.cfpkg 打包/解包(目录级/容器级写面,不产 Op 不升 rev)
+            | "project_package" | "project_unpackage"))
 }
 use crate::registry::registry;
 use cutforge_core::oplog::Actor;

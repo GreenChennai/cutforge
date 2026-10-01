@@ -3216,7 +3216,7 @@
    "name": "library_manage",
    "kind": "write",
    "idempotent": false,
-   "description": "工程库管理(册六 T6.1):action=new(新建,scaffold 同源,layout v2/v3)/rename/copy/archive/unarchive/delete;root=库根(env CUTFORGE_PROJECTS,缺省 %USERPROFILE%\\CutForge\\Projects);操作=目录级移动/复制,OpLog 完整性不动;活进程持锁的工程拒绝移动;delete 移入 .trash/(可捞回)",
+   "description": "工程库管理(册六 T6.1;T6.4 增 export_cfproj):action=new(新建,scaffold 同源,layout v2/v3)/rename/copy/archive/unarchive/delete/export_cfproj(.cfproj 工程描述快照,serve 关联打开面);root=库根(env CUTFORGE_PROJECTS,缺省 %USERPROFILE%\\CutForge\\Projects);操作=目录级移动/复制,OpLog 完整性不动;活进程持锁的工程拒绝移动;delete 移入 .trash/(可捞回)",
    "inputSchema": {
     "type": "object",
     "properties": {
@@ -3232,17 +3232,22 @@
        "copy",
        "archive",
        "unarchive",
-       "delete"
+       "delete",
+       "export_cfproj"
       ],
-      "description": "库操作"
+      "description": "库操作(export_cfproj=导出 .cfproj 工程描述)"
      },
      "name": {
       "type": "string",
-      "description": "库内工程名(new/rename/copy/archive/unarchive/delete 必填)"
+      "description": "库内工程名(new/rename/copy/archive/unarchive/delete/export_cfproj 必填)"
      },
      "to": {
       "type": "string",
       "description": "目标名(rename/copy 必填)"
+     },
+     "out": {
+      "type": "string",
+      "description": "export_cfproj 的描述文件落点(缺省 <库根>/<名>.cfproj)"
      },
      "layout": {
       "type": "string",

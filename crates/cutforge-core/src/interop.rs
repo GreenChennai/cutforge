@@ -715,5 +715,8 @@ pub fn edl_export(project: &Project) -> String {
 }
 
 #[cfg(test)]
-#[path = "interop_tests.rs"]
-mod tests;
+mod tests {
+    // include! 相对当前文件(src/)解析,POSIX/Windows 一致(#[path] 在非 mod.rs
+    // 文件内会相对不存在的 stem 目录解析,POSIX 失败——CI ubuntu 实证)。
+    include!("interop_tests.rs");
+}

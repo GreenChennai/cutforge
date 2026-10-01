@@ -787,6 +787,10 @@ mod tests {
 
 
     #[cfg(test)]
-    #[path = "../../pro_tests.rs"]
-    mod pro_tests;
+    mod pro_tests {
+        // include! 相对当前文件(engine/)解析,POSIX/Windows 一致;super = apply::tests,
+        // 与原 #[path] 内联挂载同语义(#[path] 的相对链在内联模块下会命中不存在的
+        // 目录段,POSIX 不做词法 .. 归一——CI ubuntu 实证)。
+        include!("pro_tests.rs");
+    }
 }

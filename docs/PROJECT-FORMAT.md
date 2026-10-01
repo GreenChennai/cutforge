@@ -193,7 +193,10 @@
   逗号→点 + 头)。`subtitle_export format=vtt` / `subtitle_import`(parse_auto 按
   WEBVTT 头识别)。
 - **剪映草稿**(ADR-0023):导出**保留**,收编为随包独立脚本(`rs_jy_draft.py` 算法归属不变,
-  随安装器分发);诚实标注仍依赖 Python 运行时,不冒充零依赖能力;headless 化(Rust 直写
+  随安装器分发;册六 T6.2 落地:随包资产在 `tools/jianying/`(开发树)与 `<exe>/scripts/`
+  (安装器落点),带归属声明;orchestrate 定位序 = env CUTFLOW_REPO(显式,调试/对拍)→
+  工程内 → 随包资产 → CutFlow 仓库回退(保留一个版本期),来源经响应 `scriptSource`
+  如实标注);诚实标注仍依赖 Python 运行时,不冒充零依赖能力;headless 化(Rust 直写
   草稿 JSON)挂册七按使用频率再评估。本格式只保证 IR 字段兼容读。
 
 ## 十、版本迁移策略(v1/v2/v3)

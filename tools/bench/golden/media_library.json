@@ -1,0 +1,85 @@
+{
+ "tool": "media_library",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/medlib"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "entries": [
+      {
+       "bytes": "<BYTES>",
+       "durationMs": 5000,
+       "kind": "audio",
+       "name": "libbgm",
+       "ref": "libbgm.mp3",
+       "tags": []
+      }
+     ],
+     "heuristic": true,
+     "library": "<TMP>/medlib",
+     "manifest": "library.json",
+     "total": 1
+    },
+    "message": "素材库清单",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/medlib",
+    "action": "tag",
+    "entry": "libbgm.mp3",
+    "tags": [
+     "calm"
+    ]
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "entry": "libbgm.mp3",
+     "manifest": "library.json",
+     "tags": [
+      "calm"
+     ]
+    },
+    "message": "标签已更新",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/medlib",
+    "tag": "calm"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "entries": [
+      {
+       "bytes": "<BYTES>",
+       "durationMs": 5000,
+       "kind": "audio",
+       "name": "libbgm",
+       "ref": "libbgm.mp3",
+       "tags": [
+        "calm"
+       ]
+      }
+     ],
+     "heuristic": true,
+     "library": "<TMP>/medlib",
+     "manifest": "library.json",
+     "total": 1
+    },
+    "message": "素材库清单",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

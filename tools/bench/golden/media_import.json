@@ -1,0 +1,26 @@
+{
+ "tool": "media_import",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "libbgm.mp3",
+    "libraryRoot": "<TMP>/medlib"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "bytes": "<BYTES>",
+     "durationMs": 5000,
+     "importedFrom": "library",
+     "kind": "audio",
+     "note": "拷贝导入(原文件不动);src 可直接喂 clip_add/bgm_set",
+     "src": "01_原始素材/libbgm.mp3"
+    },
+    "message": "素材已导入",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

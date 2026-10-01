@@ -12,8 +12,10 @@ fn capability_matrix_single_source() {
     // A4-BE3a(T4.5/T4.6)增转场库目录化/特效库/动效库 → 21 项;
     // 册五 A5(T5.2/T5.3/T5.6)增调色/曲线/LUT/示波器/分屏拷贝/轨道 EQ/动态/响度计/
     // ducking 参数化/硬件编码降级/编码参数面/bt709 标签/渲染队列/渲染日志 + HSL/HDR 降级登记 → 37 项;
-    // A5-BE3(T5.4/T5.5)增复合/调整层/多机位/场景检测/OTIO-EDL 互操作 → 42 项
-    assert_eq!(items.len(), 42, "册五 A5-BE3 后 42 项口径(37 + T5.4/T5.5 五项)");
+    // A5-BE3(T5.4/T5.5)增复合/调整层/多机位/场景检测/OTIO-EDL 互操作 → 42 项;
+    // 册六 A6(T6.3/T6.2)增导出格式矩阵/导出预设/区域导出/导出预检/多画幅批量/
+    // 素材库/剪映随包 + 重构图(诚实降级)/本地转写(明确不做)→ 51 项
+    assert_eq!(items.len(), 51, "册六 A6 后 51 项口径(42 + T6.3/T6.2 九项)");
     let mut achieved = 0;
     for it in items {
         let status = it["status"].as_str().unwrap();
@@ -30,7 +32,7 @@ fn capability_matrix_single_source() {
             assert!(it["target"].is_string(), "未达成项必须写明 M11 目标: {}", it["item"]);
         }
     }
-    assert_eq!(achieved, 38, "M11+A4 19 项 + 册五 14 项 + T5.4/T5.5 五项(HSL/HDR 登记降级为 missing;证据=parity C1-C4/G/A 夹具与 interop 往返单测)");
+    assert_eq!(achieved, 45, "M11+A4 19 项 + 册五 14 项 + T5.4/T5.5 五项 + 册六七项(HSL/HDR/重构图/转写登记降级为 missing;证据=parity C1-C4/G/A 夹具、interop 往返单测与 T6.3/T6.2 产物断言)");
 }
 
 /// M8-5:python 启动器探测——本机/CI 至少一个可用,且返回的命令可执行。

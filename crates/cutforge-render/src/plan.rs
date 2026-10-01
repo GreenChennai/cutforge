@@ -160,7 +160,9 @@ impl TrackProc {
 /// - quality:fast/balanced/quality → (crf,preset) 映射(缺省 balanced=crf23);
 /// - crf/bitrate_kbps/gop/pix_fmt:显式覆盖(缺省 None = 既有值);
 /// - loudnorm_i/tp:响度目标(缺省 -14/-1.0 = 既有双 pass 参数);
-/// - verbose_cmd:进度事件附带命令原文(缺省关——安全)。
+/// - verbose_cmd:进度事件附带命令原文(缺省关——安全);
+/// - export(册六 T6.3 导出矩阵):None = 既有路径逐位不变;Some 时 encode 步
+///   按格式分派(export.rs 单源),画幅/窗口在工程侧先行换写。
 #[derive(Debug, Clone, Default)]
 pub struct RenderOptions {
     pub encoder: Option<String>,
@@ -172,6 +174,7 @@ pub struct RenderOptions {
     pub loudnorm_i: Option<f64>,
     pub loudnorm_tp: Option<f64>,
     pub verbose_cmd: bool,
+    pub export: Option<crate::export::ExportSpec>,
 }
 
 impl RenderPlan {
@@ -195,8 +198,13 @@ impl RenderPlan {
         use_proxy: bool,
         opts: RenderOptions,
     ) -> RenderPlan {
+        // 导出产物目录三态布局感知(册六 ADR-0021/T6.3):v3 = exports/;
+        // v2 = 06_成片输出/;legacy(v1)= 06_output(既有语义逐字保留——判定
+        // 短路序 legacy 优先,双目录并存的 v1 边角不因 v3 改判)。
         let out_dir = if cutforge_io::paths::is_legacy_layout(project_dir) {
             project_dir.join(cutforge_io::paths::LEGACY_OUTPUT)
+        } else if cutforge_io::paths::is_v3_layout(project_dir) {
+            project_dir.join(cutforge_io::paths::V3_EXPORTS)
         } else {
             project_dir.join(cutforge_io::paths::OUTPUT)
         };

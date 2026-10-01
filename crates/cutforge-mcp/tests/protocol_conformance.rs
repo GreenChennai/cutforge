@@ -83,6 +83,12 @@ fn protocol_conformance() {
         ("library_manage", json!({"root": root_s})),
         ("library_manage", json!({"root": root_s, "action": "new"})),
         ("library_recover", json!({"root": root_s, "action": "recover"})),
+        // 册六 A6 T6.3/T6.2:导出矩阵与素材导入缺参/非法参数面
+        ("export_all_variants", json!({"root": root_s, "action": "status"})),
+        ("export_all_variants", json!({"root": root_s, "ratios": ["21x9"]})),
+        ("media_import", json!({"root": root_s})),
+        ("media_import", json!({"root": root_s, "src": "无此素材.mp4"})),
+        ("media_library", json!({"root": root_s, "action": "tag"})),
     ] {
         let resp = cutforge_mcp::dispatch(name, &args);
         assert_envelope(&resp, name);
@@ -114,22 +120,24 @@ fn protocol_conformance() {
     //  scope_data/audio_loudness/encode_probe/render_queue → 61;册五 A5-BE3 增
     //  compound_create/compound_unbind/multicam_cut/scene_detect(写)+
     //  multicam_sync/otio_export/otio_import(编排)→ 68;册六 A6 T6.1 增
-    //  migrate_layout/library_manage/library_recover(写)+ library_list(查询)→ 72)
+    //  migrate_layout/library_manage/library_recover(写)+ library_list(查询)→ 72;
+    //  T6.3/T6.2 增 export_preflight/media_library(查询)+ media_import(写)+
+    //  export_all_variants(编排)→ 76)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 72, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册六 A6 增 migrate/library/recover 四工具)");
+    assert_eq!(names.len(), 76, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册六 A6 增导出矩阵/素材库四工具)");
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);
         assert!(t["outputSchema"].is_object(), "{} 缺 outputSchema", t["name"]);
     }
-    // kind 口径:16 查询 + 37 写 + 19 编排(与 _doc 同句;册六 A6 68→72)
+    // kind 口径:18 查询 + 38 写 + 20 编排(与 _doc 同句;册六 A6 72→76)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds.entry(t["kind"].as_str().unwrap().to_string()).or_insert(0usize) += 1;
     }
-    assert_eq!(kinds.get("query"), Some(&16), "查询 16:{kinds:?}");
-    assert_eq!(kinds.get("write"), Some(&37), "写 37:{kinds:?}");
-    assert_eq!(kinds.get("orchestrate"), Some(&19), "编排 19:{kinds:?}");
+    assert_eq!(kinds.get("query"), Some(&18), "查询 18:{kinds:?}");
+    assert_eq!(kinds.get("write"), Some(&38), "写 38:{kinds:?}");
+    assert_eq!(kinds.get("orchestrate"), Some(&20), "编排 20:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
     // 实现分支,不得出现"已注册但未实现"。统一以缺 root 空参探针:所有工具(capability_matrix

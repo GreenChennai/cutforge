@@ -46,11 +46,22 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     // render_progress 同理免锁(E5-3 异步 + 轮询;T5.6 队列化)。ass 服务端过滤
     // (壳纯度);useProxy 显式 opt-in;T5.6 渲染选项缺省零变化。
     let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
-    let render_extra = crate::progress::build_render_extra(args);
+    let render_extra = crate::progress::build_render_extra(args, true);
     if name == "render" && args["backend"].as_str() == Some("cutforge") {
         return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, &render_extra);
     }
     if name == "render_run" {
+        // 册六 T6.3:frame-png 出口 = 单帧管线复用(atMs = inMs;同步单帧,
+        // 与 render_frame 同口径),其余格式走异步导出队列。
+        if args["format"].as_str() == Some("frame-png") {
+            let mut fargs = args.clone();
+            if fargs["atMs"].is_null()
+                && let Some(in_ms) = fargs["inMs"].as_u64()
+            {
+                fargs["atMs"] = json!(in_ms);
+            }
+            return render_frame_tool(&ws_root, &fargs);
+        }
         return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, render_extra);
     }
     if name == "render_progress" {
@@ -94,6 +105,13 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "library_manage" => return library_manage_tool(&ws_root, args),
         "library_list" => return library_list_tool(&ws_root, args),
         "library_recover" => return library_recover_tool(&ws_root, args),
+        // 册六 T6.3:导出前检查(轻探测)/ 多画幅批量(编排入队;均免开工作区)
+        "export_preflight" => return crate::export_tools::export_preflight_tool(&ws_root, args),
+        "export_all_variants" => return crate::export_tools::export_all_variants_tool(&ws_root, args),
+        // 册六 T6.2:素材库 manifest(库根)+ 素材拷贝导入(工程;免开工作区,
+        // 不产 Op 不改 IR,与 lut_import 同类写面)
+        "media_library" => return crate::media_library::media_library_tool(&ws_root, args),
+        "media_import" => return crate::media_library::media_import_tool(&ws_root, args),
         _ => {}
     }
 
@@ -658,7 +676,17 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 "render" => "rs_render.py",
                 _ => "rs_jy_draft.py",
             };
-            let script_args = args["scriptArgs"].as_array().cloned().unwrap_or_default();
+            let mut script_args = args["scriptArgs"].as_array().cloned().unwrap_or_default();
+            if name == "export_jianying" && script_args.is_empty() {
+                // 册六 T6.2/ADR-0023 随包收编后的端到端缺省:project 路径(三态布局
+                // 感知)+ --name(契约 required)。显式 scriptArgs 仍整组透传(编排
+                // 纪律 = 参数接线,不实现阶段逻辑)。
+                script_args.push(json!(paths::project_path(&ws_root).to_string_lossy()));
+                if let Some(n) = args["name"].as_str() {
+                    script_args.push(json!("--name"));
+                    script_args.push(json!(n));
+                }
+            }
             orchestrate(&ws_root, script, &script_args)
         }
 

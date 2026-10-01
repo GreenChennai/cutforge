@@ -1,0 +1,77 @@
+{
+ "tool": "export_all_variants",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "ratios": [
+     "9x16",
+     "16x9"
+    ],
+    "qualityTier": "480p"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "note": "逐变体走渲染队列(runId 独立);聚合状态用 action=status",
+     "parentRunId": "<RUN_ID>",
+     "ratios": [
+      "9x16",
+      "16x9"
+     ],
+     "runs": [
+      {
+       "ratio": "9x16",
+       "runId": "<RUN_ID>"
+      },
+      {
+       "ratio": "16x9",
+       "runId": "<RUN_ID>"
+      }
+     ]
+    },
+    "message": "多画幅批量导出已入队",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "action": "status",
+    "parentRunId": "<RUN_ID>"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "aggregate": {
+      "canceled": 0,
+      "fail": 0,
+      "ok": 2,
+      "paused": 0,
+      "queued": 0,
+      "running": 0,
+      "total": 2
+     },
+     "parentRunId": "<RUN_ID>",
+     "runs": [
+      {
+       "ratio": "9x16",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      },
+      {
+       "ratio": "16x9",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      }
+     ],
+     "state": "ok"
+    },
+    "message": "多画幅批量导出状态",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

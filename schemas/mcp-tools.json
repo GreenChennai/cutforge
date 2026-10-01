@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。72 工具 = 16 查询 + 37 写 + 19 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats 后 48→56;册五 A5 新增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 后 56→61,A5-BE3 新增 compound_create/compound_unbind/multicam_cut/scene_detect/multicam_sync/otio_export/otio_import 后 61→68;册六 A6 新增 migrate_layout/library_manage/library_recover(写)+ library_list(查询)后 68→72,当前一律以本文件 tools 数组为准)",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。76 工具 = 18 查询 + 38 写 + 20 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats 后 48→56;册五 A5 新增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 后 56→61,A5-BE3 新增 compound_create/compound_unbind/multicam_cut/scene_detect/multicam_sync/otio_export/otio_import 后 61→68;册六 A6 T6.1 新增 migrate_layout/library_manage/library_recover(写)+ library_list(查询)后 68→72;T6.3/T6.2 新增 export_preflight/media_library(查询)+ media_import(写)+ export_all_variants(编排)后 72→76,render/render_run 同批扩导出预设参数面(format/preset/qualityTier/bitrateTier/inMs/outMs/videoOnly;新增 gif/纯音频/png 序列/frame-png 出口),当前一律以本文件 tools 数组为准)",
  "channels": [
   "stdio",
   "embedded-http"
@@ -1419,6 +1419,66 @@
      "verboseCmd": {
       "type": "boolean",
       "description": "进度事件附命令原文(缺省 false——安全)"
+     },
+     "format": {
+      "type": "string",
+      "enum": [
+       "mp4-h264",
+       "mp4-h265",
+       "mov",
+       "gif",
+       "m4a",
+       "mp3",
+       "png-seq",
+       "frame-png"
+      ],
+      "description": "导出格式(册六 T6.3;缺省 mp4-h264 与既有渲染同出口;gif=palettegen/paletteuse 两段 fps12;frame-png=单帧 PNG 走 render_frame 管线)"
+     },
+     "preset": {
+      "type": "string",
+      "enum": [
+       "vertical",
+       "horizontal",
+       "square",
+       "9x16",
+       "16x9",
+       "1x1",
+       "3x4",
+       "4x5"
+      ],
+      "description": "画幅预设(vertical=1080x1920/horizontal=1920x1080/square=1080x1080;缺省=工程画幅)"
+     },
+     "qualityTier": {
+      "type": "string",
+      "enum": [
+       "1080p",
+       "720p",
+       "480p"
+      ],
+      "description": "清晰度档(短边缩放偶数取整:1080p 竖屏=1080x1920,横屏=1920x1080)"
+     },
+     "bitrateTier": {
+      "type": "string",
+      "enum": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "description": "码率档(估算值:1080p 基准 12000/8000/4000 kbps 按高度折算;显式 bitrate 覆盖)"
+     },
+     "inMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "区域导出入点 ms(输出时间轴平移到 0;配 outMs 定窗口)"
+     },
+     "outMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "区域导出出点 ms(缺省=到片尾)"
+     },
+     "videoOnly": {
+      "type": "boolean",
+      "description": "仅视频(音轨静音+BGM 摘除,静音轨保留)"
      }
     },
     "required": [
@@ -1587,6 +1647,66 @@
      "verboseCmd": {
       "type": "boolean",
       "description": "进度事件附命令原文(缺省 false——安全)"
+     },
+     "format": {
+      "type": "string",
+      "enum": [
+       "mp4-h264",
+       "mp4-h265",
+       "mov",
+       "gif",
+       "m4a",
+       "mp3",
+       "png-seq",
+       "frame-png"
+      ],
+      "description": "导出格式(册六 T6.3;缺省 mp4-h264 与既有渲染同出口;gif=palettegen/paletteuse 两段 fps12;frame-png=单帧 PNG 走 render_frame 管线)"
+     },
+     "preset": {
+      "type": "string",
+      "enum": [
+       "vertical",
+       "horizontal",
+       "square",
+       "9x16",
+       "16x9",
+       "1x1",
+       "3x4",
+       "4x5"
+      ],
+      "description": "画幅预设(vertical=1080x1920/horizontal=1920x1080/square=1080x1080;缺省=工程画幅)"
+     },
+     "qualityTier": {
+      "type": "string",
+      "enum": [
+       "1080p",
+       "720p",
+       "480p"
+      ],
+      "description": "清晰度档(短边缩放偶数取整:1080p 竖屏=1080x1920,横屏=1920x1080)"
+     },
+     "bitrateTier": {
+      "type": "string",
+      "enum": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "description": "码率档(估算值:1080p 基准 12000/8000/4000 kbps 按高度折算;显式 bitrate 覆盖)"
+     },
+     "inMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "区域导出入点 ms(输出时间轴平移到 0;配 outMs 定窗口)"
+     },
+     "outMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "区域导出出点 ms(缺省=到片尾)"
+     },
+     "videoOnly": {
+      "type": "boolean",
+      "description": "仅视频(音轨静音+BGM 摘除,静音轨保留)"
      }
     },
     "required": [
@@ -3235,6 +3355,225 @@
      "name": {
       "type": "string",
       "description": "action=recover 的库内工程名"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "export_preflight",
+   "kind": "query",
+   "idempotent": true,
+   "description": "导出前检查清单(册六 T6.3;轻探测不渲全片):缺失素材/黑帧风险(首末帧亮度,源域抽帧)/静音段(声轨覆盖间隙+逐段源 RMS 启发式)/时长(窗口裁剪后)/响度预估(audio_loudness 复用:最新成片在位则实测,否则 null);启发式面如实打 heuristic 标注;只读不持锁",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "inMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "检查窗口入点 ms(与导出窗口同参)"
+     },
+     "outMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "检查窗口出点 ms(缺省=到片尾)"
+     },
+     "target": {
+      "type": "number",
+      "description": "响度目标 LUFS(缺省 -14;仅成片在位实测时算偏差)"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "export_all_variants",
+   "kind": "orchestrate",
+   "idempotent": false,
+   "description": "多画幅批量导出(册六 T6.3):action=run(缺省)一次排队 outputs 全变体任务(ratios 缺省取工程 outputs,再缺省 9x16/16x9/1x1;逐变体 runId 走渲染队列,进度/取消/重试复用 render_queue);action=status 按 parentRunId 聚合子任务状态(ok/fail/running)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "action": {
+      "type": "string",
+      "description": "run|status(缺省 run)"
+     },
+     "ratios": {
+      "type": "array",
+      "items": {
+       "enum": [
+        "vertical",
+        "horizontal",
+        "square",
+        "9x16",
+        "16x9",
+        "1x1",
+        "3x4",
+        "4x5"
+       ]
+      },
+      "description": "画幅变体清单(action=run;缺省=工程 outputs,再缺省 9x16/16x9/1x1)"
+     },
+     "format": {
+      "type": "string",
+      "enum": [
+       "mp4-h264",
+       "mp4-h265",
+       "mov",
+       "gif",
+       "m4a",
+       "mp3",
+       "png-seq",
+       "frame-png"
+      ],
+      "description": "导出格式(册六 T6.3;缺省 mp4-h264 与既有渲染同出口;gif=palettegen/paletteuse 两段 fps12;frame-png=单帧 PNG 走 render_frame 管线)"
+     },
+     "qualityTier": {
+      "type": "string",
+      "enum": [
+       "1080p",
+       "720p",
+       "480p"
+      ],
+      "description": "清晰度档(短边缩放偶数取整:1080p 竖屏=1080x1920,横屏=1920x1080)"
+     },
+     "bitrateTier": {
+      "type": "string",
+      "enum": [
+       "high",
+       "medium",
+       "low"
+      ],
+      "description": "码率档(估算值:1080p 基准 12000/8000/4000 kbps 按高度折算;显式 bitrate 覆盖)"
+     },
+     "inMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "区域导出入点 ms(输出时间轴平移到 0;配 outMs 定窗口)"
+     },
+     "outMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "区域导出出点 ms(缺省=到片尾)"
+     },
+     "videoOnly": {
+      "type": "boolean",
+      "description": "仅视频(音轨静音+BGM 摘除,静音轨保留)"
+     },
+     "ass": {
+      "type": "string",
+      "description": "字幕 ass 相对路径(逐变体烧录)"
+     },
+     "useProxy": {
+      "type": "boolean",
+      "description": "代理预览渲染(缺省 false)"
+     },
+     "parentRunId": {
+      "type": "string",
+      "description": "父任务 id(action=status 必填)"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "media_import",
+   "kind": "write",
+   "idempotent": false,
+   "description": "素材拷贝导入(册六 T6.2;FE1 拷贝导入通道欠账收口):src=绝对路径或素材库相对引用(libraryRoot 缺省 CUTFORGE_MEDIA/默认根),拷入工程布局感知落点(v3=media/,v2=01_原始素材/,v1=01_materials/);同名同内容幂等覆盖、异内容追加序号;tmp+rename 原子落盘;不产 Op 不改 IR(返回 src 可直接喂 clip_add/bgm_set)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "src": {
+      "type": "string",
+      "description": "素材源(绝对路径,或素材库相对引用)"
+     },
+     "libraryRoot": {
+      "type": "string",
+      "description": "素材库根(缺省 env CUTFORGE_MEDIA,再缺省 %USERPROFILE%\\CutForge\\Media)"
+     }
+    },
+    "required": [
+     "root",
+     "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "media_library",
+   "kind": "query",
+   "idempotent": true,
+   "description": "本地素材库 manifest(册六 T6.2;库根 library.json:类型/标签/时长/引用):action=list(缺省)扫描合并(在位文件↔条目按引用对齐,标签持久,派生索引幂等落盘)+ kind/tag/query 过滤;action=tag 改条目标签(entry+tags);root=素材库根(env CUTFORGE_MEDIA 缺省面同源);只读工程不持锁",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "素材库根目录绝对路径"
+     },
+     "action": {
+      "type": "string",
+      "description": "list|tag(缺省 list)"
+     },
+     "kind": {
+      "type": "string",
+      "enum": [
+       "video",
+       "audio",
+       "image",
+       "lut",
+       "text"
+      ],
+      "description": "类型过滤(list)"
+     },
+     "tag": {
+      "type": "string",
+      "description": "标签过滤(list;entry.tags 含即命中)"
+     },
+     "query": {
+      "type": "string",
+      "description": "名称/引用子串过滤(list)"
+     },
+     "entry": {
+      "type": "string",
+      "description": "素材库相对引用(action=tag 必填)"
+     },
+     "tags": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "标签全集(action=tag;整组替换)"
      }
     },
     "required": [

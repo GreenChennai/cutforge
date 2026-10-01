@@ -15,7 +15,10 @@ pub(crate) fn is_readonly_tool(name: &str) -> bool {
         // 册五 T5.5:OTIO/EDL 导出同类(派生物产物,不产 Op 不改 IR)
         | "subtitle_export" | "otio_export"
         // 册六 T6.1:工程库清单只读库根(卡片轻量派生,不产 Op 不改 IR)
-        | "library_list")
+        | "library_list"
+        // 册六 T6.3/T6.2:导出前检查(轻探测)/ 素材库清单(库根扫描 +
+        // manifest 派生索引,不触工程 IR)
+        | "export_preflight" | "media_library")
 }
 
 /// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。
@@ -36,7 +39,10 @@ pub(crate) fn produces_rev_mutation(name: &str) -> bool {
             // OTIO 导入(从零建新工程,不动当前工作区 rev)
             | "subtitle_export" | "multicam_sync" | "otio_export" | "otio_import"
             // 册六 T6.1:库面目录级操作与迁移(不产 Op 不升 rev;OpLog 完整性不动)
-            | "migrate_layout" | "library_manage" | "library_recover"))
+            | "migrate_layout" | "library_manage" | "library_recover"
+            // 册六 T6.3/T6.2:导出矩阵编排/预检与素材导入(拷贝落盘不产 Op;
+            // 多画幅批量 = 渲染队列入队,不升 rev)
+            | "export_preflight" | "export_all_variants" | "media_library" | "media_import"))
 }
 use crate::registry::registry;
 use cutforge_core::oplog::Actor;

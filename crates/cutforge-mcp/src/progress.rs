@@ -42,8 +42,10 @@ pub(crate) fn existing_rel<'a>(root: &Path, rel: Option<&'a str>) -> Option<&'a 
 }
 
 /// 渲染选项(MCP 参数)→ cutforge-render CLI 附加参数(册五 T5.6;
-/// 缺省参数不产生任何 CLI 旗标 = 现行为零变化)。
-pub(crate) fn build_render_extra(args: &Value) -> Vec<String> {
+/// 缺省参数不产生任何 CLI 旗标 = 现行为零变化)。export=true 时附带导出矩阵
+/// 参数面(册六 T6.3);render_frame 的 format 参数是 png/jpeg 帧格式,不走导出
+/// 分派(调用方传 false,避免参数名撞车)。
+pub(crate) fn build_render_extra(args: &Value, export: bool) -> Vec<String> {
     let mut extra: Vec<String> = Vec::new();
     let mut flag = |name: &str, v: Option<String>| {
         if let Some(v) = v.filter(|s| !s.is_empty()) {
@@ -67,7 +69,31 @@ pub(crate) fn build_render_extra(args: &Value) -> Vec<String> {
     if args["verboseCmd"].as_bool() == Some(true) {
         extra.push("--verbose-cmd".into());
     }
+    if export {
+        build_export_extra(args, &mut extra);
+    }
     extra
+}
+
+/// 导出矩阵参数面(册六 T6.3;render/render_run 共用;缺省零旗标 = 现行为):
+/// format/preset/qualityTier/bitrateTier/inMs/outMs/videoOnly → cutforge-render
+/// 导出 CLI(映射与出口语义单源 = cutforge_render::export)。
+pub(crate) fn build_export_extra(args: &Value, extra: &mut Vec<String>) {
+    let mut flag = |name: &str, v: Option<String>| {
+        if let Some(v) = v.filter(|s| !s.is_empty()) {
+            extra.push(name.into());
+            extra.push(v);
+        }
+    };
+    flag("--export-format", args["format"].as_str().map(String::from));
+    flag("--preset", args["preset"].as_str().map(String::from));
+    flag("--quality-tier", args["qualityTier"].as_str().map(String::from));
+    flag("--bitrate-tier", args["bitrateTier"].as_str().map(String::from));
+    flag("--in-ms", args["inMs"].as_u64().filter(|&v| v > 0).map(|v| v.to_string()));
+    flag("--out-ms", args["outMs"].as_u64().map(|v| v.to_string()));
+    if args["videoOnly"].as_bool() == Some(true) {
+        extra.push("--video-only".into());
+    }
 }
 
 /// f64 → 紧凑串(去尾零;与 cutforge-render steps::fmt_f64 同风格)。
@@ -426,7 +452,7 @@ pub(crate) fn render_frame_tool(root: &Path, args: &Value) -> Value {
     let ass = existing_rel(root, args["ass"].as_str());
     let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
     let mut extra: Vec<String> = vec!["--frame".into(), format!("{at_ms}"), "--format".into(), fmt.into()];
-    extra.extend(build_render_extra(args));
+    extra.extend(build_render_extra(args, false));
     let mut cmd = spawn_render(root, ass, use_proxy, &extra);
     match cmd.output() {
         Ok(out) if out.status.success() => {

@@ -1,0 +1,63 @@
+{
+ "tool": "export_preflight",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "audioEvents": 9,
+     "blackFrame": {
+      "firstLuma": 128,
+      "lastLuma": 32,
+      "risk": false
+     },
+     "clips": 9,
+     "heuristic": true,
+     "loudness": {
+      "code": "OK",
+      "data": {
+       "deviation": 1.02,
+       "inputI": "-15",
+       "inputLra": "11.5",
+       "inputThresh": "-25.5",
+       "inputTp": "-11.5",
+       "src": "06_成片输出/final_cutforge_parity-main_854x480.mp4",
+       "target": -14.0,
+       "within1LU": false
+      },
+      "message": "响度测量",
+      "ns": "ok",
+      "ok": true
+     },
+     "missingAssets": [],
+     "silentRanges": [
+      {
+       "endMs": 4000,
+       "startMs": 0
+      },
+      {
+       "endMs": 10400,
+       "startMs": 6800
+      },
+      {
+       "endMs": 15000,
+       "startMs": 12400
+      },
+      {
+       "endMs": 20000,
+       "startMs": 17000
+      }
+     ],
+     "totalMs": 24000,
+     "warnings": []
+    },
+    "message": "导出前检查(轻探测预估面)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

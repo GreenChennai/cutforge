@@ -55,7 +55,7 @@ cutforge/
 ├── tools/
 │   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1–A4 已注册,决策 D-A2)
 │   ├── bench/bench.py          性能基准(T1.8;--check 阈值判定,基线 docs/bench/baseline.json)
-│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;册五 A5 增调色/音频/队列五工具后 61;A5-BE3 增复合/多机位/场景检测/OTIO 七工具后 68;册六 A6 增 migrate_layout/library_manage/library_recover/library_list 四工具后 72;数量以 schemas/mcp-tools.json 为准)
+│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;册五 A5 增调色/音频/队列五工具后 61;A5-BE3 增复合/多机位/场景检测/OTIO 七工具后 68;册六 A6 增 migrate_layout/library_manage/library_recover/library_list 四工具后 72,增 export_preflight/media_library/media_import/export_all_variants 四工具后 76;数量以 schemas/mcp-tools.json 为准)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
 │   ├── schema_gen.py           生成 tools/_generated/cf_validate.py(Python 校验器)
 │   └── validate_regression.py  回归集校验入口(16/16)

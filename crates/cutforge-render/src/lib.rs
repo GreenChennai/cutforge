@@ -13,6 +13,7 @@ pub mod cache;
 pub mod catalog;
 pub mod compound;
 pub mod encode;
+pub mod export;
 pub mod frame;
 pub mod grade;
 pub mod kf_expr;
@@ -51,7 +52,11 @@ use std::process::Command;
 /// 9.0(册五 T5.4/ADR-0019):compound 递归展开(子时间线中间段挂 compose 层,
 /// 键 = 子内容指纹)+ adjust 调整层步(新缓存层,主合成后按时间窗再过 fx/grade 链)
 /// + 字幕 VTT 子格式(不触缓存键面,随行为面整体升版)。旧缓存整体失效。
-pub const RENDERER_VERSION: &str = "cutforge-render-9.0";
+///
+/// 册六 10.0(T6.3 导出矩阵):RenderOptions 增 export 规格(格式分派/预设/
+/// 清晰度/码率档/区域窗口)——**缺省 None 路径参数逐字不变**;中间产物与格式
+/// 无关,导出复用既有缓存键(canvas/clip 变化自然分键);升版为行为面登记口径。
+pub const RENDERER_VERSION: &str = "cutforge-render-10.0";
 
 pub struct RenderOutcome {
     pub output: PathBuf,
@@ -75,7 +80,7 @@ pub fn ff_bin(tool: &str) -> String {
     tool.to_string()
 }
 
-fn run_ff(tool: &str, args: &[&str]) -> Result<String, String> {
+pub(crate) fn run_ff(tool: &str, args: &[&str]) -> Result<String, String> {
     let out = Command::new(ff_bin(tool)).args(args).output().map_err(|e| format!("启动 {tool} 失败: {e}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -125,7 +130,7 @@ fn ffprobe_duration_sec(path: &Path) -> Result<f64, String> {
 }
 
 /// Vec<String> 命令行 → &[&str](run_ff 适配)。
-fn strs(args: &[String]) -> Vec<&str> {
+pub(crate) fn strs(args: &[String]) -> Vec<&str> {
     args.iter().map(|s| s.as_str()).collect()
 }
 
@@ -584,7 +589,12 @@ fn exec_subtitle(
 
 /// 步 7:encode(bt709 标签 remux 缺省 / 显式选项重编码 + ffprobe 复验,ADR-0020;
 /// 硬件选项试编探测,失败优雅降级 libx264——AC-5.6;不走缓存,输出路径与格式不变)。
+/// 册六 T6.3:export 规格在位时按格式分派(export.rs 单源;mp4-h264/mov 与既有
+/// 编码面同源,其余走新出口)。缺省(export = None)分支逐字不变。
 fn exec_encode(plan: &RenderPlan, video_input: &Path) -> Result<(StepReport, PathBuf, Vec<String>), String> {
+    if let Some(spec) = &plan.opts.export {
+        return export::exec_export_encode(plan, video_input, spec);
+    }
     let output = steps::encode_output_path(plan);
     let mut detail = json!({});
     let mut warns: Vec<String> = Vec::new();
@@ -647,6 +657,72 @@ pub fn render_variants(project: &Project, project_dir: &Path, ratios: &[&str]) -
         .collect()
 }
 
+/// 导出主入口(册六 T6.3):工程侧先按 ExportSpec 换写(画幅/清晰度/仅视频/
+/// 时间窗,export.rs 纯函数单源),随后:
+/// - 纯音频格式(m4a/mp3)走**短路管线** probe → mix → 音频编码(不渲视频链);
+/// - 其余格式走既有八步管线,encode 步按格式分派(exec_export_encode);
+/// - frame-png 不进本入口(CLI/MCP 面复用 render_frame 单帧管线)。
+///
+/// 缺省(无导出意图)请继续调 render/render_with_opts,本函数不改变其行为。
+pub fn render_export(
+    project: &Project,
+    project_dir: &Path,
+    ass_path: Option<&Path>,
+    use_proxy: bool,
+    mut opts: plan::RenderOptions,
+    spec: export::ExportSpec,
+    progress: &mut dyn FnMut(Value),
+) -> Result<RenderOutcome, String> {
+    let format = spec.effective_format();
+    if format == export::ExportFormat::FramePng {
+        return Err("PRECONDITION: frame-png 走单帧管线(render_frame),不进整片导出".into());
+    }
+    let prepared = export::prepare_project(project, &spec);
+    if format.is_audio_only() {
+        let plan = RenderPlan::build_full(&prepared, project_dir, ass_path, use_proxy, opts);
+        std::fs::create_dir_all(&plan.out_dir).map_err(|e| e.to_string())?;
+        cache::ensure_dirs(&plan.cache_dir)?;
+        let mut idx = CacheIndex::load(&plan.cache_dir);
+        let mut steps: Vec<(&'static str, bool)> = Vec::new();
+        let t0 = std::time::Instant::now();
+        let mut rep = exec_probe(&plan);
+        rep.detail["elapsedMs"] = json!(t0.elapsed().as_millis() as u64);
+        progress(rep.to_progress());
+        steps.push((rep.name, rep.ok));
+        let t0 = std::time::Instant::now();
+        let (mut rep, mixed, _mix_key, mix_hit, _cmds) = exec_mix(&plan, &mut idx)?;
+        rep.detail["elapsedMs"] = json!(t0.elapsed().as_millis() as u64);
+        progress(rep.to_progress());
+        steps.push((rep.name, rep.ok));
+        idx.save(&plan.cache_dir)?;
+        let output = export::export_output_path(&plan.out_dir, &plan.slug, plan.canvas_w, plan.canvas_h, format);
+        let args = export::audio_export_args(format, &mixed, &output);
+        run_ff("ffmpeg", &strs(&args))?;
+        progress(json!({
+            "step": "encode", "ok": true, "format": format.as_str(),
+            "output": output.to_string_lossy(), "mixCacheHit": mix_hit,
+        }));
+        steps.push(("encode", true));
+        return Ok(RenderOutcome {
+            output,
+            steps,
+            cache_hits: 0,
+            cache_misses: 0,
+            segments: 0,
+            mix_cache_hit: mix_hit,
+        });
+    }
+    if !prepared
+        .tracks
+        .iter()
+        .any(|t| t.kind == cutforge_core::model::TrackKind::Video && !t.clips.is_empty())
+    {
+        return Err("PRECONDITION: 导出窗口内无视频片段(区域出点越界或时间线为空)".into());
+    }
+    opts.export = Some(spec);
+    render_with_opts(&prepared, project_dir, ass_path, use_proxy, opts, progress)
+}
+
 pub fn write_progress(v: Value) {
     let mut out = std::io::stdout();
     let _ = writeln!(out, "{v}");
@@ -658,7 +734,14 @@ mod tests {
 
     #[test]
     fn renderer_version_is_bumped_for_cache_layout_change() {
-        assert!(RENDERER_VERSION >= "cutforge-render-4.0", "T1.5 缓存键口径变更必须升版");
+        // 数值化比较(字符串序会误判 "10.0" < "9.0");任一缓存键口径变更必须升版
+        let major: u32 = RENDERER_VERSION
+            .trim_start_matches("cutforge-render-")
+            .split('.')
+            .next()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        assert!(major >= 4, "T1.5 缓存键口径变更必须升版: {RENDERER_VERSION}");
     }
 
     #[test]

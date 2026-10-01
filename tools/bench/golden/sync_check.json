@@ -14,6 +14,7 @@
    "response": {
     "code": "OK",
     "data": {
+     "scriptSource": "cutflow-env",
      "stdout": "{\"argv\": [\"--video\", \"06_成片输出/final.mp4\"], \"stub\": true}"
     },
     "message": "编排完成",

@@ -343,10 +343,82 @@
         "jianying": "部分",
         "status": "missing",
         "target": "ADR-0020 触发条件(真实 HDR 交付用例)出现时按逐案 ADR 重开;挂载点=输入归一层"
+       },
+       {
+        "evidence": "册六 T6.3:render/render_run 扩 format 参数;gif=palettegen/paletteuse 两段(fps12 固定,如实声明)、纯音频走 probe+mix 短路(m4a=copy/mp3=libmp3lame)、png 序列 image2 %04d(帧数清点入进度)、h265=libx265+hvc1(软件编码,hw 请求 WARN 不冒充)、mov 随扩展名容器;mp4-h264 与既有编码面同源(缺省 remux+bt709);export.rs 单测锁参数面",
+        "ffmpeg": "支持",
+        "item": "导出格式矩阵(MP4 H.264/H.265/MOV/GIF/纯音频 M4A/MP3/图片序列/帧导出)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": "AC-6.4 导出矩阵 e2e"
+       },
+       {
+        "evidence": "册六 T6.3:preset(vertical/horizontal/square+比率别名)画幅映射与 render_variants 同源;qualityTier 1080p/720p/480p=短边缩放偶数取整;bitrateTier=1080p 基准线性折算的估算值(显式 bitrate 覆盖,档位是预估不是承诺——如实声明)",
+        "ffmpeg": "部分",
+        "item": "导出预设(画幅/清晰度/码率档)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": "预设映射单测(export.rs)"
+       },
+       {
+        "evidence": "册六 T6.3:inMs/outMs=工程级时间窗裁剪(全轨种钳制平移,头部源域按速度分段积分折算;首段入向转场清除;textass/叠加层同窗;freeze 区近似已登记)+ videoOnly(音轨静音+BGM 摘除)+ 仅音频=纯音频出口;window_project 纯函数单测(裁剪/折算/转场清除/零窗口恒等)",
+        "ffmpeg": "支持",
+        "item": "区域导出(入出点区间/仅音频/仅视频)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": "区域导出时长=in-out e2e"
+       },
+       {
+        "evidence": "册六 T6.3:export_preflight 轻探测不渲全片——缺失素材(计划源在位性)/黑帧风险(首末帧源域 32x18 灰度抽样,16 级量化)/静音段(声轨覆盖间隙+逐段源 RMS 启发式,100ms 网格)/时长(窗口裁剪后)/响度预估=audio_loudness 复用(最新成片在位实测,否则 null 不虚标);启发式面 heuristic:true 如实标注",
+        "ffmpeg": "支持",
+        "item": "导出前检查清单(黑帧/静音/时长/响度预估)",
+        "jianying": "不支持",
+        "status": "achieved",
+        "target": "parity 预检夹具(missingAssets=0/totalMs>0 产物断言)"
+       },
+       {
+        "evidence": "册六 T6.3:export_all_variants(ratios 缺省取工程 outputs)逐变体入既有渲染队列(独立 runId,进度/取消/重试复用 render_queue),action=status 拉取式聚合(all ok→ok;有 fail/canceled→fail);底座 render_variants 已有,本面补编排",
+        "ffmpeg": "支持",
+        "item": "多画幅批量导出(一次排队全变体+父任务聚合)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": "parity 两变体终态全 ok 产物断言"
+       },
+       {
+        "evidence": "册六 T6.2:media_library(库根 library.json:类型/标签/时长/引用;扫描合并幂等,标签持久,kind/tag/query 过滤)+ media_import(拷贝导入工程,布局感知落点 v3=media//v2=01_原始素材//v1=01_materials/,同名同内容幂等/异内容追加序号,tmp+rename 原子落盘,不产 Op)——FE1 拷贝导入通道欠账收口",
+        "ffmpeg": "支持",
+        "item": "本地素材库(manifest 索引/标签/拷贝导入)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": "parity 导入落盘/标签过滤产物断言 + Rust 单测"
+       },
+       {
+        "evidence": "册六 T6.2/ADR-0023:rs_jy_draft.py 收编为随包资产(tools/jianying/,归属声明在位);orchestrate 定位序=env CUTFLOW_REPO(显式)→工程内→随包(<exe>/scripts/ 与 tools/jianying/)→CutFlow 回退(一个版本期);诚实标注:仍依赖 Python 运行时,不冒充零依赖",
+        "ffmpeg": "不适用",
+        "item": "剪映草稿导出随包化(零 CutFlow 依赖)",
+        "jianying": "原生",
+        "status": "achieved",
+        "target": "scriptSource 来源标注入编排响应"
+       },
+       {
+        "evidence": "诚实降级(不虚标 AI 构图):无可靠自动构图算法(运动能量/响度重心启发式对构图质量不可判定,人脸检测不可做);clip.reframe(anchorY)契约字段承载防丢,渲染端零消费",
+        "ffmpeg": "不支持",
+        "item": "重构图全自动构图",
+        "jianying": "支持",
+        "status": "missing",
+        "target": "触发条件=anchorY 渲染消费落地 + 可判定的构图规则;届时逐案 ADR"
+       },
+       {
+        "evidence": "ADR-0023 明确不做(非待办):体积(模型数百 MB 起)/速度(CPU 推理分钟级/分钟素材)/维护面三指标全不达标且无用例;上游转写件(wordline.json)直读已覆盖真实工作流",
+        "ffmpeg": "不适用",
+        "item": "本地转写(whisper 系)",
+        "jianying": "不适用",
+        "status": "missing",
+        "target": "触发条件=无网环境批量长素材的真实用例;届时逐案 ADR"
        }
       ],
       "rule": "诚实口径:status 只认实码 + 对拍夹具(M8-5)。achieved=有专属夹具证据;partial=字段被契约接受但渲染端不完整消费;missing=契约字段存在、渲染零消费;optional=规划可选未启动。本文件是唯一真相源:docs/capability-matrix.md 与 MCP capability_matrix 工具均由它生成(M11-1 起 evidence 由 parity_matrix 夹具实测回填,ADR-0003)。",
-      "updated": "2026-09-30(册五 T5.4 复合/调整层/多机位/场景检测 + T5.5 OTIO/EDL/VTT 互操作,ADR-0019)",
+      "updated": "2026-09-30(册六 T6.3 导出矩阵 + T6.2 素材库/剪映随包收编;重构图诚实降级)",
       "version": 3
      }
     },

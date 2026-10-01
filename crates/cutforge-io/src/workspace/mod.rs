@@ -52,7 +52,8 @@ pub struct Workspace {
 }
 
 /// 盘面布局(打开时判定一次,整个生命周期一致):
-/// 新布局(0.5 中文目录)或旧布局(0.4.x 英文目录;兼容读写、原地保留、不自动迁移)。
+/// V2 中文目录 / V1 旧英文目录(兼容读写、原地保留、不自动迁移)/
+/// V3 扁平布局(册六 ADR-0021;判定与映射表唯一来源 `paths`)。
 #[derive(Clone, Copy)]
 struct Layout {
     project_rel: &'static str,
@@ -61,16 +62,19 @@ struct Layout {
 
 impl Layout {
     fn detect(root: &Path) -> Self {
-        if crate::paths::is_legacy_layout(root) {
-            Self {
+        match crate::paths::detect_layout(root) {
+            crate::paths::LayoutKind::Legacy => Self {
                 project_rel: crate::paths::LEGACY_PROJECT_REL,
                 truths: &crate::paths::FILE_TRUTHS_LEGACY,
-            }
-        } else {
-            Self {
+            },
+            crate::paths::LayoutKind::V3 => Self {
+                project_rel: crate::paths::V3_PROJECT_REL,
+                truths: &crate::paths::FILE_TRUTHS_V3,
+            },
+            crate::paths::LayoutKind::V2 => Self {
                 project_rel: crate::paths::PROJECT_REL,
                 truths: &crate::paths::FILE_TRUTHS_NEW,
-            }
+            },
         }
     }
 }

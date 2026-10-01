@@ -60,6 +60,8 @@ fn bin_available(bin: &str, env_key: &str) -> bool {
 }
 
 /// ② ffmpeg / ffprobe 可用(渲染与素材探测的外部依赖;CUTFORGE_FFMPEG/CUTFORGE_FFPROBE 优先)。
+/// ADR-0022:解析顺序 = env 显式 → 系统 PATH → 内嵌随包(安装器勾选组件,默认勾;
+/// 命中方式 = 安装器写 env,运行时探测面零新代码)。缺失给三选一修复指引。
 fn check_bin(name: &'static str, bin: &str, env_key: &str) -> Check {
     if bin_available(bin, env_key) {
         let via_env = std::env::var_os(env_key).is_some_and(|v| !v.is_empty());
@@ -67,8 +69,11 @@ fn check_bin(name: &'static str, bin: &str, env_key: &str) -> Check {
     }
     Check::fail(
         name,
-        format!("{bin} 不可用(素材时长探测/渲染导出依赖它)"),
-        format!("winget install --id Gyan.FFmpeg -e ;或安装后 setx {env_key} \"C:\\path\\to\\{bin}.exe\""),
+        format!("{bin} 不可用(素材时长探测/渲染导出依赖它;ADR-0022 解析顺序 env→PATH→内嵌随包)"),
+        format!(
+            "三选一:① 重跑安装器勾选「ffmpeg 内嵌组件」(默认勾选,纯净机装完即用);\
+             ② winget install --id Gyan.FFmpeg -e ;③ 安装后 setx {env_key} \"C:\\path\\to\\{bin}.exe\""
+        ),
     )
 }
 

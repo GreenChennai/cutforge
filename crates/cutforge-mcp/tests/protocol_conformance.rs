@@ -78,6 +78,11 @@ fn protocol_conformance() {
         ("compound_unbind", json!({"root": root_s})),
         ("multicam_cut", json!({"root": root_s})),
         ("scene_detect", json!({"root": root_s})),
+        // 册六 A6 T6.1:布局迁移/工程库缺参面(migrate_layout 缺 to;library_manage 缺 action)
+        ("migrate_layout", json!({"root": root_s})),
+        ("library_manage", json!({"root": root_s})),
+        ("library_manage", json!({"root": root_s, "action": "new"})),
+        ("library_recover", json!({"root": root_s, "action": "recover"})),
     ] {
         let resp = cutforge_mcp::dispatch(name, &args);
         assert_envelope(&resp, name);
@@ -108,21 +113,22 @@ fn protocol_conformance() {
     //  media_thumbnail/media_proxy/audio_beats → 56;册五 A5 增 lut_import/
     //  scope_data/audio_loudness/encode_probe/render_queue → 61;册五 A5-BE3 增
     //  compound_create/compound_unbind/multicam_cut/scene_detect(写)+
-    //  multicam_sync/otio_export/otio_import(编排)→ 68)
+    //  multicam_sync/otio_export/otio_import(编排)→ 68;册六 A6 T6.1 增
+    //  migrate_layout/library_manage/library_recover(写)+ library_list(查询)→ 72)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 68, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册五 A5-BE3 增 compound/multicam/scene/otio 七工具)");
+    assert_eq!(names.len(), 72, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册六 A6 增 migrate/library/recover 四工具)");
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);
         assert!(t["outputSchema"].is_object(), "{} 缺 outputSchema", t["name"]);
     }
-    // kind 口径:15 查询 + 34 写 + 19 编排(与 _doc 同句;册五 A5-BE3 61→68)
+    // kind 口径:16 查询 + 37 写 + 19 编排(与 _doc 同句;册六 A6 68→72)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds.entry(t["kind"].as_str().unwrap().to_string()).or_insert(0usize) += 1;
     }
-    assert_eq!(kinds.get("query"), Some(&15), "查询 15:{kinds:?}");
-    assert_eq!(kinds.get("write"), Some(&34), "写 34:{kinds:?}");
+    assert_eq!(kinds.get("query"), Some(&16), "查询 16:{kinds:?}");
+    assert_eq!(kinds.get("write"), Some(&37), "写 37:{kinds:?}");
     assert_eq!(kinds.get("orchestrate"), Some(&19), "编排 19:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
@@ -354,4 +360,117 @@ fn edit_ops_tools_full_chain() {
     assert!(v1.get("mute").is_none() && v1.get("heightPx").is_none(), "undo 后轨道属性字段消失");
     assert_eq!(v1["clips"].as_array().unwrap()[0]["durationMs"], json!(8400));
     cutforge_io::fsutil::cleanup(&root);
+}
+
+/// 册六 A6(T6.1/AC-6.1/6.2):migrate_layout / library_manage / library_list /
+/// library_recover 的 dispatch 级闭环——V2→V3 迁移(幂等/冲突拒绝/工程照常读写)、
+/// 工程库七操作、卡片轻量派生、强造残留锁→恢复清单→恢复清零。
+#[test]
+fn library_migrate_recover_full_chain() {
+    let tmp = cutforge_io::fsutil::temp_dir("mcp-library");
+    let lib = tmp.join("lib");
+    let lib_s = lib.to_string_lossy().to_string();
+    let call = |name: &str, args: Value| cutforge_mcp::dispatch(name, &args);
+
+    // ---- 迁移:V2 工程 → v3(一次性),再跑幂等 NOOP,冲突整体拒绝 ----
+    let proj = tmp.join("proj");
+    let proj_s = proj.to_string_lossy().to_string();
+    let r = call("project_new", json!({"root": proj_s, "slug": "迁客体", "fps": 30, "tracks": ["video"]}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    std::fs::create_dir_all(proj.join("01_原始素材")).unwrap();
+    std::fs::write(proj.join("01_原始素材/a.mp4"), b"m").unwrap();
+    let r = call("migrate_layout", json!({"root": proj_s, "to": "v3"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["from"], json!("v2"));
+    assert_eq!(r["data"]["idempotent"], json!(false));
+    assert!(proj.join("media/a.mp4").is_file(), "素材随映射入 media/");
+    assert!(proj.join("project.json").is_file(), "真相源到根");
+    assert!(!proj.join("05_时间线工程").exists(), "腾空目录移除");
+    // 迁移后工程照常读写(v3 三态打开)
+    let r = call("timeline_get", json!({"root": proj_s}));
+    assert_eq!(r["code"], json!("OK"), "v3 工程照常打开: {r}");
+    // 幂等:再跑 = NOOP
+    let r = call("migrate_layout", json!({"root": proj_s, "to": "v3"}));
+    assert_eq!(r["data"]["idempotent"], json!(true), "二次迁移必须 NOOP: {r}");
+    // 冲突:media/ 已存在的 V2 工程拒绝(盘面不动)
+    let proj2 = tmp.join("proj2");
+    let proj2_s = proj2.to_string_lossy().to_string();
+    let r = call("project_new", json!({"root": proj2_s, "slug": "冲突体", "fps": 30, "tracks": ["video"]}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    std::fs::create_dir_all(proj2.join("01_原始素材")).unwrap(); // 迁移源在盘 → 计划含改名
+    std::fs::create_dir_all(proj2.join("media")).unwrap(); // 映射目标已存在 → 冲突
+    let r = call("migrate_layout", json!({"root": proj2_s, "to": "v3"}));
+    assert_eq!(r["code"], json!("CONFLICT"), "映射目标已存在必须 CONFLICT: {r}");
+    assert!(proj2.join("05_时间线工程/project.json").is_file(), "冲突拒绝盘面不动");
+    // 非 v3 目标 / 非工程目录
+    let r = call("migrate_layout", json!({"root": proj_s, "to": "v2"}));
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "{r}");
+    let r = call("migrate_layout", json!({"root": tmp.join("无此工程").to_string_lossy(), "to": "v3"}));
+    assert_eq!(r["code"], json!("NO_CONFIG"), "{r}");
+
+    // ---- 工程库:new/list/search/rename/copy/archive/unarchive/delete ----
+    let r = call("library_manage", json!({"root": lib_s, "action": "new", "name": "甲",
+                 "slug": "工程甲", "fps": 25, "canvasW": 1920, "canvasH": 1080}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let dup = call("library_manage", json!({"root": lib_s, "action": "new", "name": "甲"}));
+    assert_eq!(dup["code"], json!("PRECONDITION_FAILED"), "重名必须拒绝: {dup}");
+    let bad = call("library_manage", json!({"root": lib_s, "action": "new", "name": "../逃逸"}));
+    assert_eq!(bad["code"], json!("PRECONDITION_FAILED"), "非法名必须拒绝: {bad}");
+    let r = call("library_manage", json!({"root": lib_s, "action": "copy", "name": "甲", "to": "乙"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // 卡片:轻量派生(slug/fps/画幅/时长/valid)
+    let r = call("library_list", json!({"root": lib_s}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let cards = r["data"]["projects"].as_array().unwrap();
+    assert_eq!(cards.len(), 2, "{r}");
+    let card = cards.iter().find(|c| c["name"] == json!("甲")).unwrap();
+    assert_eq!(card["slug"], json!("工程甲"));
+    assert_eq!(card["fps"], json!(25));
+    assert_eq!(card["canvas"]["width"], json!(1920));
+    assert_eq!(card["valid"], json!(true));
+    // search 子串过滤
+    let r = call("library_list", json!({"root": lib_s, "query": "乙"}));
+    assert_eq!(r["data"]["total"], json!(1));
+    // archive → includeArchived → unarchive
+    let r = call("library_manage", json!({"root": lib_s, "action": "archive", "name": "乙"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let r = call("library_list", json!({"root": lib_s}));
+    assert_eq!(r["data"]["total"], json!(1), "归档不入缺省清单");
+    let r = call("library_list", json!({"root": lib_s, "includeArchived": true}));
+    let archived = r["data"]["projects"].as_array().unwrap().iter()
+        .find(|c| c["name"] == json!("乙")).unwrap().clone();
+    assert_eq!(archived["archived"], json!(true));
+    let r = call("library_manage", json!({"root": lib_s, "action": "unarchive", "name": "乙"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // rename(目录级;slug 不随改,报告如实标注)
+    let r = call("library_manage", json!({"root": lib_s, "action": "rename", "name": "乙", "to": "丙"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let r = call("library_list", json!({"root": lib_s, "query": "丙"}));
+    assert_eq!(r["data"]["projects"][0]["slug"], json!("工程甲"), "slug 不随目录名改写");
+    // delete → .trash(可捞回,非物理删除)
+    let r = call("library_manage", json!({"root": lib_s, "action": "delete", "name": "丙"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert!(r["data"]["at"].as_str().unwrap().replace('\\', "/").contains(".trash/"), "{r}");
+
+    // ---- 崩溃恢复:强造残留锁(假死 pid)→ 恢复清单 → 恢复清零 ----
+    let p = lib.join("崩溃体");
+    let r = call("library_manage", json!({"root": lib_s, "action": "new", "name": "崩溃体"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    std::fs::create_dir_all(p.join(".cutforge")).unwrap();
+    std::fs::write(p.join(".cutforge/lock"), b"pid=4194303 ts=1").unwrap();
+    let r = call("library_recover", json!({"root": lib_s, "action": "list"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let stale = r["data"]["stale"].as_array().unwrap();
+    assert_eq!(stale.len(), 1, "{r}");
+    assert_eq!(stale[0]["pidAlive"], json!(false), "假 pid 必判死");
+    // 执行恢复:清锁 + OpLog 一致性校验
+    let r = call("library_recover", json!({"root": lib_s, "action": "recover", "name": "崩溃体"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["lockCleared"], json!(true));
+    assert_eq!(r["data"]["rev"], json!(0));
+    assert!(!p.join(".cutforge/lock").exists(), "残留锁必须被清");
+    let r = call("library_recover", json!({"root": lib_s, "action": "list"}));
+    assert_eq!(r["data"]["total"], json!(0), "恢复后清单归零");
+
+    cutforge_io::fsutil::cleanup(&tmp);
 }

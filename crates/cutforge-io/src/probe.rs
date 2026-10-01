@@ -49,6 +49,29 @@ pub fn ffprobe_available() -> bool {
     Command::new(ffprobe_bin()).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
+/// 进程存活判定(崩溃恢复,册六 T6.1):锁文件里的 pid 是否还活着。
+/// 本模块是 IO 层唯一的外部进程调用点,pid 探测同域收敛于此:
+/// Windows 走 `tasklist /FI`(过滤精确 PID,无匹配时输出本地化 INFO 行,不含数字);
+/// unix 走 `/proc/<pid>` 存在性(纯文件系统,零进程派生)。
+pub fn pid_alive(pid: u32) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .output()
+            .map(|o| {
+                let stdout = String::from_utf8_lossy(&o.stdout);
+                // CSV 行首列带引号包 PID(精确过滤命中才有一行);INFO 行无该 pid
+                stdout.contains(&format!("\"{pid}\""))
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::path::Path::new(&format!("/proc/{pid}")).exists()
+    }
+}
+
 pub fn probe(path: &Path) -> io::Result<MediaInfo> {
     // -show_streams 与 -show_format 同批输出:B12 接线后 media_probe 需要分辨率
     // 与音轨存在性(来自 streams),时长仍统一取 format.duration(单一口径)。

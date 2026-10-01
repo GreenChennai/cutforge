@@ -63,3 +63,14 @@ pub fn create_exclusive(path: &Path, data: &[u8]) -> io::Result<()> {
 pub fn remove(path: &Path) -> io::Result<()> {
     fs::remove_file(path)
 }
+
+/// 结构性改名/搬移(册六 T6.1:布局迁移器与工程库的目录级操作原语)。
+/// 目录/文件整体 rename 在同卷内原子,不经临时文件(单文件落盘语义不适用整目录)。
+pub fn rename(src: &Path, target: &Path) -> io::Result<()> {
+    fs::rename(src, target)
+}
+
+/// 递归删除目录(腾空目录移除/回收站清理;文件删除走 [`remove`])。
+pub fn remove_dir_all(path: &Path) -> io::Result<()> {
+    fs::remove_dir_all(path)
+}

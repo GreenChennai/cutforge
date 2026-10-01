@@ -204,7 +204,7 @@ pub fn subtitle_export_tool(ws: &Workspace, root: &Path, args: &Value) -> Value 
             }
             o.to_string()
         }
-        None => format!("{}/subtitles_{track_id}.{ext}", cutforge_io::paths::OUTPUT),
+        None => format!("{}/subtitles_{track_id}.{ext}", cutforge_io::paths::output_dir_name(root)),
     };
     let abs_out = root.join(&out);
     if let Some(dir) = abs_out.parent()

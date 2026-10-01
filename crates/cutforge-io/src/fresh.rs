@@ -63,6 +63,7 @@ pub fn disk_fingerprint(root: &Path) -> Option<DiskFingerprint> {
     let truths = crate::paths::FILE_TRUTHS_NEW
         .iter()
         .chain(crate::paths::FILE_TRUTHS_LEGACY.iter())
+        .chain(crate::paths::FILE_TRUTHS_V3.iter())
         .map(|(_, rel)| sig_of(&root.join(rel)))
         .collect();
     let oplog_dir = root.join(".cutforge/oplog");

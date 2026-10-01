@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。68 工具 = 15 查询 + 34 写 + 19 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42,编排 7→8;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48,轨道属性字段 locked/mute/solo/hidden/heightPx/color 同批进 IR/TrackPatch/ui-fields)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace(写)+ subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats(编排/纯计算/产物面) → 48→56,并承接 clip.textStyle/clip.huazi(textStyle/huazi 入 ClipPatch 整对象替换)与 clip.denoise/clip.pitch 渲染链;册五 A5 新增 lut_import/scope_data(编排/派生物)+ audio_loudness/encode_probe(查询/探测)+ render_queue(编排/队列) → 56→61,并承接 clip.grade(整对象替换,含 LUT 引用)与 track.eq/track.dyn(轨道处理)与 bgm.duck*(侧链参数化),渲染端 RENDERER_VERSION 8.0(grade 链/轨道组建流/bt709 encode);册五 A5-BE3(T5.4/T5.5)新增 compound_create/compound_unbind/multicam_cut/scene_detect(写,单 Op 原子/可选切段)+ multicam_sync/otio_export/otio_import(编排:纯计算/派生物导出/从零导入) → 61→68,并承接 clip.compound(内联子时间线,整对象替换)与 track.kind=adjust(调整层,渲染端 RENDERER_VERSION 9.0:compound 递归展开 + adjust 时间窗步 + 字幕 VTT 子格式)。",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。72 工具 = 16 查询 + 37 写 + 19 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats 后 48→56;册五 A5 新增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 后 56→61,A5-BE3 新增 compound_create/compound_unbind/multicam_cut/scene_detect/multicam_sync/otio_export/otio_import 后 61→68;册六 A6 新增 migrate_layout/library_manage/library_recover(写)+ library_list(查询)后 68→72,当前一律以本文件 tools 数组为准)",
  "channels": [
   "stdio",
   "embedded-http"
@@ -3057,6 +3057,188 @@
     "required": [
      "root",
      "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "migrate_layout",
+   "kind": "write",
+   "idempotent": true,
+   "description": "工程布局迁移(册六 T6.1/ADR-0021):V1(0.4.x 英文目录)/V2(中文阶段目录)→ V3 扁平布局(media/ + 真相源在根 + exports/);一次性到位,幂等(v3 工程 = NOOP),映射目标已存在整体拒绝(CONFLICT,盘面不动);目录级搬运,OpLog/rev/notes/.cutforge 随工程根原地不动,完整性零影响",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "to": {
+      "type": "string",
+      "enum": [
+       "v3"
+      ],
+      "description": "目标布局(当前唯一目标 v3;v2/v1 兼容读写冻结,不做回迁)"
+     }
+    },
+    "required": [
+     "root",
+     "to"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "library_manage",
+   "kind": "write",
+   "idempotent": false,
+   "description": "工程库管理(册六 T6.1):action=new(新建,scaffold 同源,layout v2/v3)/rename/copy/archive/unarchive/delete;root=库根(env CUTFORGE_PROJECTS,缺省 %USERPROFILE%\\CutForge\\Projects);操作=目录级移动/复制,OpLog 完整性不动;活进程持锁的工程拒绝移动;delete 移入 .trash/(可捞回)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "库根目录绝对路径"
+     },
+     "action": {
+      "type": "string",
+      "enum": [
+       "new",
+       "rename",
+       "copy",
+       "archive",
+       "unarchive",
+       "delete"
+      ],
+      "description": "库操作"
+     },
+     "name": {
+      "type": "string",
+      "description": "库内工程名(new/rename/copy/archive/unarchive/delete 必填)"
+     },
+     "to": {
+      "type": "string",
+      "description": "目标名(rename/copy 必填)"
+     },
+     "layout": {
+      "type": "string",
+      "enum": [
+       "v2",
+       "v3"
+      ],
+      "description": "action=new 的布局(过渡期缺省 v2,ADR-0021)"
+     },
+     "slug": {
+      "type": "string",
+      "description": "action=new 的工程标识(缺省=工程名)"
+     },
+     "fps": {
+      "type": "integer",
+      "enum": [
+       24,
+       25,
+       30,
+       50,
+       60
+      ],
+      "description": "action=new;缺省 30"
+     },
+     "canvasW": {
+      "type": "integer",
+      "minimum": 64,
+      "maximum": 7680,
+      "multipleOf": 2,
+      "description": "action=new;缺省宽 1080"
+     },
+     "canvasH": {
+      "type": "integer",
+      "minimum": 64,
+      "maximum": 7680,
+      "multipleOf": 2,
+      "description": "action=new;缺省高 1920"
+     },
+     "tracks": {
+      "type": "array",
+      "items": {
+       "enum": [
+        "video",
+        "audio",
+        "text",
+        "adjust"
+       ]
+      },
+      "description": "action=new 初始轨道(缺省 [video, audio])"
+     }
+    },
+    "required": [
+     "root",
+     "action"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "library_list",
+   "kind": "query",
+   "idempotent": true,
+   "description": "工程库清单(册六 T6.1):卡片元数据从 project.json 轻量派生(slug/fps/画幅/时长=IR 投影 max endMs/rev/修改时间/缩略图=.cutforge/thumb-cache 最新产物);不逐工程 ffprobe(列表成本可控);query 子串过滤 name/slug(大小写不敏感);includeArchived 并入 .archives 归档区;坏工程如实标 valid=false",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "库根目录绝对路径"
+     },
+     "query": {
+      "type": "string",
+      "description": "搜索子串(过滤 name/slug;缺省不过滤)"
+     },
+     "includeArchived": {
+      "type": "boolean",
+      "description": "是否并入归档区(缺省 false)"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "library_recover",
+   "kind": "write",
+   "idempotent": false,
+   "description": "崩溃恢复(册六 T6.1/AC-6.1):action=list 列库内可恢复工程(.cutforge/lock 在盘且 pid 已死/锁龄超阈;附会话摘要证据 revFrom/revTo);action=recover+name 对指定工程执行恢复(清残留锁 + OpLog 一致性校验:半行截断/rev 对账/规范形落盘,复用 Workspace::open_for_write 既有语义)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "库根目录绝对路径"
+     },
+     "action": {
+      "type": "string",
+      "enum": [
+       "list",
+       "recover"
+      ],
+      "description": "list=恢复清单(缺省);recover=执行恢复"
+     },
+     "name": {
+      "type": "string",
+      "description": "action=recover 的库内工程名"
+     }
+    },
+    "required": [
+     "root"
     ]
    },
    "outputSchema": {

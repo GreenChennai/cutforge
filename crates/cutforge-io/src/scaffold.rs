@@ -6,7 +6,7 @@
 
 use crate::atomic;
 use crate::fsutil;
-use crate::PROJECT_REL;
+use crate::paths::{LayoutKind, PROJECT_REL, V3_EXPORTS, V3_MEDIA, V3_PROJECT_REL};
 use cutforge_core::model::Project;
 use std::path::Path;
 
@@ -79,9 +79,10 @@ pub fn new_project_value(
     Ok(v)
 }
 
-/// 在 `root` 新建空工程:写 `05_时间线工程/project.json`(0.5 中文目录契约,
-/// 目录名唯一来源 `paths`;已存在则拒绝,绝不静默覆盖)。
+/// 在 `root` 新建空工程:V2 布局写 `05_时间线工程/project.json`(0.5 中文目录契约,
+/// 目录名唯一来源 `paths`);已存在则拒绝,绝不静默覆盖。
 /// 返回工程文件路径;目录创建不算文件写(同 fsutil 口径),文件本体走唯一落盘点。
+/// (过渡期缺省形态 = V2,ADR-0021 决策 4;V3 走 [`scaffold_project_layout`]。)
 pub fn scaffold_project(
     root: &Path,
     slug: &str,
@@ -90,16 +91,49 @@ pub fn scaffold_project(
     height: u32,
     track_kinds: &[cutforge_core::model::TrackKind],
 ) -> std::io::Result<std::path::PathBuf> {
+    scaffold_project_layout(root, slug, fps, width, height, track_kinds, LayoutKind::V2)
+}
+
+/// 同 [`scaffold_project`],按显式布局建盘(册六 ADR-0021):V2 落
+/// `05_时间线工程/project.json`;V3 落根 `project.json` 并创建 `media/`+`exports/`
+/// 空目录(独立模式素材/导出面)。工程文件名唯一来源 `paths` 常量。
+pub fn scaffold_project_layout(
+    root: &Path,
+    slug: &str,
+    fps: u32,
+    width: u32,
+    height: u32,
+    track_kinds: &[cutforge_core::model::TrackKind],
+    layout: LayoutKind,
+) -> std::io::Result<std::path::PathBuf> {
     let v = new_project_value(slug, fps, width, height, track_kinds)
         .map_err(std::io::Error::other)?;
-    let project_path = root.join(PROJECT_REL);
+    let (project_rel, stage_dir) = match layout {
+        LayoutKind::V2 => (PROJECT_REL, Some(root.join(crate::paths::TIMELINE))),
+        LayoutKind::V3 => (V3_PROJECT_REL, None),
+        // V1 是历史兼容形态,不作为新建产物
+        LayoutKind::Legacy => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "legacy(0.4.x 英文目录)布局只兼容读写,不作为新建产物",
+            ))
+        }
+    };
+    let project_path = root.join(project_rel);
     if project_path.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
             format!("工程已存在,拒绝覆盖: {}", project_path.display()),
         ));
     }
-    fsutil::ensure(&root.join(crate::paths::TIMELINE))?;
+    match stage_dir {
+        Some(dir) => fsutil::ensure(&dir)?,
+        None => {
+            // V3:media/ + exports/ 先建(空目录不参与指纹,目录创建不算文件写)
+            fsutil::ensure(&root.join(V3_MEDIA))?;
+            fsutil::ensure(&root.join(V3_EXPORTS))?;
+        }
+    }
     let mut buf = serde_json::to_vec_pretty(&v)?;
     buf.push(b'\n');
     atomic::atomic_write(&project_path, &buf)?;
@@ -153,5 +187,35 @@ mod tests {
         assert_eq!(v["tracks"].as_array().unwrap().len(), 0, "tracks 可为空数组");
         let p = Project::from_value(&v).unwrap();
         assert_eq!(p.next_track_id(TrackKind::Video), "V1", "空工程第一条视频轨 = V1");
+    }
+
+    /// V3 显式新建(册六 ADR-0021):根 project.json + media/ + exports/;
+    /// 缺省 scaffold_project 仍产 V2(过渡期缺省,e2e 断言锚定面)。
+    #[test]
+    fn v3_layout_scaffold_and_roundtrip() {
+        let root = fsutil::temp_dir("scaffold-v3");
+        let kinds = [TrackKind::Video, TrackKind::Audio];
+        let path = scaffold_project_layout(&root, "扁平工程", 30, 1080, 1920, &kinds, LayoutKind::V3)
+            .unwrap();
+        assert_eq!(path, root.join(crate::paths::V3_PROJECT_REL));
+        assert!(root.join(crate::paths::V3_MEDIA).is_dir(), "V3 必须建 media/");
+        assert!(root.join(crate::paths::V3_EXPORTS).is_dir(), "V3 必须建 exports/");
+        assert!(!root.join(crate::paths::TIMELINE).exists(), "V3 不得再造阶段目录");
+        assert_eq!(crate::paths::detect_layout(&root), LayoutKind::V3);
+        // V3 工程可被 Workspace 打开、可写、写回原地
+        let mut ws = crate::Workspace::open_exclusive(&root).unwrap();
+        ws.apply(
+            cutforge_core::command::Command::TrackAdd { kind: TrackKind::Text, request_id: None },
+            cutforge_core::oplog::Actor::agent("scaffold-v3"),
+            Default::default(),
+        )
+        .unwrap();
+        assert!(root.join(crate::paths::V3_PROJECT_REL).is_file(), "写回必须原地");
+        assert!(!root.join(crate::paths::PROJECT_REL).exists());
+        // V1 不是合法新建产物
+        let err = scaffold_project_layout(&root.join("x"), "a", 30, 1080, 1920, &kinds, LayoutKind::Legacy)
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        fsutil::cleanup(&root);
     }
 }

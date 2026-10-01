@@ -22,9 +22,11 @@
 #[cfg(test)]
 mod tests;
 
+mod cutlist_ops;
 mod dispatch;
 mod edit_ops;
 mod grade_tools;
+mod library_tools;
 mod media_tools;
 mod pro_ops;
 mod subtitle_ops;

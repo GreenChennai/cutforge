@@ -1,0 +1,35 @@
+{
+ "tool": "library_recover",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "list"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "library": "<TMP>/lib",
+     "stale": [],
+     "total": 0
+    },
+    "message": "可恢复工程清单",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "recover"
+   },
+   "response": {
+    "code": "PRECONDITION_FAILED",
+    "data": {},
+    "message": "recover 需 name(库内工程名)",
+    "ns": "core",
+    "ok": false
+   }
+  }
+ ]
+}

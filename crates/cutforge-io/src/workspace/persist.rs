@@ -55,6 +55,10 @@ impl Workspace {
         // 本进程写入登记(T1.8 性能专项):供同步守护判别"变化来自自己"而免开合并。
         // 以当下磁盘实况为准(自证写入已完成且一致);失败不影响写路径结果。
         crate::fresh::note_local_write(&self.root);
+        // 自动快照(册六 T6.1):env 配置间隔,缺省关;快照是派生物,
+        // 失败不影响写路径结果(与登记同口径)。
+        let (interval, keep) = crate::snapshot::config_from_env();
+        let _ = crate::snapshot::snapshot_if_due(&self.root, interval, keep);
         Ok(())
     }
 

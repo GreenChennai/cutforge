@@ -43,10 +43,11 @@ render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,册四 A4-BE3
   - golden 有的键:实际必须有且值相等,否则 DRIFT(阻断);
   - 实际多出的键:仅警告(WARN),不失败;
   - 数组:长度与逐元素(按下标)严格一致;
-  - 唯一宽口径(仅启发式检测面:audio_beats 的 onsets/onsetCount、scene_detect 的
-    cuts/cutCount/frames):网格化后计数差 ≤2(a5 cuts/frames ≤1)且首个网格值相等
-    网格值相等、onsetCount 计数差 ≤2 → WARN 不 DRIFT;超差仍 DRIFT
-    (不弱化其他工具的严格度)。
+  - 唯一宽口径(仅启发式检测面与响度测量面):audio_beats 的 onsets/onsetCount、
+    scene_detect 的 cuts/cutCount/frames(网格化后计数差 ≤2,scene_detect ≤1 且
+    首个网格值相等)→ WARN 不 DRIFT;册七增响度测量字段族 deviation/inputI/
+    inputTp/inputLra/targetI(数值或数值字符串,绝对容差见 LOUDNESS_TOL)同走
+    WARN;超差仍落回严格对比 DRIFT(不弱化其他工具的严格度)。
 
 退出码:0 = 68/68 PASS;2 = 有 DRIFT/FAIL;3 = 环境缺失(ffmpeg)。
 依赖:Python 标准库 + 已构建的 cutforge-mcp(+ 同目录 cutforge-render)+ ffmpeg。
@@ -188,6 +189,21 @@ CONF_BIN = 0.2       # confidence 量化档(见 _conf_bin:0.1 档无法并档,�
 # 同策:网格化(500ms,吸收 ±1 采样帧)+ 计数容差。
 CUT_GRID_MS = 500    # cuts[].tMs 网格(粗于采样帧 200ms,吸收 ±1 帧漂移)
 CUT_COUNT_TOL = 1    # cuts/cutCount/frames 计数容忍差(±1 抽帧)
+
+# 册七:响度测量字段族跨平台容差口径 —— loudnorm/ebur128 测量值跨 ffmpeg build 有
+# 小数级漂移,归一化层 0.5LU 量化档吸收不了**跨档**漂移(CI ubuntu 实证:inputLra
+# golden=11.5 vs actual=11、inputTp golden=-11.5 vs actual=-11,各差 0.5 恰落在相邻
+# 两档;deviation 1.02 vs 1.1 亦曾漏网)。与 audio_beats 启发式容差同策:测量/估计值
+# 反映外部工具链(ffmpeg 解码/滤波)产物而非 cutforge-mcp 行为 → 绝对容差内 WARN
+# 不 DRIFT,超差落回严格对比。判定面不受影响:target 偏差 ≤1LU 的硬口径是独立判定
+# 字段(within1LU 布尔),不在本族键内、保持严格对比。
+LOUDNESS_TOL: dict[str, float] = {
+    "deviation": 0.5,   # 实测 vs 目标偏差(LU)
+    "inputI": 1.0,      # 输入整合响度(LUFS)
+    "inputTp": 1.0,     # 输入真峰值(dBTP)
+    "inputLra": 1.5,    # 输入响度范围(LU;估计面漂移更宽)
+    "targetI": 1.0,     # 目标整合响度(loudnorm JSON 口径键名)
+}
 
 
 def _grid(values: list, grid_ms: int) -> list[int] | None:
@@ -369,8 +385,28 @@ class Normalizer:
 # ---------------- 加法容忍对比 ----------------
 
 
+def _num_or_none(v) -> float | None:
+    """数值或可转数值字符串 → 有限 float;否则 None(交回严格对比)。
+
+    布尔显式排除(True/False 数值化会伪装成 1.0/0.0);"-inf" 等非有限形态
+    (响度计静音/直通面)与不可转字符串不进容差,保持严格。
+    """
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v) if math.isfinite(v) else None
+    if isinstance(v, str):
+        try:
+            f = float(v)
+        except ValueError:
+            return None
+        return f if math.isfinite(f) else None
+    return None
+
+
 def _tolerant_pair(k: str, g, a, path: str, extras: list[str]) -> bool:
-    """audio_beats 启发式面的唯一宽口径(严格对比前尝试;返回 True = 已按容差记 WARN)。
+    """audio_beats 启发式面 + 响度测量字段族的唯一宽口径(严格对比前尝试;
+    返回 True = 已按容差记 WARN)。
 
     CI 实证:启发式 onset 面对解码舍入敏感,Windows/ubuntu 可差 1 个 onset、
     confidence ±0.1 级 —— confidence/onsets 形态已在归一化层量化/网格化,这里对
@@ -414,6 +450,19 @@ def _tolerant_pair(k: str, g, a, path: str, extras: list[str]) -> bool:
         if g != a and abs(g - a) <= CUT_COUNT_TOL:
             extras.append(f"{path}: 启发式容差计数差 golden={g} actual={a}"
                           f"(≤ {CUT_COUNT_TOL};抽帧输出帧数跨 build ±1)")
+            return True
+    # 响度测量字段族(册七;loudnorm/ebur128 测量面,export_preflight 的
+    # loudness.data.* 与 audio_loudness 共用叶子键名):归一化层 0.5LU 量化吸收不了
+    # 跨档漂移(ubuntu 实证 11.5 vs 11 恰跨档界),这里按物理量纲给绝对容差 →
+    # WARN。compare 递归自带完整 path,叶子键名匹配;值取数值或可转数值字符串两形
+    # (golden/actual 两侧同形,量化后均为字符串形,裸数值形亦兜住)。与 audio_beats
+    # 启发式容差同策:测量值反映外部工具链产物,非 cutforge-mcp 行为。
+    tol = LOUDNESS_TOL.get(k)
+    if tol is not None and g != a:  # 完全相等交回严格对比(不产冗余 WARN)
+        gv, av = _num_or_none(g), _num_or_none(a)
+        if gv is not None and av is not None and abs(gv - av) <= tol:
+            extras.append(f"{path}: 响度测量容差 golden={g!r} actual={a!r}"
+                          f"(差 {abs(gv - av):.6g} ≤ {tol})")
             return True
     return False  # 超差/不适用 → 严格对比
 

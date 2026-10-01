@@ -17,6 +17,21 @@
 
 ### 新增
 
+- **册六(A6)独立化 · T6.1 工程库与布局 v3**:工程布局 **v3 扁平目录**(真相源全部在根
+  `project.json/wordline.json/cutlist.json/cutlist.applied.json/notes.json` + `media/` +
+  `exports/` + `.cutforge/`;三态判定 Legacy/V2/V3 收敛 `paths` 单点;过渡期 scaffold
+  缺省仍产 V2,v3 经显式开关 `new --layout v3` / `project_new layout="v3"` / 迁移启用,
+  ADR-0021);**迁移器** `cutforge-cli migrate <工程> --to v3` + MCP `migrate_layout`
+  (一次性到位、幂等 NOOP、冲突整体拒绝;project.json 字节零改动,OpLog 完整性不动);
+  **工程库** `cutforge-cli library`(list/search/new/rename/copy/archive/unarchive/delete,
+  库根 env `CUTFORGE_PROJECTS` 缺省 `%USERPROFILE%\CutForge\Projects`)+ MCP
+  `library_manage`/`library_list`(卡片元数据从 project.json 轻量派生,不逐工程 ffprobe);
+  **崩溃恢复** `cutforge-cli recover` + MCP `library_recover`(残留锁检测 pid 存活性/
+  锁龄 + 会话摘要证据;恢复 = 清锁 + OpLog 一致性校验复用既有装载语义);**自动快照**
+  `.cutforge/snapshots/`(env `CUTFORGE_SNAPSHOT_INTERVAL_MS`/`CUTFORGE_SNAPSHOT_KEEP`,
+  LRU 上限,缺省关)。工具 **68→72 = 16 查询 + 37 写 + 19 编排**。决策见 ADR-0021/0022/0023;
+  台账见 [docs/A6-PROGRESS.md](docs/A6-PROGRESS.md)。
+
 - **册五(A5)专业深度**:关键帧引擎 IR v3(schemaVersion 3.0.0 双读兼容;白名单属性
   + closed interp + 贝塞尔精确求值,求值器单源,投影下发 `keyframes`/`keyframeSamples`
   采样点集,壳零插值;五条渲染通路按 ADR-0018 分级:position/rotation/scale/opacity/volume

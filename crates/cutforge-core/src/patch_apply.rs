@@ -347,6 +347,16 @@ impl ClipPatch {
                 Value::Null,
             );
         }
+        if let Some(v) = self.compound {
+            // 整对象替换(册五 T5.4;与 crop/fx 同口径原子操作;无 clear——
+            // 复合摘除走 compound_unbind,不经 patch)
+            let old = clip.compound.replace(v.clone());
+            record(
+                "compound",
+                old.map(|c| serde_json::to_value(c).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                serde_json::to_value(v).unwrap_or(Value::Null),
+            );
+        }
         changes
     }
 }

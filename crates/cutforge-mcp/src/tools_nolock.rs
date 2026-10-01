@@ -189,7 +189,8 @@ pub(crate) fn project_new_tool(root: &Path, args: &Value) -> Value {
             Some("video") => kinds.push(cutforge_core::model::TrackKind::Video),
             Some("audio") => kinds.push(cutforge_core::model::TrackKind::Audio),
             Some("text") => kinds.push(cutforge_core::model::TrackKind::Text),
-            other => return envelope(false, "PRECONDITION_FAILED", &format!("未知轨道类型: {other:?}(允许 video/audio/text)"), json!({})),
+            Some("adjust") => kinds.push(cutforge_core::model::TrackKind::Adjust),
+            other => return envelope(false, "PRECONDITION_FAILED", &format!("未知轨道类型: {other:?}(允许 video/audio/text/adjust)"), json!({})),
         }
     }
     match cutforge_io::scaffold::scaffold_project(root, &slug, fps, width, height, &kinds) {

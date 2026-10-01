@@ -12,7 +12,8 @@ pub(crate) fn is_readonly_tool(name: &str) -> bool {
         "project_get" | "wordline_get" | "cutlist_get" | "notes_list"
         | "oplog_tail" | "conflict_list" | "timeline_get"
         // 册四 T4.7:字幕导出只读工程(产物落 06_成片输出,不产 Op 不改 IR)
-        | "subtitle_export")
+        // 册五 T5.5:OTIO/EDL 导出同类(派生物产物,不产 Op 不改 IR)
+        | "subtitle_export" | "otio_export")
 }
 
 /// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。
@@ -29,7 +30,9 @@ pub(crate) fn produces_rev_mutation(name: &str) -> bool {
             | "media_peaks" | "media_thumbnail" | "media_proxy" | "audio_beats"
             // 册五 T5.2/T5.3/T5.6:LUT 落库/示波器数据/响度计/编码探测(非 IR,不升 rev)
             | "lut_import" | "scope_data" | "audio_loudness" | "encode_probe"
-            | "subtitle_export"))
+            // 册五 T5.4/T5.5:多机位同步(纯计算)/字幕导出/OTIO 导出(派生物)/
+            // OTIO 导入(从零建新工程,不动当前工作区 rev)
+            | "subtitle_export" | "multicam_sync" | "otio_export" | "otio_import"))
 }
 use crate::registry::registry;
 use cutforge_core::oplog::Actor;

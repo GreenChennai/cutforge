@@ -186,13 +186,108 @@ pub fn ass_export(clips: &[ExportClip], canvas_w: u32, canvas_h: u32) -> String 
     )
 }
 
-/// 自动识别格式:SRT(含 `-->` 与 `,mmm` 形时间)优先,否则按 ASS Dialogue。
+/// 自动识别格式:WEBVTT 头 → VTT;SRT(含 `-->` 与 `,mmm` 形时间)次之;
+/// 否则按 ASS Dialogue。
 pub fn parse_auto(input: &str) -> Option<Vec<SubLine>> {
-    if input.contains("-->") {
-        srt_parse(input).or_else(|| ass_parse(input))
-    } else {
-        ass_parse(input).or_else(|| srt_parse(input))
+    if input.trim_start().starts_with("WEBVTT") {
+        return vtt_parse(input);
     }
+    if input.contains("-->") {
+        srt_parse(input).or_else(|| vtt_parse(input)).or_else(|| ass_parse(input))
+    } else {
+        ass_parse(input).or_else(|| srt_parse(input)).or_else(|| vtt_parse(input))
+    }
+}
+
+// ---------------- WebVTT(册五 T5.5;SRT↔VTT 差异:逗号→点 + WEBVTT 头) ----------------
+
+/// VTT 时间戳 `HH:MM:SS.mmm`(兼容短形 `MM:SS.mmm`;非法 → None)。
+pub fn vtt_time_parse(s: &str) -> Option<u64> {
+    let s = s.trim();
+    // 剥离 cue settings(时间后跟的空白+非时间 token 由调用方切;此处容忍纯时间)
+    let parts: Vec<&str> = s.split(':').collect();
+    let (h, m, sec) = match parts.len() {
+        3 => (parts[0], parts[1], parts[2]),
+        2 => ("0", parts[0], parts[1]),
+        _ => return None,
+    };
+    let h: u64 = h.trim().parse().ok()?;
+    let m: u64 = m.trim().parse().ok()?;
+    let (sec, msm) = sec.trim().split_once('.')?;
+    if msm.len() != 3 {
+        return None;
+    }
+    Some(h * 3_600_000 + m * 60_000 + sec.parse::<u64>().ok()? * 1000 + msm.parse::<u64>().ok()?)
+}
+
+/// ms → VTT 时间戳 `HH:MM:SS.mmm`(点分隔;确定性与溢出安全)。
+pub fn vtt_time_format(ms: u64) -> String {
+    format!("{:02}:{:02}:{:02}.{:03}", ms / 3_600_000, ms % 3_600_000 / 60_000, ms % 60_000 / 1000, ms % 1000)
+}
+
+/// VTT 解析:首行 WEBVTT 头(必需);NOTE/STYLE/REGION 块跳过;cue 正文多行保留。
+/// 非法 cue 跳过(逐块容错);零合法 cue → None(调用方报协议错)。
+pub fn vtt_parse(input: &str) -> Option<Vec<SubLine>> {
+    let input = input.replace("\r\n", "\n");
+    if !input.trim_start().starts_with("WEBVTT") {
+        return None;
+    }
+    let mut out: Vec<SubLine> = Vec::new();
+    for block in input.split("\n\n") {
+        let lines: Vec<&str> = block.lines().filter(|l| !l.trim().is_empty()).collect();
+        if lines.is_empty() {
+            continue;
+        }
+        let first = lines[0].trim();
+        if first.starts_with("WEBVTT")
+            || first.starts_with("NOTE")
+            || first.starts_with("STYLE")
+            || first.starts_with("REGION")
+        {
+            continue;
+        }
+        // 时间行定位(cue id 行可选):第一处含 "-->" 的行
+        let Some(ti) = lines.iter().position(|l| l.contains("-->")) else { continue };
+        let mut seg = lines[ti].split("-->");
+        let (Some(a), Some(b)) = (seg.next(), seg.next()) else { continue };
+        // cue settings(终点时间后的空白+token)剥除
+        let b_time: String = b.trim().chars().take_while(|c| !c.is_whitespace()).collect();
+        let (Some(at), Some(end)) = (vtt_time_parse(a), vtt_time_parse(&b_time)) else { continue };
+        if end <= at {
+            continue;
+        }
+        let text = lines[ti + 1..].join("\n");
+        if text.trim().is_empty() {
+            continue;
+        }
+        out.push(SubLine { at_ms: at, duration_ms: end - at, text });
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
+
+/// VTT 导出:WEBVTT 头 + cue(时序毫秒精度零损失;无序号——VTT 惯例,cue id 缺省)。
+pub fn vtt_format(lines: &[SubLine]) -> String {
+    let mut out = String::from("WEBVTT\n\n");
+    for l in lines {
+        out.push_str(&format!(
+            "{} --> {}\n{}\n\n",
+            vtt_time_format(l.at_ms),
+            vtt_time_format(l.at_ms + l.duration_ms),
+            l.text
+        ));
+    }
+    out
+}
+
+/// 文本轨片段 → VTT(按 atMs 升序;字幕导出的工具面入口)。
+pub fn vtt_export_clips(clips: &[ExportClip]) -> String {
+    let mut sorted: Vec<&ExportClip> = clips.iter().collect();
+    sorted.sort_by_key(|c| (c.at_ms, c.id.clone()));
+    let lines: Vec<SubLine> = sorted
+        .iter()
+        .map(|c| SubLine { at_ms: c.at_ms, duration_ms: c.duration_ms, text: c.text.clone() })
+        .collect();
+    vtt_format(&lines)
 }
 
 #[cfg(test)]
@@ -288,5 +383,56 @@ mod tests {
         let ass = "Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,甲\n";
         assert_eq!(parse_auto(ass), ass_parse(ass), "无 --> 识别为 ASS");
         assert!(parse_auto("两者皆非").is_none());
+    }
+
+    // ---- 册五 T5.5:WebVTT(SRT→VTT 时间格式差异:逗号→点,WEBVTT 头) ----
+
+    const CANONICAL_VTT: &str = "WEBVTT\n\n00:00:00.500 --> 00:00:02.500\n你好世界\n\n00:00:03.000 --> 00:00:04.250\n第二行字幕\n跨行文本\n\n";
+
+    #[test]
+    fn vtt_time_roundtrip() {
+        assert_eq!(vtt_time_parse("00:00:00.500"), Some(500));
+        assert_eq!(vtt_time_parse("01:02:03.456"), Some(3_723_456));
+        assert_eq!(vtt_time_parse("01:02.500"), Some(62_500), "短形 MM:SS.mmm");
+        assert_eq!(vtt_time_parse("垃圾"), None);
+        assert_eq!(vtt_time_format(0), "00:00:00.000");
+        assert_eq!(vtt_time_format(3_723_456), "01:02:03.456");
+    }
+
+    /// VTT 往返零丢失(本仓规范形 byte 级)+ 语义幂等;cue settings/NOTE 块容错。
+    #[test]
+    fn vtt_roundtrip_zero_loss() {
+        let lines = vtt_parse(CANONICAL_VTT).expect("夹具必须可解析");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], SubLine { at_ms: 500, duration_ms: 2000, text: "你好世界".into() });
+        assert_eq!(lines[1].text, "第二行字幕\n跨行文本", "多行保留");
+        assert_eq!(vtt_format(&lines), CANONICAL_VTT, "byte 级往返零丢失");
+        assert_eq!(vtt_parse(&vtt_format(&lines)).unwrap(), lines, "再解析语义相等");
+        // 容错:cue id 行 / cue settings / NOTE 块 / 零合法块
+        let loose = "WEBVTT\n\nNOTE 这是一个注释块\n跨行注释\n\ncue-1\n00:00:01.000 --> 00:00:02.000 position:50%\n带设置\n\n00:00:03.000 --> 00:00:02.000\n倒置跳过\n\n";
+        let lines = vtt_parse(loose).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "带设置");
+        assert!(vtt_parse("没有 WEBVTT 头\n\n00:00:01.000 --> 00:00:02.000\nx").is_none());
+        assert!(vtt_parse("WEBVTT\n\n").is_none());
+        // 与 SRT 的格式差异锁:VTT 用点,SRT 用逗号(同毫秒内容互相转换等值)
+        let srt_lines = srt_parse(CANONICAL_SRT).unwrap();
+        let as_vtt = vtt_format(&srt_lines);
+        assert!(as_vtt.starts_with("WEBVTT\n\n00:00:00.500 -->"), "VTT 头 + 点分隔: {as_vtt}");
+        assert_eq!(vtt_parse(&as_vtt).unwrap(), srt_lines, "SRT 内容经 VTT 格式化后解析等值");
+    }
+
+    /// VTT 导出确定性 + 按时序重排;parse_auto 识别 WEBVTT 头优先。
+    #[test]
+    fn vtt_export_deterministic_and_auto_detected() {
+        let clips = vec![
+            ExportClip { id: "T1-002".into(), at_ms: 3000, duration_ms: 1000, text: "后".into() },
+            ExportClip { id: "T1-001".into(), at_ms: 500, duration_ms: 2000, text: "前".into() },
+        ];
+        let a = vtt_export_clips(&clips);
+        let b = vtt_export_clips(&clips);
+        assert_eq!(a, b, "同输入同产物(确定性)");
+        assert!(a.starts_with("WEBVTT\n\n00:00:00.500 --> 00:00:02.500\n前"), "{a}");
+        assert_eq!(parse_auto(&a), vtt_parse(&a), "WEBVTT 头识别优先");
     }
 }

@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。61 工具 = 15 查询 + 30 写 + 16 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42,编排 7→8;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48,轨道属性字段 locked/mute/solo/hidden/heightPx/color 同批进 IR/TrackPatch/ui-fields)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace(写)+ subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats(编排/纯计算/产物面) → 48→56,并承接 clip.textStyle/clip.huazi(textStyle/huazi 入 ClipPatch 整对象替换)与 clip.denoise/clip.pitch 渲染链;册五 A5 新增 lut_import/scope_data(编排/派生物)+ audio_loudness/encode_probe(查询/探测)+ render_queue(编排/队列) → 56→61,并承接 clip.grade(整对象替换,含 LUT 引用)与 track.eq/track.dyn(轨道处理)与 bgm.duck*(侧链参数化),渲染端 RENDERER_VERSION 8.0(grade 链/轨道组建流/bt709 encode)",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。68 工具 = 15 查询 + 34 写 + 19 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42,编排 7→8;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48,轨道属性字段 locked/mute/solo/hidden/heightPx/color 同批进 IR/TrackPatch/ui-fields)。outputSchema 统一引用 #/definitions/envelope(计划书 5.4 结果协议与错误码表)。册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace(写)+ subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats(编排/纯计算/产物面) → 48→56,并承接 clip.textStyle/clip.huazi(textStyle/huazi 入 ClipPatch 整对象替换)与 clip.denoise/clip.pitch 渲染链;册五 A5 新增 lut_import/scope_data(编排/派生物)+ audio_loudness/encode_probe(查询/探测)+ render_queue(编排/队列) → 56→61,并承接 clip.grade(整对象替换,含 LUT 引用)与 track.eq/track.dyn(轨道处理)与 bgm.duck*(侧链参数化),渲染端 RENDERER_VERSION 8.0(grade 链/轨道组建流/bt709 encode);册五 A5-BE3(T5.4/T5.5)新增 compound_create/compound_unbind/multicam_cut/scene_detect(写,单 Op 原子/可选切段)+ multicam_sync/otio_export/otio_import(编排:纯计算/派生物导出/从零导入) → 61→68,并承接 clip.compound(内联子时间线,整对象替换)与 track.kind=adjust(调整层,渲染端 RENDERER_VERSION 9.0:compound 递归展开 + adjust 时间窗步 + 字幕 VTT 子格式)。",
  "channels": [
   "stdio",
   "embedded-http"
@@ -2763,6 +2763,300 @@
     },
     "required": [
      "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "compound_create",
+   "kind": "write",
+   "idempotent": false,
+   "description": "复合片段打包(册五 T5.4/ADR-0019):选中多片段打包为一个复合片段(单 Op 原子;原片段移除,子时间线=选中片段局部时间域)。守卫:≥2 片段/全部视频轨/两两不重叠且首尾相接/不得含复合片段(深度上限两级)。编辑复合内部=解包→改→重打包",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipIds": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "minItems": 2,
+      "description": "选中片段 id 数组(≥2)"
+     },
+     "toTrack": {
+      "type": "string",
+      "description": "目标视频轨"
+     },
+     "startMs": {
+      "type": "number",
+      "description": "复合片段落点毫秒"
+     },
+     "requestId": {
+      "type": "string",
+      "description": "幂等去重键"
+     }
+    },
+    "required": [
+     "root",
+     "clipIds",
+     "toTrack",
+     "startMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "compound_unbind",
+   "kind": "write",
+   "idempotent": false,
+   "description": "复合片段解包(册五 T5.4/ADR-0019):还原为子片段落回所在轨(单 Op 原子;局部时间域平移回主时间线,id 重新确定性分配;打包的逆操作)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "clipId": {
+      "type": "string",
+      "description": "复合片段 id"
+     },
+     "requestId": {
+      "type": "string",
+      "description": "幂等去重键"
+     }
+    },
+    "required": [
+     "root",
+     "clipId"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "multicam_sync",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "多机位同步分析(册五 T5.4/ADR-0019):同源多角度素材数组 → 音频包络互相关对齐 → 各素材偏移 ms(angles[0]=基准,offset 恒 0;offset 语义=角度源时间轴相对基准的滞后)。engine=envelope-xcorr,degraded=true 启发式诚实标注;纯计算不落盘不产 Op",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "angles": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "minItems": 2,
+      "description": "同源多角度素材(工程内相对路径;angles[0]=基准)"
+     },
+     "windowMs": {
+      "type": "number",
+      "description": "搜索窗 ±毫秒(缺省 5000,上限 30000)"
+     }
+    },
+    "required": [
+     "root",
+     "angles"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "multicam_cut",
+   "kind": "write",
+   "idempotent": false,
+   "description": "多机位切换序列展开(册五 T5.4/ADR-0019:多机位=序列不是实体):切换点列表 → 展开为普通片段序列落同一条轨(单 Op 原子;sourceInMs 已含同步偏移)。angles[i].offsetMs 接 multicam_sync 输出",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "trackId": {
+      "type": "string",
+      "description": "目标视频轨"
+     },
+     "startMs": {
+      "type": "number",
+      "description": "序列起点毫秒(绝对)"
+     },
+     "durationMs": {
+      "type": "number",
+      "description": "序列总时长毫秒"
+     },
+     "angles": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "src": {
+         "type": "string"
+        },
+        "offsetMs": {
+         "type": "number"
+        }
+       },
+       "required": [
+        "src"
+       ]
+      },
+      "description": "角度清单([{src, offsetMs}];offsetMs 缺省 0)"
+     },
+     "switches": {
+      "type": "array",
+      "items": {
+       "type": "object",
+       "properties": {
+        "tMs": {
+         "type": "number"
+        },
+        "angle": {
+         "type": "integer"
+        }
+       },
+       "required": [
+        "tMs",
+        "angle"
+       ]
+      },
+      "description": "切换点列表(tMs 相对 startMs,严格递增,首点必须为 0)"
+     },
+     "requestId": {
+      "type": "string",
+      "description": "幂等去重键"
+     }
+    },
+    "required": [
+     "root",
+     "trackId",
+     "startMs",
+     "durationMs",
+     "angles",
+     "switches"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "scene_detect",
+   "kind": "write",
+   "idempotent": false,
+   "description": "场景剪切检测(册五 T5.4):抽帧差分(灰度 64x36 @sampleFps)→ 自适应阈值局部极大 → 剪切点列表(engine=frame-diff,degraded=true 启发式诚实标注);autoSplit.trackId 给定时按切点自动切段(Command::TrackSplitAt 单 Op 原子;切点不在片段内部时 GUARD 拒绝)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "src": {
+      "type": "string",
+      "description": "素材(工程内相对路径)"
+     },
+     "sampleFps": {
+      "type": "number",
+      "description": "抽帧采样率(缺省 5,1..15)"
+     },
+     "sensitivity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "灵敏度(0 稀疏..1 密集),缺省 0.5"
+     },
+     "autoSplit": {
+      "type": "object",
+      "properties": {
+       "trackId": {
+        "type": "string"
+       }
+      },
+      "required": [
+       "trackId"
+      ],
+      "description": "自动切段目标轨(缺省只检测不切)"
+     }
+    },
+    "required": [
+     "root",
+     "src"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "otio_export",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "互操作导出(册五 T5.5/ADR-0019 手写最小子集):format=otio → OTIO JSON(Timeline/Track(Video/Audio)/Clip(source_range+相对路径)/Gap/Marker/Transition 基础型/Stack(复合↔嵌套 Stack);子集外轨型 WARN 留痕)或 format=edl → EDL CMX3600 文本(视频轨逐事件 C/D,转场映射 D 溶解;生成器与版本写头注释)。派生物产物,不产 Op 不改 IR;缺省落 06_成片输出/<slug>.<ext>",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "format": {
+      "type": "string",
+      "enum": [
+       "otio",
+       "edl"
+      ],
+      "description": "缺省 otio"
+     },
+     "out": {
+      "type": "string",
+      "description": "导出路径(工程内相对路径;缺省 06_成片输出/<slug>.<ext>)"
+     }
+    },
+    "required": [
+     "root"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "otio_import",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "OTIO 导入(册五 T5.5/ADR-0019):OTIO JSON → 新工程(从零起步,project_new 同类免锁创建;目标 root 须不存在,拒绝覆盖)。子集外元素(未知轨型/效果栈/时间变形等)WARN 留痕不静默丢;Track kind 仅 Video/Audio,未知转场类型降级 fade 并 WARN",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "目标工程目录绝对路径(必须不存在,拒绝覆盖)"
+     },
+     "src": {
+      "type": "string",
+      "description": "OTIO 文件路径(任意可读;导出产物可经 /media 加载)"
+     }
+    },
+    "required": [
+     "root",
+     "src"
     ]
    },
    "outputSchema": {

@@ -234,6 +234,7 @@ fn kind_str(k: TrackKind) -> &'static str {
         TrackKind::Video => "video",
         TrackKind::Audio => "audio",
         TrackKind::Text => "text",
+        TrackKind::Adjust => "adjust",
     }
 }
 
@@ -280,6 +281,7 @@ pub(crate) fn timeline_projection(project: &cutforge_core::model::Project) -> Ve
                     cutforge_core::model::TrackKind::Video => "video",
                     cutforge_core::model::TrackKind::Audio => "audio",
                     cutforge_core::model::TrackKind::Text => "text",
+                    cutforge_core::model::TrackKind::Adjust => "adjust",
                 },
                 "src": c.src, "startMs": c.start_ms, "endMs": c.start_ms + c.duration_ms,
                 "durationMs": c.duration_ms, "sourceInMs": c.source_in_ms,
@@ -300,6 +302,12 @@ pub(crate) fn timeline_projection(project: &cutforge_core::model::Project) -> Ve
                 "denoise": c.denoise, "pitch": c.pitch,
                 // 关键帧(IR v3,T5.1):原始数组 + 采样点集(求值单源;壳零插值)
                 "keyframes": c.keyframes, "keyframeSamples": keyframe_samples_projection(c),
+                // 复合片段概要(册五 T5.4):子 clips 数量与总时长(壳据此展示与
+                // 进入复合编辑视图;全量子 clips 不随投影下发——投影载荷纪律)
+                "compound": c.compound.as_ref().map(|cp| json!({
+                    "clipCount": cp.clips.len(), "durationMs": cp.duration_ms(),
+                    "canvas": cp.canvas,
+                })),
                 // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
                 // (transition/motion 已于 ClipPatch 扩展后承接,不再列只读)
                 "fade": c.fade,

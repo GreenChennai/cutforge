@@ -1,7 +1,8 @@
 # A5-PROGRESS · 册五「专业深度」进度册
 
 > 口径:status 只认实码 + 夹具证据;工具数以 `schemas/mcp-tools.json` 为准
-> (册五后 **61 = 15 查询 + 30 写 + 16 编排**)。RENDERER_VERSION 随本册升 **8.0**
+> (册五后 **68 = 15 查询 + 34 写 + 19 编排**)。RENDERER_VERSION 随本册升 **8.0**
+> (BE2),BE3(T5.4/T5.5)再升 **9.0**(compound 递归展开 + adjust 步 + VTT)
 > (grade 链 / 轨道组建流 / loudnorm 目标入键 / encode 带 bt709 标签重编码,旧缓存整体失效)。
 
 ## 一、任务面
@@ -12,7 +13,8 @@
 | T5.2 调色 | clip.grade 整对象替换:一级校色(色温/色调/曝光/对比/高光阴影/饱和度/Lift/Gamma/Gain)+ 二级(曲线/LUT;HSL 登记降级)+ 示波器数据后端 + lut_import | ✅(BE2,本批) | `render::grade` 链单测;parity G1–G5;`lut_import`/`scope_data` 工具 |
 | T5.3 音频工作站 | track.eq(≤8 段 biquad 链)+ track.dyn(acompressor 参数子集 + alimiter)+ ducking 参数化 + audio_loudness 响度计 + loudnormTarget 导出参数化 | ✅(BE2,本批) | parity A1–A3(频带能量/动态范围/响度 ≤1LU);`across.rs` 分组建流单测 |
 | T5.6 渲染质量与控制 | encode 缺省 **remux+bt709 标签**(零重编码零代损)+ 显式选项重编码参数面(encoder/quality/crf/bitrate/gop/pixFmt)+ ffprobe 复验自检 + 硬件探测/优雅降级 + 渲染队列(排队/暂停/恢复/取消/重试)+ 每步耗时/命令回显开关 | ✅(BE2,本批) | `render::encode` 单测;encode_probe;render_queue 冒烟;parity G1 标签复验;bench 复跑 -15.5% |
-| T5.4/T5.5 | 复合/多机位/调整层;OTIO/EDL | ⬜ 未开工 | 册五后续批次 |
+| T5.4 专业编辑工具 | compound 内联子时间线 + adjust 调整层 + 多机位展开 + scene_detect | ✅(BE3,本批) | parity C1–C4(compound 两级实渲/adjust 窗/multicam 500ms 恢复/硬切检测);单 Op 原子(create/unbind/cut/split) |
+| T5.5 互操作 | OTIO 手写最小子集往返 + EDL CMX3600 + VTT + PROJECT-FORMAT.md | ✅(BE3,本批) | 往返语义等价(出→入→再出 diff=0 + 工程投影等价);docs/PROJECT-FORMAT.md 生成式落档 |
 
 ## 二、T5.2 调色:grade IR 与滤镜链映射
 
@@ -103,12 +105,74 @@
 - **渲染日志**:每步耗时 `elapsedMs` 恒入进度事件;`verboseCmd`(缺省关——命令原文含
   素材路径,安全口径)附加 `cmd`。
 
+## 六点五、T5.4 专业编辑工具(BE3)
+
+- **复合片段(ADR-0019 内联子时间线)**:`clip.compound = {clips, canvas?}`——子 clips
+  局部时间域、升序/不重叠/首尾相接(`CompoundSpec::validate` 拒重叠与间隙,与主轨同
+  契约);深度上限两级(子 clip 带 compound 即拒,语义层校验与 keyframes 同模式)。
+  `compound_create`(选区 ≥2 视频片段、两两相接、不含复合 → 打包单 Op 原子)与
+  `compound_unbind`(局部→全局时间域平移回主时间线,id 重分配,单 Op)互为逆操作,
+  undo/replay 零新机制;patch.compound 整对象替换(显式 null 拒绝);merge 按
+  compound.clips id 数组递归(单测锁定内层不同叶零冲突/同叶 CF-001)。
+- **渲染递归展开**(render::compound):segment 步遇 compound 先按**同一管线**
+  (exec_segment+exec_compose 共享内容寻址缓存)渲子时间线为中间段——键 = compose_key
+  (子 seg keys),即「子内容寻址键 = 子 clips 内容指纹」;中间段再作普通素材走外层
+  全通路(变换/变速/转场)。子 clips 音频暂不渲染(诚实降级 WARN 留痕,登记遗留);
+  compound 壳不产混音事件(中间段纯视频,防 mix 空 audio 流炸)。parity C1:子时间线
+  红/蓝各 1s + fade 500ms 转场,外层 lime 叠加片段——总时长 2.0s/中间帧红→混合→蓝/
+  叠加上层正确/重渲二级缓存全命中。
+- **调整层**:`track.kind=adjust`(轨 id 字母 X);adjust 片段 fx/grade 按时间窗作用于
+  主合成结果——渲染新增 **adjust 步**(overlay 之后 mix 之前;STEP_NAMES 7→8 加法):
+  每片段 trim 抽窗→setpts 归零→fx+grade 链(窗内流,不依赖滤镜级 enable)→overlay
+  enable 贴回;空 = 透传零产物;缓存层 `adjust`(键 = 基片键 + 片段 JSON)。调整层
+  文本随 textass 同通道烧录;hidden 轨整轨不生效。parity C2:fx.blur 时间窗内红蓝
+  边界峰值梯度骤降(<50%),窗外画面与颜色逐位不变。
+- **多机位(ADR-0019 展开方案)**:`multicam_sync`(免锁纯计算)——PCM 波形互相关
+  (engine=pcm-xcorr,8 倍抽取均值减除 + NCC,重叠 <60% 守卫;degraded=true +
+  confidence 诚实标注;offset 语义 = 角度源时间轴相对基准滞后)。`multicam_cut`——
+  切换点列表展开为普通片段序列落视频轨(sourceInMs 已含同步偏移,单 Op 原子;首切点
+  必须 0/严格递增/角度越界拒绝)。parity C3:双素材固定 500ms 偏移(非周期六响锚点,
+  周期节拍 xcorr 有等分歧义峰)→ 恢复 499ms,切换序列渲染色块无缝(1.5s 切点两侧同绿)。
+- **场景检测**:`scene_detect`——灰度 64x36 @5fps 抽帧差分(engine=frame-diff,阈值 =
+  mean+(max−mean)×k,严格局部极大防平台误报,200ms 最小间隔;degraded 诚实标注)+
+  可选 autoSplit(Command::TrackSplitAt 单 Op 多点切,切点严格包含才切)。纯函数面在
+  cutforge-render::analyze(与 mcp 工具/parity 同源)。parity C4:硬切色块检测点
+  1.0s ±100ms;TrackSplitAt 切两段断言。
+
+## 六点六、T5.5 互操作(BE3)
+
+- **OTIO 手写最小子集**(ADR-0019,否决 otio crate):`cutforge-core::interop` 单一
+  映射函数两侧——`otio_export`(工程→OTIO JSON:Timeline/Track(Video/Audio)/Clip
+  (source_range + 相对路径 ExternalReference)/Gap/Marker/Transition 基础型/Stack↔
+  复合;time = 秒值 RationalTime rate=fps,毫秒零损失)与 `otio_import`(从零新建工程,
+  project_new 同类免锁;子集外元素 subset_scan 逐节点 WARN 留痕不静默丢;未知轨型/
+  转场降级留痕)。**往返语义等价**:出→入→再出 `otio_semantic_eq` diff=0(name/id
+  不透明句柄不比)+ 工程投影等价(src/startMs/durationMs/sourceIn/transition 逐键;
+  sourceIn 缺席≡0 归一),单测锁定(含复合 Stack 往返)。
+- **EDL CMX3600**:`otio_export format=edl` 手写导出——视频轨逐事件(硬切 C/转场 D,
+  D 帧数 = 声明 durMs),头注释写生成器与版本,音频/文本/调整层轨头注释如实声明略过
+  (不冒充全量);外部工具解析人工验证一次(AC-5.5 后半)候用户执行。
+- **VTT**:subtitle.rs 补 webvtt(vtt_parse 兼容短形时间戳/cue settings/NOTE 块,
+  vtt_format WEBVTT 头 + 点分隔;规范形 byte 级往返 + 与 SRT 同内容互转等值单测);
+  subtitle_export format=vtt / subtitle_import parse_auto 按 WEBVTT 头识别。
+- **docs/PROJECT-FORMAT.md**(公开工程格式):IR 全字段+语义+复合/调整层/多机位/
+  OTIO 子集范围+版本迁移策略(v1/v2/v3+加法扩展零改写)+结果协议——从 schema 与
+  model 实码生成式撰写,逐节核对实码(册六独立化信任基础)。
+- 顺手修:**overlay 步层输入索引潜伏 bug**(`[i:v]`→`[i+1:v]`,旧实现把基片自身缩放
+  叠加——红底红 logo 不可见;compound 夹具 lime 检出;单测锁定 + 既有 parity 断言
+  不受影响);RENDERER_VERSION 8.0→9.0。
+
 ## 七、工具数与 golden
 
-- 56 → **61**(lut_import/scope_data 编排,audio_loudness/encode_probe 查询,
-  render_queue 编排);口径 **61 = 15 查询 + 30 写 + 16 编排**。
-- golden 重录 61 工具;**对比模式连跑两次 0 DRIFT**(elapsedMs 经 JSON-Lines 行归一;
+- 56 → **61**(BE2:lut_import/scope_data 编排,audio_loudness/encode_probe 查询,
+  render_queue 编排)→ **68**(BE3:compound_create/compound_unbind/multicam_cut/
+  scene_detect 写 + multicam_sync/otio_export/otio_import 编排);口径
+  **68 = 15 查询 + 34 写 + 19 编排**。
+- golden 重录(以 tools/bench/tool_parity.py 热修线最终盘面为准,工具序列覆盖以该文件
+  实配为准);**对比模式连跑两次 0 DRIFT**(elapsedMs 经 JSON-Lines 行归一;
   LUFS 值 probe_mode 下 0.5LU 量化;硬件探测布尔占位 `<HW_PROBE>`——跨机稳定)。
+  BE3 新七工具的协议面由 protocol_conformance(缺参探针 + pro_ops_tools_full_chain
+  dispatch 级闭环)与 pro_ops/analyze 单测覆盖。
 - 四则口径文档同步:README/FLOW/protocol_conformance 单测/check_doc_counts 全绿。
 
 ## 八、验证输出(全部实际执行)
@@ -155,3 +219,14 @@
    未做(当前直测,量级可忽略)——如需批量工具面调用再补。
 5. hw 质量映射的 amf 分支仅 `-quality`(crf/cq 无对应参数面,诚实映射);nvenc/qsv 全参面。
 6. e2e_note_cli 首轮偶发(temp 目录并发竞争)——既有测试基建,候隔离化,非本册引入。
+7. **compound 子时间线音频**(T5.4):单轨中间段只取视频面,子 clips 音频不渲染
+   (WARN 留痕 + 壳不产混音事件);候选路线 = 子管线 mix 步产物作中间段音轨
+   (须解决音频内容寻址键与外层变速耦合),真实多轨复合需求出现时按逐案 ADR 重开。
+8. **EDL 外部解析人工验证一次**(AC-5.5 后半)候用户执行;多轨音频 EDL(A 通道映射)
+   未做(诚实声明略过)。
+9. **CutFlow 侧 schema 模板同步**(compound/adjust 字段)未做——跨仓改动不在本批
+   授权面(crates/schemas/tools/docs);双边落库候单独批次(CONTRACT-WORKFLOW §1)。
+10. **进出复合编辑视图无损 e2e** 壳侧半(投影 compound 概要已下放;壳视图是 FE 活,
+    ADR-0019 落地证据登记)。
+11. multicam_sync 只支持音频同源素材(视频画面差分对齐未做;诚实标注 engine=pcm-xcorr)。
+12. scene_detect 阈值只收硬切级跳变(溶解/渐变检出候 ffmpeg scdet 选件评估)。

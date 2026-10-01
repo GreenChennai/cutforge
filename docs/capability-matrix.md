@@ -43,6 +43,11 @@
 | 35 | 渲染队列 | 部分 | 支持 | ✅ achieved(册五 T5.6:render_run 入队 + render_queue list/pause/resume/cancel/retry,并发上限 env 可配) | 必达 | AC-5.6 排队场景;暂停语义=终止+重入队(缓存吸收重跑,诚实声明);状态事件接 render.progress |
 | 36 | 渲染日志(耗时/命令开关) | 部分 | 支持 | ✅ achieved(册五 T5.6:progress 事件 elapsedMs 恒开;verboseCmd 命令原文缺省关) | 加分 | 安全口径:命令原文含素材路径,缺省不上事件面 |
 | 37 | HDR(bt2020/PQ/HLG) | 部分 | 部分 | ❌ missing(ADR-0020 明确暂缓) | 可选 | 无素材无用例不做 tone mapping;触发条件=真实 HDR 交付用例(逐案 ADR 重开,挂载点=输入归一层) |
+| 38 | 复合片段(嵌套时间线) | 支持 | 部分 | ✅ achieved(册五 T5.4/ADR-0019:compound 内联子时间线,深度≤两级;create/unbind 单 Op;渲染递归展开 compose 层内容寻址) | 必达 | parity C1 两级实渲(总时长/颜色序列/叠加上层/二级缓存全命中);子 clips 音频暂不渲染(WARN 留痕登记) |
+| 39 | 调整层(kind=adjust) | 支持 | 支持 | ✅ achieved(册五 T5.4:adjust 步 trim 抽窗→fx/grade 链→overlay enable 贴回) | 必达 | parity C2 fx.blur 窗内峰值梯度骤降、窗外画面不变;文本随 textass 同通道 |
+| 40 | 多机位(同步+展开) | 支持 | 部分 | ✅ achieved(册五 T5.4/ADR-0019 展开方案:multicam_sync pcm-xcorr 启发式诚实标注 + multicam_cut 序列展开单 Op;IR 不建实体) | 加分 | parity C3 500ms 固定偏移恢复 ±50ms;渲染色块时间线无缝 |
+| 41 | 场景剪切检测 | 支持 | 支持 | ✅ achieved(册五 T5.4:scene_detect 抽帧差分 frame-diff 启发式 + TrackSplitAt 单 Op 自动切段) | 加分 | analyze 纯函数单测(硬切 ±100ms/渐变零误报);parity C4 硬切色块检测 |
+| 42 | OTIO/EDL 互操作 | 支持 | 部分 | ✅ achieved(册五 T5.5/ADR-0019 手写最小 OTIO JSON 子集 + EDL CMX3600 导出 + VTT 往返;子集外 WARN 留痕不静默丢) | 加分 | 往返语义等价单测(出→入→再出 diff=0 + 工程投影等价);EDL 外部解析人工验证候用户执行(AC-5.5) |
 
 ## 结论(M11-1 追平后口径)
 

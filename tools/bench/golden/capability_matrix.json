@@ -297,6 +297,46 @@
         "target": null
        },
        {
+        "evidence": "册五 T5.4/ADR-0019:clip.compound 内联子时间线(深度≤两级,子时间线单轨首尾相接校验);compound_create/unbind 单 Op 原子;渲染递归展开(子时间线中间段 compose 层内容寻址,键=子 clips 内容指纹);parity 夹具 C1 两级实渲(总时长/红→混合→蓝/叠加上层/二级缓存全命中);子 clips 音频暂不渲染(WARN 留痕,登记遗留)",
+        "ffmpeg": "部分",
+        "item": "复合片段(嵌套时间线)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "册五 T5.4:adjust 轨片段 fx/grade 按时间窗作用于主合成结果(exec_adjust 步:trim 抽窗→链作用→overlay enable 贴回,任意链可窗内生效);parity 夹具 C2 fx.blur 窗内峰值梯度骤降、窗外不变;文本随 textass 同通道烧录",
+        "ffmpeg": "支持",
+        "item": "调整层(kind=adjust)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "册五 T5.4/ADR-0019 展开方案(IR 不建实体):multicam_sync PCM 波形互相关(engine=pcm-xcorr,启发式 degraded+confidence 诚实标注)+ multicam_cut 切换序列展开为普通片段(单 Op);parity 夹具 C3 500ms 固定偏移恢复(±50ms)且渲染色块时间线无缝",
+        "ffmpeg": "部分",
+        "item": "多机位(同步+展开)",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "册五 T5.4:scene_detect 抽帧差分(engine=frame-diff,灰度 64x36 @5fps,自适应阈值局部极大,启发式诚实标注)+ 可选自动切段(Command::TrackSplitAt 单 Op);analyze::pick_cuts 纯函数单测(硬切 ±100ms/渐变零误报);parity 夹具 C4",
+        "ffmpeg": "支持",
+        "item": "场景剪切检测",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": null
+       },
+       {
+        "evidence": "册五 T5.5/ADR-0019 手写最小 OTIO JSON 子集(Timeline/Track(V/A)/Clip(source_range+相对路径)/Gap/Marker/Transition 基础型/Stack↔复合;子集外 WARN 留痕不静默丢);往返语义等价(出→入→再出 otio_semantic_eq diff=0 + 工程投影等价,单测锁定);EDL CMX3600 手写导出(视频轨 C/D 事件+头注释生成器版本,外部解析人工验证待办);VTT 字幕往返(T5.5)",
+        "ffmpeg": "部分",
+        "item": "OTIO/EDL 互操作",
+        "jianying": "支持",
+        "status": "achieved",
+        "target": "EDL 外部工具解析人工验证一次(AC-5.5 后半)候用户执行"
+       },
+       {
         "evidence": "ADR-0020 明确暂缓:无素材无用例不做 tone mapping/bt2020 管线;触发条件=真实 HDR 交付用例(逐案 ADR 重开)",
         "ffmpeg": "部分",
         "item": "HDR(bt2020/PQ/HLG)",
@@ -306,8 +346,8 @@
        }
       ],
       "rule": "诚实口径:status 只认实码 + 对拍夹具(M8-5)。achieved=有专属夹具证据;partial=字段被契约接受但渲染端不完整消费;missing=契约字段存在、渲染零消费;optional=规划可选未启动。本文件是唯一真相源:docs/capability-matrix.md 与 MCP capability_matrix 工具均由它生成(M11-1 起 evidence 由 parity_matrix 夹具实测回填,ADR-0003)。",
-      "updated": "2026-09-30(册五 T5.2 调色/LUT/示波器数据 + T5.3 轨道 EQ/动态/响度计/ducking 参数化 + T5.6 编码参数面/bt709 标签/渲染队列)",
-      "version": 2
+      "updated": "2026-09-30(册五 T5.4 复合/调整层/多机位/场景检测 + T5.5 OTIO/EDL/VTT 互操作,ADR-0019)",
+      "version": 3
      }
     },
     "message": "能力对等矩阵(实码口径,单一真相源)",

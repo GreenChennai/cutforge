@@ -7,8 +7,10 @@
 
 pub mod anchor;
 pub mod command;
+mod compound_ir;
 mod grade_ir;
 pub mod engine;
+pub mod interop;
 pub mod keyframes;
 pub mod merge;
 pub mod model;

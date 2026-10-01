@@ -3,8 +3,8 @@
 //! 本文件**不启动任何进程**:全部函数只做输入 → 命令行字符串的映射,
 //! 可在不装 ffmpeg 的环境单测断言;参数串与拆分前的 render() 逐字一致
 //! (渲染输出逐字节语义不变的底线,由 parity_matrix 实渲夹具锁定)。
-//! 册四 A4-BE2:段提取链(步 2 segment)随曲线/变换扩容,纯移动至
-//! [`crate::segment`](段链模块);此处 `pub use` 保持 `steps::segment_*` 接口路径不变。
+//! 册四 A4-BE2:段提取链(步 2 segment)纯移动至 [`crate::segment`];此处
+//! `pub use` 保持 `steps::segment_*` 接口路径不变。
 
 use crate::plan::{OverlaySeg, RenderPlan};
 use cutforge_core::model::{Clip, Transition};
@@ -16,8 +16,8 @@ pub use crate::segment::{
     segment_pad_ms, segment_read_ms, transform_pre_chain,
 };
 
-/// clip i 的出向转场时长(ms;转场字段在 clip i 上表示 i-1→i 的转场,
-/// i=0 无意义)。type=cut/none 或 durMs<=0 → 硬切(None)。
+/// clip i 的出向转场时长(ms;转场字段在 clip i 上表示 i-1→i 转场,i=0 无意义);
+/// type=cut/none 或 durMs<=0 → 硬切(None)。
 pub fn transition_out_ms(clip: &Clip) -> Option<(String, f64)> {
     if clip.start_ms == 0 && clip.transition.is_none() {
         return None;
@@ -35,10 +35,9 @@ pub fn transition_out_ms(clip: &Clip) -> Option<(String, f64)> {
     Some((kind, dur))
 }
 
-/// 段 i 的尾帧扩展毫秒(ADR-0023):clip i 的转场由 seg_i 与 seg_{i+1} 之间的
-/// xfade 消费,段 i 需要延长 D_{i+1} 保证整链零时间漂移。该值进入段缓存键
-/// (旧键漏掉它 → 改转场会陈旧复用前一段的 tpad)。D 取**有效转场时长**
-/// (册四 BE3a:钳到两侧片段时长,与 compose/acrossfade 同一函数,尾帧只进重叠)。
+/// 段 i 的尾帧扩展毫秒(ADR-0023):段 i 延长 D_{i+1} 供 seg_i/seg_{i+1} 间
+/// xfade 消费,保证整链零时间漂移;该值入段缓存键(漏掉 → 改转场陈旧复用
+/// tpad)。D 取**有效转场时长**(册四 BE3a 钳两侧,与 compose/acrossfade 同源)。
 pub fn segment_tail_ms(video_clips: &[Clip], i: usize) -> f64 {
     if i + 1 < video_clips.len() {
         crate::catalog::effective_transition_ms(video_clips, i + 1)
@@ -75,10 +74,9 @@ pub fn is_xfade_chain(video_clips: &[Clip]) -> bool {
     video_clips.iter().enumerate().any(|(i, c)| i > 0 && transition_out_ms(c).is_some())
 }
 
-/// xfade 链命令行:offset_k = **前序名义时长累计**(ADR-0023 口径:不含尾帧扩展
-/// ——尾帧只进转场重叠不前移 offset;册四 BE3a 实测修复:旧实现把尾帧计入累计,
-/// offset 越过输入末端导致 xfade 坍缩截断,后段整段丢失)。返回 (参数, WARN 列表)
-/// ——转场名经目录直通解析,未注册降级 fade 留痕(册四 T4.5)。
+/// xfade 链命令行:offset_k = **前序名义时长累计**(ADR-0023:尾帧只进转场重叠
+/// 不前移 offset——旧实现把尾帧计入累计导致 xfade 坍缩截断,BE3a 实测修复)。
+/// 返回 (参数, WARN 列表)——转场名经目录直通,未注册降级 fade 留痕(T4.5)。
 pub fn compose_xfade_args(
     video_clips: &[Clip],
     seg_files: &[PathBuf],
@@ -117,7 +115,7 @@ pub fn compose_xfade_args(
     (args, warns)
 }
 
-/// concat 清单内容(路径统一正斜杠;concat demuxer 对引号内反斜杠敏感)。
+/// concat 清单内容(路径统一正斜杠;demuxer 对引号内反斜杠敏感)。
 pub fn concat_list_content(seg_files: &[PathBuf]) -> String {
     let mut list = String::new();
     for f in seg_files {
@@ -156,8 +154,11 @@ pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_ou
         } else {
             format!("{scale_chain},format=rgba,colorchannelmixer=aa={:.4}", ov.spec.opacity)
         };
+        // 层输入 = i+1(基片恒输入 0,叠加源从 1 起;A5-BE3 修复:旧实现 [i:v]
+        // 把基片自身缩放叠加——红底红 logo 不可见的潜伏缺陷,compound 夹具 lime 检出)
+        let inp = i + 1;
         filters.push(format!(
-            "[{i}:v]{chain}[l{i}];{cur}[l{i}]overlay=x={}:y={}:enable='between(t,{:.3},{:.3})'[o{}]",
+            "[{inp}:v]{chain}[l{i}];{cur}[l{i}]overlay=x={}:y={}:enable='between(t,{:.3},{:.3})'[o{}]",
             ov.spec.x, ov.spec.y,
             ov.start_ms as f64 / 1000.0,
             (ov.start_ms + ov.duration_ms) as f64 / 1000.0,
@@ -169,6 +170,66 @@ pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_ou
         "-filter_complex".into(), filters.join(";"), "-map".into(), cur,
         "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
         overlaid_out.to_string_lossy().into(),
+    ]);
+    args
+}
+
+// ---------------- 步 4.5 adjust(册五 T5.4 调整层) ----------------
+
+/// 调整层时间窗处理命令行(纯函数,可离线单测):每片段
+/// `trim 抽窗 → setpts 归零 → fx+grade 链作用于窗内流 → overlay enable 贴回`;
+/// 不依赖滤镜级 enable(任意链可窗内生效);空链片段跳过;编码与 overlay 同款。
+pub fn adjust_args(
+    adjust_clips: &[Clip],
+    base_video: &Path,
+    adjusted_out: &Path,
+    project_dir: &Path,
+    w: u32,
+    h: u32,
+    fps: u32,
+) -> Vec<String> {
+    let mut args: Vec<String> =
+        vec!["-y".into(), "-v".into(), "error".into(), "-i".into(), base_video.to_string_lossy().into()];
+    let mut filters: Vec<String> = Vec::new();
+    let mut cur = "[0:v]".to_string();
+    let mut n = 0usize;
+    for c in adjust_clips {
+        let (fx, _) = crate::catalog::fx_chain(c, w, h, fps);
+        let (grade, _) = crate::grade::grade_chain(c, project_dir);
+        let mut chain = String::new();
+        for part in [grade, fx] {
+            if !part.is_empty() {
+                if !chain.is_empty() {
+                    chain.push(',');
+                }
+                chain.push_str(&part);
+            }
+        }
+        if chain.is_empty() {
+            continue; // 无 fx/grade 声明 = 无处理(时间窗纯占位)
+        }
+        let s = c.start_ms as f64 / 1000.0;
+        let e = (c.start_ms + c.duration_ms) as f64 / 1000.0;
+        let win_in = format!("[w{n}in]");
+        let win_out = format!("[w{n}]");
+        let merged_out = format!("[a{n}]");
+        filters.push(format!("{cur}trim=start={s:.3}:end={e:.3},setpts=PTS-STARTPTS{win_in}"));
+        filters.push(format!("{win_in}{chain}{win_out}"));
+        filters.push(format!(
+            "{cur}{win_out}overlay=enable='between(t,{s:.3},{e:.3})'{merged_out}"
+        ));
+        cur = merged_out;
+        n += 1;
+    }
+    if filters.is_empty() {
+        // 全部片段无链:透传拷贝(不产滤镜图)
+        args.extend(["-c".into(), "copy".into(), adjusted_out.to_string_lossy().into()]);
+        return args;
+    }
+    args.extend([
+        "-filter_complex".into(), filters.join(";"), "-map".into(), cur,
+        "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
+        adjusted_out.to_string_lossy().into(),
     ]);
     args
 }
@@ -514,7 +575,7 @@ mod tests {
         );
         assert_eq!(
             s[8],
-            "[0:v]scale=60:60,format=rgba,colorchannelmixer=aa=0.5000[l0];\
+            "[1:v]scale=60:60,format=rgba,colorchannelmixer=aa=0.5000[l0];\
 [0:v][l0]overlay=x=40:y=40:enable='between(t,0.000,2.000)'[o0]"
         );
         assert_eq!(&s[9..], ["-map", "[o0]", "-c:v", "libx264", "-preset", "veryfast", "/c/overlay/o.mp4"]);
@@ -529,7 +590,7 @@ mod tests {
             spec: Overlay { x: 1, y: 2, w: 3, h: 4, opacity: 1.0 },
         }];
         let args = overlay_args(&ovs, Path::new("/c.mp4"), Path::new("/o.mp4"));
-        assert!(args[8].starts_with("[0:v]scale=3:4[l0];"), "opacity=1 不引入 rgba 链");
+        assert!(args[8].starts_with("[1:v]scale=3:4[l0];"), "opacity=1 不引入 rgba 链;层输入 = 1(基片恒 0)");
     }
 
     // ---- 步 5:mix ----
@@ -691,4 +752,49 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
         assert_eq!(fmt_f64(1.5), "1.5");
         assert_eq!(fmt_f64(0.0), "0");
     }
+
+    /// overlay 输入索引锁(A5-BE3 修复):层输入恒 i+1(基片输入 0);
+    /// 旧实现 [i:v] 把基片自身当叠加源(红底红 logo 不可见的潜伏缺陷)。
+    #[test]
+    fn overlay_args_layer_inputs_are_offset_by_one() {
+        let mk = |i: usize| OverlaySeg {
+            src: PathBuf::from(format!("logo{i}.png")),
+            start_ms: (i * 1000) as u64,
+            duration_ms: 500,
+            spec: cutforge_core::model::Overlay { x: 4, y: 5, w: 60, h: 60, opacity: 1.0 },
+        };
+        let args = overlay_args(&[mk(0), mk(1)], Path::new("base.mp4"), Path::new("out.mp4"));
+        let fc = &args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1];
+        assert!(fc.contains("[1:v]scale=60:60[l0];"), "第一层必须吃输入 1: {fc}");
+        assert!(fc.contains("[2:v]scale=60:60[l1];"), "第二层必须吃输入 2: {fc}");
+        assert!(fc.contains("[o0][l1]overlay"), "层链串联: {fc}");
+        assert!(fc.contains(";[0:v][l0]overlay="), "基片恒输入 0: {fc}");
+    }
+
+    /// 册五 T5.4:调整层时间窗命令行——trim 抽窗/setpts 归零/链作用/overlay enable
+    /// 贴回四段式;grade 前置 fx(调色喂特效,与段链序一致);空链片段跳过。
+    #[test]
+    fn adjust_args_window_pipeline_shape() {
+        let mk = |v: serde_json::Value| -> Clip { serde_json::from_value(v).unwrap() };
+        let clips = vec![
+            mk(json!({"id": "X1-001", "startMs": 500, "durationMs": 1000,
+                      "fx": {"combo": [{"fx": "fx.blur"}]}})),
+            mk(json!({"id": "X1-002", "startMs": 2000, "durationMs": 500,
+                      "grade": {"saturation": 1.5}})),
+            mk(json!({"id": "X1-003", "startMs": 3000, "durationMs": 500})),
+        ];
+        let args = adjust_args(&clips, Path::new("base.mp4"), Path::new("out.mp4"), Path::new("/w"), 320, 240, 30);
+        let fc = args.iter().find(|a| a == &&"-filter_complex".to_string()).map(|_| ()).is_some().then(|| args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1].clone()).unwrap();
+        assert!(fc.contains("trim=start=0.500:end=1.500,setpts=PTS-STARTPTS"), "{fc}");
+        assert!(fc.contains("overlay=enable='between(t,0.500,1.500)'"), "{fc}");
+        assert!(fc.contains("trim=start=2.000:end=2.500"), "{fc}");
+        // 饱和度链(eq)在窗内流上;X1-003 无链不产窗
+        assert!(fc.contains("eq="), "grade 链必须在窗内: {fc}");
+        assert!(!fc.contains("trim=start=3.000"), "空链片段不产窗: {fc}");
+        // 全空链 → 透传拷贝
+        let empty = vec![mk(json!({"id": "X1-001", "startMs": 0, "durationMs": 500}))];
+        let args = adjust_args(&empty, Path::new("base.mp4"), Path::new("out.mp4"), Path::new("/w"), 320, 240, 30);
+        assert!(args.contains(&"-c".to_string()) && args.contains(&"copy".to_string()), "全空链透传: {args:?}");
+    }
+
 }

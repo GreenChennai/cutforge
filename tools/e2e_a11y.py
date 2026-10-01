@@ -14,6 +14,9 @@
      vendor 缺失时降级为手写检查器(role/aria-label/焦点可达三类),报告注明降级。
 
 断言纪律(M10-R5):UI 动作只作驱动,断言以服务端状态(rev/oplog/盘面)为准。
+按键后 UI 投影读数(shortcut-gate / sel-info)一律轮询等待:最长 3s 内变为期望值
+即返回(立即命中零等待),超时才 FAIL —— ubuntu CI 实证 SSE→重投影往返慢于按键后
+同步读时机(Windows 快从未暴露);只改读数时机,不改断言语义与操作序列。
 跨平台:pathlib;二进制定位带无 .exe 回退;只依赖 playwright + stdlib(+ ffmpeg)。
 退出码:0 通过 / 2 失败。
 """
@@ -138,11 +141,38 @@ def wait_clips_pred(port: int, token: str, root: str, pred, what: str, timeout_s
     raise AssertionError(f"{what}: {timeout_s}s 内盘面未收敛,末态 {last}")
 
 
+def wait_text_contains(page, selector: str, needle: str, what: str,
+                       timeout_s: float = 3.0) -> str:
+    """按键后 UI 投影读数轮询等待:最长 timeout_s 内 selector 文本出现期望值即返回
+    (立即命中零等待),超时才 FAIL。CI 实证:ubuntu 的 SSE→重投影往返慢于按键后
+    同步读(sel-info 仍显上一次选中),Windows 快从未暴露 —— 只改读数时机。"""
+    deadline = time.time() + timeout_s
+    last = ""
+    while True:
+        last = page.inner_text(selector)
+        if needle in last:
+            return last
+        if time.time() >= deadline:
+            raise AssertionError(
+                f"{what}: {selector} {timeout_s:.0f}s 内未出现 {needle!r}(末值 {last!r})")
+        time.sleep(0.1)
+
+
 def press_key(page, key: str, gate: str, what: str) -> None:
     page.evaluate("() => { const a = document.activeElement; if (a && a !== document.body && a.blur) a.blur(); }")
     page.keyboard.press(key)
-    got = page.get_attribute('[data-testid="shortcut-gate"]', "data-gate")
-    assert got == f"hit:{gate}", f"{what}: shortcut-gate={got!r} 期望 hit:{gate!r}"
+    # gate 裁决读数同样轮询等待(≤3s,立即命中即返回):ubuntu 按键事件处理/重渲染
+    # 可能慢于同步读时机。本脚本键序无连续同键,gate 旧值不会恰好等于新期望,轮询
+    # 不会把"上次按键的命中"误判为本次命中。
+    deadline = time.time() + 3.0
+    got: str | None = None
+    while True:
+        got = page.get_attribute('[data-testid="shortcut-gate"]', "data-gate")
+        if got == f"hit:{gate}":
+            return
+        if time.time() >= deadline:
+            raise AssertionError(f"{what}: shortcut-gate={got!r} 期望 hit:{gate!r}(3s 轮询未命中)")
+        time.sleep(0.05)
 
 
 HANDMADE_A11Y = """() => {
@@ -253,12 +283,16 @@ def main() -> int:
             page.evaluate(
                 "() => { const w = document.querySelector('[data-testid=\"timeline-wrap\"]'); w.scrollLeft = 0; }")
             # 双击导入后选中停在末段:Alt+← 收到首段,Alt+→ 前进,Alt+← 回首段(全程键盘)
+            # sel-info 是 UI 投影读数 → 轮询等待(CI 实证 ubuntu 重投影慢于同步读);
+            # 末尾"零 Op"断言读服务端 rev(权威态,无投影往返),保持同步读。
             press_key(page, "Alt+ArrowLeft", "alt+arrowleft", "Alt+← 选到首段")
-            sel1 = page.inner_text('[data-testid="sel-info"]')
             c0 = v1_clips(port, token, root)[0]["id"]
-            assert c0 in sel1, f"Alt+← 应选中首段 {c0}:{sel1!r}"
+            wait_text_contains(page, '[data-testid="sel-info"]', c0,
+                               f"Alt+← 应选中首段 {c0}")
             press_key(page, "Alt+ArrowRight", "alt+arrowright", "Alt+→ 选下一段")
-            assert v1_clips(port, token, root)[1]["id"] in page.inner_text('[data-testid="sel-info"]')
+            c1 = v1_clips(port, token, root)[1]["id"]
+            wait_text_contains(page, '[data-testid="sel-info"]', c1,
+                               f"Alt+→ 应选中次段 {c1}")
             press_key(page, "Alt+ArrowLeft", "alt+arrowleft", "Alt+← 回选首段")
             assert server_rev(port, token, root) == rev2, "选择是会话态,零 Op"
             log(f"1. 键盘选择(Alt+←/→ 首段 {c0} ↔ 次段;会话态零 Op): PASS")

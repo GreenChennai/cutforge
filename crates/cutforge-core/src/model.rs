@@ -15,6 +15,21 @@ pub enum TrackKind {
     Video,
     Audio,
     Text,
+    /// 调整层(册五 T5.4):轨上片段的 fx/grade(与文本)按时间窗叠加到下方全部
+    /// 视频轨合成结果上;不占主时间线 concat 序列、不进混音。轨道 id 首字母 X。
+    Adjust,
+}
+
+impl TrackKind {
+    /// 轨道 id 首字母(kind 字符;[`Project::track_letter`] 的数值面)。
+    pub fn letter(self) -> char {
+        match self {
+            TrackKind::Video => 'V',
+            TrackKind::Audio => 'A',
+            TrackKind::Text => 'T',
+            TrackKind::Adjust => 'X',
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,7 +223,16 @@ pub struct Clip {
     /// (与 crop/fx 同模式);渲染链序见 cutforge-render::grade 模块注释(链图)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grade: Option<Grade>,
+    /// 复合片段(册五 T5.4/ADR-0019):内联子时间线(局部时间域,子 clips 结构
+    /// 同主 clips);嵌套深度上限两级(子 clip 不得再带 compound,语义层拒绝);
+    /// 渲染递归展开见 cutforge-render::compound;编辑 = 解包→改→重打包。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compound: Option<CompoundSpec>,
 }
+
+// 复合片段 IR(册五 T5.4;实现在 compound_ir 模块,纯移动——行数红线 A1-3;
+// 本模块 `pub use` 保持 `crate::model::CompoundSpec` 路径逐字不变)
+pub use crate::compound_ir::CompoundSpec;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Position {
@@ -448,13 +472,19 @@ impl Project {
         Ok(v)
     }
 
-    /// 全工程关键帧语义校验(IR v3):任一 clip 违例整组 SCHEMA_INVALID。
+    /// 全工程关键帧语义校验(IR v3)+ 复合片段语义校验(册五 T5.4:深度 ≤ 两级、
+    /// 子时间线升序不重叠首尾相接);任一 clip 违例整组 SCHEMA_INVALID。
     pub fn validate_keyframes(&self) -> Vec<String> {
         let mut errs = Vec::new();
         for t in &self.tracks {
             for c in &t.clips {
                 for e in crate::keyframes::validate_clip_keyframes(c) {
                     errs.push(format!("clip {}: {e}", c.id));
+                }
+                if let Some(cp) = &c.compound {
+                    for e in cp.validate() {
+                        errs.push(format!("clip {}: compound: {e}", c.id));
+                    }
                 }
             }
         }
@@ -511,11 +541,7 @@ impl Project {
 
     /// 轨道确定性 id:<kind 首字母大写><序号>。
     pub fn track_letter(kind: TrackKind) -> char {
-        match kind {
-            TrackKind::Video => 'V',
-            TrackKind::Audio => 'A',
-            TrackKind::Text => 'T',
-        }
+        kind.letter()
     }
 
     pub fn next_track_id(&self, kind: TrackKind) -> String {
@@ -732,5 +758,26 @@ mod tests {
             "speedCurve": [{"atMs": 0, "speed": 1.0}, {"atMs": 9999, "speed": 4.0}]
         }));
         assert_eq!(speed_segments(&c), vec![(0, 2000, 2.5)], "越界点钳边,区间均值");
+    }
+
+    /// 调整层轨(kind=adjust):parse 合法、轨道 id 可用 X 前缀;TrackKind::letter。
+    #[test]
+    fn adjust_track_kind_roundtrip() {
+        let v = json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "adjust", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "tracks": [
+                {"id": "V1", "kind": "video", "clips": [
+                    {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 2000}]},
+                {"id": "X1", "kind": "adjust", "clips": [
+                    {"id": "X1-001", "startMs": 0, "durationMs": 1000,
+                     "fx": {"combo": [{"fx": "fx.blur"}]}}]}
+            ]
+        });
+        let p = Project::from_value(&v).expect("adjust 轨必须合法");
+        assert_eq!(p.tracks[1].kind, TrackKind::Adjust);
+        assert_eq!(TrackKind::Adjust.letter(), 'X');
+        assert_eq!(p.next_track_id(TrackKind::Adjust), "X2", "X1 已存在,下一个 X2");
+        let _ = p.to_validated_value().unwrap();
     }
 }

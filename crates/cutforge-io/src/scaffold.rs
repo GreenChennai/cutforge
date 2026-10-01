@@ -50,16 +50,18 @@ pub fn new_project_value(
     let mut count_v: u32 = 0;
     let mut count_a: u32 = 0;
     let mut count_t: u32 = 0;
+    let mut count_x: u32 = 0;
     for kind in track_kinds {
         // 同类多轨:序号按 kind 计数递增(V1/V2…),与 Project::next_track_id 规则一致
         let (letter, c) = match kind {
             K::Video => { count_v += 1; ('V', count_v) }
             K::Audio => { count_a += 1; ('A', count_a) }
             K::Text => { count_t += 1; ('T', count_t) }
+            K::Adjust => { count_x += 1; ('X', count_x) }
         };
         let id = format!("{letter}{c}");
         tracks.push(serde_json::json!({"id": id, "kind": match kind {
-            K::Video => "video", K::Audio => "audio", K::Text => "text",
+            K::Video => "video", K::Audio => "audio", K::Text => "text", K::Adjust => "adjust",
         }, "clips": []}));
     }
     let v = serde_json::json!({

@@ -1377,3 +1377,271 @@ fn parity_grade_audio_matrix() {
     }
     assert!(achieved.len() >= 8, "调色五夹具 + 音频三夹具全数落档");
 }
+
+// ---------------- 册五 A5-BE3:复合/调整层/多机位/场景检测(AC-5.4) ----------------
+
+fn is_greenish(p: (u8, u8, u8)) -> bool {
+    p.1 > 150 && p.0 < 110 && p.2 < 110
+}
+
+fn is_limeish(p: (u8, u8, u8)) -> bool {
+    p.1 > 150 && p.0 < 110 && p.2 < 110
+}
+
+/// 水平边缘的**峰值单步梯度**(模糊断言的可观测锚点;总变差在模糊下近似守恒,
+/// 峰值梯度 = 锐利边缘的判据:锐利 ≈ 765,半径 8 双程盒糊后摊到 ~32px ≈ 24)。
+fn edge_energy(frame: &[u8], w: usize, y: usize, x0: usize, x1: usize) -> f64 {
+    let mut peak = 0f64;
+    for x in x0..x1 {
+        let (r0, g0, b0) = px(frame, x, y, w);
+        let (r1, g1, b1) = px(frame, x + 1, y, w);
+        let d = ((i32::from(r0) - i32::from(r1)).abs()
+            + (i32::from(g0) - i32::from(g1)).abs()
+            + (i32::from(b0) - i32::from(b1)).abs()) as f64;
+        peak = peak.max(d);
+    }
+    peak
+}
+
+/// 解码单声道 22050Hz s16le PCM(与 mcp 工具面同参数;夹具自起 ffmpeg)。
+fn decode_mono_pcm(dir: &Path, name: &str) -> Vec<i16> {
+    let out = Command::new("ffmpeg").args([
+        "-v", "error", "-i", name, "-vn", "-ac", "1", "-ar", "22050", "-f", "s16le", "-",
+    ]).current_dir(dir).output().expect("ffmpeg 必须存在");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    out.stdout.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect()
+}
+
+/// 解码灰度缩帧(fps 采样 64x36;scene_detect 夹具)。
+fn decode_gray_frames(dir: &Path, name: &str, sample_fps: f64) -> Vec<u8> {
+    let out = Command::new("ffmpeg").args([
+        "-v", "error", "-i", name,
+        "-vf", &format!("fps={sample_fps},scale=64:36,format=gray"),
+        "-f", "rawvideo", "-",
+    ]).current_dir(dir).output().expect("ffmpeg 必须存在");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    out.stdout
+}
+
+/// 多机位夹具素材:三色块内容(红/绿/蓝各 1s)+ 非周期门控正弦(六响
+/// 0.0/0.7/1.1/1.9/2.3/2.9s,sine 短爆 × adelay × amix 合成;angleB 为
+/// +delay_s 平移的同一定义)——周期节拍的自相关在周期倍数上有等分歧义峰,
+/// 固定偏移的恢复必须靠非周期锚点(lavfi -i 内联表达式逗号在 graph 解析层
+/// 不可引号保护,故走 -filter_complex 组装)。
+fn make_multicam_angle(dir: &Path, name: &str, delay_s: f64) {
+    let pulses = [0.0f64, 0.7, 1.1, 1.9, 2.3, 2.9];
+    let mut args: Vec<String> = ["-y".into(), "-v".into(), "error".into()].to_vec();
+    // ffmpeg 命名色 green = #008000(半亮);内容绿用 0x00FF00(与 parity 色判据一致)
+    let colors = ["red", "0x00FF00", "blue"];
+    for c in colors {
+        args.extend(["-f".into(), "lavfi".into(), "-i".into(),
+            format!("color=c={c}:size=320x240:rate=30:duration=1")]);
+    }
+    if delay_s > 0.0 {
+        args.extend(["-f".into(), "lavfi".into(), "-i".into(),
+            format!("color=c=black:size=320x240:rate=30:duration={delay_s}")]);
+    }
+    for p in pulses {
+        args.extend(["-f".into(), "lavfi".into(), "-i".into(),
+            "sine=frequency=880:duration=0.05:sample_rate=44100".to_string()]);
+        let _ = p;
+    }
+    // 视频串联(有延迟先拼黑场)+ 六响 adelay → amix
+    let n_color = if delay_s > 0.0 { 4 } else { 3 };
+    // 角度 B(延迟):黑场**前置**(concat 顺序 = 标签序;black = 输入 3)
+    let video_in: Vec<String> = if delay_s > 0.0 {
+        vec!["[3:v]".into(), "[0:v]".into(), "[1:v]".into(), "[2:v]".into()]
+    } else {
+        (0..n_color).map(|i| format!("[{i}:v]")).collect()
+    };
+    let mut fc: Vec<String> = Vec::new();
+    let mut audio_refs: Vec<String> = Vec::new();
+    for (k, p) in pulses.iter().enumerate() {
+        let idx = n_color + k;
+        let ms = ((p + delay_s.max(0.0)) * 1000.0).round() as u64;
+        fc.push(format!("[{idx}:a]adelay={ms}:all=1[d{k}]"));
+        audio_refs.push(format!("[d{k}]"));
+    }
+    fc.push(format!("{}amix=inputs={}:duration=longest:normalize=0[a]", audio_refs.join(""), pulses.len()));
+    fc.push(format!("{}concat=n={n_color}:v=1:a=0[cv]", video_in.join("")));
+    args.extend(["-filter_complex".into(), fc.join(";"), "-map".into(), "[cv]".into(), "-map".into(), "[a]".into()]);
+    args.extend(["-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
+                 "-c:a".into(), "aac".into(), "-shortest".into(), name.into()]);
+    ff(&args.iter().map(|s| s.as_str()).collect::<Vec<_>>(), dir);
+}
+
+/// AC-5.4/A5-BE3 四夹具:① compound 两级实渲(时长/颜色序列/叠加上层/缓存命中)
+/// ② adjust 调整层时间窗(fx.blur 窗内边缘能量骤降)③ multicam 同步+展开
+/// (500ms 固定偏移 → onset_lag;展开序列渲染色块无缝)④ scene_detect 硬切
+/// (抽帧差分 → 切点 ≈1s;TrackSplitAt 单 Op 切段)。
+#[test]
+fn parity_pro_tools_matrix() {
+    assert!(ffmpeg_ok(), "ffmpeg 不可用:AC-5.4 对拍是硬门禁,禁止跳过");
+    const FRAME: f64 = 1.0 / 30.0;
+    let mut achieved: Vec<&str> = Vec::new();
+
+    // ---- ① compound 两级实渲(ADR-0019 递归展开;AC-5.4 判定口径) ----
+    {
+        let dir = workspace("compound");
+        make_two_tone(&dir, "inner.mp4", "red", "blue", 1.0, 1.0);
+        ff(&[
+            "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=lime:size=60x60",
+            "-frames:v", "1", "lime.png",
+        ], &dir);
+        let v = json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "m11-compound", "fps": 30,
+            "canvas": {"width": 320, "height": 240},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "startMs": 0, "durationMs": 2000,
+                 "compound": {"clips": [
+                    {"id": "V1-001", "src": "inner.mp4", "startMs": 0, "durationMs": 1000,
+                     "sourceInMs": 0},
+                    {"id": "V1-002", "src": "inner.mp4", "startMs": 1000, "durationMs": 1000,
+                     "sourceInMs": 1000, "transition": {"type": "fade", "durMs": 500}}
+                 ]}},
+                {"id": "V1-002", "src": "lime.png", "startMs": 0, "durationMs": 2000,
+                 "volume": 0, "overlay": {"x": 0, "y": 0, "w": 60, "h": 60, "opacity": 1.0}}
+            ]}]
+        });
+        write_project(&dir, "m11-compound", &v);
+        let p = parse_project(v);
+        let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
+        let dur = probe_duration_sec(&out.output);
+        assert!((dur - 2.0).abs() <= FRAME, "复合总时长 = 子时间线总时长 2.0s: {dur}");
+        // 中间帧颜色序列:0.3s 红(子时间线第一段)→ 1.25s 混合(fade 中点)→ 1.7s 蓝
+        let f03 = frame_bytes(&out.output, 0.3);
+        assert!(is_reddish(px(&f03, 160, 120, 320)), "0.3s 必须红: {:?}", px(&f03, 160, 120, 320));
+        let f125 = frame_bytes(&out.output, 1.25);
+        let mid = px(&f125, 160, 120, 320);
+        assert!(mid.0 > 80 && mid.0 < 180 && mid.2 > 80 && mid.2 < 180,
+            "fade 中点必须红蓝混合: {mid:?}");
+        let f17 = frame_bytes(&out.output, 1.7);
+        assert!(is_blueish(px(&f17, 160, 120, 320)), "1.7s 必须蓝: {:?}", px(&f17, 160, 120, 320));
+        // 叠加上层正确:lime 方块在两个时刻都压在复合画面之上
+        for (label, f) in [("0.3s", &f03), ("1.7s", &f17)] {
+            assert!(is_limeish(px(f, 10, 10, 320)), "{label} 叠加上层必须 lime: {:?}", px(f, 10, 10, 320));
+        }
+        // 二级缓存:重渲全命中(子时间线中间段 = compose 层内容寻址,跨渲染复用)
+        let out2 = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
+        assert_eq!(out2.cache_misses, 0, "重渲全命中(含复合中间段): hits={} misses={}",
+            out2.cache_hits, out2.cache_misses);
+        achieved.push("C1 compound 两级实渲:总时长 2.0s/红→混合→蓝/叠加上层 lime 正确/二级缓存全命中");
+    }
+
+    // ---- ② adjust 调整层时间窗(fx.blur;主合成后按窗再过链) ----
+    {
+        let dir = workspace("adjust");
+        make_left_red_right_blue(&dir, "adj.mp4", 3.0);
+        let v = json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "m11-adjust", "fps": 30,
+            "canvas": {"width": 320, "height": 240},
+            "tracks": [
+                {"id": "V1", "kind": "video", "clips": [
+                    {"id": "V1-001", "src": "adj.mp4", "startMs": 0, "durationMs": 3000,
+                     "sourceInMs": 0, "volume": 0}
+                ]},
+                {"id": "X1", "kind": "adjust", "clips": [
+                    {"id": "X1-001", "startMs": 500, "durationMs": 1000,
+                     "fx": {"combo": [{"fx": "fx.blur"}]}}
+                ]}
+            ]
+        });
+        write_project(&dir, "m11-adjust", &v);
+        let p = parse_project(v);
+        let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
+        // 窗内(1.0s ∈ [0.5,1.5))红蓝边界被模糊 → 边缘能量骤降;窗外(2.5s)锐利
+        let f_in = frame_bytes(&out.output, 1.0);
+        let f_out = frame_bytes(&out.output, 2.5);
+        let e_in = edge_energy(&f_in, 320, 120, 100, 220);
+        let e_out = edge_energy(&f_out, 320, 120, 100, 220);
+        assert!(e_in < e_out * 0.5, "窗内必须模糊(边缘能量骤降): in={e_in:.1} out={e_out:.1}");
+        assert!(is_reddish(px(&f_out, 80, 120, 320)) && is_blueish(px(&f_out, 240, 120, 320)),
+            "窗外保持左红右蓝: {:?}", px(&f_out, 80, 120, 320));
+        achieved.push("C2 adjust 调整层:fx.blur 时间窗 [0.5,1.5) 内边缘能量骤降,窗外画面与颜色不变");
+    }
+
+    // ---- ③ multicam 同步 + 展开(ADR-0019 展开方案;500ms 固定偏移) ----
+    {
+        let dir = workspace("multicam");
+        make_multicam_angle(&dir, "angleA.mp4", 0.0);
+        make_multicam_angle(&dir, "angleB.mp4", 0.5);
+        // 同步分析(与 mcp multicam_sync 同一纯函数面:cutforge_render::analyze;
+        // PCM 波形互相关,非周期六响锚点)
+        let pcm_a = decode_mono_pcm(&dir, "angleA.mp4");
+        let pcm_b = decode_mono_pcm(&dir, "angleB.mp4");
+        let (offset_ms, score) = cutforge_render::analyze::pcm_lag(&pcm_a, &pcm_b, 22050, 5000);
+        assert!((450..=550).contains(&offset_ms),
+            "固定 500ms 偏移必须恢复(±50ms): offset={offset_ms} score={score}");
+        assert!(score > 0.5, "同源波形相似度必须高: {score}");
+        // 展开(multicam_cut 同口径):切换点 1500ms;B 段 sourceIn = offset + 段内偏移
+        let src_in_b = (1500u64).saturating_add(offset_ms.max(0) as u64);
+        let v = json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "m11-mc", "fps": 30,
+            "canvas": {"width": 320, "height": 240},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "src": "angleA.mp4", "startMs": 0, "durationMs": 1500,
+                 "sourceInMs": 0, "volume": 0},
+                {"id": "V1-002", "src": "angleB.mp4", "startMs": 1500, "durationMs": 1500,
+                 "sourceInMs": src_in_b, "volume": 0}
+            ]}]
+        });
+        write_project(&dir, "m11-mc", &v);
+        let p = parse_project(v);
+        let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
+        // 色块时间线无缝:红[0,1) 绿[1,2) 蓝[2,3);切换点 1.5s 两侧同为绿(无黑帧/跳色)
+        // 时间线内容:红 [0,1) / 绿 [1,2) / 蓝 [2,3);1.5s 切换点在绿块内部
+        let samples = [(0.5f64, "红", is_reddish as fn((u8, u8, u8)) -> bool),
+                       (1.4, "绿", is_greenish), (1.5, "绿", is_greenish),
+                       (1.6, "绿", is_greenish), (2.4, "蓝", is_blueish),
+                       (2.6, "蓝", is_blueish)];
+        for (at, label, check) in samples {
+            let f = frame_bytes(&out.output, at);
+            let pv = px(&f, 160, 120, 320);
+            assert!(check(pv), "{at}s 必须是{label}: {pv:?} (offset={offset_ms})");
+        }
+        achieved.push("C3 multicam 同步+展开:500ms 偏移经包络互相关恢复(±1 帧),切换序列渲染色块无缝");
+    }
+
+    // ---- ④ scene_detect:硬切色块检测点准确 + TrackSplitAt 切段 ----
+    {
+        let dir = workspace("scene");
+        make_two_tone(&dir, "scn.mp4", "red", "blue", 1.0, 1.0);
+        let frames = decode_gray_frames(&dir, "scn.mp4", 5.0);
+        let diffs = cutforge_render::analyze::frame_diffs(&frames, 64 * 36);
+        let cuts = cutforge_render::analyze::pick_cuts(&diffs, 5.0, 0.5);
+        assert_eq!(cuts.len(), 1, "单硬切 → 单检测点: {cuts:?}");
+        let (cut_ms, _) = cuts[0];
+        assert!((900..=1100).contains(&cut_ms), "硬切 1.0s 检测点须在 ±100ms: {cut_ms}");
+        // 可选自动切段(Command::TrackSplitAt 单 Op;切点严格包含才切)
+        let v = json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "m11-scene", "fps": 30,
+            "canvas": {"width": 320, "height": 240},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "src": "scn.mp4", "startMs": 0, "durationMs": 2000,
+                 "sourceInMs": 0, "volume": 0}
+            ]}]
+        });
+        let p = parse_project(v);
+        let mut eng = cutforge_core::Engine::new(p).unwrap();
+        let r = eng.apply(cutforge_core::Command::TrackSplitAt {
+            track_id: "V1".into(), t_points: vec![cut_ms],
+        }, cutforge_core::Actor::agent("parity"), Default::default()).unwrap();
+        assert_eq!(r.op_ids.len(), 1, "自动切段单 Op");
+        match eng.query(cutforge_core::Query::Timeline) {
+            cutforge_core::Answer::Timeline(tl) => {
+                assert_eq!(tl.len(), 2, "切段后两段: {tl:?}");
+                assert!(tl.iter().any(|(_, s, e, _)| *s == 0 && *e == cut_ms));
+                assert!(tl.iter().any(|(_, s, e, _)| *s == cut_ms && *e == 2000));
+            }
+            other => panic!("意外: {other:?}"),
+        }
+        achieved.push("C4 scene_detect:硬切色块检测点 1.0s ±100ms;TrackSplitAt 单 Op 切段");
+    }
+
+    println!("T5.4 专业编辑 parity achieved {} 项:", achieved.len());
+    for a in &achieved {
+        println!("  OK {a}");
+    }
+    assert!(achieved.len() == 4, "四夹具全数落档");
+}

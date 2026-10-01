@@ -27,12 +27,19 @@ render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,册四 A4-BE3
     恰为 16 位十六进制的 "key" 字段值 → <FRAME_KEY>(缓存键正确性由 Rust 单测锁定,
     对拍只锁协议形状);
   - 媒体探测值(ffprobe 口径):durationMs 就近取整到 100ms、bytes → <BYTES>
-    (这两者反映外部工具链产物,不是 cutforge-mcp 行为)。
+    (这两者反映外部工具链产物,不是 cutforge-mcp 行为);
+  - audio_beats 启发式面(onset-energy;CI 实证跨解码器漂移):confidence 量化到
+    0.2 步进档(0.42/0.33 同归 0.4)、onsets 时间戳 100ms 网格化 + 去重 —— 启发式
+    检测值对 ffmpeg 解码舍入敏感(Windows/ubuntu 样本微差让个别 onset 跨过自适应
+    阈值),与 media_probe 的 durationMs 100ms 量化同策。
 
 对比语义(**加法容忍**,适配后续有计划的加法演进):
   - golden 有的键:实际必须有且值相等,否则 DRIFT(阻断);
   - 实际多出的键:仅警告(WARN),不失败;
-  - 数组:长度与逐元素(按下标)严格一致。
+  - 数组:长度与逐元素(按下标)严格一致;
+  - 唯一宽口径(仅 audio_beats 启发式面):onsets 网格化后计数差 ≤2 且首个 onset
+    网格值相等、onsetCount 计数差 ≤2 → WARN 不 DRIFT;超差仍 DRIFT
+    (不弱化其他工具的严格度)。
 
 退出码:0 = 42/42 PASS;2 = 有 DRIFT/FAIL;3 = 环境缺失(ffmpeg)。
 依赖:Python 标准库 + 已构建的 cutforge-mcp(+ 同目录 cutforge-render)+ ffmpeg。
@@ -158,6 +165,39 @@ def _fmt_half(f: float) -> str:
     return t if t not in ("", "-0") else "0"
 
 
+# 册五:audio_beats(onset-energy 启发式)跨平台容差口径 —— CI(ubuntu)实证:Windows
+# 录制的 golden 与实测可差 1 个 onset、confidence 相差 0.1 级(ffmpeg 解码样本微差让
+# 个别 onset 跨过自适应阈值)。启发式检测值反映解码产物而非 cutforge-mcp 行为,与
+# media_probe 的 durationMs 100ms 量化同策,在归一化/对比两层吸收:
+ONSET_GRID_MS = 100  # onsets 时间戳 100ms 网格(与 durationMs 量化同格)
+ONSET_COUNT_TOL = 2  # onset 计数容忍差(网格化后 golden/actual 允许 ±2)
+CONF_BIN = 0.2       # confidence 量化档(见 _conf_bin:0.1 档无法并档,取 0.2 步进)
+
+
+def _onset_grid(values: list) -> list[int] | None:
+    """onsets 时间戳 → 100ms 网格就近取整 + 保序去重(采集与对比同规则)。
+
+    非数值列表返回 None,交回严格对比(onset 能力面若变更形态不静默放宽)。
+    """
+    out: list[int] = []
+    for v in values:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        g = int(round(v / ONSET_GRID_MS) * ONSET_GRID_MS)
+        if not out or out[-1] != g:
+            out.append(g)
+    return out
+
+
+def _conf_bin(f: float) -> float:
+    """confidence 档位量化:floor(x/0.2 + 0.5) * 0.2,使 CI 实证的 0.42/0.33 同归 0.4。
+
+    注:若按 0.1 档最近舍入,0.42→0.4、0.33→0.3 仍分两档,吸收不了该漂移;
+    0.2 步进档才满足"0.42/0.33 同归 0.4"的并档口径。IEEE 双精度下两端同式同结果。
+    """
+    return math.floor(f / CONF_BIN + 0.5) * CONF_BIN
+
+
 def _fwd(p: str) -> str:
     """与归一化同规则的路径展平:反斜杠串(含 canonicalize 的 \\\\?\\ 前缀)归一为单正斜杠。"""
     return RE_BS_RUN.sub("/", p)
@@ -252,6 +292,15 @@ class Normalizer:
                     out[k] = "<BYTES>"
                 elif k == "durationMs" and probe_mode and isinstance(val, (int, float)):
                     out[k] = int(round(val / 100.0) * 100)  # ffprobe 口径:就近 100ms
+                elif k == "confidence" and probe_mode and isinstance(val, (int, float)) \
+                        and not isinstance(val, bool) and math.isfinite(val):
+                    # audio_beats 启发式置信度跨解码器漂移(0.42 vs 0.33)→ 档位量化
+                    out[k] = _conf_bin(val)
+                elif k == "onsets" and probe_mode and isinstance(val, list):
+                    # audio_beats onset 时间戳:100ms 网格化 + 去重(跨解码器 ±1 onset
+                    # 漂移的吸收口径;仅 audio_beats 有此键,probe_mode 限定不外溢)
+                    gridded = _onset_grid(val)
+                    out[k] = gridded if gridded is not None else val
                 elif k in LUFS_KEYS and probe_mode and isinstance(val, str):
                     # 响度测量值(跨 ffmpeg build 有 0.x LU 漂移)→ 0.5LU 量化
                     try:
@@ -274,6 +323,34 @@ class Normalizer:
 # ---------------- 加法容忍对比 ----------------
 
 
+def _tolerant_pair(k: str, g, a, path: str, extras: list[str]) -> bool:
+    """audio_beats 启发式面的唯一宽口径(严格对比前尝试;返回 True = 已按容差记 WARN)。
+
+    CI 实证:启发式 onset 面对解码舍入敏感,Windows/ubuntu 可差 1 个 onset、
+    confidence ±0.1 级 —— confidence/onsets 形态已在归一化层量化/网格化,这里只对
+    "计数"与"首 onset 位置"放宽:onsets 网格化后计数差 ≤ ONSET_COUNT_TOL 且首个
+    onset 网格值相等、onsetCount 计数差 ≤ ONSET_COUNT_TOL → WARN;超差返回 False
+    落回严格对比报 DRIFT(其他工具不受影响)。
+    """
+    if k == "onsets" and isinstance(g, list) and isinstance(a, list):
+        gg, aa = _onset_grid(g), _onset_grid(a)
+        if gg is None or aa is None:
+            return False
+        d = abs(len(gg) - len(aa))
+        if d <= ONSET_COUNT_TOL and gg[:1] == aa[:1]:
+            extras.append(f"{path}: 启发式容差 golden={len(gg)} actual={len(aa)} 个 onset"
+                          f"(计数差 {d} ≤ {ONSET_COUNT_TOL} 且首个 onset 网格值相等)")
+            return True
+        return False  # 超差 → 严格对比,按数组长度/逐元素报 DRIFT
+    if k == "onsetCount" and isinstance(g, (int, float)) and isinstance(a, (int, float)) \
+            and not isinstance(g, bool) and not isinstance(a, bool):
+        if abs(g - a) <= ONSET_COUNT_TOL:
+            extras.append(f"{path}: 启发式容差计数差 golden={g} actual={a}"
+                          f"(≤ {ONSET_COUNT_TOL})")
+            return True
+    return False  # 超差/不适用 → 严格对比
+
+
 def compare(golden, actual, path: str, diffs: list[str], extras: list[str]) -> None:
     """golden 有的键必须存在且相等;实际多出的键只记警告。数组按下标全等。"""
     if isinstance(golden, dict):
@@ -283,6 +360,8 @@ def compare(golden, actual, path: str, diffs: list[str], extras: list[str]) -> N
         for k, gv in golden.items():
             if k not in actual:
                 diffs.append(f"{path}.{k}: 键缺失(实际响应没有 golden 的键)")
+            elif _tolerant_pair(k, gv, actual[k], f"{path}.{k}", extras):
+                pass  # audio_beats 启发式容差命中,已记 WARN
             else:
                 compare(gv, actual[k], f"{path}.{k}", diffs, extras)
         for k in actual:
@@ -779,7 +858,7 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
                 head = "; ".join(alldiff[:4]) + (f"(共 {len(alldiff)} 处)" if len(alldiff) > 4 else "")
                 report.add(name, "DRIFT", head, allextra[:8])
             elif allextra:
-                report.add(name, "WARN", f"加法容忍:{len(allextra)} 个新键(仅警告)",
+                report.add(name, "WARN", f"容忍项 {len(allextra)} 条(加法键/启发式容差,仅警告)",
                            allextra[:8])
             else:
                 report.add(name, "PASS", f"{len(calls)} 次调用逐字段一致")

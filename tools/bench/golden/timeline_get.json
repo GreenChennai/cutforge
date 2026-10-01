@@ -25,6 +25,7 @@
     "data": {
      "clips": [
       {
+       "compound": null,
        "crop": null,
        "denoise": "mid",
        "durationMs": 1800,
@@ -72,6 +73,7 @@
        "volume": 0.85
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 2000,
@@ -108,6 +110,7 @@
        "volume": 1.0
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 3200,
@@ -148,6 +151,7 @@
        "volume": null
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 1800,
@@ -188,6 +192,7 @@
        "volume": null
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 2000,
@@ -224,6 +229,7 @@
        "volume": 1.0
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 400,
@@ -260,6 +266,7 @@
        "volume": 0.8
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 2000,
@@ -302,6 +309,7 @@
        "volume": 0.0
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 900,
@@ -341,6 +349,7 @@
        "volume": null
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 1000,
@@ -377,6 +386,7 @@
        "volume": null
       },
       {
+       "compound": null,
        "crop": null,
        "denoise": null,
        "durationMs": 1000,

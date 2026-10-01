@@ -92,15 +92,17 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^[VAT][0-9]+$",
-            "description": "轨道稳定 id,确定性生成规则:<kind 首字母大写><轨道序号+1>,如 V1/A1/T2(计划书 3.3 第 2 项);首次生成后写回,此后不变——标注锚点依赖它"
+            "pattern": "^[VATX][0-9]+$",
+            "description": "轨道稳定 id,确定性生成规则:<kind 首字母大写><轨道序号+1>,如 V1/A1/T2(计划书 3.3 第 2 项;调整层 kind=adjust 首字母取 X,如 X1);首次生成后写回,此后不变——标注锚点依赖它"
           },
           "kind": {
             "enum": [
               "video",
               "audio",
-              "text"
-            ]
+              "text",
+              "adjust"
+            ],
+            "description": "adjust = 调整层(册五 T5.4):轨上片段的 fx/grade(与文本)按时间窗叠加到**下方全部视频轨**的合成结果上;调整层不占主时间线 concat 序列、不进混音;渲染 = 主合成后按时间窗再过一遍其 fx/grade 链(render::steps::adjust_args)"
           },
           "name": {
             "type": "string",
@@ -579,8 +581,8 @@
       "properties": {
         "id": {
           "type": "string",
-          "pattern": "^[VAT][0-9]+-[0-9]{3}$",
-          "description": "片段稳定 id,确定性生成规则:<轨道 id>-<片段序号+1 三位零填>,如 V1-003;锚点(kind=clip)与 Op target 均引用它,禁止依赖数组下标"
+          "pattern": "^[VATX][0-9]+-[0-9]{3}$",
+          "description": "片段稳定 id,确定性生成规则:<轨道 id>-<片段序号+1 三位零填>,如 V1-003(调整层轨片段 X1-001);锚点(kind=clip)与 Op target 均引用它,禁止依赖数组下标"
         },
         "sourceHash": {
           "type": "string",
@@ -1171,6 +1173,50 @@
         },
         "grade": {
           "$ref": "#/$defs/grade"
+        },
+        "compound": {
+          "$ref": "#/$defs/compound"
+        }
+      }
+    },
+    "compound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clips"
+      ],
+      "description": "复合片段(册五 T5.4/ADR-0019):**内联子时间线**——clips 结构与顶层时间线同构,时间域为复合片段局部域(子 clip startMs 相对复合片段起点);复合片段时长 = 子时间线总时长(max endMs)。渲染递归展开:子时间线先按同一管线渲染为中间段(内容寻址缓存,键 = 子 clips JSON 哈希 + 画幅/帧率/渲染版本),再作为外层片段源参与既有合成;嵌套深度上限两级(主时间线 + 一层复合,拒绝三层——层级校验在内核语义层 Project::validate_keyframes,与 keyframes 同模式);编辑内部 = 解包(compound_unbind)→改→重打包(compound_create),子 clips 不经 clip_update 直接 patch(个人自用心智,简单可审计);打包/解包各为单 Op 原子。子时间线当前为单轨语义:子 clips 必须按 startMs 升序、两两不重叠且首尾相接(无间隙);子 clips 携带的音频暂不渲染(诚实降级 WARN 留痕,登记遗留)。compound.canvas 可省略(缺省 = 工程画幅);canvas 不缩放中间段,仅声明子时间线画幅语义",
+      "properties": {
+        "clips": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/clip"
+          },
+          "description": "子时间线片段(局部时间域;升序、不重叠、首尾相接;子 clip 不得再带 compound——深度上限两级)"
+        },
+        "canvas": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "子时间线画幅(可省略,缺省 = 工程画幅;64..7680 偶数,与顶层 canvas 同约束)",
+          "required": [
+            "width",
+            "height"
+          ],
+          "properties": {
+            "width": {
+              "type": "integer",
+              "minimum": 64,
+              "maximum": 7680,
+              "multipleOf": 2
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 64,
+              "maximum": 7680,
+              "multipleOf": 2
+            }
+          }
         }
       }
     }

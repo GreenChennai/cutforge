@@ -21,7 +21,9 @@ use std::path::{Path, PathBuf};
 pub const CACHE_ROOT: &str = ".cutforge/render-cache";
 /// 分层目录:seg(段)/mix(混音)/compose(合成)/overlay(叠加)/sub(字幕合流)
 /// /frame(单帧,T2.4 精确预览;键含工作区指纹,改一笔即 miss)。
-pub const LAYERS: [&str; 6] = ["seg", "mix", "compose", "overlay", "sub", "frame"];
+/// 缓存层(册五 T5.4 增 adjust:调整层时间窗处理产物;复合中间段挂 compose 层,
+/// 键 = 子内容指纹——见 compound.rs 模块注释,不另设层)。
+pub const LAYERS: [&str; 7] = ["seg", "mix", "compose", "overlay", "adjust", "sub", "frame"];
 /// 临时文件目录(concat 清单、burn 用 ASS 副本;不入索引,gc 按超龄清理)。
 pub const TMP_DIR: &str = "tmp";
 /// 清单文件名(相对缓存根)。
@@ -247,6 +249,19 @@ pub fn overlay_spec(base_key: &str, overlays: &[OverlaySeg]) -> Value {
 
 pub fn overlay_key(base_key: &str, overlays: &[OverlaySeg]) -> String {
     key_hex(&overlay_spec(base_key, overlays))
+}
+
+/// adjust 层输入 spec(册五 T5.4 调整层):基片键 + adjust 片段清单
+/// (整 clip JSON:fx/grade 链 + 时间窗)+ 画幅/帧率。基片变 → 键变;
+/// 改调整层任一片段 → 键变(真分叉)。
+pub fn adjust_spec(base_key: &str, clips: &[Clip], w: u32, h: u32, fps: u32) -> Value {
+    json!({
+        "v": crate::RENDERER_VERSION,
+        "base": base_key,
+        "canvas": [w, h],
+        "fps": fps,
+        "clips": clips.iter().map(|c| serde_json::to_string(c).unwrap_or_default()).collect::<Vec<_>>(),
+    })
 }
 
 /// mix 输入 spec:音频段清单 + BGM + 总长 + 边界转场时长(册四 T4.5:acrossfade

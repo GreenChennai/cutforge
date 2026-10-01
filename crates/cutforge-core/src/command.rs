@@ -136,6 +136,10 @@ pub struct ClipPatch {
     /// (Option<Grade> 表达不了「从有到无」;与 huazi_clear 同模式)。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub grade_clear: bool,
+    /// 复合片段(册五 T5.4):整对象替换(与 crop/fx 同口径原子操作)。
+    /// 无 compound_clear——复合摘除走 compound_unbind(解包还原),不经 patch。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compound: Option<crate::model::CompoundSpec>,
 }
 
 impl ClipPatch {
@@ -234,6 +238,16 @@ pub enum Command {
     /// 批量改片段属性(册四 A4 T4.7 subtitle_replace 批量替换):单 Op 原子,
     /// 每个 (clipId, patch) 独立按字段合并;任一 clipId 不存在则整批拒绝。
     ClipsPatch { updates: Vec<(String, ClipPatch)> },
+    /// 复合片段打包(册五 T5.4/ADR-0019):选中多片段打包为一个复合片段
+    /// (单 Op 原子;原片段移除,子时间线 = 选中片段按 startMs 升序的局部时间域;
+    /// 守卫:全部在视频轨、两两不重叠且首尾相接、不得含复合片段——深度上限两级)。
+    CompoundCreate { clip_ids: Vec<String>, to_track: String, start_ms: u64, request_id: Option<String> },
+    /// 复合片段解包(册五 T5.4/ADR-0019):复合片段还原为子片段落回所在轨
+    /// (单 Op 原子;局部时间域平移回主时间线,id 重新确定性分配;逆操作)。
+    CompoundUnbind { clip_id: String },
+    /// 单轨多点分割(册五 T5.4 scene_detect 自动切段):给定轨上**严格包含**
+    /// 任一切点的片段一次全切(单 Op 原子;切点不在片段内部时不切)。
+    TrackSplitAt { track_id: String, t_points: Vec<u64> },
 }
 
 /// `clip_trim` 模式(册四 A4 T4.2):trim 单边/roll 双边联动/slip 内容/slide 位置。
@@ -295,6 +309,7 @@ mod tests {
             keyframes: None,
             grade: None,
             grade_clear: false,
+            compound: None,
         }
         .apply_to(&mut c);
         assert_eq!(changes.len(), 21);
@@ -496,6 +511,41 @@ mod tests {
         }
         .apply_to(&mut c);
         assert!(changes.is_empty(), "同值 fx 不得计入变更: {changes:?}");
+    }
+
+    /// 册五 T5.4:compound patch(整对象替换;指针 /compound;同值不产变更;
+    /// undo 用的 before/after 成对;None 不改)。
+    #[test]
+    fn compound_patch_replaces_whole_object() {
+        let mut c = clip();
+        assert!(c.compound.is_none());
+        let spec = crate::model::CompoundSpec { canvas: None, clips: vec![
+            serde_json::from_value(serde_json::json!({
+                "id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000
+            })).unwrap(),
+            serde_json::from_value(serde_json::json!({
+                "id": "V1-002", "src": "blue.mp4", "startMs": 1000, "durationMs": 1000
+            })).unwrap(),
+        ] };
+        let changes = ClipPatch { compound: Some(spec.clone()), ..Default::default() }.apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].0, "/compound");
+        assert_eq!(c.compound.as_ref().unwrap().clips.len(), 2);
+        // 同值不产变更;None 不改
+        let changes = ClipPatch { compound: Some(spec.clone()), ..Default::default() }.apply_to(&mut c);
+        assert!(changes.is_empty(), "同值 compound 不得计入变更: {changes:?}");
+        let changes = ClipPatch { rotation: Some(45.0), ..Default::default() }.apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(c.compound.as_ref().unwrap().clips.len(), 2, "None 不改");
+        // 整对象替换:旧子 clips 不残留
+        let spec2 = crate::model::CompoundSpec { canvas: None, clips: vec![
+            serde_json::from_value(serde_json::json!({
+                "id": "V1-001", "src": "x.mp4", "startMs": 0, "durationMs": 500
+            })).unwrap(),
+        ] };
+        let changes = ClipPatch { compound: Some(spec2), ..Default::default() }.apply_to(&mut c);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(c.compound.as_ref().unwrap().clips.len(), 1);
     }
 
     /// BgmPatch:合并语义 + 无 bgm 时按 schema 默认新建;is_empty 口径。

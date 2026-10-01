@@ -6,13 +6,14 @@ use serde_json::json;
 #[test]
 fn capability_matrix_single_source() {
     let m = capability_matrix();
-    assert_eq!(m["version"], json!(2));
+    assert_eq!(m["version"], json!(3));
     let items = m["items"].as_array().unwrap();
     // M11 时点 15 项;A4-BE2(T4.4/T4.9)增曲线变速/倒放/画布范围 → 18 项;
     // A4-BE3a(T4.5/T4.6)增转场库目录化/特效库/动效库 → 21 项;
     // 册五 A5(T5.2/T5.3/T5.6)增调色/曲线/LUT/示波器/分屏拷贝/轨道 EQ/动态/响度计/
-    // ducking 参数化/硬件编码降级/编码参数面/bt709 标签/渲染队列/渲染日志 + HSL/HDR 降级登记 → 37 项
-    assert_eq!(items.len(), 37, "册五 A5 后 37 项口径(M11+A4 21 项 + 册五 16 项)");
+    // ducking 参数化/硬件编码降级/编码参数面/bt709 标签/渲染队列/渲染日志 + HSL/HDR 降级登记 → 37 项;
+    // A5-BE3(T5.4/T5.5)增复合/调整层/多机位/场景检测/OTIO-EDL 互操作 → 42 项
+    assert_eq!(items.len(), 42, "册五 A5-BE3 后 42 项口径(37 + T5.4/T5.5 五项)");
     let mut achieved = 0;
     for it in items {
         let status = it["status"].as_str().unwrap();
@@ -29,7 +30,7 @@ fn capability_matrix_single_source() {
             assert!(it["target"].is_string(), "未达成项必须写明 M11 目标: {}", it["item"]);
         }
     }
-    assert_eq!(achieved, 33, "M11+A4 19 项 + 册五 14 项(HSL/HDR 登记降级为 missing;证据=parity_matrix grade/audio 夹具与 encode.rs 单测)");
+    assert_eq!(achieved, 38, "M11+A4 19 项 + 册五 14 项 + T5.4/T5.5 五项(HSL/HDR 登记降级为 missing;证据=parity C1-C4/G/A 夹具与 interop 往返单测)");
 }
 
 /// M8-5:python 启动器探测——本机/CI 至少一个可用,且返回的命令可执行。

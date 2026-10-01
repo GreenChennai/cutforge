@@ -19,8 +19,9 @@ use crate::registry::envelope;
 use serde_json::{json, Value};
 use std::path::Path;
 
-/// ffmpeg 定位(E5-2 同口径:env CUTFORGE_FFMPEG 优先,缺省按 PATH 名)。
-fn ff_bin() -> String {
+/// ffmpeg 定位(E5-2 同口径:env CUTFORGE_FFMPEG 优先,缺省按 PATH 名;
+/// 册五 T5.4 起 multicam/scene 工具共用,crate 内 pub(crate))。
+pub(crate) fn ff_bin() -> String {
     if let Some(v) = std::env::var_os("CUTFORGE_FFMPEG")
         && !v.is_empty()
     {
@@ -29,7 +30,7 @@ fn ff_bin() -> String {
     "ffmpeg".into()
 }
 
-fn ffmpeg_available() -> bool {
+pub(crate) fn ffmpeg_available() -> bool {
     std::process::Command::new(ff_bin()).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
 }
 
@@ -284,27 +285,13 @@ pub const BPM_MIN: f64 = 60.0;
 pub const BPM_MAX: f64 = 180.0;
 pub const ONSET_MIN_GAP_MS: u64 = 200;
 
-/// RMS 能量包络(20ms 窗;确定性纯函数)。
+// rms 包络 / onset 强度纯函数(册五 T5.4 起单一实现移入 cutforge-render::analyze
+// —— multicam_sync 与 parity 夹具同源;此处 1 参薄封装保持既有路径与签名逐字不变):
 pub fn rms_envelope(samples: &[i16]) -> Vec<f32> {
-    let win = (PCM_RATE as usize * WINDOW_MS as usize) / 1000;
-    if win == 0 || samples.is_empty() {
-        return Vec::new();
-    }
-    samples
-        .chunks(win)
-        .map(|seg| {
-            let acc: f64 = seg.iter().map(|s| (*s as f64) * (*s as f64)).sum();
-            (acc / seg.len().max(1) as f64).sqrt() as f32
-        })
-        .collect()
+    cutforge_render::analyze::rms_envelope(samples, PCM_RATE, WINDOW_MS)
 }
 
-/// 起音强度:半波整流差分(能量上涨量才是起音)。
-pub fn onset_strength(env: &[f32]) -> Vec<f32> {
-    std::iter::once(0.0)
-        .chain(env.windows(2).map(|w| (w[1] - w[0]).max(0.0)))
-        .collect()
-}
+pub use cutforge_render::analyze::onset_strength;
 
 /// 起音候选:超过自适应阈值的局部极大值(阈值 = min(中位数×K, 峰值×0.5);
 /// K 由灵敏度 0..1 派生:K = 4.0 − 3.0×sens,sens 越高越密)。

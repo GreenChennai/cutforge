@@ -1,7 +1,7 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
-//! 命令接口:唯一写入口(计划书 2.6)。
-//! `apply`/`record_file_change` 负责幂等/前置检查 → 变更 → schema 验证 →
-//! 产出 Op 入 OpLog;`mutate` 承担 Command → (路径, before, after, 摘要) 的就地变更。
+//! 命令接口:唯一写入口(计划书 2.6)。`apply`/`record_file_change` 负责幂等/
+//! 前置检查 → 变更 → schema 验证 → 产出 Op 入 OpLog;`mutate` 承担 Command →
+//! (路径, before, after, 摘要) 的就地变更;复合/多轨分割体在 engine::pro_cmds。
 
 use super::invariants::enforce_no_overlap;
 use super::{Engine, Reject};
@@ -10,9 +10,9 @@ use crate::model::Project;
 use crate::oplog::{Actor, Op, OpKind, OpTarget};
 use serde_json::Value;
 
-/// apply 选项:op_id/request_id 支持幂等;caused_by 把改动与标注绑定(4.9);
-/// expect_rev 是 baseRev 前置检查(调用方声明"我基于哪一版改");
-/// non_undoable 标记自动簿记类登记(锚点重定位):进审计链但不入撤销栈(ADR-0001)。
+/// apply 选项:op_id/request_id 幂等;caused_by 绑定标注(4.9);expect_rev =
+/// baseRev 前置("我基于哪一版改");non_undoable = 自动簿记登记(进审计链
+/// 不入撤销栈,ADR-0001)。
 #[derive(Debug, Clone, Default)]
 pub struct ApplyOpts {
     pub op_id: Option<String>,
@@ -576,6 +576,15 @@ impl Engine {
             Command::ClipsInsert { .. } | Command::ClipsPatch { .. } => {
                 unreachable!("批量命令已在 mutate 入口分派(engine::batch)")
             }
+            // 复合片段打包/解包与单轨多点分割(册五 T5.4;实现在 engine::pro_cmds
+            // ——行数红线 A1-3 纯移动,mutate 臂只做薄委托,语义与 Reject 面零变化)
+            Command::CompoundCreate { clip_ids, to_track, start_ms, request_id: _ } => {
+                super::pro_cmds::compound_create(p, clip_ids, to_track, start_ms)
+            }
+            Command::CompoundUnbind { clip_id } => super::pro_cmds::compound_unbind(p, clip_id),
+            Command::TrackSplitAt { track_id, t_points } => {
+                super::pro_cmds::track_split_at(p, track_id, t_points)
+            }
         }
     }
 }
@@ -589,11 +598,13 @@ fn clips_pointer(ti: usize) -> String {
 }
 
 impl crate::model::TrackKind {
-    fn kind_json(&self) -> &'static str {
+    /// kind 字符串(crate 内共用;pro_cmds 经 kind_json_pub 桥取用)。
+    pub(crate) fn kind_json(&self) -> &'static str {
         match self {
             crate::model::TrackKind::Video => "video",
             crate::model::TrackKind::Audio => "audio",
             crate::model::TrackKind::Text => "text",
+            crate::model::TrackKind::Adjust => "adjust",
         }
     }
 }
@@ -690,27 +701,6 @@ mod tests {
     }
 
     #[test]
-    fn delete_insert_move_and_request_id_dedup() {
-        let mut eng = Engine::new(sample_project()).unwrap();
-        let r = eng.apply(Command::ClipDelete { clip_id: "A1-001".into() }, agent(), ApplyOpts::default()).unwrap();
-        assert_eq!(r.rev, 1);
-        let mut clip = sample_project().tracks[1].clips[0].clone();
-        clip.id = "A1-002".into();
-        let opts = ApplyOpts { request_id: Some("req-1".into()), ..Default::default() };
-        let r2 = eng.apply(Command::ClipInsert { to_track: "A1".into(), clip, request_id: Some("req-1".into()) }, agent(), opts).unwrap();
-        assert!(!r2.idempotent);
-        assert_eq!(eng.rev(), 2);
-        // 同 request_id 再来 → 幂等回执,rev 不动
-        let clip2 = { let mut c = sample_project().tracks[1].clips[0].clone(); c.id = "A1-003".into(); c };
-        let r3 = eng.apply(Command::ClipInsert { to_track: "A1".into(), clip: clip2, request_id: Some("req-1".into()) }, agent(), ApplyOpts { request_id: Some("req-1".into()), ..Default::default() }).unwrap();
-        assert!(r3.idempotent);
-        assert_eq!(eng.rev(), 2);
-        // 跨 kind 移动拒绝
-        let r4 = eng.apply(Command::ClipMove { clip_id: "A1-002".into(), new_start_ms: 0, to_track: Some("V1".into()) }, agent(), ApplyOpts::default());
-        assert!(matches!(r4, Err(Reject::InvariantViolation(_))));
-    }
-
-    #[test]
     fn duplicate_clip_id_rejected() {
         let mut eng = Engine::new(sample_project()).unwrap();
         let clip = sample_project().tracks[0].clips[0].clone();
@@ -794,4 +784,9 @@ mod tests {
         }, agent(), ApplyOpts::default());
         assert!(matches!(r, Err(Reject::SchemaInvalid(_))), "枚举外动效必须被 schema 层拒: {r:?}");
     }
+
+
+    #[cfg(test)]
+    #[path = "../../pro_tests.rs"]
+    mod pro_tests;
 }

@@ -8,8 +8,10 @@
 //! 工作区指纹),供壳「精确预览」;见 frame.rs。
 
 pub mod across;
+pub mod analyze;
 pub mod cache;
 pub mod catalog;
+pub mod compound;
 pub mod encode;
 pub mod frame;
 pub mod grade;
@@ -46,7 +48,10 @@ use std::process::Command;
 /// lut3d,键增 LUT 内容哈希)+ 轨道 EQ/动态混音链 + ducking 参数化 + 编码参数面与
 /// bt709 输出标签(encode 步从原子拷贝升级为带标签重编码,ADR-0020 决策 1)+
 /// 每步耗时入进度事件。旧缓存整体失效(键全部含版本位)。
-pub const RENDERER_VERSION: &str = "cutforge-render-8.0";
+/// 9.0(册五 T5.4/ADR-0019):compound 递归展开(子时间线中间段挂 compose 层,
+/// 键 = 子内容指纹)+ adjust 调整层步(新缓存层,主合成后按时间窗再过 fx/grade 链)
+/// + 字幕 VTT 子格式(不触缓存键面,随行为面整体升版)。旧缓存整体失效。
+pub const RENDERER_VERSION: &str = "cutforge-render-9.0";
 
 pub struct RenderOutcome {
     pub output: PathBuf,
@@ -186,6 +191,8 @@ pub fn render_with_opts(
     steps.push((rep.name, rep.ok));
 
     // ---- 步 2 segment(内容寻址:键含 clip JSON + 尾帧 + 画幅 + fps + LUT 哈希) ----
+    // 复合片段(册五 T5.4/ADR-0019)在此递归展开:先渲子时间线为中间段
+    // (compound::resolve,compose 层内容寻址),再按普通素材走段管线。
     let t0 = std::time::Instant::now();
     let (mut rep, seg_files, seg_keys, cache_hits, cache_misses) = exec_segment(&plan, &mut idx)?;
     emit(&mut rep, t0, &[]);
@@ -199,8 +206,14 @@ pub fn render_with_opts(
 
     // ---- 步 4 overlay(品牌/花字位图;无叠加层直接透传) ----
     let t0 = std::time::Instant::now();
-    let (mut rep, base_video, video_key, overlay_cmds) = exec_overlay(&plan, &mut idx, &composed, &compose_key)?;
+    let (mut rep, overlaid, overlay_key, overlay_cmds) = exec_overlay(&plan, &mut idx, &composed, &compose_key)?;
     emit(&mut rep, t0, &overlay_cmds);
+    steps.push((rep.name, rep.ok));
+
+    // ---- 步 4.5 adjust(册五 T5.4 调整层:主合成后按时间窗再过 fx/grade 链;空透传) ----
+    let t0 = std::time::Instant::now();
+    let (mut rep, base_video, video_key, adjust_cmds) = exec_adjust(&plan, &mut idx, &overlaid, &overlay_key)?;
+    emit(&mut rep, t0, &adjust_cmds);
     steps.push((rep.name, rep.ok));
 
     // ---- 步 5 mix(画幅无关 → 共享缓存;多画幅变体真分叉) ----
@@ -237,6 +250,8 @@ fn exec_probe(plan: &RenderPlan) -> StepReport {
 type SegOutputs = (StepReport, Vec<PathBuf>, Vec<String>, usize, usize);
 
 /// 步 2:逐段提取(缓存命中即跳过;fx/motion/调色降级 WARN 并入进度事件)。
+/// 复合片段(compound 字段)先递归渲染子时间线为中间段(compound::resolve,
+/// 共享内容寻址缓存),再按普通素材走段管线;子管线 WARN 并入本步 warnings。
 fn exec_segment(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<SegOutputs, String> {
     let now = cache::now_secs();
     let mut seg_files: Vec<PathBuf> = Vec::new();
@@ -246,6 +261,17 @@ fn exec_segment(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<SegOutputs, S
     let mut degradations: Vec<String> = Vec::new();
     for (i, clip) in plan.video_clips.iter().enumerate() {
         let tail = steps::segment_tail_ms(&plan.video_clips, i);
+        // 复合片段递归展开(T5.4):壳克隆 + src 换写中间段 → 键含整 clip JSON
+        // (含 compound),子时间线任一变化必换键
+        let effective = match &clip.compound {
+            Some(spec) => {
+                let resolved = crate::compound::resolve(plan, clip, spec, idx)?;
+                degradations.extend(resolved.warns.iter().cloned());
+                crate::compound::effective_clip(clip, &resolved)
+            }
+            None => clip.clone(),
+        };
+        let clip = &effective;
         let spec = cache::seg_spec(plan, clip, tail);
         let key = cache::seg_key(plan, clip, tail);
         degradations.extend(crate::catalog::clip_degradations(clip, plan.canvas_w, plan.canvas_h, plan.fps));
@@ -375,6 +401,60 @@ fn exec_overlay(
 }
 
 type MixOutputs = (StepReport, PathBuf, String, bool, Vec<String>);
+
+/// 步 4.5 adjust(册五 T5.4 调整层):主合成(含叠加层)后,adjust 轨片段的
+/// fx/grade 链按时间窗再过一遍(时间窗处理 = trim 抽窗 → 链作用于窗内流 →
+/// overlay enable 贴回;不依赖滤镜级 enable,任意链可窗内生效)。
+/// 无 adjust 片段直接透传(基片与键原样,零重编码零新缓存条目)。
+fn exec_adjust(
+    plan: &RenderPlan,
+    idx: &mut CacheIndex,
+    base_video: &Path,
+    base_key: &str,
+) -> Result<(StepReport, PathBuf, String, Vec<String>), String> {
+    if plan.adjust_clips.is_empty() {
+        return Ok((
+            StepReport::new("adjust", json!({"count": 0})),
+            base_video.to_path_buf(),
+            base_key.to_string(),
+            Vec::new(),
+        ));
+    }
+    let now = cache::now_secs();
+    let mut warns: Vec<String> = Vec::new();
+    for c in &plan.adjust_clips {
+        let (_, gw) = crate::grade::grade_chain(c, &plan.project_dir);
+        warns.extend(gw);
+        let (_, _, mw) = crate::catalog::motion_chains(c, plan.canvas_w, plan.canvas_h, plan.fps);
+        warns.extend(mw);
+    }
+    let spec = cache::adjust_spec(base_key, &plan.adjust_clips, plan.canvas_w, plan.canvas_h, plan.fps);
+    let key = format!("{}-{}x{}f{}", cache::key_hex(&spec), plan.canvas_w, plan.canvas_h, plan.fps);
+    let mut cmds: Vec<String> = Vec::new();
+    let adjusted = match idx.touch("adjust", &key, now) {
+        Some(rel) => (plan.cache_dir.join(rel), true),
+        None => {
+            let rel = idx.record("adjust", &key, spec, now);
+            let adjusted = plan.cache_dir.join(rel);
+            let args = steps::adjust_args(&plan.adjust_clips, base_video, &adjusted, plan.project_dir.as_path(), plan.canvas_w, plan.canvas_h, plan.fps);
+            cmds.push(args.join(" "));
+            run_ff("ffmpeg", &strs(&args))?;
+            idx.set_size("adjust", &key, file_size(&adjusted));
+            (adjusted, false)
+        }
+    };
+    idx.save(&plan.cache_dir)?;
+    let mut detail = json!({"count": plan.adjust_clips.len()});
+    if !warns.is_empty() {
+        detail["warnings"] = json!(warns);
+    }
+    Ok((
+        StepReport::new("adjust", detail).with_cache_hit(adjusted.1),
+        adjusted.0,
+        key,
+        cmds,
+    ))
+}
 
 /// 步 5:混音(pass A 逐段落点/变速/淡变 → 轨道组建流 → 总线 → BGM ducking;
 /// pass B loudnorm——响度目标可由渲染选项注入,响度单参数化 T5.3/T5.6)。

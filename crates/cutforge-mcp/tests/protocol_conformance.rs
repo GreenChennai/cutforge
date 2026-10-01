@@ -72,6 +72,12 @@ fn protocol_conformance() {
         ("clip_copy", json!({"root": root_s})),
         ("clip_paste_at", json!({"root": root_s})),
         ("clip_paste_at", json!({"root": root_s, "trackId": "V1"})),
+        // 册五 A5-BE3:专业编辑工具缺参面
+        ("compound_create", json!({"root": root_s})),
+        ("compound_create", json!({"root": root_s, "clipIds": ["V1-001"]})),
+        ("compound_unbind", json!({"root": root_s})),
+        ("multicam_cut", json!({"root": root_s})),
+        ("scene_detect", json!({"root": root_s})),
     ] {
         let resp = cutforge_mcp::dispatch(name, &args);
         assert_envelope(&resp, name);
@@ -100,22 +106,24 @@ fn protocol_conformance() {
     //  track_update/clip_gap_delete/clip_copy/clip_paste_at → 48;册四 A4-BE3b 增
     //  text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/
     //  media_thumbnail/media_proxy/audio_beats → 56;册五 A5 增 lut_import/
-    //  scope_data/audio_loudness/encode_probe/render_queue → 61)
+    //  scope_data/audio_loudness/encode_probe/render_queue → 61;册五 A5-BE3 增
+    //  compound_create/compound_unbind/multicam_cut/scene_detect(写)+
+    //  multicam_sync/otio_export/otio_import(编排)→ 68)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 61, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册五 A5 增 lut_import/scope_data/audio_loudness/encode_probe/render_queue)");
+    assert_eq!(names.len(), 68, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册五 A5-BE3 增 compound/multicam/scene/otio 七工具)");
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);
         assert!(t["outputSchema"].is_object(), "{} 缺 outputSchema", t["name"]);
     }
-    // kind 口径:15 查询 + 30 写 + 16 编排(与 _doc 同句;册五 A5 56→61)
+    // kind 口径:15 查询 + 34 写 + 19 编排(与 _doc 同句;册五 A5-BE3 61→68)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds.entry(t["kind"].as_str().unwrap().to_string()).or_insert(0usize) += 1;
     }
     assert_eq!(kinds.get("query"), Some(&15), "查询 15:{kinds:?}");
-    assert_eq!(kinds.get("write"), Some(&30), "写 30:{kinds:?}");
-    assert_eq!(kinds.get("orchestrate"), Some(&16), "编排 16:{kinds:?}");
+    assert_eq!(kinds.get("write"), Some(&34), "写 34:{kinds:?}");
+    assert_eq!(kinds.get("orchestrate"), Some(&19), "编排 19:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
     // 实现分支,不得出现"已注册但未实现"。统一以缺 root 空参探针:所有工具(capability_matrix
@@ -149,6 +157,101 @@ fn project_new_from_zero_and_query() {
     let dup = cutforge_mcp::dispatch("project_new", &json!({"root": root_s}));
     assert_eq!(dup["code"], json!("PRECONDITION_FAILED"), "重复创建必须拒绝: {dup}");
     cutforge_io::fsutil::cleanup(&root);
+}
+
+/// 册五 A5-BE3(T5.4/T5.5):专业编辑与互操作工具的 dispatch 级闭环——
+/// 复合打包/解包(单 Op + undo)、clip_update patch.compound 拒绝 null、
+/// multicam_cut 切换序列展开、otio_export/otio_import 往返(工程投影等价)、
+/// EDL 头注释。纯计算类(multicam_sync/scene_detect)需 ffmpeg,由渲染端
+/// parity 与 pro_ops 单测覆盖,此处只验证缺参协议面(上方写工具缺参探针)。
+#[test]
+fn pro_ops_tools_full_chain() {
+    let root = cutforge_io::fsutil::temp_dir("mcp-pro-ops");
+    let root_s = root.to_string_lossy().to_string();
+    let call = |name: &str, args: Value| cutforge_mcp::dispatch(name, &args);
+    // 从零建工程:V1 两段相邻片段
+    let r = call("project_new", json!({"root": root_s, "slug": "pro-ops", "fps": 30,
+                 "canvasW": 320, "canvasH": 240, "tracks": ["video"]}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    std::fs::write(root.join("a.mp4"), b"fake").unwrap();
+    std::fs::write(root.join("b.mp4"), b"fake").unwrap();
+    for (i, start) in [0i64, 2000].iter().enumerate() {
+        let r = call("clip_add", json!({"root": root_s, "trackId": "V1",
+                     "src": "a.mp4", "startMs": start, "durationMs": 2000,
+                     "requestId": format!("pro-add-{i}")}));
+        assert_eq!(r["code"], json!("OK"), "{r}");
+    }
+    // compound_create:两片段打包(单 Op)
+    let r = call("compound_create", json!({"root": root_s, "clipIds": ["V1-001", "V1-002"],
+                  "toTrack": "V1", "startMs": 0}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["opIds"].as_array().unwrap().len(), 1, "打包单 Op");
+    assert_eq!(r["data"]["innerClips"], json!(2));
+    let shell_id = r["data"]["clipId"].as_str().unwrap().to_string();
+    // 投影:compound 概要(clipCount/durationMs)
+    let r = call("timeline_get", json!({"root": root_s}));
+    let shell = r["data"]["clips"].as_array().unwrap().iter().find(|c| c["id"] == json!(shell_id)).unwrap();
+    assert_eq!(shell["compound"]["clipCount"], json!(2));
+    assert_eq!(shell["compound"]["durationMs"], json!(4000));
+    // compound_unbind:还原两片段(单 Op;undo 回复合态)
+    let r = call("compound_unbind", json!({"root": root_s, "clipId": shell_id.clone()}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["opIds"].as_array().unwrap().len(), 1, "解包单 Op");
+    assert_eq!(r["data"]["unbound"], json!(2));
+    let r = call("undo", json!({"root": root_s}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    // undo 本身也是一笔 Op(rev 前进,审计链);断言**状态**回归复合态
+    let rows = call("timeline_get", json!({"root": root_s}))["data"]["clips"].clone();
+    assert!(rows.as_array().unwrap().iter().any(|c| c["compound"].is_object()
+        && c["compound"]["clipCount"] == json!(2)), "undo 后复合壳回归: {rows}");
+    // clip_update patch.compound:null 显式拒绝(摘除走 compound_unbind)
+    let r = call("clip_update", json!({"root": root_s, "clipId": shell_id, "patch": {"compound": null}}));
+    assert_eq!(r["code"], json!("SCHEMA_INVALID"), "{r}");
+    // multicam_cut:切换序列展开(单 Op)
+    let r = call("multicam_cut", json!({"root": root_s, "trackId": "V1",
+                  "startMs": 20000, "durationMs": 3000,
+                  "angles": [{"src": "a.mp4", "offsetMs": 0}, {"src": "b.mp4", "offsetMs": 500}],
+                  "switches": [{"tMs": 0, "angle": 0}, {"tMs": 1500, "angle": 1}],
+                  "requestId": "pro-mc-1"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    assert_eq!(r["data"]["opIds"].as_array().unwrap().len(), 1, "多机位序列单 Op");
+    assert_eq!(r["data"]["segments"], json!(2));
+    // 守卫:switches 首点非 0 → PRECONDITION_FAILED
+    let r = call("multicam_cut", json!({"root": root_s, "trackId": "V1",
+                  "startMs": 30000, "durationMs": 1000,
+                  "angles": [{"src": "a.mp4"}], "switches": [{"tMs": 100, "angle": 0}]}));
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "{r}");
+    // otio_export(只读派生物)→ otio_import(新工程)→ 工程投影等价
+    let r = call("otio_export", json!({"root": root_s, "format": "otio"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let otio_out = root.join(r["data"]["out"].as_str().unwrap());
+    assert!(otio_out.is_file(), "OTIO 产物必须落盘");
+    let dest = cutforge_io::fsutil::temp_dir("mcp-pro-ops-import");
+    let r = call("otio_import", json!({"root": dest.to_string_lossy(), "src": otio_out.to_string_lossy()}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let a = call("timeline_get", json!({"root": root_s}))["data"]["clips"].clone();
+    let b = call("timeline_get", json!({"root": dest.to_string_lossy()}))["data"]["clips"].clone();
+    type Row = (Option<String>, u64, u64, Option<u64>, bool);
+    let norm = |rows: &Value| -> Vec<Row> {
+        rows.as_array().unwrap().iter().map(|c| (
+            c["src"].as_str().map(String::from),
+            c["startMs"].as_u64().unwrap_or(0),
+            c["durationMs"].as_u64().unwrap_or(0),
+            // OTIO 侧 source_range.start 恒显式(缺省 0 ≡ 缺席)
+            Some(c["sourceInMs"].as_u64().unwrap_or(0)),
+            c["compound"].is_object(),
+        )).collect()
+    };
+    assert_eq!(norm(&a), norm(&b), "OTIO 往返工程投影等价");
+    // EDL 导出(头部生成器与版本)
+    let r = call("otio_export", json!({"root": root_s, "format": "edl"}));
+    assert_eq!(r["code"], json!("OK"), "{r}");
+    let edl = std::fs::read_to_string(root.join(r["data"]["out"].as_str().unwrap())).unwrap();
+    assert!(edl.starts_with("TITLE: pro-ops
+"), "{edl}");
+    assert!(edl.contains("generated by cutforge"));
+    cutforge_io::fsutil::cleanup(&root);
+    cutforge_io::fsutil::cleanup(&dest);
 }
 
 /// E6-3/B14:只读查询不申请排他锁——project_get 后 `.cutforge/lock` 不存在

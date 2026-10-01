@@ -363,9 +363,10 @@ def _tolerant_pair(k: str, g, a, path: str, extras: list[str]) -> bool:
     """audio_beats 启发式面的唯一宽口径(严格对比前尝试;返回 True = 已按容差记 WARN)。
 
     CI 实证:启发式 onset 面对解码舍入敏感,Windows/ubuntu 可差 1 个 onset、
-    confidence ±0.1 级 —— confidence/onsets 形态已在归一化层量化/网格化,这里只对
-    "计数"与"首 onset 位置"放宽:onsets 网格化后计数差 ≤ ONSET_COUNT_TOL 且首个
-    onset 网格值相等、onsetCount 计数差 ≤ ONSET_COUNT_TOL → WARN;超差返回 False
+    confidence ±0.1 级 —— confidence/onsets 形态已在归一化层量化/网格化,这里对
+    "计数"放宽:onsets 网格化后计数差 ≤ ONSET_COUNT_TOL 且 onsetCount 计数差
+    ≤ ONSET_COUNT_TOL → WARN(不要求首个 onset 相等:ubuntu 实证缺失的可能是
+    第一个 onset,首元素相等前置会把容差整条落回严格对比);超差返回 False
     落回严格对比报 DRIFT(其他工具不受影响)。
     """
     if k == "onsets" and isinstance(g, list) and isinstance(a, list):
@@ -373,9 +374,9 @@ def _tolerant_pair(k: str, g, a, path: str, extras: list[str]) -> bool:
         if gg is None or aa is None:
             return False
         d = abs(len(gg) - len(aa))
-        if d <= ONSET_COUNT_TOL and gg[:1] == aa[:1]:
+        if d <= ONSET_COUNT_TOL:
             extras.append(f"{path}: 启发式容差 golden={len(gg)} actual={len(aa)} 个 onset"
-                          f"(计数差 {d} ≤ {ONSET_COUNT_TOL} 且首个 onset 网格值相等)")
+                          f"(计数差 {d} ≤ {ONSET_COUNT_TOL})")
             return True
         return False  # 超差 → 严格对比,按数组长度/逐元素报 DRIFT
     if k == "onsetCount" and isinstance(g, (int, float)) and isinstance(a, (int, float)) \

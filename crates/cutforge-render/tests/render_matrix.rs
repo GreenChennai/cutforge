@@ -172,3 +172,38 @@ fn render_matrix_fixture() {
         let _ = std::fs::remove_dir_all(d);
     }
 }
+
+/// 导出产物目录三态布局感知(册六 T6.3/ADR-0021):v3 工程 = exports/;
+/// v2 工程 = 06_成片输出/(零变化);legacy = 06_output(双目录并存的 v1
+/// 边角也不改判,既有语义逐字保留)。纯计划层断言,不需要 ffmpeg。
+#[test]
+fn out_dir_follows_layout_tri_state() {
+    fn mk(dir: &Path, marker: &str, extra_dir: Option<&str>) {
+        let mp = dir.join(marker);
+        std::fs::create_dir_all(mp.parent().unwrap()).unwrap();
+        std::fs::write(mp, b"{}").unwrap();
+        if let Some(x) = extra_dir {
+            std::fs::create_dir_all(dir.join(x)).unwrap();
+        }
+    }
+    let base = std::env::temp_dir().join(format!("cutforge-outdir-tri-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let proj = serde_json::from_value::<cutforge_core::model::Project>(json!({
+        "version": 1, "schemaVersion": "2.0.0", "slug": "t", "fps": 30,
+        "canvas": {"width": 1080, "height": 1920},
+        "tracks": [{"id": "V1", "kind": "video", "clips": [
+            {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 1000, "role": "voice"}]
+        }]
+    })).unwrap();
+    for (tag, marker, extra, want) in [
+        ("v3", "project.json", None, "exports"),
+        ("v2", "05_时间线工程/project.json", None, "06_成片输出"),
+        ("lg", "05_ir/project.json", Some("06_成片输出"), "06_output"),
+    ] {
+        let root = base.join(tag);
+        mk(&root, marker, extra);
+        let plan = cutforge_render::plan::RenderPlan::build(&proj, &root, None);
+        assert_eq!(plan.out_dir, root.join(want), "{tag}: 导出产物目录必须随布局");
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}

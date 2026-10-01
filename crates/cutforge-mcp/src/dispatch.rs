@@ -4,6 +4,8 @@
 
 use crate::edit_ops;
 use crate::subtitle_ops;
+use crate::cutlist_ops::{apply_cut_merge_patch, notes_op_error, read_truth};
+use crate::library_tools::{library_list_tool, library_manage_tool, library_recover_tool, migrate_layout_tool};
 use crate::orchestrate::orchestrate;
 use crate::progress::{existing_rel, render_cutforge_sync, render_frame_tool, render_progress, render_run_async};
 use crate::registry::{capability_matrix, envelope, tool_def};
@@ -13,7 +15,6 @@ use cutforge_core::command::{BgmPatch, ClipPatch, Command, MotionPatch, Transiti
 use cutforge_core::engine::{Answer, ApplyOpts, Query};
 use cutforge_core::oplog::{Actor, ActorKind};
 use cutforge_io::paths;
-use cutforge_io::Workspace;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -45,11 +46,22 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     // render_progress 同理免锁(E5-3 异步 + 轮询;T5.6 队列化)。ass 服务端过滤
     // (壳纯度);useProxy 显式 opt-in;T5.6 渲染选项缺省零变化。
     let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
-    let render_extra = crate::progress::build_render_extra(args);
+    let render_extra = crate::progress::build_render_extra(args, true);
     if name == "render" && args["backend"].as_str() == Some("cutforge") {
         return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, &render_extra);
     }
     if name == "render_run" {
+        // 册六 T6.3:frame-png 出口 = 单帧管线复用(atMs = inMs;同步单帧,
+        // 与 render_frame 同口径),其余格式走异步导出队列。
+        if args["format"].as_str() == Some("frame-png") {
+            let mut fargs = args.clone();
+            if fargs["atMs"].is_null()
+                && let Some(in_ms) = fargs["inMs"].as_u64()
+            {
+                fargs["atMs"] = json!(in_ms);
+            }
+            return render_frame_tool(&ws_root, &fargs);
+        }
         return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, render_extra);
     }
     if name == "render_progress" {
@@ -87,6 +99,19 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         // 册五 T5.4/T5.5:多机位同步分析(纯计算)/ OTIO 导入(从零建工程,免锁)
         "multicam_sync" => return crate::pro_ops::multicam_sync_tool(&ws_root, args),
         "otio_import" => return crate::pro_ops::otio_import_tool(&ws_root, args),
+        // 册六 T6.1:布局迁移(工程目录)/ 工程库与崩溃恢复(root = 库根;免锁面,
+        // 目录级操作由 io 层自持锁)
+        "migrate_layout" => return migrate_layout_tool(&ws_root, args),
+        "library_manage" => return library_manage_tool(&ws_root, args),
+        "library_list" => return library_list_tool(&ws_root, args),
+        "library_recover" => return library_recover_tool(&ws_root, args),
+        // 册六 T6.3:导出前检查(轻探测)/ 多画幅批量(编排入队;均免开工作区)
+        "export_preflight" => return crate::export_tools::export_preflight_tool(&ws_root, args),
+        "export_all_variants" => return crate::export_tools::export_all_variants_tool(&ws_root, args),
+        // 册六 T6.2:素材库 manifest(库根)+ 素材拷贝导入(工程;免开工作区,
+        // 不产 Op 不改 IR,与 lut_import 同类写面)
+        "media_library" => return crate::media_library::media_library_tool(&ws_root, args),
+        "media_import" => return crate::media_library::media_import_tool(&ws_root, args),
         _ => {}
     }
 
@@ -111,17 +136,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             _ => unreachable!(),
         },
         "wordline_get" => read_truth(
-            &paths::resolve_rel(&ws_root, paths::WORDLINE_REL, paths::LEGACY_WORDLINE_REL),
+            &ws_root.join(paths::truth_rel_on_disk(&ws_root, "wordline.json").unwrap_or(paths::WORDLINE_REL)),
             "wordline",
         ),
         "cutlist_get" => {
             let applied = args["applied"].as_bool().unwrap_or(false);
-            let (rel, legacy) = if applied {
-                (paths::CUTLIST_APPLIED_REL, paths::LEGACY_CUTLIST_APPLIED_REL)
-            } else {
-                (paths::CUTLIST_REL, paths::LEGACY_CUTLIST_REL)
-            };
-            read_truth(&paths::resolve_rel(&ws_root, rel, legacy), "cutlist")
+            let name = if applied { "cutlist.applied.json" } else { "cutlist.json" };
+            let rel = paths::truth_rel_on_disk(&ws_root, name).unwrap_or(paths::CUTLIST_REL);
+            read_truth(&ws_root.join(rel), "cutlist")
         }
         "notes_list" => {
             let state = args["state"].as_str().and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
@@ -654,7 +676,17 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 "render" => "rs_render.py",
                 _ => "rs_jy_draft.py",
             };
-            let script_args = args["scriptArgs"].as_array().cloned().unwrap_or_default();
+            let mut script_args = args["scriptArgs"].as_array().cloned().unwrap_or_default();
+            if name == "export_jianying" && script_args.is_empty() {
+                // 册六 T6.2/ADR-0023 随包收编后的端到端缺省:project 路径(三态布局
+                // 感知)+ --name(契约 required)。显式 scriptArgs 仍整组透传(编排
+                // 纪律 = 参数接线,不实现阶段逻辑)。
+                script_args.push(json!(paths::project_path(&ws_root).to_string_lossy()));
+                if let Some(n) = args["name"].as_str() {
+                    script_args.push(json!("--name"));
+                    script_args.push(json!(n));
+                }
+            }
             orchestrate(&ws_root, script, &script_args)
         }
 
@@ -686,19 +718,16 @@ fn reject_to_envelope(msg: String) -> Value {
     envelope(false, code, &msg, json!({}))
 }
 
-/// 真相源文件读取(wordline/cutlist;root 按双布局解析)。
-fn read_truth(p: &Path, label: &str) -> Value {
-    match std::fs::read_to_string(p) {
-        Ok(text) => match serde_json::from_str::<Value>(&text) {
-            Ok(v) => envelope(true, "OK", label, json!({label.to_string().replace('-', "_"): v})),
-            Err(e) => envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
-        },
-        Err(_) => envelope(false, "NO_CONFIG", &format!("文件不存在: {}", p.display()), json!({})),
-    }
-}
-
 // E6-3/B14 查询类名单(实现在 rpc.rs 同域纯移动——行数红线 A1-3)
 pub(crate) use crate::rpc::{is_readonly_tool, produces_rev_mutation};
+
+/// 下一个片段 id(轨道内序号递增;轨道不存在时回退 <轨id>-999 的显式占位)。
+fn next_clip_id_for(project: &cutforge_core::model::Project, track_id: &str) -> String {
+    project
+        .find_track(track_id)
+        .map(|ti| cutforge_core::model::Project::next_clip_id(&project.tracks[ti]))
+        .unwrap_or_else(|| format!("{track_id}-999"))
+}
 
 /// E2-1 的 canonicalize 校验函数化:/media、clip_add、media_probe 等共用
 /// (相对路径、拒 `..`、canonicalize 后仍在工程根内);新端点禁止另造并行实现。
@@ -719,79 +748,6 @@ pub(crate) fn resolve_within_root(root: &Path, rel: &str) -> Result<PathBuf, &'s
         return Err("路径越出工程根");
     }
     Ok(canon_t)
-}
-
-fn next_clip_id_for(project: &cutforge_core::model::Project, track_id: &str) -> String {
-    project
-        .find_track(track_id)
-        .map(|ti| cutforge_core::model::Project::next_clip_id(&project.tracks[ti]))
-        .unwrap_or_else(|| format!("{track_id}-999"))
-}
-
-/// RFC7386 merge-patch 应用到 cutlist.json,schema 校验后走 record_change 审计
-/// (文件由 Workspace reconcile 先文件后记账落盘——不旁路自写)。
-fn apply_cut_merge_patch(ws: &mut Workspace, patch: &Value) -> Value {
-    // cutlist 按 Workspace 盘面布局解析(新 04_粗剪决策 / 旧 04_cut)
-    let rel = paths::resolve_rel(ws.root(), paths::CUTLIST_REL, paths::LEGACY_CUTLIST_REL);
-    let Ok(text) = std::fs::read_to_string(&rel) else {
-        return envelope(false, "NO_CONFIG", &format!("文件不存在: {}", rel.display()), json!({}));
-    };
-    let Ok(before) = serde_json::from_str::<Value>(&text) else {
-        return envelope(false, "SCHEMA_INVALID", "cutlist.json 非法 JSON", json!({}));
-    };
-    let mut after = merge_patch(before.clone(), patch);
-    // M9-3:按 cuts[].action 服务端重算 keep/removedMs(rs_cut.finalize_cutlist 镜像,
-    // 金样对拍锁定)——经 MCP 的编辑不再是"keep 幻觉"
-    if let Err(e) = cutforge_schema::finalize::finalize_cutlist_value(&mut after) {
-        return envelope(false, "GUARD_FAILED", &format!("keep 重算失败: {e}"), json!({}));
-    }
-    let errors = cutforge_schema::validate("cutlist", &after);
-    if !errors.is_empty() {
-        return envelope(false, "SCHEMA_INVALID", &errors.join("; "), json!({"errors": errors}));
-    }
-    let rec = ws.record_change(
-        "cutlist.json",
-        "/",
-        before,
-        after,
-        cutforge_core::oplog::OpKind::Set,
-        Actor::script("cutforge-mcp:cut_apply"),
-        ApplyOpts { summary: Some("cut_apply merge-patch".into()), ..Default::default() },
-    );
-    match rec {
-        Ok(r) => envelope(true, "OK", "cutlist 已更新", json!({"rev": r.rev, "opIds": r.op_ids})),
-        Err(e) => envelope(false, "INTERNAL", &e.to_string(), json!({})),
-    }
-}
-
-/// 标注操作协议错误映射(5.4 表内码):不存在/参数不合法 → PRECONDITION_FAILED,
-/// 其余 → INTERNAL。
-fn notes_op_error(e: std::io::Error) -> Value {
-    let code = if e.kind() == std::io::ErrorKind::NotFound || e.kind() == std::io::ErrorKind::InvalidInput {
-        "PRECONDITION_FAILED"
-    } else {
-        "INTERNAL"
-    };
-    envelope(false, code, &e.to_string(), json!({}))
-}
-
-fn merge_patch(mut target: Value, patch: &Value) -> Value {
-    if let (Some(t), Some(p)) = (target.as_object_mut(), patch.as_object()) {
-        for (k, v) in p {
-            if v.is_null() {
-                t.remove(k);
-            } else {
-                let nv = match t.get(k) {
-                    Some(existing) if existing.is_object() && v.is_object() => merge_patch(existing.clone(), v),
-                    _ => v.clone(),
-                };
-                t.insert(k.clone(), nv);
-            }
-        }
-        target
-    } else {
-        patch.clone()
-    }
 }
 
 // JSON-RPC 传输面(册五 T5.2 拆分自本文件——行数红线 A1-3,纯移动;

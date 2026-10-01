@@ -9,7 +9,8 @@
    "response": {
     "code": "OK",
     "data": {
-     "stdout": "{\"argv\": [], \"stub\": true}"
+     "scriptSource": "cutflow-env",
+     "stdout": "{\"argv\": [\"<TMP>/proot/05_时间线工程/project.json\", \"--name\", \"parity-成片\"], \"stub\": true}"
     },
     "message": "编排完成",
     "ns": "ok",

@@ -60,6 +60,8 @@ fn bin_available(bin: &str, env_key: &str) -> bool {
 }
 
 /// ② ffmpeg / ffprobe 可用(渲染与素材探测的外部依赖;CUTFORGE_FFMPEG/CUTFORGE_FFPROBE 优先)。
+/// ADR-0022:解析顺序 = env 显式 → 系统 PATH → 内嵌随包(安装器勾选组件,默认勾;
+/// 命中方式 = 安装器写 env,运行时探测面零新代码)。缺失给三选一修复指引。
 fn check_bin(name: &'static str, bin: &str, env_key: &str) -> Check {
     if bin_available(bin, env_key) {
         let via_env = std::env::var_os(env_key).is_some_and(|v| !v.is_empty());
@@ -67,8 +69,11 @@ fn check_bin(name: &'static str, bin: &str, env_key: &str) -> Check {
     }
     Check::fail(
         name,
-        format!("{bin} 不可用(素材时长探测/渲染导出依赖它)"),
-        format!("winget install --id Gyan.FFmpeg -e ;或安装后 setx {env_key} \"C:\\path\\to\\{bin}.exe\""),
+        format!("{bin} 不可用(素材时长探测/渲染导出依赖它;ADR-0022 解析顺序 env→PATH→内嵌随包)"),
+        format!(
+            "三选一:① 重跑安装器勾选「ffmpeg 内嵌组件」(默认勾选,纯净机装完即用);\
+             ② winget install --id Gyan.FFmpeg -e ;③ 安装后 setx {env_key} \"C:\\path\\to\\{bin}.exe\""
+        ),
     )
 }
 
@@ -144,9 +149,54 @@ fn check_port(root: &Path, port: u16) -> Check {
     )
 }
 
-/// 入口。用法:`doctor <工程目录> [--port N] [--web 目录] [--json]`。
+/// --bundle 诊断包(册六 T6.4):单文件 zip = doctor.json + environment.txt +
+/// 会话/摘要/rev 快照(在位才收,单件 512KB 上限;工程真相源 project.json 一并快照——
+/// 「导出失败」类问题的最小取证面)。返回 (落点, 字节数, 条目数)。
+fn write_bundle(root: &Path, data: &serde_json::Value, out: Option<&String>) -> Result<(PathBuf, usize, usize), String> {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let out_path = match out.filter(|s| !s.is_empty()) {
+        Some(p) => PathBuf::from(p),
+        None => root.join(format!(".cutforge/doctor-bundle-{secs}.zip")),
+    };
+    let doctor_doc = json!({"generatedAt": cutforge_core::timeutil::now_rfc3339(), "diagnosis": data});
+    let mut entries = vec![
+        crate::bundle::Entry {
+            name: "doctor.json".into(),
+            data: serde_json::to_vec_pretty(&doctor_doc).map_err(|e| e.to_string())?,
+        },
+        crate::bundle::Entry { name: "environment.txt".into(), data: crate::bundle::environment_text(root).into_bytes() },
+    ];
+    // 日志与快照面:在位才收(诊断不虚构);单件上限 512KB(oplog 尾巴足够定位问题)
+    const CAP: u64 = 512 * 1024;
+    for (name, path) in [
+        ("session.json", root.join(".cutforge/session")),
+        ("session-summary.json", root.join(".cutforge/session-summary.json")),
+        ("rev.txt", root.join(".cutforge/rev")),
+        ("project.json", cutforge_io::paths::project_path(root)),
+    ] {
+        if let Some(bytes) = read_capped(&path, CAP) {
+            entries.push(crate::bundle::Entry { name: name.into(), data: bytes });
+        }
+    }
+    let n = entries.len();
+    let bytes = crate::bundle::write_bundle(&out_path, entries)?;
+    Ok((out_path, bytes, n))
+}
+
+/// 读文件前 cap 字节(诊断包收集面;不存在/不可读 → None,不虚构)。
+fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    let f = std::fs::File::open(path).ok()?;
+    let take = f.metadata().ok()?.len().min(cap) as usize;
+    let mut buf = Vec::with_capacity(take);
+    f.take(cap).read_to_end(&mut buf).ok()?;
+    Some(buf)
+}
+
+/// 入口。用法:`doctor <工程目录> [--port N] [--web 目录] [--bundle 路径] [--json]`。
 pub fn run(a: &Args) -> i32 {
-    const USAGE: &str = "用法: doctor <工程目录> [--port N] [--web 目录] [--json]";
+    const USAGE: &str = "用法: doctor <工程目录> [--port N] [--web 目录] [--bundle 路径] [--json]";
     let Some(root_s) = a.positional.first().cloned() else {
         return emit(a.json, false, "PRECONDITION_FAILED", USAGE, json!({}));
     };
@@ -172,7 +222,7 @@ pub fn run(a: &Args) -> i32 {
             }
         }
     }
-    let data = json!({
+    let mut data = json!({
         "root": root.display().to_string(),
         "port": port,
         "webDir": web.display().to_string(),
@@ -183,11 +233,26 @@ pub fn run(a: &Args) -> i32 {
         "passed": passed,
         "total": checks.len(),
     });
+    // --bundle(T6.4):诊断包随任一结论落盘(诊断面即取证面;失败项也能打包带修)
+    let bundle_note = match a.flags.get("bundle") {
+        Some(_) => match write_bundle(&root, &data, a.flags.get("bundle")) {
+            Ok((path, bytes, n)) => {
+                let note = format!(";诊断包: {}({bytes} B,{n} 件)", path.display());
+                if let Some(obj) = data.as_object_mut() {
+                    obj.insert("bundle".into(), json!({"path": path.display().to_string(), "bytes": bytes, "entries": n}));
+                }
+                note
+            }
+            Err(e) => return emit(a.json, false, "INTERNAL", &format!("诊断包失败: {e}"), json!({})),
+        },
+        None => String::new(),
+    };
+    let tail_msg = |m: &str| -> String { format!("{m}{bundle_note}") };
     if passed == checks.len() {
-        emit(a.json, true, "OK", &format!("工程环境诊断:{passed}/{} 项通过", checks.len()), data)
+        emit(a.json, true, "OK", &tail_msg(&format!("工程环境诊断:{passed}/{} 项通过", checks.len())), data)
     } else {
         emit(a.json, false, "DOCTOR_FAILED",
-            &format!("工程环境诊断:{passed}/{} 项通过(失败项见 checks[].fix,均可复制执行)", checks.len()), data)
+            &tail_msg(&format!("工程环境诊断:{passed}/{} 项通过(失败项见 checks[].fix,均可复制执行)", checks.len())), data)
     }
 }
 

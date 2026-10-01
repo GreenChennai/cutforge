@@ -97,6 +97,11 @@ jobs:
         run: python tools/e2e_keyframes.py --bin target/debug/cutforge-mcp --cli target/debug/cutforge-cli
       - name: A5 调色壳侧闭环 e2e(色轮写回单 Op/帧色偏/LUT/示波器三画布/分屏割线)
         run: python tools/e2e_color.py --bin target/debug/cutforge-mcp --cli target/debug/cutforge-cli
+      # A6(册六):独立性 e2e——ubuntu runner 无 CUTFLOW_REPO,恰是"无外部管线"的天然主场
+      # (脚本再显式剥离 CUTFLOW_* 双保险);进程树断言零 python 子进程,psutil 缺席时
+      # 走 /proc 兜底采样(Linux 主路径)。
+      - name: A6 独立运行 e2e(AC-6.3:环境隔离 + 四大件内置 + 零 python 进程树断言 + 纯 CLI 面)
+        run: python tools/e2e_independence.py --bin target/debug/cutforge-mcp --cli target/debug/cutforge-cli
       # A2/A3/A4/A5 负载敏感 e2e 不进 CI:e2e_perf_timeline / e2e_drag_perf(帧率阈值 --min-fps 55)、
       # e2e_perf_budget(真实导出+媒体池 200 轮导航)、e2e_media_perf(千素材滚动帧率 +min-fps 55,
       # 共享 runner 抖动会假红)——本地册收官在安静时段跑(python tools/gates/gate.py A4)。

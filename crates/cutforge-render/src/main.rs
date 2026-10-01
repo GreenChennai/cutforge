@@ -1,6 +1,8 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! cutforge-render CLI:headless 渲染入口(计划书 6.5)。
 //! 输出结构化进度事件(JSON 行);失败带具体步骤与原因。
+//! 册六 T6.3:导出矩阵参数面(--export-format/--preset/--quality-tier/
+//! --bitrate-tier/--in-ms/--out-ms/--video-only);frame-png 复用单帧管线。
 
 use std::path::{Path, PathBuf};
 
@@ -27,6 +29,14 @@ fn main() {
     let mut use_proxy = false;
     // 册五 T5.6 渲染选项(缺省 = 现行为零变化)
     let mut opts = cutforge_render::plan::RenderOptions::default();
+    // 册六 T6.3 导出矩阵参数面(任一在位即走导出入口;frame-png 复用单帧管线)
+    let mut export_format: Option<cutforge_render::export::ExportFormat> = None;
+    let mut preset: Option<String> = None;
+    let mut tier: Option<u32> = None;
+    let mut bitrate_tier: Option<String> = None;
+    let mut in_ms: u64 = 0;
+    let mut out_ms: Option<u64> = None;
+    let mut video_only = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -57,14 +67,39 @@ fn main() {
                 }
             }
             "--verbose-cmd" => opts.verbose_cmd = true,
+            // 册六 T6.3 导出矩阵
+            "--export-format" => export_format = args.get(i + 1).and_then(|v| cutforge_render::export::ExportFormat::parse(v)),
+            "--preset" => preset = args.get(i + 1).map(String::from),
+            "--quality-tier" => tier = args.get(i + 1).and_then(|v| v.trim_end_matches(['p', 'P']).parse::<u32>().ok()),
+            "--bitrate-tier" => bitrate_tier = args.get(i + 1).map(String::from),
+            "--in-ms" => in_ms = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
+            "--out-ms" => out_ms = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()),
+            "--video-only" => video_only = true,
             _ => {}
         }
         i += 1;
     }
+    // frame-png 导出 = 单帧管线复用(atMs = inMs;忽略整片导出参数面)
+    if export_format == Some(cutforge_render::export::ExportFormat::FramePng) {
+        frame_ms = Some(in_ms);
+        export_format = None;
+        preset = None;
+        tier = None;
+        bitrate_tier = None;
+        out_ms = None;
+        video_only = false;
+    }
     let Some(root) = root else {
-        eprintln!("用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>] [--frame <atMs> [--format png|jpeg]] [--use-proxy] [--encoder auto|hw|sw] [--quality fast|balanced|quality] [--crf N] [--bitrate K] [--gop N] [--pix-fmt F] [--loudnorm-target I[:TP]] [--verbose-cmd]");
+        eprintln!("用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>] [--frame <atMs> [--format png|jpeg]] [--use-proxy] [--encoder auto|hw|sw] [--quality fast|balanced|quality] [--crf N] [--bitrate K] [--gop N] [--pix-fmt F] [--loudnorm-target I[:TP]] [--verbose-cmd] [--export-format mp4-h264|mp4-h265|mov|gif|m4a|mp3|png-seq|frame-png] [--preset vertical|horizontal|square|9x16|16x9|1x1|3x4|4x5] [--quality-tier 1080p|720p|480p] [--bitrate-tier high|medium|low] [--in-ms N] [--out-ms N] [--video-only]");
         std::process::exit(3);
     };
+    let export_present = export_format.is_some()
+        || preset.is_some()
+        || tier.is_some()
+        || bitrate_tier.is_some()
+        || in_ms > 0
+        || out_ms.is_some()
+        || video_only;
     if let Some(at_ms) = frame_ms {
         // 单帧模式(T2.4):同步执行一帧,完成事件一行 + FRAME_OK <路径>
         match load_project_from_disk(&root).and_then(|p| {
@@ -89,14 +124,35 @@ fn main() {
             std::process::exit(if e.starts_with("SCHEMA_INVALID") { 2 } else { 3 });
         }
     };
-    let outcome = cutforge_render::render_with_opts(
-        &project,
-        Path::new(&root),
-        ass.as_deref(),
-        use_proxy,
-        opts,
-        &mut cutforge_render::write_progress,
-    );
+    let outcome = if export_present {
+        let spec = cutforge_render::export::ExportSpec {
+            format: export_format,
+            preset,
+            tier,
+            bitrate_tier,
+            in_ms,
+            out_ms,
+            video_only,
+        };
+        cutforge_render::render_export(
+            &project,
+            Path::new(&root),
+            ass.as_deref(),
+            use_proxy,
+            opts,
+            spec,
+            &mut cutforge_render::write_progress,
+        )
+    } else {
+        cutforge_render::render_with_opts(
+            &project,
+            Path::new(&root),
+            ass.as_deref(),
+            use_proxy,
+            opts,
+            &mut cutforge_render::write_progress,
+        )
+    };
     match outcome {
         Ok(outcome) => {
             for (step, ok) in &outcome.steps {

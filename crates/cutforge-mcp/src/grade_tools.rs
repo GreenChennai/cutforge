@@ -92,7 +92,7 @@ pub fn lut_import_tool(root: &Path, args: &Value) -> Value {
             }
         }
     }
-    if let Err(e) = std::fs::write(&target, text.as_bytes()) {
+    if let Err(e) = cutforge_io::atomic::atomic_write(&target, text.as_bytes()) {
         return envelope(false, "INTERNAL", &format!("LUT 落库失败: {e}"), json!({}));
     }
     envelope(true, "OK", "LUT 已导入", json!({

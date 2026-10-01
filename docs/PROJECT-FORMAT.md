@@ -10,9 +10,9 @@
 
 ## 一、总体形态
 
-工程 = **目录 + 单文件真相源** `05_时间线工程/project.json` + 媒体素材(单文件真相源纪律,
-ADR-0019 复合片段否决外部子工程引用的公共根据)。目录契约(0.5 中文布局;旧英文布局
-0.4.x 兼容读,不迁移):
+工程 = **目录 + 单文件真相源** `05_时间线工程/project.json`(V2 布局;V3 为根 `project.json`)
++ 媒体素材(单文件真相源纪律,ADR-0019 复合片段否决外部子工程引用的公共根据)。
+目录契约(0.5 中文布局;旧英文布局 0.4.x 兼容读,不迁移;**V3 扁平布局**见 §1b):
 
 | 目录 | 内容 |
 |---|---|
@@ -20,10 +20,35 @@ ADR-0019 复合片段否决外部子工程引用的公共根据)。目录契约(
 | `04_粗剪决策/` | cutlist.json / cutlist.applied.json |
 | `05_时间线工程/` | project.json + wordline.json(旧布局 `05_ir/`) |
 | `06_成片输出/` | 渲染成片与导出派生物(SRT/ASS/VTT/OTIO/EDL) |
-| `.cutforge/` | 渲染缓存/代理/缩略图/LUT 库/oplog/rev/锁(派生物不入真相源,ADR-0013) |
+| `.cutforge/` | 渲染缓存/代理/缩略图/LUT 库/oplog/rev/锁/快照(派生物不入真相源,ADR-0013) |
 
 时间统一**毫秒**(`*Ms` 后缀);剪映微秒只存在于适配层。工程 `version` 恒为 `1`
 (兼容旧读法),契约演进由 `schemaVersion` 表达。
+
+## 1b、V3 扁平布局(册六 ADR-0021,独立模式)
+
+独立化心智:**真相源全部平铺工程根**,素材一个 `media/`,导出一个 `exports/`。
+目录名唯一真相源仍是 `cutforge-io::paths`(`V3_*` 常量;三态判定 `LayoutKind::Legacy/V2/V3`,
+并存时优先级 V2 > V3 > V1):
+
+| 路径(相对工程根) | 内容 |
+|---|---|
+| `project.json` / `wordline.json` | 工程真相源 + 全片时间真相源(V2 的 `05_时间线工程/` 两文件上提) |
+| `cutlist.json` / `cutlist.applied.json` | 粗剪决策单(V2 的 `04_粗剪决策/` 两文件上提) |
+| `notes.json` / `.cutforge/` | 不变(本就随根;oplog/rev/快照/缓存三态同构) |
+| `media/` | 素材池(`media_browse` 默认视图;迁移映射 `01_原始素材`/`01_materials` → `media`) |
+| `exports/` | 导出产物目录(`06_成片输出`/`06_output` → `exports`) |
+
+- **迁移器**:`cutforge-cli migrate <工程> --to v3` / MCP `migrate_layout`——一次性、幂等
+  (v3 工程再跑 = NOOP)、冲突整体拒绝(任一映射目标已存在 → CONFLICT,盘面不动);
+  project.json **字节零改动**,`.cutforge/`(OpLog/rev)原地不动——OpLog 完整性与撤销链保留(AC-6.2)。
+  迁移映射:真相源文件上提 + 素材/输出两目录整体改名;`00/02/03/_内部状态` 等非契约
+  目录原地保留并在报告 kept 如实列出;腾空目录移除。
+- **冻结口径(F-R1)**:V1/V2 工程**兼容读写原地保留,只修 bug 不双写**;不做 v3→v2 回迁。
+- **缺省策略(过渡期)**:scaffold 缺省仍产 V2(19 份 e2e 断言锚定面);V3 经显式开关
+  (`cutforge-cli new --layout v3` / MCP `project_new layout="v3"` / 迁移)启用;缺省翻转
+  待壳侧工程库页与安装器收编后单独变更(ADR-0021 决策 4,登记遗留)。
+- 迁移后的工程不再被 CutFlow 侧 rs_* 桥按 V2 契约识别(独立化语义本身;ADR-0021)。
 
 ## 二、顶层字段
 
@@ -167,7 +192,12 @@ ADR-0019 复合片段否决外部子工程引用的公共根据)。目录契约(
   NOTE/STYLE/REGION 块与 cue settings 容错;与 SRT 同毫秒内容互相转换等值(差异仅
   逗号→点 + 头)。`subtitle_export format=vtt` / `subtitle_import`(parse_auto 按
   WEBVTT 头识别)。
-- **剪映草稿**:保持既有导出在外部管线侧不动;本格式只保证 IR 字段兼容读。
+- **剪映草稿**(ADR-0023):导出**保留**,收编为随包独立脚本(`rs_jy_draft.py` 算法归属不变,
+  随安装器分发;册六 T6.2 落地:随包资产在 `tools/jianying/`(开发树)与 `<exe>/scripts/`
+  (安装器落点),带归属声明;orchestrate 定位序 = env CUTFLOW_REPO(显式,调试/对拍)→
+  工程内 → 随包资产 → CutFlow 仓库回退(保留一个版本期),来源经响应 `scriptSource`
+  如实标注);诚实标注仍依赖 Python 运行时,不冒充零依赖能力;headless 化(Rust 直写
+  草稿 JSON)挂册七按使用频率再评估。本格式只保证 IR 字段兼容读。
 
 ## 十、版本迁移策略(v1/v2/v3)
 
@@ -188,7 +218,7 @@ ADR-0019 复合片段否决外部子工程引用的公共根据)。目录契约(
 - 所有 MCP/HTTP 工具返回 `{ok, code, message, data}` + 加法字段 `ns`;code 取值限于
   5.4 表(OK/CONFLICT/SCHEMA_INVALID/PRECONDITION_FAILED/GUARD_FAILED/
   JIANYING_RUNNING/NO_CONFIG/DEP_MISSING/GREEN_SCREEN_INPUT/INTERNAL)。
-- 工具集单一真相源 = `schemas/mcp-tools.json`(册五 BE3 后 **68 = 15 查询 + 34 写 +
+- 工具集单一真相源 = `schemas/mcp-tools.json`(册六 A6 后 **72 = 16 查询 + 37 写 +
   19 编排**);`_doc` 口径句与 tools 数组机械对拍(`check_doc_counts`)。
 - 写通道唯一入口 `Workspace::apply`(八步);工程级文档变更经 `record_change`
   (先文件后记账);渲染/同步分析/导出为免锁面(不产 Op 不改 IR)。

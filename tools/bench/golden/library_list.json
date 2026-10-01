@@ -1,0 +1,148 @@
+{
+ "tool": "library_list",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/lib"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "library": "<TMP>/lib",
+     "projects": [
+      {
+       "archived": false,
+       "canvas": {
+        "height": 1920,
+        "width": 1080
+       },
+       "clipCount": 0,
+       "durationMs": 0,
+       "fps": 30,
+       "locked": false,
+       "modifiedAtMs": "<TS>",
+       "name": "parity-b",
+       "path": "<TMP>/lib/parity-b",
+       "rev": "<REV>",
+       "slug": "库甲",
+       "thumbnailPath": null,
+       "valid": true
+      },
+      {
+       "archived": false,
+       "canvas": {
+        "height": 1920,
+        "width": 1080
+       },
+       "clipCount": 0,
+       "durationMs": 0,
+       "fps": 30,
+       "locked": false,
+       "modifiedAtMs": "<TS>",
+       "name": "parity-a",
+       "path": "<TMP>/lib/parity-a",
+       "rev": "<REV>",
+       "slug": "库甲",
+       "thumbnailPath": null,
+       "valid": true
+      }
+     ],
+     "total": 2
+    },
+    "message": "工程库清单",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "query": "parity-b"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "library": "<TMP>/lib",
+     "projects": [
+      {
+       "archived": false,
+       "canvas": {
+        "height": 1920,
+        "width": 1080
+       },
+       "clipCount": 0,
+       "durationMs": 0,
+       "fps": 30,
+       "locked": false,
+       "modifiedAtMs": "<TS>",
+       "name": "parity-b",
+       "path": "<TMP>/lib/parity-b",
+       "rev": "<REV>",
+       "slug": "库甲",
+       "thumbnailPath": null,
+       "valid": true
+      }
+     ],
+     "total": 1
+    },
+    "message": "工程库清单",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "includeArchived": true
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "library": "<TMP>/lib",
+     "projects": [
+      {
+       "archived": true,
+       "canvas": {
+        "height": 1920,
+        "width": 1080
+       },
+       "clipCount": 0,
+       "durationMs": 0,
+       "fps": 30,
+       "locked": false,
+       "modifiedAtMs": "<TS>",
+       "name": "parity-c",
+       "path": "<TMP>/lib/.archives/parity-c",
+       "rev": "<REV>",
+       "slug": "库甲",
+       "thumbnailPath": null,
+       "valid": true
+      },
+      {
+       "archived": false,
+       "canvas": {
+        "height": 1920,
+        "width": 1080
+       },
+       "clipCount": 0,
+       "durationMs": 0,
+       "fps": 30,
+       "locked": false,
+       "modifiedAtMs": "<TS>",
+       "name": "parity-a",
+       "path": "<TMP>/lib/parity-a",
+       "rev": "<REV>",
+       "slug": "库甲",
+       "thumbnailPath": null,
+       "valid": true
+      }
+     ],
+     "total": 2
+    },
+    "message": "工程库清单",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -13,6 +13,7 @@
    "response": {
     "code": "OK",
     "data": {
+     "scriptSource": "cutflow-env",
      "stdout": "{\"argv\": [\"--only\", \"S3\"], \"stub\": true}"
     },
     "message": "编排完成",

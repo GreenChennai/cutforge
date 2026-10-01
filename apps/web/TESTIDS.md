@@ -385,3 +385,53 @@ T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeC
 | `queue-head` / `queue-refresh` / `queue-count` | div/button/span | 头部:刷新 + 任务数/渲染中/并发上限 |
 | `queue-rows` / `queue-row` / `queue-state` / `queue-runid` / `queue-empty` | div/span | 行:data-runId/data-state;状态徽标(queued/running/paused/ok/fail/canceled,色 + 文本双通道) |
 | `queue-pause` / `queue-resume` / `queue-cancel` / `queue-retry` | button(行内) | 五 action 按态给/不给(禁用态 title 说明状态机;render.progress 事件联动刷新) |
+
+## 九、册六 A6-F3 新增 testid(T6.1 工程库 / T6.3 导出矩阵 / T6.2 素材库)
+
+### 静态骨架(index.html)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `project-menu` | button(topbar) | 「工程 ▾」菜单:新建向导 / 工程库 / 迁移到 v3(常驻入口;当前布局为只读信息项) |
+
+### 工程库视图(panels/library.js + library-ops.js;openDialog #library-dialog)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `lib-root` / `lib-refresh` | input/button | 库根目录(缺省 = 当前工程旁,偏好记忆)/ library_list 重扫 |
+| `lib-search` / `lib-archived` | input/button | 名称/slug 搜索(服务端 query)/ 并入归档区(aria-pressed) |
+| `lib-new` / `lib-new-name` / `lib-new-canvas` / `lib-new-layout` / `lib-new-tracks` / `lib-new-run` / `lib-new-cancel` | — | 库内新建(library_manage new;布局 v2 缺省/v3;轨道模板三套) |
+| `lib-grid` / `lib-card` / `lib-card-name` / `lib-thumb` / `lib-meta` / `lib-empty` | div | 卡片栅格;卡片 dataset.name/path/archived/locked;徽标:`lib-badge-current`(当前)/`lib-badge-archived`/`lib-badge-locked`/`lib-badge-invalid` |
+| `lib-open` / `lib-rename` / `lib-copy` / `lib-archive`·`lib-unarchive` / `lib-delete` | button(卡内) | 七操作(锁定卡禁用移动类,title 给 why;无效卡禁用打开) |
+| `lib-open-cmd` / `lib-open-copy` / `lib-open-close` | code/button | 打开=serve 命令一键复制(一个 serve 一个工程,诚实口径);数字键 1–9 开对应卡片 |
+| `lib-rename-to`·`-run`·`-cancel` / `lib-copy-to`·`-run`·`-cancel` / `lib-delete-run`·`-cancel` | — | 重命名/复制/删除(确认框给 .trash 捞回提示)对话框 |
+| `lib-recover-box` / `lib-recover-item` / `lib-recover-run` | div/div/button | 恢复清单(library_recover list→recover;pid 存活性/锁龄文本) |
+| `banner-migrate` / `migrate-banner-run` / `migrate-banner-dismiss` | div/button(#banner 内) | v2/v1 工程迁移提示条(知道了 = 偏好记忆不再打扰) |
+| `migrate-run` / `migrate-cancel` | button(#migrate-dialog) | migrate_layout to=v3 确认框(成功后页面重载) |
+| `banner-recover` / `recover-banner-open` | div/button(#banner 内) | 启动静默扫描有可恢复项时的顶栏提示条 |
+
+### 导出矩阵(panels/export-matrix.js;挂 #export 面板内 fieldset)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `export-matrix` | fieldset | 导出矩阵组(仅 cutforge 内核;ffmpeg 后端导出时 toast 如实提示被忽略) |
+| `export-format` / `export-format-hint` | select/div | 七出口(mp4-h264 缺省/mp4-h265/mov/gif/m4a/mp3/png-seq;frame-png 走精确预览不入列)+ 按格式说明行(gif=12fps、m4a/mp3=仅音频、png-seq=序列帧) |
+| `export-preset` / `export-quality-tier` / `export-bitrate-tier` | select | 画幅预设(缺省=工程画幅)/清晰度三档(短边)/码率三档(估算) |
+| `export-in-ms` / `export-out-ms` / `export-range-fill` | input/button | 区域导出(留空=到片尾);回填 selectionStore 入出点(I/O 键),可手改 |
+| `export-video-only` | input[checkbox] | 仅视频(音轨静音+BGM 摘除) |
+| `export-preflight-run` / `export-preflight` / `export-pf-item` | button/fieldset/div | 手动跑检查;清单行 `data-warn`="0\|1"(色+属性双通道) |
+| `export-pf-anyway` / `export-pf-cancel` | button | 自动门前的问题项裁决(仍要导出 / 先不导出;干净项自动放行) |
+| `export-batch` / `export-batch-out` | button/span | export_all_variants 入队(ratios 缺省=工程 outputs);完成后切「渲染队列」页 |
+
+### 素材面板双页签(panels/media-panel.js + media-lib.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `media-tabs` / `media-tab-project` / `media-tab-library` | div/button | 页签(工程素材=原面红线不动 / 素材库) |
+| `media-import-src` / `media-import-run` / `media-import-pick` / `media-import-auto` | input/button | 绝对路径导入(media_import 拷贝入工程,不产 Op)/ 文件选择器(浏览器拿不到绝对路径时如实指引)/ 导入后自动插到播放头 |
+| `media-lib-root` / `media-lib-refresh` | input/button | 素材库根(env CUTFORGE_MEDIA 缺省面壳读不到,首次手填偏好记忆) |
+| `media-lib-kinds` / `media-lib-tag` / `media-lib-query` | div/input | kind chips / 标签过滤 / 名称搜索 |
+| `media-lib-list` / `media-lib-item` / `media-lib-import` / `media-lib-tag-edit` / `media-lib-empty` | div/button | 条目行(ref=素材库相对引用)一键导入 / 标签整组替换(#media-lib-tags-dialog:tags-input/tags-run/tags-cancel) |
+
+### 新建向导升级(wizard.js;旧锚点全保留)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `wiz-template` | select | 模板三套:竖屏单轨口播(9:16·V+A)/ 横屏双机位(16:9·V+V+A)/ 方形社媒(1:1·V+A+文本);选即预填画幅/帧率/轨道,手改即脱离 |
+| `wiz-layout` | select | 布局 v2(缺省)/v3 扁平(project_new layout;ADR-0021 过渡期) |
+

@@ -129,9 +129,9 @@ pub(crate) fn media_browse_payload(root: &Path, dir: &str) -> Result<Value, Stri
 }
 
 /// render_probe(E6-3 起):仅读成片输出目录存在性,不再为此申请排他锁。
-/// 目录名走 paths 契约(`06_成片输出`;0.4.x 旧工程回退 `06_output`)。
+/// 目录名走 paths 契约(三态布局感知:V3 `exports` / V2 `06_成片输出` / V1 `06_output`)。
 pub(crate) fn render_probe_tool(root: &Path) -> Value {
-    let dir = paths::resolve_dir(root, paths::OUTPUT, paths::LEGACY_OUTPUT);
+    let dir = paths::output_dir(root);
     let mut files = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
@@ -143,7 +143,7 @@ pub(crate) fn render_probe_tool(root: &Path) -> Value {
     let dir_name = dir
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| paths::OUTPUT.to_string());
+        .unwrap_or_else(|| paths::output_dir_name(root).to_string());
     envelope(true, "OK", "产物清单", json!({"dir": dir_name, "files": files}))
 }
 
@@ -173,7 +173,7 @@ pub(crate) fn stage_status_tool(ws_root: &Path) -> Value {
 }
 
 /// B11-1:project_new——空工程模板 + 建盘(与 CLI `new` 子命令同走 cutforge_io::scaffold,
-/// 单一实现;已存在拒绝覆盖)。
+/// 单一实现;已存在拒绝覆盖)。册六 ADR-0021:layout 显式开关(v2 缺省/v3 扁平)。
 pub(crate) fn project_new_tool(root: &Path, args: &Value) -> Value {
     let slug = args["slug"].as_str().map(String::from)
         .or_else(|| root.file_name().map(|s| s.to_string_lossy().into_owned()))
@@ -181,6 +181,12 @@ pub(crate) fn project_new_tool(root: &Path, args: &Value) -> Value {
     let fps = args["fps"].as_u64().unwrap_or(30) as u32;
     let width = args["canvasW"].as_u64().unwrap_or(1080) as u32;
     let height = args["canvasH"].as_u64().unwrap_or(1920) as u32;
+    let layout = match args["layout"].as_str().unwrap_or("v2") {
+        "v2" => paths::LayoutKind::V2,
+        "v3" => paths::LayoutKind::V3,
+        other => return envelope(false, "PRECONDITION_FAILED",
+            &format!("未知布局: {other}(允许 v2/v3;过渡期缺省 v2,ADR-0021)"), json!({})),
+    };
     let kinds_v = args["tracks"].as_array().cloned()
         .unwrap_or_else(|| vec![json!("video"), json!("audio")]);
     let mut kinds = Vec::new();
@@ -193,9 +199,10 @@ pub(crate) fn project_new_tool(root: &Path, args: &Value) -> Value {
             other => return envelope(false, "PRECONDITION_FAILED", &format!("未知轨道类型: {other:?}(允许 video/audio/text/adjust)"), json!({})),
         }
     }
-    match cutforge_io::scaffold::scaffold_project(root, &slug, fps, width, height, &kinds) {
+    match cutforge_io::scaffold::scaffold_project_layout(root, &slug, fps, width, height, &kinds, layout) {
         Ok(path) => envelope(true, "OK", "空工程已创建(可独立起步,不依赖 CutFlow)", json!({
             "project": path.to_string_lossy(),
+            "layout": if layout == paths::LayoutKind::V3 { "v3" } else { "v2" },
             "hint": format!("打开:cutforge-cli serve {} 或 cutforge-mcp serve --root {}", root.display(), root.display()),
         })),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {

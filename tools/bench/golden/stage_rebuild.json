@@ -12,6 +12,7 @@
    "response": {
     "code": "OK",
     "data": {
+     "scriptSource": "workspace",
      "stdout": "{\"argv\": [\"05_时间线工程\"], \"stub\": true}"
     },
     "message": "编排完成",

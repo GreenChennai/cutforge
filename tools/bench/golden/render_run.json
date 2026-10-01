@@ -15,6 +15,59 @@
     "ns": "ok",
     "ok": true
    }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "format": "m4a"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "concurrency": 1,
+     "runId": "<RUN_ID>"
+    },
+    "message": "渲染任务已入队",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "format": "gif",
+    "inMs": 0,
+    "outMs": 2000,
+    "qualityTier": "480p"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "concurrency": 1,
+     "runId": "<RUN_ID>"
+    },
+    "message": "渲染任务已入队",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "preset": "horizontal",
+    "qualityTier": "480p",
+    "bitrateTier": "low"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "concurrency": 1,
+     "runId": "<RUN_ID>"
+    },
+    "message": "渲染任务已入队",
+    "ns": "ok",
+    "ok": true
+   }
   }
  ]
 }

@@ -22,6 +22,53 @@
     "ns": "ok",
     "ok": true
    }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "action": "list"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "concurrency": 1,
+     "jobs": [
+      {
+       "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      },
+      {
+       "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920_m4a.m4a",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      },
+      {
+       "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_480x854_gif.gif",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      },
+      {
+       "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_854x480.mp4",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      },
+      {
+       "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_480x854.mp4",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      },
+      {
+       "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_854x480.mp4",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      }
+     ]
+    },
+    "message": "渲染队列",
+    "ns": "ok",
+    "ok": true
+   }
   }
  ]
 }

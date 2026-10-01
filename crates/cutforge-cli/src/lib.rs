@@ -14,14 +14,18 @@ use std::path::{Path, PathBuf};
 mod cache;
 /// 工程环境诊断(T1.7):doctor——每项失败给可复制执行的修复命令。
 mod doctor;
+/// doctor --bundle(T6.4):诊断包单文件 zip(零依赖 store 形手写)。
+mod bundle;
 /// 门禁判定器(册二 T2.6):check-shell-purity v2 / check-write-paths v2(自本文件迁入并升级)。
 mod gates;
+/// 库面与管理子命令(册六 T6.1):library / migrate / recover。
+mod library;
 
 const EXIT_OK: i32 = 0;
 const EXIT_FAIL: i32 = 2;
 const EXIT_ENV: i32 = 3;
 
-fn emit(json: bool, ok: bool, code: &str, message: &str, data: serde_json::Value) -> i32 {
+pub(crate) fn emit(json: bool, ok: bool, code: &str, message: &str, data: serde_json::Value) -> i32 {
     // T1.7 三面同码:CLI 面的 ns 与 MCP/HTTP 同源(cutforge_mcp::code_namespace,
     // 单一真相源 registry::CODE_NS)。ns 是加法字段,ok/code/message/data 老字段逐字不变。
     let envelope = serde_json::json!(
@@ -39,10 +43,10 @@ fn emit(json: bool, ok: bool, code: &str, message: &str, data: serde_json::Value
     }
 }
 
-struct Args {
-    positional: Vec<String>,
-    flags: std::collections::BTreeMap<String, String>,
-    json: bool,
+pub(crate) struct Args {
+    pub(crate) positional: Vec<String>,
+    pub(crate) flags: std::collections::BTreeMap<String, String>,
+    pub(crate) json: bool,
 }
 
 fn parse_args(args: &[String]) -> Args {
@@ -118,7 +122,8 @@ pub fn run(argv: Vec<String>) -> i32 {
         return emit(json_first, false, "PRECONDITION_FAILED", "用法: cutforge-cli <子命令> […]", serde_json::json!({
             "subcommands": ["new", "project", "timeline", "clip", "clip-update", "split", "undo", "redo",
                 "oplog", "notes", "notes-add", "notes-resolve", "notes-reject", "conflicts",
-                "cache", "doctor", "serve", "check-shell-purity", "check-write-paths", "check-deps", "check-ui-fields"]
+                "cache", "doctor", "serve", "library", "migrate", "recover",
+                "check-shell-purity", "check-write-paths", "check-deps", "check-ui-fields"]
         }));
     };
     let mut args = parse_args(&argv[1..]);
@@ -276,6 +281,10 @@ pub fn run(argv: Vec<String>) -> i32 {
         "conflicts" => conflicts_list(&args),
         "cache" => cache::run(&args),
         "doctor" => doctor::run(&args),
+        // 册六 T6.1:工程库 / 布局迁移 / 崩溃恢复(实现在 library.rs,单一实现走 cutforge_io)
+        "library" => library::library_cmd(&args),
+        "migrate" => library::migrate_cmd(&args),
+        "recover" => library::recover_cmd(&args),
         "check-shell-purity" => gates::check_shell_purity(args.json),
         "check-write-paths" => gates::check_write_paths(args.json),
         "check-deps" => check_deps(args.json),
@@ -290,12 +299,16 @@ fn serve_cmd(a: &Args) -> i32 {
     use std::io::IsTerminal as _;
     let root = a.positional.first().cloned().or_else(|| a.flags.get("root").cloned());
     let root = match root {
-        Some(r) => PathBuf::from(r),
+        Some(r) => match cutforge_mcp::resolve_root_arg(&r) {
+            // T6.4:`.cfproj` 工程描述 → 其 root(文件关联「双击打开」单一实现)
+            Ok(p) => p,
+            Err(e) => return emit(a.json, false, "NO_CONFIG", &e, serde_json::json!({})),
+        },
         None => {
             // E6-1(提前落):无 --root 时交互列候选工程;非交互环境必须显式给目录
             if !std::io::stdin().is_terminal() {
                 return emit(a.json, false, "PRECONDITION_FAILED",
-                    "用法: serve <工程目录> [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录",
+                    "用法: serve <工程目录|.cfproj> [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录",
                     serde_json::json!({}));
             }
             // 单一实现:E1-4 交互选择器迁至 cutforge_mcp(mcp serve 无 --root 同一行为)
@@ -307,17 +320,9 @@ fn serve_cmd(a: &Args) -> i32 {
             }
         }
     };
-    let explicit_port = a.flags.get("port").and_then(|s| s.parse::<u16>().ok());
-    let mut port = explicit_port.unwrap_or(8787);
-    if explicit_port.is_none() {
-        // E1-4:未指定端口时自动挑空闲(+1..+20;探测即放手的竞态由 serve 自检兜底)
-        for cand in port..port.saturating_add(20) {
-            if std::net::TcpListener::bind(("127.0.0.1", cand)).is_ok() {
-                port = cand;
-                break;
-            }
-        }
-    }
+    // T6.4 端口占用处理收敛 serve_workspace 单一实现(被占自动换下一空闲 + 横幅;
+    // 此处的预选只决定「缺省起点」,占用与否不再由 CLI 静默裁决)
+    let port = a.flags.get("port").and_then(|s| s.parse::<u16>().ok()).unwrap_or(8787);
     let token = a.flags.get("token").cloned().unwrap_or_else(cutforge_mcp::new_token);
     let web = a.flags.get("web").map(PathBuf::from).unwrap_or_else(cutforge_mcp::default_web_dir);
     let open = a.flags.contains_key("open");
@@ -329,7 +334,7 @@ fn serve_cmd(a: &Args) -> i32 {
 fn new_project_cmd(a: &Args) -> i32 {
     let Some(root) = a.positional.first() else {
         return emit(a.json, false, "PRECONDITION_FAILED",
-            "用法: new <工程目录> [--slug S] [--fps 30] [--width 1080] [--height 1920] [--track video,audio]",
+            "用法: new <工程目录> [--slug S] [--fps 30] [--width 1080] [--height 1920] [--track video,audio] [--layout v2|v3]",
             serde_json::json!({}));
     };
     let slug = a.flags.get("slug").cloned()
@@ -357,10 +362,18 @@ fn new_project_cmd(a: &Args) -> i32 {
     if kinds.is_empty() {
         kinds = vec![cutforge_core::model::TrackKind::Video, cutforge_core::model::TrackKind::Audio];
     }
-    match cutforge_io::scaffold::scaffold_project(Path::new(root), &slug, fps, width, height, &kinds) {
+    // 册六 ADR-0021:布局显式开关(过渡期缺省 v2;v3 = 扁平布局)
+    let layout = match a.flags.get("layout").map(|s| s.as_str()).unwrap_or("v2") {
+        "v2" => cutforge_io::paths::LayoutKind::V2,
+        "v3" => cutforge_io::paths::LayoutKind::V3,
+        other => return emit(a.json, false, "PRECONDITION_FAILED",
+            &format!("未知布局: {other}(允许 v2/v3;过渡期缺省 v2,ADR-0021)"), serde_json::json!({})),
+    };
+    match cutforge_io::scaffold::scaffold_project_layout(Path::new(root), &slug, fps, width, height, &kinds, layout) {
         Ok(path) => emit(a.json, true, "OK", "空工程已创建(可独立起步,不依赖 CutFlow)", serde_json::json!({
             "project": path.to_string_lossy(),
             "slug": slug, "fps": fps, "canvas": {"width": width, "height": height},
+            "layout": if layout == cutforge_io::paths::LayoutKind::V3 { "v3" } else { "v2" },
             "hint": format!("打开:cutforge-cli serve {root} --open"),
         })),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => emit(a.json, false, "PRECONDITION_FAILED", &e.to_string(), serde_json::json!({})),

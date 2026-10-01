@@ -26,6 +26,7 @@
    "response": {
     "code": "OK",
     "data": {
+     "scriptSource": "cutflow-env",
      "stdout": "{\"argv\": [], \"stub\": true}"
     },
     "message": "编排完成",

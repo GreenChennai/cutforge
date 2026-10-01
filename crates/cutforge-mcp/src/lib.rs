@@ -22,9 +22,13 @@
 #[cfg(test)]
 mod tests;
 
+mod cutlist_ops;
 mod dispatch;
 mod edit_ops;
+mod export_tools;
 mod grade_tools;
+mod library_tools;
+mod media_library;
 mod media_tools;
 mod pro_ops;
 mod subtitle_ops;
@@ -44,7 +48,7 @@ pub use registry::{code_namespace, registry, tool_names, CODE_NS, CAPABILITY_MAT
 pub use session::new_token;
 pub use transport::http::serve_http;
 pub use transport::stdio::serve_stdio;
-pub use workspace_svc::{default_web_dir, pick_project_interactive, serve_workspace};
+pub use workspace_svc::{default_web_dir, pick_project_interactive, resolve_root_arg, serve_workspace};
 
 // ---- crate 内部胶水:仅供 #[cfg(test)] 的 tests.rs 经 `use super::*` 取用 ----
 #[cfg(test)]

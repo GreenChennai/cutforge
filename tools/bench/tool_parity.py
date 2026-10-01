@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """T1.1/AC-1.2 门禁:MCP 工具黄金响应库(golden 响应对拍;册一建 41,册二 A2 增
 render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,册四 A4-BE3b 增文本/字幕/媒体
-八工具后 56,册五 A5 增专业编辑/互操作七工具后 68,数量口径以 schemas/mcp-tools.json 为准)。
+八工具后 56,册五 A5 增专业编辑/互操作七工具后 68,册六 A6 增布局迁移/工程库四工具后 72、导出矩阵/素材库四工具后 76,数量口径以 schemas/mcp-tools.json 为准)。
 
     python tools/bench/tool_parity.py                  # 对比模式:重跑采集,与 golden 逐字段对拍
     python tools/bench/tool_parity.py --update-golden  # 采集模式:重建 tools/bench/golden/*.json
@@ -148,6 +148,7 @@ def rpc(port: int, token: str, name: str, args: dict) -> dict:
 
 TS_KEYS = {"ts", "createdAt", "resolvedAt", "rejectedAt", "generatedAt",
            "modifiedAt", "updatedAt", "startedAt", "finishedAt", "savedAt"}
+NUMERIC_TS_KEYS = {"modifiedAtMs"}  # 册六 A6:工程库卡片 mtime(epoch ms;run 间必变)
 ELAPSED_KEYS = {"elapsedMs", "elapsedSec", "tookMs", "wallMs", "elapsedUs"}
 RE_ISO_TS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
 RE_REV = re.compile(r"(?<![A-Za-z0-9-])rev-\d+(?![A-Za-z0-9-])")
@@ -160,6 +161,8 @@ RE_FRAME_KEY = re.compile(r"[0-9a-f]{16}")
 # A4-BE3b:媒体派生物缓存文件名内嵌内容键(mtime 入键,run 间必变)→ 占位
 RE_MEDIA_CACHE_FILE = re.compile(
     r"\.cutforge/((?:peaks-cache|thumb-cache|proxy|scope-cache)/)[0-9a-f]{16}\.(json|png|mp4)")
+# 册六 A6:工程库回收站条目名内嵌时间戳(delete 落点 .trash/<ts>-<名>,run 间必变)→ 占位
+RE_TRASH_ENTRY = re.compile(r"\.trash/[0-9]+-")
 # 册五 A5:响度测量键(audio_loudness;probe_mode 下 0.5LU 量化)+ 硬件探测键
 LUFS_KEYS = {"inputI", "inputTp", "inputLra", "inputThresh", "target", "deviation"}
 HW_KEYS = {"nvenc", "qsv", "amf"}
@@ -293,6 +296,8 @@ class Normalizer:
         s = RE_FRAME_FILE.sub(lambda m: f"render-cache/frame/<FRAME>{m.group(1)}", s)
         # 4) 媒体派生物缓存文件名占位(peaks/thumb/proxy 内容键含 mtime,run 间必变;目录与扩展名保留)
         s = RE_MEDIA_CACHE_FILE.sub(lambda m: f".cutforge/{m.group(1)}<MEDIA_CACHE>.{m.group(2)}", s)
+        # 5) 回收站条目时间戳占位(册六 library delete 落点,run 间必变;目录结构保留)
+        s = RE_TRASH_ENTRY.sub(".trash/<TRASH>-", s)
         return s
 
     def __call__(self, v, probe_mode: bool = False):
@@ -301,10 +306,12 @@ class Normalizer:
             for k, val in v.items():
                 if k == "rev":
                     out[k] = "<REV>"
-                elif k == "runId":
+                elif k in ("runId", "parentRunId"):
                     out[k] = "<RUN_ID>"
                 elif k in TS_KEYS:
                     out[k] = "<TS>"
+                elif k in NUMERIC_TS_KEYS:
+                    out[k] = "<TS>"  # 数值时间戳(工程库卡片 mtime)同占位口径
                 elif k in ELAPSED_KEYS:
                     out[k] = "<ELAPSED>"
                 elif k == "key" and isinstance(val, str) and RE_FRAME_KEY.fullmatch(val):
@@ -781,6 +788,25 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         ("render_frame", {"root": "{MAIN}", "atMs": 1500}, False),
         # -- 阶段 E3:册五 T5.6 渲染队列(整片渲已完成 → 终态快照确定) --
         ("render_queue", {"root": "{MAIN}", "action": "list"}, False),
+        # -- 阶段 E4:册六 T6.3 导出矩阵(render_run 扩参;export_preflight /
+        #    export_all_variants 新工具)+ T6.2 素材库(media_import/media_library;
+        #    76 收口)。逐个导出任务等终态(保证后续 render_queue list 快照确定) --
+        ("render_run", {"root": "{MAIN}", "format": "m4a"}, False),
+        ("render_run", {"root": "{MAIN}", "format": "gif", "inMs": 0, "outMs": 2000,
+                        "qualityTier": "480p"}, False),
+        ("render_run", {"root": "{MAIN}", "preset": "horizontal", "qualityTier": "480p",
+                        "bitrateTier": "low"}, False),
+        ("export_preflight", {"root": "{MAIN}"}, True),
+        ("media_import", {"root": "{MAIN}", "src": "libbgm.mp3", "libraryRoot": "{MEDLIB}"}, True),
+        ("media_library", {"root": "{MEDLIB}"}, True),
+        ("media_library", {"root": "{MEDLIB}", "action": "tag", "entry": "libbgm.mp3",
+                           "tags": ["calm"]}, True),
+        ("media_library", {"root": "{MEDLIB}", "tag": "calm"}, True),
+        ("export_all_variants", {"root": "{MAIN}", "ratios": ["9x16", "16x9"],
+                                 "qualityTier": "480p"}, False),
+        ("export_all_variants", {"root": "{MAIN}", "action": "status",
+                                 "parentRunId": "@PARENT_ID@"}, False),
+        ("render_queue", {"root": "{MAIN}", "action": "list"}, False),
         # -- 阶段 F:编排(CUTFLOW_REPO 桩;锁派发/参数透传/stdout 透传行为) --
         ("render", {"root": "{MAIN}", "backend": "ffmpeg"}, False),
         ("export_jianying", {"root": "{MAIN}", "name": "parity-成片"}, False),
@@ -793,18 +819,45 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         ("sync_check", {"root": "{MAIN}",
                         "video": "06_成片输出/final_cutforge_parity-main_1080x1920.mp4",
                         "qc": True, "scriptArgs": ["--video", "06_成片输出/final.mp4"]}, False),
+        # -- 阶段 G:册六 T6.1(布局迁移/工程库/崩溃恢复;72 收口,T6.3/T6.2 增至 76) --
+        # migrate:V2 工程(带素材)→ v3 一次性,再跑幂等 NOOP;冲突拒绝面一并入 golden
+        ("project_new", {"root": "{MIG}", "slug": "parity-mig", "fps": 30,
+                         "tracks": ["video"]}, False),
+        ("migrate_layout", {"root": "{MIG}", "to": "v3"}, False),
+        ("migrate_layout", {"root": "{MIG}", "to": "v3"}, False),
+        ("migrate_layout", {"root": "{MIG}", "to": "v2"}, False),
+        # library:七操作 + 搜索(卡片 mtime/路径走归一化;durationMs 为 IR 派生,确定性)
+        ("library_manage", {"root": "{LIB}", "action": "new", "name": "parity-a",
+                            "slug": "库甲", "fps": 30}, False),
+        ("library_manage", {"root": "{LIB}", "action": "new", "name": "parity-a"}, False),
+        ("library_manage", {"root": "{LIB}", "action": "copy", "name": "parity-a",
+                            "to": "parity-b"}, False),
+        ("library_list", {"root": "{LIB}"}, False),
+        ("library_list", {"root": "{LIB}", "query": "parity-b"}, False),
+        ("library_manage", {"root": "{LIB}", "action": "rename", "name": "parity-b",
+                            "to": "parity-c"}, False),
+        ("library_manage", {"root": "{LIB}", "action": "archive", "name": "parity-c"}, False),
+        ("library_list", {"root": "{LIB}", "includeArchived": True}, False),
+        ("library_manage", {"root": "{LIB}", "action": "unarchive", "name": "parity-c"}, False),
+        ("library_manage", {"root": "{LIB}", "action": "delete", "name": "parity-c"}, False),
+        ("library_manage", {"root": "{LIB}", "action": "delete", "name": "无此工程"}, False),
+        # recover:清单为空(无残留锁,确定性);recover 缺 name 拒绝面
+        ("library_recover", {"root": "{LIB}", "action": "list"}, False),
+        ("library_recover", {"root": "{LIB}", "action": "recover"}, False),
     ]
 
 
 def resolve_placeholders(args: dict, ctx: dict, main_ws: Path, new_ws: Path,
-                         import_ws: Path) -> dict:
-    """深递归替换:{MAIN}/{NEW}/{NEW2} 路径标记与 @...@ 动态接线占位(含列表内元素)。"""
+                         import_ws: Path, mig_ws: Path, lib_root: Path, medlib: Path) -> dict:
+    """深递归替换:{MAIN}/{NEW}/{NEW2}/{MIG}/{LIB}/{MEDLIB} 路径标记与 @...@ 动态接线占位(含列表内元素)。"""
     def walk(v):
         if isinstance(v, str):
             v = (v.replace("{MAIN}", str(main_ws)).replace("{NEW}", str(new_ws))
-                  .replace("{NEW2}", str(import_ws))
+                  .replace("{NEW2}", str(import_ws)).replace("{MIG}", str(mig_ws))
+                  .replace("{LIB}", str(lib_root)).replace("{MEDLIB}", str(medlib))
                   .replace("@OP_OF_CAUSED_UPDATE@", ctx.get("caused_update_op", ""))
                   .replace("@RUN_ID@", ctx.get("run_id", ""))
+                  .replace("@PARENT_ID@", ctx.get("parent_id", ""))
                   .replace("@COMPOUND_ID@", ctx.get("compound_id", ""))
                   .replace("@OTIO_OUT@", ctx.get("otio_out", "")))
             if "@" in v and "@" in ctx_marker_scan(v):
@@ -891,6 +944,21 @@ def product_assert(name: str, args: dict, resp: dict, ctx: dict) -> None:
         second_doc = json.loads(Path(args["root"], args["out"]).read_text(encoding="utf-8"))
         if otio_semantic_rows(ctx["otio_first_doc"]) != otio_semantic_rows(second_doc):
             raise ParityError("FAIL: OTIO 往返语义 diff ≠ 0(导出→导入→再导出必须等价)", 2)
+    elif name == "export_all_variants" and args.get("action", "run") == "run":
+        if len(data.get("runs", [])) != 2 or not str(data.get("parentRunId", "")).startswith("p"):
+            raise ParityError(f"FAIL: 批量导出必须 2 变体且父 id 形如 p<hex>: {data}", 2)
+    elif name == "export_all_variants" and args.get("action") == "status":
+        if data.get("state") != "ok" or data.get("aggregate", {}).get("ok") != 2:
+            raise ParityError(f"FAIL: 变体终态必须全 ok: {data}", 2)
+    elif name == "media_import":
+        if data.get("src") != "01_原始素材/libbgm.mp3" or not Path(args["root"], data["src"]).is_file():
+            raise ParityError(f"FAIL: 拷贝导入必须真实落盘 01_原始素材/libbgm.mp3: {data}", 2)
+    elif name == "export_preflight":
+        if data.get("totalMs", 0) <= 0 or data.get("missingAssets") != []:
+            raise ParityError(f"FAIL: 预检必须报出时长且零缺失素材: {data}", 2)
+    elif name == "media_library" and args.get("tag") == "calm":
+        if data.get("total") != 1 or data["entries"][0].get("tags") != ["calm"]:
+            raise ParityError(f"FAIL: 标签过滤必须命中打了 calm 标的条目: {data}", 2)
 
 
 # ---------------- serve 生命周期 ----------------
@@ -975,6 +1043,10 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
         make_media(main_ws)
         write_truth_fixtures(main_ws)
         write_subtitle_fixture(main_ws)
+        # 册六 T6.2:素材库夹具(库根 + 一条音频;media_import 的库引用源)
+        medlib = tmp / "medlib"
+        medlib.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(main_ws / "01_原始素材" / "bgm.mp3", medlib / "libbgm.mp3")
 
         serve, port = spawn_serve(bin_path, main_ws, tmp, stub)
         norm = Normalizer(tmp, TOKEN)
@@ -982,14 +1054,15 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
 
         collected: dict[str, list[dict]] = {}
         for name, raw_args, probe_mode in seq:
-            args = resolve_placeholders(raw_args, ctx, main_ws, tmp / "wsnew", tmp / "wsimport")
+            args = resolve_placeholders(raw_args, ctx, main_ws, tmp / "wsnew", tmp / "wsimport",
+                                        tmp / "wsmig", tmp / "lib", tmp / "medlib")
             try:
                 resp = rpc(port, TOKEN, name, args)
             except Exception as exc:  # noqa: BLE001
                 report.add(name, "FAIL", f"/rpc 调用异常: {exc!r}")
                 continue
             # 动态接线:回执喂给后续调用(render_progress 的 runId、notes_resolve 的 opIds、
-            # compound_unbind 的壳 id、otio_import 的产物路径)
+            # compound_unbind 的壳 id、otio_import 的产物路径、export_all_variants 的父 id)
             if name == "render_run" and resp.get("ok"):
                 ctx["run_id"] = resp["data"]["runId"]
                 done = wait_render_done(port, ctx["run_id"])
@@ -997,6 +1070,23 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
                     report.add(name, "FAIL",
                                f"真实渲染未成功: {done.get('data', {}).get('error')}")
                     continue
+                # 册六 T6.3:导出出口产物必须真实落盘(m4a/gif/预设 mp4)
+                outp = done.get("data", {}).get("output")
+                if args.get("format") or args.get("preset"):
+                    if not outp or not Path(outp).is_file():
+                        report.add(name, "FAIL", f"导出产物缺失: {outp}")
+                        continue
+            if name == "export_all_variants" and resp.get("ok") and args.get("action", "run") == "run":
+                ctx["parent_id"] = resp["data"]["parentRunId"]
+                for r in resp["data"]["runs"]:
+                    vdone = wait_render_done(port, r["runId"])
+                    if vdone.get("data", {}).get("state") != "ok":
+                        report.add(name, "FAIL",
+                                   f"变体 {r['ratio']} 渲染未成功: {vdone.get('data', {}).get('error')}")
+                        continue
+                    vout = vdone.get("data", {}).get("output")
+                    if not vout or not Path(vout).is_file():
+                        report.add(name, "FAIL", f"变体 {r['ratio']} 产物缺失: {vout}")
             if name == "clip_update" and args.get("causedBy") == ["n-0001"] and resp.get("ok"):
                 ctx["caused_update_op"] = resp["data"]["opIds"][0]
             if name == "compound_create" and resp.get("ok"):

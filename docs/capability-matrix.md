@@ -48,6 +48,15 @@
 | 40 | 多机位(同步+展开) | 支持 | 部分 | ✅ achieved(册五 T5.4/ADR-0019 展开方案:multicam_sync pcm-xcorr 启发式诚实标注 + multicam_cut 序列展开单 Op;IR 不建实体) | 加分 | parity C3 500ms 固定偏移恢复 ±50ms;渲染色块时间线无缝 |
 | 41 | 场景剪切检测 | 支持 | 支持 | ✅ achieved(册五 T5.4:scene_detect 抽帧差分 frame-diff 启发式 + TrackSplitAt 单 Op 自动切段) | 加分 | analyze 纯函数单测(硬切 ±100ms/渐变零误报);parity C4 硬切色块检测 |
 | 42 | OTIO/EDL 互操作 | 支持 | 部分 | ✅ achieved(册五 T5.5/ADR-0019 手写最小 OTIO JSON 子集 + EDL CMX3600 导出 + VTT 往返;子集外 WARN 留痕不静默丢) | 加分 | 往返语义等价单测(出→入→再出 diff=0 + 工程投影等价);EDL 外部解析人工验证候用户执行(AC-5.5) |
+| 43 | 导出格式矩阵(MP4 H.264/H.265/MOV/GIF/纯音频 M4A/MP3/图片序列/帧导出) | 支持 | 支持 | ✅ achieved(册六 T6.3:render/render_run 扩 format;gif=palettegen/paletteuse 两段 fps12 如实声明、纯音频 probe+mix 短路(m4a=copy/mp3=libmp3lame)、png 序列 %04d 帧数清点、h265=libx265+hvc1 软件编码(hw 请求 WARN 不冒充)、mov 随扩展名;mp4-h264 与既有编码面同源) | 必达 | export.rs 参数面单测;gif/纯音频手工冒烟(帧数/体积/无视频流) |
+| 44 | 导出预设(画幅/清晰度/码率档) | 支持 | 部分 | ✅ achieved(册六 T6.3:preset 画幅映射与 render_variants 同源;qualityTier=短边缩放偶数取整;bitrateTier=估算值,显式 bitrate 覆盖——档位是预估不是承诺,如实声明) | 必达 | 预设/清晰度/码率映射单测(export.rs) |
+| 45 | 区域导出(入出点/仅音频/仅视频) | 支持 | 支持 | ✅ achieved(册六 T6.3:inMs/outMs 工程级时间窗裁剪——全轨种钳制平移、头部源域按速度分段积分折算、首段入向转场清除、textass/叠加层同窗、freeze 区近似已登记;videoOnly=音轨静音+BGM 摘除;仅音频=纯音频出口) | 必达 | window_project 纯函数单测(裁剪/折算/转场清除/零窗口恒等);区域导出时长 e2e |
+| 46 | 导出前检查清单(黑帧/静音/时长/响度预估) | 不支持 | 支持 | ✅ achieved(册六 T6.3:export_preflight 轻探测不渲全片——缺失素材/首末帧亮度(16 级量化)/静音段(覆盖间隙+逐段源 RMS 启发式)/时长/响度=audio_loudness 复用(成片在位实测,否则 null);heuristic:true 如实标注) | 加分 | parity 预检夹具(missingAssets=0/totalMs>0) |
+| 47 | 多画幅批量导出(一次排队全变体+父任务聚合) | 支持 | 支持 | ✅ achieved(册六 T6.3:export_all_variants 逐变体入既有渲染队列(独立 runId,进度/取消/重试复用 render_queue),action=status 拉取式聚合;底座 render_variants 已有,补编排面) | 必达 | parity 两变体终态全 ok + 产物落盘断言 |
+| 48 | 本地素材库(manifest/标签/拷贝导入) | 支持 | 支持 | ✅ achieved(册六 T6.2:media_library 库根 library.json(类型/标签/时长/引用,扫描合并幂等,标签持久)+ media_import 拷贝导入(布局感知落点,同名同内容幂等/异内容追加序号,tmp+rename 原子,不产 Op)——FE1 拷贝导入通道欠账收口) | 必达 | Rust 单测(扫描/标签/导入/布局落点)+ parity 导入落盘断言 |
+| 49 | 剪映草稿导出随包化(零 CutFlow 依赖) | 原生 | 不适用 | ✅ achieved(册六 T6.2/ADR-0023:rs_jy_draft.py 收编随包资产(tools/jianying/ + 归属声明);orchestrate 定位序=env CUTFLOW_REPO(显式)→工程内→随包(<exe>/scripts/ 与 tools/jianying/)→CutFlow 回退一版期;诚实标注仍依赖 Python 运行时) | 可选 | scriptSource 来源标注入编排响应;ADR-0023 |
+| 50 | 重构图全自动构图 | 支持 | 不支持 | ❌ missing(诚实降级,不虚标 AI 构图:无可靠自动构图算法——运动能量/响度重心启发式对构图质量不可判定,人脸检测不可做;clip.reframe(anchorY) 契约承载防丢,渲染端零消费) | 加分 | 触发条件=anchorY 渲染消费落地 + 可判定构图规则,届时逐案 ADR |
+| 51 | 本地转写(whisper 系) | 不适用 | 不适用 | ❌ missing(ADR-0023 明确不做,非待办:体积/速度/维护三指标全不达标且无用例;上游转写件 wordline.json 直读已覆盖真实工作流) | 可选 | 触发条件=无网环境批量长素材真实用例,届时逐案 ADR |
 
 ## 结论(M11-1 追平后口径)
 
@@ -57,6 +66,7 @@
 - 可选 2 项:0 项实现(关键词 6、蒙版 10)
 - **整体 = 16/18 ≈ 89%**(M8 止血时 47%;V1 虚报 93.3% 的差值 = 可选两项;基线 15 项口径 87%,A4-BE3a 新增 3 项全达成分母加 3)
 - ~~旋转:契约无字段~~ 册四 A4(T4.9)起 rotation/crop/flip 入契约并渲染落地(#4/#16/#18,ADR-0015 画布范围同批)
+- 册六 T6.3/T6.2 新增 9 项(#43–#51):7 项 achieved(导出格式矩阵/导出预设/区域导出/导出预检/多画幅批量/素材库/剪映随包)、2 项 missing 为**诚实标注**(重构图自动构图=无可靠算法不虚标;本地转写=ADR-0023 明确不做,非待办)
 - 证据:crates/cutforge-render/tests/parity_matrix.rs 九项 ffmpeg 实测(转场零漂移/变速时长语义/punch-in 帧差/overlay 时间窗/ducking 能量差/afade RMS/文件名消毒/文本轨口径/mix 真分叉);册四 A4-BE2 增五项(曲线变速时长对拍/倒放首末帧对调/90° 旋转朝向/crop 象限/flip 镜像);册四 A4-BE3a 增四项(转场五分类各 2 项目录直通零漂移/acrossfade 音频链/特效四项像素级断言/motion 淡入滑入)——夹具 achieved 总数 18
 
 ## 与 V1 版本的差异说明

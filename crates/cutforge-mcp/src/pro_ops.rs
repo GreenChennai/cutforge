@@ -349,7 +349,7 @@ pub fn otio_export_tool(ws: &Workspace, root: &Path, args: &Value) -> Value {
             }
             o.to_string()
         }
-        None => format!("{}/{}.{}", cutforge_io::paths::OUTPUT, ws.project().slug, ext),
+        None => format!("{}/{}.{}", cutforge_io::paths::output_dir_name(root), ws.project().slug, ext),
     };
     let abs_out = root.join(&out);
     if let Some(dir) = abs_out.parent()

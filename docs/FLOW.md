@@ -53,9 +53,9 @@ cutforge/
 │   └── cutforge-script/        脚本宿主:cutforge-script-v1 批式步骤 + 策略沙箱(白名单/路径/步数/超时,逃逸面结构性为零)
 ├── apps/web/                   壳:core/render/panels/ui 四层无构建 ESM(SSE 主通道 + 长轮询断线降级;data-testid 锚点登记 TESTIDS.md;旧壳 legacy/ 已于册三收尾删除,回退期结束;ADR-0011~0017)
 ├── tools/
-│   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1–A4 已注册,决策 D-A2)
+│   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1–A6 已注册,决策 D-A2)
 │   ├── bench/bench.py          性能基准(T1.8;--check 阈值判定,基线 docs/bench/baseline.json)
-│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;册五 A5 增调色/音频/队列五工具后 61;A5-BE3 增复合/多机位/场景检测/OTIO 七工具后 68;数量以 schemas/mcp-tools.json 为准)
+│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;册五 A5 增调色/音频/队列五工具后 61;A5-BE3 增复合/多机位/场景检测/OTIO 七工具后 68;册六 A6 增 migrate_layout/library_manage/library_recover/library_list 四工具后 72,增 export_preflight/media_library/media_import/export_all_variants 四工具后 76;数量以 schemas/mcp-tools.json 为准)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
 │   ├── schema_gen.py           生成 tools/_generated/cf_validate.py(Python 校验器)
 │   └── validate_regression.py  回归集校验入口(16/16)
@@ -252,7 +252,7 @@ e2e_static / e2e_events / e2e_ui_smoke / e2e_playback_survival / e2e_drag_perf(`
 e2e_perf_timeline(负载敏感项均不进 CI);载体 tools/e2e_{drag_perf,hotkeys,a11y,perf_budget}.py。
 已注册 **`gate.py A4`**(册四,核心工具与媒体管线),**18 项全阻断**(A3 十五项一字不动
 全部继承,另纳册四三份新 e2e):cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/
-pytest / tool_parity(68,schema 实配口径)/ e2e_static / e2e_events / e2e_ui_smoke /
+pytest / tool_parity(schema 实配口径)/ e2e_static / e2e_events / e2e_ui_smoke /
 e2e_playback_survival / e2e_drag_perf(`--min-fps 55`)/ e2e_hotkeys / e2e_a11y /
 e2e_perf_budget / e2e_perf_timeline / **e2e_editing_tools**(四件套恰一 Op+实渲逐差+
 锁定轨拒编辑)/ **e2e_subtitle_editor**(SRT byte 级往返+帧证位置+卡拉OK+花字)/
@@ -265,7 +265,7 @@ A<n> 本机册收官跑;台账见 [A1-PROGRESS.md](A1-PROGRESS.md) /
 [A4-PROGRESS.md](A4-PROGRESS.md)。
 已注册 **`gate.py A5`**(册五,专业深度),**21 项全阻断**(A4 十八项一字不动全部继承,
 另纳册五两份新 e2e):cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/ pytest /
-tool_parity(68,schema 实配口径)/ e2e_static / e2e_events / e2e_ui_smoke /
+tool_parity(schema 实配口径)/ e2e_static / e2e_events / e2e_ui_smoke /
 e2e_playback_survival / e2e_drag_perf(`--min-fps 55`)/ e2e_hotkeys / e2e_a11y /
 e2e_perf_budget / e2e_perf_timeline / e2e_editing_tools / e2e_subtitle_editor /
 e2e_media_perf(负载敏感项不进 CI)/ **e2e_keyframes**(AC-5.1 壳侧闭环:秒表打点单 Op/
@@ -273,6 +273,14 @@ e2e_media_perf(负载敏感项不进 CI)/ **e2e_keyframes**(AC-5.1 壳侧闭环:
 LUT/示波器三画布/分屏割线);载体 tools/e2e_{keyframes,color}.py;
 CI 册五新增 keyframes/color 两步(共八步),A5 本机册收官跑;台账见
 [A5-PROGRESS.md](A5-PROGRESS.md)。
+已注册 **`gate.py A6`**(册六,独立化),**22 项全阻断**(A5 二十一项一字不动全部继承,
+另纳册六一份新 e2e):A5 全项 / **e2e_independence**(AC-6.3 判定器:CUTFLOW_* 剥离的
+环境隔离起 serve → 字幕(含花字)/卡点/重构图(anchorY 承载防丢)/导出四大件全内置工具链
+→ **进程树断言全程零 python 子进程**(psutil/wmic/proc 三级采样;剪映导出豁免,
+ADR-0023 注明)→ 产物时长/像素抽样 → 纯 CLI 面(run-script 建卡→clip-update 改字段→
+cutforge-render 直渲→ffprobe,AC-7.4 预演));载体 tools/e2e_independence.py;
+CI 册六新增 e2e_independence 一步(共九步;ubuntu 无 CUTFLOW_REPO 天然主场),
+A6 本机册收官跑;台账见 [A6-PROGRESS.md](A6-PROGRESS.md)。
 
 ## 八、观察项与已知占位(诚实清单)
 

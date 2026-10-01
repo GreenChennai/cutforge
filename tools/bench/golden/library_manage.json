@@ -1,0 +1,146 @@
+{
+ "tool": "library_manage",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "new",
+    "name": "parity-a",
+    "slug": "库甲",
+    "fps": 30
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "layout": "v2",
+     "name": "parity-a",
+     "project": "<TMP>/lib/parity-a"
+    },
+    "message": "工程库操作完成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "new",
+    "name": "parity-a"
+   },
+   "response": {
+    "code": "PRECONDITION_FAILED",
+    "data": {},
+    "message": "库内已存在: parity-a",
+    "ns": "core",
+    "ok": false
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "copy",
+    "name": "parity-a",
+    "to": "parity-b"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "from": "parity-a",
+     "project": "<TMP>/lib/parity-b",
+     "to": "parity-b"
+    },
+    "message": "工程库操作完成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "rename",
+    "name": "parity-b",
+    "to": "parity-c"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "from": "parity-b",
+     "note": "slug 不随目录名改写(库操作目录级,OpLog 不动)",
+     "project": "<TMP>/lib/parity-c",
+     "to": "parity-c"
+    },
+    "message": "工程库操作完成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "archive",
+    "name": "parity-c"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "action": "archive",
+     "at": "<TMP>/lib/.archives/parity-c",
+     "name": "parity-c"
+    },
+    "message": "工程库操作完成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "unarchive",
+    "name": "parity-c"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "action": "unarchive",
+     "at": "<TMP>/lib/parity-c",
+     "name": "parity-c"
+    },
+    "message": "工程库操作完成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "delete",
+    "name": "parity-c"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "action": "delete",
+     "at": "<TMP>/lib/.trash/<TRASH>-parity-c",
+     "name": "parity-c"
+    },
+    "message": "工程库操作完成",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/lib",
+    "action": "delete",
+    "name": "无此工程"
+   },
+   "response": {
+    "code": "PRECONDITION_FAILED",
+    "data": {},
+    "message": "工程不存在: 无此工程",
+    "ns": "core",
+    "ok": false
+   }
+  }
+ ]
+}

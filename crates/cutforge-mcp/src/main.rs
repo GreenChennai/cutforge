@@ -35,10 +35,17 @@ fn main() {
             use std::io::IsTerminal as _;
             let root = args.iter().position(|a| a == "--root").and_then(|i| args.get(i + 1));
             let root = match root {
-                Some(r) => std::path::PathBuf::from(r),
+                Some(r) => match cutforge_mcp::resolve_root_arg(r) {
+                    // T6.4:`.cfproj` 工程描述 → 其 root(与 cli serve 单一实现)
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(2);
+                    }
+                },
                 None => {
                     if !std::io::stdin().is_terminal() {
-                        eprintln!("用法: serve [--root <工程目录>] [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录");
+                        eprintln!("用法: serve [--root <工程目录|.cfproj>] [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录");
                         std::process::exit(2);
                     }
                     match cutforge_mcp::pick_project_interactive() {

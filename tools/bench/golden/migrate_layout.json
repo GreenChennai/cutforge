@@ -1,0 +1,65 @@
+{
+ "tool": "migrate_layout",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/wsmig",
+    "to": "v3"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "from": "v2",
+     "idempotent": false,
+     "kept": [],
+     "moved": [
+      {
+       "from": "05_时间线工程/project.json",
+       "to": "project.json"
+      }
+     ],
+     "removedEmptyDirs": [
+      "05_时间线工程"
+     ],
+     "to": "v3"
+    },
+    "message": "迁移完成(v3)",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/wsmig",
+    "to": "v3"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "from": "v3",
+     "idempotent": true,
+     "kept": [],
+     "moved": [],
+     "removedEmptyDirs": [],
+     "to": "v3"
+    },
+    "message": "已是 v3 布局,幂等 NOOP",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/wsmig",
+    "to": "v2"
+   },
+   "response": {
+    "code": "PRECONDITION_FAILED",
+    "data": {},
+    "message": "--to 必须为 v3(当前唯一目标布局;v2/v1 兼容读写冻结,不做回迁,ADR-0021)",
+    "ns": "core",
+    "ok": false
+   }
+  }
+ ]
+}

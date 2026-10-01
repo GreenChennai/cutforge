@@ -7,7 +7,7 @@
 > **拖拽过程零动画(直接跟手)**;同屏并发入场动画 ≤3(全部为 ≤240ms 一次性短动效,
 > 循环动画仅两处豁免:导出不确定进度条、断连横幅呼吸点);
 > `prefers-reduced-motion` 在 `css/motion.css` 一处总控全量降级(动画/过渡压到 0.01ms)。
-> 录屏存档(AC-3.2,record-captures.py 可重录):docs/design/recordings/ 共 19 条 webm(960×600,单条 ≤2MB,合计 ≈4.7MB);27 项逐行回链见下表「录屏」列;关键项覆盖:拖拽 ghost 跟手+吸附脉冲(02)、非法落点红态(03)、trim 时长气泡(04)、框选多选(07)、右键菜单(14)、模态缩放入场(13)、toast 撤销(15)、断连横幅滑入(18)、首启引导(01)、性能面板(19-perf-panel.webm)。
+> 录屏存档(AC-3.2,record-captures.py 可重录):docs/design/recordings/ 共 40 条 webm(册三 19 条 960×600;册五 15 支/册六 6 支 720×450 低分辨率,单条 ≤2MB,合计 ≈7.9MB ≤ 8MB 红线);27 项逐行回链见下表「录屏」列,册五/册六回链见第八~十节;关键项覆盖:拖拽 ghost 跟手+吸附脉冲(02)、非法落点红态(03)、trim 时长气泡(04)、框选多选(07)、右键菜单(14)、模态缩放入场(13)、toast 撤销(15)、断连横幅滑入(18)、首启引导(01)、性能面板(19-perf-panel.webm)。
 
 ## 一、拖拽
 
@@ -122,3 +122,18 @@ tokens.css 之外的任何色值字面量;示波器 render_frame 不可用时降
 录制口径:`docs/design/record-captures.py` 册五补录段(#40-46 微交互 + D1-D8 面板
 演示)统一 720×450 低分辨率,单文件 ≤2MB、目录总量红线 ≤8MB;复跑命令
 `python docs/design/record-captures.py [--only <子串>]`。
+
+## 十、册六 A6 录屏(T6.1 工程库/迁移/模板 + T6.3 导出矩阵/preflight 门 + T6.2 素材库;F4 补录)
+
+| # | 演示 | 面板/工具 | 录屏 |
+|---|---|---|---|
+| R1 | 工程库视图七操作(搜索/重命名/复制/归档/恢复/删除/打开命令一键复制;归档区并入) | `panels/library.js` + `library-ops.js` / library_manage | [录屏:recordings/50-library-ops.webm](recordings/50-library-ops.webm) |
+| R2 | 布局迁移 v3(v2 提示条 → 确认框 → 迁移后重载;工程菜单常驻入口) | `panels/library.js` 迁移入口 / migrate_layout | [录屏:recordings/51-migrate-v3.webm](recordings/51-migrate-v3.webm) |
+| R3 | 新建向导三模板(口播/双机位/方形,选即预填画幅帧率轨道)+ 布局 v3 选择 | `panels/wizard.js` / library_manage new | [录屏:recordings/52-wizard-template.webm](recordings/52-wizard-template.webm) |
+| R4 | 导出矩阵(七格式说明行/画幅·清晰度·码率三档位/区域 in-out/仅视频) | `panels/export-matrix.js` / render_run 扩参 | [录屏:recordings/53-export-matrix.webm](recordings/53-export-matrix.webm) |
+| R5 | 导出前 preflight 检查门(「导出成片」自动触发;缺失素材 warn 行 → 裁决「先不导出」;「仍要导出」同面) | `panels/export-matrix.js` runPreflight(auto) / export_preflight | [录屏:recordings/54-preflight-gate.webm](recordings/54-preflight-gate.webm) |
+| R6 | 素材库页签(库根扫描入库/类型 chips/标签整组替换/一键导入工程) | `panels/media-lib.js` + `media-panel.js` 双页签 / media_library + media_import | [录屏:recordings/55-media-library.webm](recordings/55-media-library.webm) |
+
+录制口径:同第九节(册六补录段 50-55 前缀,720×450;裁决按钮只在导出前自动门路径
+渲染——手动「检查」按钮无裁决面,54 走「导出成片」触发);录屏经 VP9 重编码压总量
+(时长逐支不变,单文件 ≤2MB)。

@@ -16,6 +16,7 @@ import { subscribe } from "../core/event-bus.js";
 import { recordExportTick } from "../ui/perf.js";
 import { markHistory } from "../core/edit-commands.js";
 import { pref, setPref } from "../ui/prefs.js";
+import { mountExportMatrix, matrixArgs, runPreflight } from "./export-matrix.js";
 
 let backendSel = null;
 let ratioSel = null;
@@ -55,6 +56,7 @@ export function mount(container) {
     proxyToggle, " 用代理预览(缺省原片导出)",
   ]));
   buildEncodeGroup(container); // T5.6 编码设置(缺省 remux 零代损;显式选项才重编码)
+  mountExportMatrix(container); // 册六 T6.3 导出矩阵(格式/档位/区域/仅视频/批量/预检)
   buildOtioRow(container);     // T5.5 OTIO/EDL 导出 + OTIO 导入(新工程)
   container.appendChild(h("div", { class: "exp-actions" }, [
     h("button", { id: "exp-run", testid: "export-run", title: "按当前后端导出成片(Ctrl+S 回到这里)", onclick: () => runExport() }, ["导出成片"]),
@@ -107,14 +109,19 @@ function syncProxyEnabled() {
     : "ffmpeg 后端不支持代理(useProxy 仅 cutforge 内核)";
 }
 
-function runExport() {
+async function runExport() {
   // 导出前自动打历史快照标记(T4.3;会话态,不落盘)
   markHistory("导出前");
   if (backendSel.get() === "cutforge") {
-    runExportCutforge(onProgress, proxyToggle.checked, encOpts());
+    // 册六 T6.3:导出前自动跑 export_preflight 检查(有问题项给「仍要导出」显式越过)
+    const go = await runPreflight(true);
+    if (!go) return;
+    runExportCutforge(onProgress, proxyToggle.checked, encOpts(), matrixArgs());
   } else {
-    // 编码设置仅 cutforge 内核消费;填了选项切到 ffmpeg 时如实提示被忽略
-    if (Object.keys(encOpts()).length) toast("编码设置仅 cutforge 内核消费(ffmpeg 后端忽略)", false);
+    // 编码设置/导出矩阵仅 cutforge 内核消费;填了选项切到 ffmpeg 时如实提示被忽略
+    if (Object.keys(encOpts()).length || Object.keys(matrixArgs()).length) {
+      toast("编码设置/导出矩阵仅 cutforge 内核消费(ffmpeg 后端忽略)", false);
+    }
     runExportFfmpeg(ratioSel.get(), onProgress);
   }
 }

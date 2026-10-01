@@ -1,0 +1,27 @@
+{
+ "tool": "render_queue",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "action": "list"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "concurrency": 1,
+     "jobs": [
+      {
+       "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4",
+       "runId": "<RUN_ID>",
+       "state": "ok"
+      }
+     ]
+    },
+    "message": "渲染队列",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

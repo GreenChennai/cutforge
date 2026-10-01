@@ -1,0 +1,25 @@
+{
+ "tool": "otio_import",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/wsimport",
+    "src": "<TMP>/proot/06_成片输出/parity-main.otio"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "clips": 10,
+     "hint": "从零起步导入(project_new 同类);打开后可继续常规编辑",
+     "project": "<TMP>/wsimport/05_时间线工程/project.json",
+     "slug": "parity-main",
+     "tracks": 3,
+     "warnings": []
+    },
+    "message": "OTIO 导入完成(新工程;子集外 WARN 随回执)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

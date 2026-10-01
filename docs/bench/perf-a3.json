@@ -1,19 +1,19 @@
 {
-  "capturedAt": "2026-10-01T02:39:07+08:00",
+  "capturedAt": "2026-10-01T13:37:18+08:00",
   "env": {
     "cpu": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
     "os": "Windows-11-10.0.26200-SP0",
     "profile": "debug(local e2e)"
   },
-  "bootMs": 345,
+  "bootMs": 390,
   "tabMs": 45.3,
   "tabPanelRow": {
     "pass": "1",
-    "text": "✓页签切换5ms<100ms"
+    "text": "✓页签切换7ms<100ms"
   },
   "export": {
     "updates": 5,
-    "steadyP95GapS": 0.985,
+    "steadyP95GapS": 0.988,
     "barPreserved": true,
     "barAnimated": true,
     "panelRow": {
@@ -27,7 +27,7 @@
   "pool": {
     "cap": 24,
     "maxObserved": 24,
-    "evicted": 6635,
+    "evicted": 6659,
     "rounds": 200,
     "note": "4 小时长跑内存曲线为人工项(登记),以 200 轮导航模拟+池有界替代"
   }

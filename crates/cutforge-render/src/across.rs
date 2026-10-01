@@ -19,12 +19,43 @@
 //! 本模块不启动进程;纯函数生成 ffmpeg 参数,可离线单测。
 
 use crate::plan::{AudioSeg, RenderPlan};
+use cutforge_core::model::{Bgm, EqBand, TrackDyn};
+use serde_json::Value;
 use std::path::Path;
 
 /// acrossfade 链模式开关:≥2 个主线视频段且至少一个边界有有效转场。
 /// 关闭 = 既有逐段 adelay 总线路径(参数逐字一致,parity 红线)。
 pub fn chain_active(plan: &RenderPlan) -> bool {
     plan.video_clips.len() >= 2 && plan.boundary_durs_ms.iter().any(|d| *d > 0.0)
+}
+
+/// 视频轨处理链(册五 T5.3,acrossfade 链模式):全部主线片段同属一条**有处理
+/// 声明**的轨时返回其链,否则空串(跨轨声明无单点归属,诚实跳过)。
+pub fn video_track_chain(plan: &RenderPlan) -> String {
+    let Some(first) = plan.video_track_of.first() else { return String::new() };
+    if plan.video_track_of.iter().any(|t| t != first) {
+        return String::new();
+    }
+    let Some(p) = plan.track_proc.iter().find(|p| &p.track_id == first) else {
+        return String::new();
+    };
+    if p.is_empty() {
+        return String::new();
+    }
+    track_chain(p.eq.as_deref(), p.dyn_.as_ref())
+}
+
+/// ducking 侧链滤镜(册五 T5.3 参数化):BGM 字段缺省 = 既有常量
+/// (threshold=0.03/ratio=8/attack=80/release=500),格式化去尾零——缺省时
+/// 与既有字面串逐字一致(parity 红线)。
+pub fn ducking_filter(bgm: &Bgm) -> String {
+    format!(
+        "sidechaincompress=threshold={}:ratio={}:attack={}:release={}",
+        crate::steps::fmt_f64(bgm.duck_threshold()),
+        crate::steps::fmt_f64(bgm.duck_ratio()),
+        crate::steps::fmt_f64(bgm.duck_attack_ms()),
+        crate::steps::fmt_f64(bgm.duck_release_ms()),
+    )
 }
 
 /// 降噪档 → afftdn 滤镜(册四 T4.8):nr=降噪量(dB),nf=噪声底(dB),tn=频带跟踪。
@@ -44,6 +75,136 @@ pub fn pitch_factor(semitones: f64) -> f64 {
         return 1.0;
     }
     2f64.powf(semitones / 12.0)
+}
+
+/// 单条 EQ 频段 → biquad 滤镜(册五 T5.3;本机 ffmpeg biquad 族全量在位,
+/// firequalizer 的 FFT 卷积对短段有窗效应且版本差异大——选 biquad 链为稳)。
+/// peaking → equalizer(f/t/w/g);shelf 忽略 q(ffmpeg shelf 无 Q 语义,坡宽固定)。
+/// 增益 |0| 档跳过(中性段不产滤镜,链零变化)。
+pub fn eq_band_filter(b: &EqBand) -> Option<String> {
+    if b.gain.abs() < 1e-6 || !b.freq.is_finite() {
+        return None;
+    }
+    let f = crate::steps::fmt_f64(b.freq.clamp(20.0, 20000.0));
+    let g = crate::steps::fmt_f64(b.gain.clamp(-24.0, 24.0));
+    match b.type_.as_str() {
+        "lowshelf" => Some(format!("lowshelf=f={f}:g={g}")),
+        "highshelf" => Some(format!("highshelf=f={f}:g={g}")),
+        "peaking" => {
+            let q = crate::steps::fmt_f64(b.q.unwrap_or(1.0).clamp(0.1, 16.0));
+            Some(format!("equalizer=f={f}:width_type=q:w={q}:g={g}"))
+        }
+        _ => None, // 未知类型诚实跳过(schema 枚举封闭,防御面)
+    }
+}
+
+/// 轨道 EQ 链(段序 = 数组序;空 = 空串)。
+pub fn track_eq_chain(bands: &[EqBand]) -> String {
+    bands.iter().filter_map(eq_band_filter).collect::<Vec<_>>().join(",")
+}
+
+/// 轨道动态链(册五 T5.3):acompressor(参数子集;threshold/limit IR dB → 线性域
+/// 10^(dB/20))+ alimiter(限幅收尾)。未声明压缩/限幅的维度不产滤镜。
+pub fn track_dyn_chain(d: &TrackDyn) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(th) = d.threshold_db
+        && th.is_finite()
+    {
+        let lin = 10f64.powf(th.clamp(-60.0, 0.0) / 20.0);
+        let ratio = crate::steps::fmt_f64(d.ratio.unwrap_or(4.0).clamp(1.0, 20.0));
+        let attack = crate::steps::fmt_f64(d.attack_ms.unwrap_or(25.0).clamp(1.0, 500.0));
+        let release = crate::steps::fmt_f64(d.release_ms.unwrap_or(250.0).clamp(5.0, 5000.0));
+        parts.push(format!(
+            "acompressor=threshold={lin:.6}:ratio={ratio}:attack={attack}:release={release}"
+        ));
+    }
+    if let Some(lim) = d.limit_db
+        && lim.is_finite()
+    {
+        let lin = 10f64.powf(lim.clamp(-24.0, 0.0) / 20.0);
+        parts.push(format!("alimiter=limit={lin:.6}"));
+    }
+    parts.join(",")
+}
+
+/// 轨道处理链(册五 T5.3):EQ 全段 → 压缩 → 限幅(链内序固定;空 = 空串)。
+pub fn track_chain(eq: Option<&[EqBand]>, dyn_: Option<&TrackDyn>) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(bands) = eq
+        && !track_eq_chain(bands).is_empty()
+    {
+        parts.push(track_eq_chain(bands));
+    }
+    if let Some(d) = dyn_
+        && !track_dyn_chain(d).is_empty()
+    {
+        parts.push(track_dyn_chain(d));
+    }
+    parts.join(",")
+}
+
+/// 轨道组建流标签(册五 T5.3):把 (seg, 事件标签) 平行数组按轨道分组——
+/// 有处理声明的轨 amix 建流 → per-track 链 → 单标签 `[tp…]`;无处理轨保持
+/// 逐事件标签(既有图零变化)。返回 (追加滤镜片段, 总线标签序列)。
+/// 追加次序 = 轨道首次出现序(确定性);track_id 缺失的事件诚实直通。
+pub fn grouped_bus_labels(
+    plan: &RenderPlan,
+    segs: &[&AudioSeg],
+    refs: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut labels: Vec<String> = Vec::new();
+    if plan.track_proc.is_empty() {
+        labels.extend(refs.iter().cloned());
+        return (parts, labels);
+    }
+    let mut done: Vec<&str> = Vec::new();
+    for (i, s) in segs.iter().enumerate() {
+        let Some(tid) = s.track_id.as_deref() else {
+            labels.push(refs[i].clone());
+            continue;
+        };
+        if done.contains(&tid) {
+            continue;
+        }
+        done.push(tid);
+        let idxs: Vec<usize> =
+            (0..segs.len()).filter(|&j| segs[j].track_id.as_deref() == Some(tid)).collect();
+        let proc = plan.track_proc.iter().find(|p| p.track_id == tid).filter(|p| !p.is_empty());
+        match proc {
+            Some(p) => {
+                let chain = track_chain(p.eq.as_deref(), p.dyn_.as_ref());
+                if chain.is_empty() {
+                    // 处理声明存在但滤镜为空(中性段/未知类型全跳过)→ 按无处理直通
+                    for j in idxs {
+                        labels.push(refs[j].clone());
+                    }
+                    continue;
+                }
+                if idxs.len() == 1 {
+                    let i0 = idxs[0];
+                    // 标签后直接接滤镜名(标签 + 逗号是非法图式:"No such filter: ''")
+                    parts.push(format!("{}{chain}[tp{i0}]", refs[i0]));
+                    labels.push(format!("[tp{i0}]"));
+                } else {
+                    let grouped: String =
+                        idxs.iter().map(|&j| refs[j].as_str()).collect::<Vec<_>>().join("");
+                    parts.push(format!(
+                        "{grouped}amix=inputs={}:duration=longest:normalize=0[tg{tid}]",
+                        idxs.len()
+                    ));
+                    parts.push(format!("[tg{tid}]{chain}[tp{tid}]"));
+                    labels.push(format!("[tp{tid}]"));
+                }
+            }
+            None => {
+                for j in idxs {
+                    labels.push(refs[j].clone());
+                }
+            }
+        }
+    }
+    (parts, labels)
 }
 
 /// 单事件音频链体(aformat 归一 → 降噪 → 倒放 → 变调 → 变速 → 音量 → 淡入淡出;
@@ -79,7 +240,15 @@ pub fn event_body(seg: &AudioSeg) -> String {
             body.push_str(&format!(",{t}"));
         }
     }
-    body.push_str(&format!(",volume={:.4}", seg.volume));
+    // volume 关键帧(IR v3)优先于静态音量(关键帧覆盖静态值;表达式在 atempo
+    // 之后,t 已是播放域子段局部秒);afade 淡变仍在其后叠加(组合顺序文档化:
+    // 关键帧包络 × 淡变包络相乘)。
+    if let Some(ve) = &seg.volume_expr {
+        body.push(',');
+        body.push_str(ve);
+    } else {
+        body.push_str(&format!(",volume={:.4}", seg.volume));
+    }
     if seg.fade_in_ms > 0.0 {
         body.push_str(&format!(",afade=t=in:st=0:d={:.3}", seg.fade_in_ms / 1000.0));
     }
@@ -154,8 +323,12 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
         }
         cur = format!("x{k}");
     }
-    // ---- 链落点(首片段 startMs;通常 0)+ 音频轨事件(绝对落点)→ [bus] ----
-    filters.push(format!("[{cur}]adelay={}:all=1[acb]", plan.video_clips[0].start_ms));
+    // ---- 链落点(首片段 startMs;通常 0)+ 轨道处理 + 音频轨事件(绝对落点)→ [bus] ----
+    // 视频轨处理链(册五 T5.3):仅当全部主线片段同属一条**有处理声明**的轨时
+    // 应用(acrossfade 链把多视频轨主线熔成单流,跨轨声明无单点归属——诚实跳过);
+    // 无处理 = 拼接逐字一致(parity 红线)。
+    let vchain = video_track_chain(plan);
+    filters.push(format!("[{cur}]adelay={}:all=1{vchain}[acb]", plan.video_clips[0].start_ms));
     let others: Vec<(usize, &AudioSeg)> = plan
         .audio_segs
         .iter()
@@ -166,12 +339,23 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
         filters.push("[acb]anull[bus]".into());
     } else {
         let mut parts: Vec<String> = Vec::new();
-        let mut refs = String::from("[acb]");
+        let mut other_refs: Vec<String> = Vec::new();
+        let other_segs: Vec<&AudioSeg> = others.iter().map(|(_, s)| *s).collect();
         for (k, s) in &others {
             parts.push(format!("[{k}:a]{},adelay={}:all=1[a{k}]", event_body(s), s.start_ms));
-            refs.push_str(&format!("[a{k}]"));
+            other_refs.push(format!("[a{k}]"));
         }
-        parts.push(format!("{refs}amix=inputs={}:duration=longest:normalize=0[bus]", others.len() + 1));
+        // 轨道组建流(册五 T5.3):有处理声明的轨 amix 建流 → per-track 链 → 单标签;
+        // 无处理轨保持逐事件标签(零变化面)
+        let (group_parts, bus_refs) = grouped_bus_labels(plan, &other_segs, &other_refs);
+        parts.extend(group_parts);
+        let mut all_refs = vec!["[acb]"];
+        all_refs.extend(bus_refs.iter().map(|s| s.as_str()));
+        parts.push(format!(
+            "{}amix=inputs={}:duration=longest:normalize=0[bus]",
+            all_refs.join(""),
+            all_refs.len()
+        ));
         filters.extend(parts);
     }
     // ---- BGM(与旧路径同一形态:循环铺满 + gain + ducking 侧链) ----
@@ -189,9 +373,7 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
         ));
         if bgm.ducking && !plan.audio_segs.is_empty() {
             filters.push("[bus]asplit=2[busA][busB]".into());
-            filters.push(
-                "[bgmg][busA]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]".into(),
-            );
+            filters.push(format!("[bgmg][busA]{}[bgmc]", ducking_filter(bgm)));
             filters.push("[busB][bgmc]amix=inputs=2:duration=first:normalize=0[mixout]".into());
             args.extend(["-filter_complex".into(), filters.join(";"), "-map".into(), "[mixout]".into()]);
         } else {
@@ -209,8 +391,141 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
     args
 }
 
+/// loudnorm 测量 pass 命令行(测量输出在 stderr 的 JSON)。
+/// 字面串与拆分前逐字一致(parity 红线);目标参数化走 [`mix_measure_args_t`]。
+pub fn mix_measure_args(mixed_raw: &Path) -> Vec<String> {
+    [
+        "-hide_banner", "-nostats", "-i", &mixed_raw.to_string_lossy(),
+        "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json",
+        "-f", "null", "-",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// 同 [`mix_measure_args`],响度目标显式给定(册五 T5.6 loudnormTarget;
+/// 响度单/交付域定制,缺省目标用上者的既有字面串)。
+pub fn mix_measure_args_t(mixed_raw: &Path, target_i: f64, target_tp: f64) -> Vec<String> {
+    [
+        "-hide_banner", "-nostats", "-i", &mixed_raw.to_string_lossy(),
+        "-filter_complex",
+        &format!(
+            "loudnorm=I={}:TP={}:print_format=json",
+            crate::steps::fmt_f64(target_i), crate::steps::fmt_f64(target_tp)
+        ),
+        "-f", "null", "-",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// 由测量结果构造 linear=true 的 loudnorm 滤镜串(先测后编;字面串与拆分前
+/// 逐字一致,parity 红线)。
+pub fn mix_linear_filter(measured: &Value) -> String {
+    format!(
+        "loudnorm=I=-14:TP=-1.0:measured_I={}:measured_TP={}:measured_LRA={}:measured_thresh={}:linear=true",
+        measured["input_i"].as_str().unwrap_or("-14"),
+        measured["input_tp"].as_str().unwrap_or("-1"),
+        measured["input_lra"].as_str().unwrap_or("0"),
+        measured["input_thresh"].as_str().unwrap_or("-30"),
+    )
+}
+
+/// 同 [`mix_linear_filter`],响度目标显式给定(册五 T5.6)。
+pub fn mix_linear_filter_t(measured: &Value, target_i: f64, target_tp: f64) -> String {
+    format!(
+        "loudnorm=I={}:TP={}:measured_I={}:measured_TP={}:measured_LRA={}:measured_thresh={}:linear=true",
+        crate::steps::fmt_f64(target_i),
+        crate::steps::fmt_f64(target_tp),
+        measured["input_i"].as_str().unwrap_or("-14"),
+        measured["input_tp"].as_str().unwrap_or("-1"),
+        measured["input_lra"].as_str().unwrap_or("0"),
+        measured["input_thresh"].as_str().unwrap_or("-30"),
+    )
+}
+
+/// mix pass B(线性滤镜串已构造)命令行。滤镜串由 [`mix_linear_filter`]/
+/// [`mix_linear_filter_t`](响度目标参数化,T5.6)单源构造。
+pub fn mix_pass_b_args(linear_filter: &str, mixed_raw: &Path, mix_out: &Path) -> Vec<String> {
+    [
+        "-y", "-v", "error", "-i", &mixed_raw.to_string_lossy(),
+        "-af", linear_filter,
+        "-c:a", "aac", &mix_out.to_string_lossy(),
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// mix pass B(静音总线)命令行:原样转封装,无需归一。
+/// (数字静音 -inf 遇 linear=true 的 measured 值,ffmpeg 报 "Result too large" 直接失败。)
+pub fn mix_pass_b_silent_args(mixed_raw: &Path, mix_out: &Path) -> Vec<String> {
+    [
+        "-y", "-v", "error", "-i", &mixed_raw.to_string_lossy(),
+        "-c:a", "copy", &mix_out.to_string_lossy(),
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+/// 测量 JSON 中 input_i 是否需要走 linear=true(静音/-inf/缺失 → false)。
+pub fn mix_measured_is_loud(measured: &Value) -> bool {
+    matches!(
+        measured["input_i"].as_str().and_then(|s| s.parse::<f64>().ok()),
+        Some(v) if v.is_finite() && v > -70.0
+    )
+}
+
+
 #[cfg(test)]
 mod tests {
+    fn strv(v: &[String]) -> Vec<&str> {
+        v.iter().map(|s| s.as_str()).collect()
+    }
+    #[test]
+    fn mix_measure_and_pass_b_args() {
+        let measured = json!({
+            "input_i": "-14.5", "input_tp": "-1.2", "input_lra": "3.1", "input_thresh": "-24.5"
+        });
+        assert!(mix_measured_is_loud(&measured));
+        assert_eq!(
+            mix_linear_filter(&measured),
+            "loudnorm=I=-14:TP=-1.0:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true"
+        );
+        let raw = Path::new("/c/mix/r.m4a");
+        assert_eq!(
+            strv(&mix_measure_args(raw)),
+            ["-hide_banner", "-nostats", "-i", "/c/mix/r.m4a",
+             "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json", "-f", "null", "-"]
+        );
+        assert_eq!(
+            strv(&mix_pass_b_args(&mix_linear_filter(&measured), raw, Path::new("/c/mix/o.m4a"))),
+            ["-y", "-v", "error", "-i", "/c/mix/r.m4a", "-af",
+             "loudnorm=I=-14:TP=-1.0:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true",
+             "-c:a", "aac", "/c/mix/o.m4a"]
+        );
+        // 目标参数化(T5.6 loudnormTarget):-16/-1.5 交付域定制
+        assert_eq!(
+            strv(&mix_measure_args_t(raw, -16.0, -1.5)),
+            ["-hide_banner", "-nostats", "-i", "/c/mix/r.m4a",
+             "-filter_complex", "loudnorm=I=-16:TP=-1.5:print_format=json", "-f", "null", "-"]
+        );
+        assert_eq!(
+            mix_linear_filter_t(&measured, -16.0, -1.5),
+            "loudnorm=I=-16:TP=-1.5:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true"
+        );
+        // 静音:input_i = -inf → 不走 linear,转封装
+        let silent = json!({"input_i": "-inf", "input_tp": "-inf", "input_lra": "0", "input_thresh": "-70"});
+        assert!(!mix_measured_is_loud(&silent));
+        assert_eq!(
+            strv(&mix_pass_b_silent_args(raw, Path::new("/c/mix/o.m4a"))),
+            ["-y", "-v", "error", "-i", "/c/mix/r.m4a", "-c:a", "copy", "/c/mix/o.m4a"]
+        );
+    }
+
     use super::*;
     use serde_json::json;
     use std::path::Path;
@@ -342,6 +657,8 @@ mod tests {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
             volume: 0.8, speed: 2.0, reverse: true, denoise: None, pitch: 1.0,
             fade_in_ms: 100.0, fade_out_ms: 200.0,
+            volume_expr: None,
+            track_id: None,
             clip_idx: None,
         };
         assert_eq!(
@@ -380,6 +697,8 @@ mod tests {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
             volume: 1.0, speed: 1.0, reverse: true, denoise: Some("mid".into()), pitch: 2.0,
             fade_in_ms: 0.0, fade_out_ms: 0.0,
+            volume_expr: None,
+            track_id: None,
             clip_idx: None,
         };
         assert_eq!(
@@ -398,6 +717,8 @@ mod tests {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
             volume: 1.0, speed: 0.5, reverse: false, denoise: None, pitch: 2.0,
             fade_in_ms: 0.0, fade_out_ms: 0.0,
+            volume_expr: None,
+            track_id: None,
             clip_idx: None,
         };
         let body = event_body(&seg);
@@ -408,6 +729,8 @@ mod tests {
             src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
             volume: 1.0, speed: 2.0, reverse: false, denoise: Some("high".into()), pitch: 0.5,
             fade_in_ms: 0.0, fade_out_ms: 0.0,
+            volume_expr: None,
+            track_id: None,
             clip_idx: None,
         };
         let body = event_body(&seg);

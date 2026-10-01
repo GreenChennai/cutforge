@@ -6,7 +6,7 @@ use crate::edit_ops;
 use crate::subtitle_ops;
 use crate::orchestrate::orchestrate;
 use crate::progress::{existing_rel, render_cutforge_sync, render_frame_tool, render_progress, render_run_async};
-use crate::registry::{capability_matrix, envelope, registry, tool_def};
+use crate::registry::{capability_matrix, envelope, tool_def};
 use crate::tools_nolock::{media_browse_tool, media_probe_tool, project_new_tool, render_probe_tool, stage_status_tool};
 use cutforge_core::anchor::{Anchor, AnchorKind};
 use cutforge_core::command::{BgmPatch, ClipPatch, Command, MotionPatch, TransitionPatch};
@@ -19,23 +19,18 @@ use std::path::{Path, PathBuf};
 
 // ---------------- 派发 ----------------
 
-/// 命令通道统一派发:所有通道(stdio/HTTP/脚本宿主)都走这里。
-/// root(工程目录)由 args["root"] 提供——工具契约的第一参数。
-/// stdio/内嵌 HTTP/脚本宿主的改动归因 agent;编辑器数据面归因 user(见 dispatch_with_actor)。
+/// 命令通道统一派发(stdio/HTTP/脚本宿主共用);root = args["root"]。
 pub fn dispatch(name: &str, args: &Value) -> Value {
     dispatch_with_actor(name, args, Actor::agent("cutforge-mcp"))
 }
 
-/// 带显式 actor 的派发。工作区数据面(编辑器壳)传 `Actor::user("editor")`,
-/// 让"人在编辑器里的手势"在 OpLog 上如实归因——RT-1 会话变更摘要
-/// (.cutforge/session-summary.json)按 actor=human 过滤的依据。
-/// 其余通道(stdio/内嵌 HTTP/脚本宿主)维持 agent 归因不变。
+/// 带显式 actor 的派发:壳传 `Actor::user("editor")`——手势在 OpLog 如实归因
+/// (RT-1 会话摘要按 actor=human 过滤);其余通道 agent 归因。
 pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     if tool_def(name).is_none() {
         return envelope(false, "INTERNAL", &format!("未知工具: {name}"), json!({}));
     }
-    // capability_matrix 是静态查询,不需要工程根
-    if name == "capability_matrix" {
+    if name == "capability_matrix" { // 静态查询,无需工程根
         return envelope(true, "OK", "能力对等矩阵(实码口径,单一真相源)", json!({
             "matrix": capability_matrix(),
         }));
@@ -45,18 +40,17 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     };
     let ws_root = PathBuf::from(root_str);
 
-    // E5/B6:render 按 backend 分派——cutforge 后端调用本地 cutforge-render 子进程,
-    // 全程不打开工作区(渲染不持排他锁);ffmpeg 后端(默认)走 CutFlow 编排,维持原路径。
-    // render_run / render_progress 同理不持锁(E5-3 异步渲染 + 轮询进度)。
-    // ass 过滤在服务端:壳无文件系统能力(壳纯度),ass 路径不存在时不烧录而非整单失败。
-    // 册四 T4.1 代理预览:useProxy 显式 opt-in(默认 false,不悄悄降质),
-    // 透传给 cutforge-render --use-proxy(缺失代理的片段回落原片)。
+    // E5/B6:render 按 backend 分派——cutforge 后端调本地 cutforge-render 子进程
+    // (不打开工作区不持锁);ffmpeg 后端(默认)走 CutFlow 编排。render_run/
+    // render_progress 同理免锁(E5-3 异步 + 轮询;T5.6 队列化)。ass 服务端过滤
+    // (壳纯度);useProxy 显式 opt-in;T5.6 渲染选项缺省零变化。
     let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
+    let render_extra = crate::progress::build_render_extra(args);
     if name == "render" && args["backend"].as_str() == Some("cutforge") {
-        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy);
+        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, &render_extra);
     }
     if name == "render_run" {
-        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy);
+        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, render_extra);
     }
     if name == "render_progress" {
         let Some(run_id) = args["runId"].as_str() else {
@@ -64,9 +58,13 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         };
         return render_progress(run_id);
     }
-    // T2.4 单帧精确预览:同步出帧(帧缓存键含工作区指纹),免开工作区不持锁
+    // T2.4 单帧精确预览:同步出帧(帧缓存键含工作区指纹),不持锁
     if name == "render_frame" {
         return render_frame_tool(&ws_root, args);
+    }
+    // 册五 T5.6 渲染队列(免开工作区;任务表为服务进程内存态)
+    if name == "render_queue" {
+        return crate::progress::render_queue_tool(&ws_root, args);
     }
 
     // ---- 免开工作区的工具(E6-3/B14:只读/创建类不持排他锁) ----
@@ -81,6 +79,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "media_thumbnail" => return crate::media_tools::media_thumbnail_tool(&ws_root, args),
         "media_proxy" => return crate::media_tools::media_proxy_tool(&ws_root, args),
         "audio_beats" => return crate::media_tools::audio_beats_tool(&ws_root, args),
+        // 册五 T5.2/T5.3/T5.6:调色 LUT/示波器/响度计/编码探测(同口径免锁)
+        "lut_import" => return crate::grade_tools::lut_import_tool(&ws_root, args),
+        "scope_data" => return crate::grade_tools::scope_data_tool(&ws_root, args),
+        "audio_loudness" => return crate::grade_tools::audio_loudness_tool(&ws_root, args),
+        "encode_probe" => return crate::grade_tools::encode_probe_tool(&ws_root, args),
+        // 册五 T5.4/T5.5:多机位同步分析(纯计算)/ OTIO 导入(从零建工程,免锁)
+        "multicam_sync" => return crate::pro_ops::multicam_sync_tool(&ws_root, args),
+        "otio_import" => return crate::pro_ops::otio_import_tool(&ws_root, args),
         _ => {}
     }
 
@@ -95,12 +101,8 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         ..Default::default()
     };
 
-    // 常驻同步守护(M9-2):外部改动 ≤1s 可见;幂等(每 root 一个线程)
-    let _ = cutforge_io::watcher::ensure_sync_daemon(&ws_root);
-    // 常驻工作区缓存(T1.8/AC-1.8 性能专项):指纹一致 → 复用已打开的 Workspace,
-    // 指纹不一致 → 重开(与既有的每笔无状态重开行为一致)。查询类仍只读零工程锁
-    // (readonly_query_holds_no_lock 铁律);写类经 open_for_write + apply 内部
-    // 临时全程锁,锁内 pre_write_sync 三路合并/冲突停写语义原样保留。
+    // 常驻同步守护(M9-2):外部改动 ≤1s 可见;常驻缓存(T1.8)指纹一致即复用。
+    // 查询类只读零锁;写类 open_for_write + apply 内临时全程锁,合并/停写语义原样。
     let readonly = is_readonly_tool(name);
     crate::resident::with_resident(root_str, &ws_root, readonly, |ws| match name {
         // ---------- 只读查询(E6-3:只读打开,不持排他锁) ----------
@@ -159,8 +161,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             Err(e) => envelope(false, "INTERNAL", &e.to_string(), json!({})),
         },
         "timeline_get" => {
-            // E2-2:扩投影——预览/检查器所需的逐 clip 字段全部由内核算好下放
-            // (endMs = start+duration 在服务端完成;壳只消费,不做时间线运算)。
+            // E2-2:投影由服务端算好下放(endMs 等);壳零时间线语义(kf 采样同此)
             envelope(true, "OK", "时间线投影", json!({
                 "clips": crate::edit_ops::timeline_projection(ws.project()),
                 "rev": ws.rev(),
@@ -169,8 +170,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
 
         // ---------- 写操作(全部经 Workspace 命令通道) ----------
         "clip_add" => {
-            // E3-1:素材导入/新建片段——内部走已存在的 Command::ClipInsert,不新增引擎逻辑;
-            // E3-2:durationMs 缺省时由 cutforge_io::probe 探测时长自动填(B12 接线)。
+            // E3-1/E3-2:走既有 Command::ClipInsert;durationMs 缺省由 probe 自动填。
             let (Some(track_id), Some(src), Some(start_ms)) = (
                 args["trackId"].as_str(), args["src"].as_str(), args["startMs"].as_u64(),
             ) else {
@@ -217,8 +217,8 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
             let p = &args["patch"];
-            // 册四 A4 T4.4/T4.9:速度曲线/倒放/旋转/裁剪/翻转(与 ClipPatch 字段面同 commit 同步;
-            // speedCurve 点集与 crop 整组替换,元素值越界由 schema 层 SCHEMA_INVALID 拒)
+            // 册四 T4.4/T4.9:速度曲线/倒放/旋转/裁剪/翻转(与 ClipPatch 字段面同
+            // commit;speedCurve/crop 整组替换,越界由 schema SCHEMA_INVALID 拒)
             let speed_curve = p["speedCurve"].as_array().map(|arr| {
                 arr.iter()
                     .filter_map(|pt| {
@@ -235,9 +235,8 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 w: p["crop"]["w"].as_u64().unwrap_or(0),
                 h: p["crop"]["h"].as_u64().unwrap_or(0),
             });
-            // 花字(册四 T4.7;收口置空语义):显式 null 或空对象 {} = 清除挂载
-            // (huazi_clear 承接,undo 可还原);非空对象 = 整对象替换,非法结构
-            // 显式拒绝(SCHEMA_INVALID,不做静默丢弃的幻觉面);字段缺席 = 不改。
+            // 花字(册四 T4.7 收口):null/{} = 清除(huazi_clear,undo 可还原);
+            // 非空 = 整替换;非法结构显式拒绝(零幻觉面);缺席 = 不改。
             let (huazi, huazi_clear) = match p.get("huazi") {
                 None => (None, false),
                 Some(Value::Null) => (None, true),
@@ -296,8 +295,60 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                         .map_err(|_| ())
                         .ok()
                 }),
-                // 文本样式/花字(册四 T4.7):整对象替换;结构非法 → None 由
-                // SCHEMA_INVALID 面?不——此处静默丢弃是幻觉面,非法结构显式拒绝。
+                // 关键帧(IR v3):整组替换;非法显式拒绝(与 textStyle/huazi 同口径)
+                keyframes: match p.get("keyframes") {
+                    None | Some(Value::Null) => None,
+                    Some(v) if v.is_array() => match serde_json::from_value(v.clone()) {
+                        Ok(kf) => Some(kf),
+                        Err(e) => {
+                            return envelope(false, "SCHEMA_INVALID",
+                                &format!("patch.keyframes 非法: {e}"), json!({}))
+                        }
+                    },
+                    _ => return envelope(false, "SCHEMA_INVALID", "patch.keyframes 必须是数组", json!({})),
+                },
+                // 片段调色(册五 T5.2):整对象替换;null/{} = 清除(同 huazi 模式)
+                grade: match p.get("grade") {
+                    None | Some(Value::Null) => None,
+                    Some(v) if v.is_object() => {
+                        if v.as_object().is_some_and(|o| o.is_empty()) {
+                            None
+                        } else {
+                            match serde_json::from_value::<cutforge_core::model::Grade>(v.clone()) {
+                                Ok(g) => Some(g),
+                                Err(e) => {
+                                    return envelope(false, "SCHEMA_INVALID",
+                                        &format!("patch.grade 非法: {e}"), json!({}))
+                                }
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        return envelope(false, "SCHEMA_INVALID", "patch.grade 必须是对象", json!({}))
+                    }
+                },
+                grade_clear: matches!(p.get("grade"), Some(Value::Null))
+                    || p.get("grade").and_then(|v| v.as_object()).is_some_and(|o| o.is_empty()),
+                // 复合片段(T5.4):整对象替换;缺席不改;显式 null 拒绝(摘除走 unbind)
+                compound: match p.get("compound") {
+                    Some(Value::Null) => {
+                        return envelope(false, "SCHEMA_INVALID",
+                            "patch.compound = null 拒绝(摘除走 compound_unbind)", json!({}))
+                    }
+                    None => None,
+                    Some(v) if v.is_object() => {
+                        match serde_json::from_value::<cutforge_core::model::CompoundSpec>(v.clone()) {
+                            Ok(c) => Some(c),
+                            Err(e) => {
+                                return envelope(false, "SCHEMA_INVALID",
+                                    &format!("patch.compound 非法: {e}(摘除走 compound_unbind)"), json!({}))
+                            }
+                        }
+                    }
+                    _ => return envelope(false, "SCHEMA_INVALID",
+                        "patch.compound 必须是对象(摘除走 compound_unbind)", json!({})),
+                },
+                // 文本样式(册四 T4.7):整对象替换;静默丢弃是幻觉面,非法显式拒绝。
                 text_style: match p.get("textStyle") {
                     None | Some(Value::Null) => None,
                     Some(v) if v.is_object() => match serde_json::from_value(v.clone()) {
@@ -371,10 +422,15 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 gain_db: args["gainDb"].as_f64(),
                 ducking: args["ducking"].as_bool(),
                 loop_: args["loop"].as_bool(),
+                // ducking 侧链参数(册五 T5.3):缺省 = 既有常量,不给即行为零变化
+                duck_threshold: args["duckThreshold"].as_f64(),
+                duck_ratio: args["duckRatio"].as_f64(),
+                duck_attack_ms: args["duckAttackMs"].as_f64(),
+                duck_release_ms: args["duckReleaseMs"].as_f64(),
             };
             if patch.is_empty() {
                 return envelope(false, "PRECONDITION_FAILED",
-                    "bgm_set 至少给 src/gainDb/ducking/loop 之一(清除背景乐用 src:null)", json!({}));
+                    "bgm_set 至少给 src/gainDb/ducking/loop/duck* 之一(清除背景乐用 src:null)", json!({}));
             }
             // 音源路径与 clip_add 同一校验(不建并行实现)
             if let Some(src) = patch.src.as_deref()
@@ -573,6 +629,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "clip_copy" => edit_ops::clip_copy_tool(ws, root_str, args),
         "clip_paste_at" => edit_ops::clip_paste_at_tool(ws, root_str, args, &actor, opts),
 
+        // ---------- 专业编辑工具(册五 T5.4;实现集中在 pro_ops) ----------
+        "compound_create" => crate::pro_ops::compound_create_tool(ws, args, &actor, opts),
+        "compound_unbind" => crate::pro_ops::compound_unbind_tool(ws, args, &actor, opts),
+        "multicam_cut" => crate::pro_ops::multicam_cut_tool(ws, args, &actor, opts),
+        "scene_detect" => crate::pro_ops::scene_detect_tool(ws, &ws_root, args, &actor, opts),
+        // 互操作导出(册五 T5.5;只读工程 + 派生物落盘,与 subtitle_export 同类)
+        "otio_export" => crate::pro_ops::otio_export_tool(ws, &ws_root, args),
+
         // ---------- 文本/字幕(册四 A4 T4.7;实现集中在 subtitle_ops) ----------
         "text_add" => subtitle_ops::text_add_tool(ws, args, &actor, opts),
         "subtitle_import" => subtitle_ops::subtitle_import_tool(ws, &ws_root, args, &actor, opts),
@@ -622,7 +686,7 @@ fn reject_to_envelope(msg: String) -> Value {
     envelope(false, code, &msg, json!({}))
 }
 
-/// 真相源文件读取(wordline/cutlist;`root` 已按 paths 双布局解析到具体文件)。
+/// 真相源文件读取(wordline/cutlist;root 按双布局解析)。
 fn read_truth(p: &Path, label: &str) -> Value {
     match std::fs::read_to_string(p) {
         Ok(text) => match serde_json::from_str::<Value>(&text) {
@@ -633,34 +697,11 @@ fn read_truth(p: &Path, label: &str) -> Value {
     }
 }
 
-/// E6-3/B14:查询类工具集合——只读打开(Workspace::open),不申请排他锁。
-/// 不在此列也不在免开工作区名单的工具 = 写操作,仍走 open_exclusive 全程锁。
-fn is_readonly_tool(name: &str) -> bool {
-    matches!(name,
-        "project_get" | "wordline_get" | "cutlist_get" | "notes_list"
-        | "oplog_tail" | "conflict_list" | "timeline_get"
-        // 册四 T4.7:字幕导出只读工程(产物落 06_成片输出,不产 Op 不改 IR)
-        | "subtitle_export")
-}
+// E6-3/B14 查询类名单(实现在 rpc.rs 同域纯移动——行数红线 A1-3)
+pub(crate) use crate::rpc::{is_readonly_tool, produces_rev_mutation};
 
-/// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。
-/// 排除:只读查询、免开工作区的静态/编排类、工程创建(不产 rev)、
-/// clip_copy(会话态剪贴板写入,不产 Op 不升 rev)。
-pub(crate) fn produces_rev_mutation(name: &str) -> bool {
-    !(is_readonly_tool(name)
-        || matches!(name,
-            "capability_matrix" | "project_new" | "render" | "render_run" | "render_progress"
-            | "render_frame"
-            | "media_probe" | "media_browse" | "render_probe" | "stage_status"
-            | "clip_copy"
-            // 册四 A4 T4.1/T4.8:派生物缓存与纯计算工具(产物非 IR,不升 rev)
-            | "media_peaks" | "media_thumbnail" | "media_proxy" | "audio_beats"
-            | "subtitle_export"))
-}
-
-/// E2-1 的 canonicalize 校验函数化:/media、/media/browse、clip_add、media_probe、
-/// media_browse 共用同一份校验(相对路径、拒 `..`、canonicalize 后仍在工程根内),
-/// 新端点禁止另造并行实现(阶段一不可回归面 + E3 风险面对策)。
+/// E2-1 的 canonicalize 校验函数化:/media、clip_add、media_probe 等共用
+/// (相对路径、拒 `..`、canonicalize 后仍在工程根内);新端点禁止另造并行实现。
 pub(crate) fn resolve_within_root(root: &Path, rel: &str) -> Result<PathBuf, &'static str> {
     if rel.is_empty() {
         return Err("路径为空");
@@ -687,8 +728,8 @@ fn next_clip_id_for(project: &cutforge_core::model::Project, track_id: &str) -> 
         .unwrap_or_else(|| format!("{track_id}-999"))
 }
 
-/// RFC7386 merge-patch 应用到 cutlist.json,schema 校验后走 record_change 审计。
-/// 文件本体由 Workspace 的 reconcile(先文件后记账)落盘——不再旁路自写。
+/// RFC7386 merge-patch 应用到 cutlist.json,schema 校验后走 record_change 审计
+/// (文件由 Workspace reconcile 先文件后记账落盘——不旁路自写)。
 fn apply_cut_merge_patch(ws: &mut Workspace, patch: &Value) -> Value {
     // cutlist 按 Workspace 盘面布局解析(新 04_粗剪决策 / 旧 04_cut)
     let rel = paths::resolve_rel(ws.root(), paths::CUTLIST_REL, paths::LEGACY_CUTLIST_REL);
@@ -723,8 +764,8 @@ fn apply_cut_merge_patch(ws: &mut Workspace, patch: &Value) -> Value {
     }
 }
 
-/// 标注操作的协议错误映射(5.4 表内码,禁止占位符):不存在/参数不合法 →
-/// PRECONDITION_FAILED;其余 → INTERNAL。
+/// 标注操作协议错误映射(5.4 表内码):不存在/参数不合法 → PRECONDITION_FAILED,
+/// 其余 → INTERNAL。
 fn notes_op_error(e: std::io::Error) -> Value {
     let code = if e.kind() == std::io::ErrorKind::NotFound || e.kind() == std::io::ErrorKind::InvalidInput {
         "PRECONDITION_FAILED"
@@ -753,47 +794,6 @@ fn merge_patch(mut target: Value, patch: &Value) -> Value {
     }
 }
 
-// ---------------- JSON-RPC 传输(两通道共用 handle_rpc) ----------------
-
-/// 处理一条 JSON-RPC 请求;通知(无 id)返回 None。
-pub fn handle_rpc(req: &Value) -> Option<Value> {
-    handle_rpc_as(req, Actor::agent("cutforge-mcp"))
-}
-
-/// 带显式 actor 的 JSON-RPC 处理:工作区数据面(编辑器壳)传 user,
-/// 使人在编辑器里的手势在 OpLog 上如实归因(RT-1 会话摘要的采集依据)。
-pub fn handle_rpc_as(req: &Value, actor: Actor) -> Option<Value> {
-    let method = req["method"].as_str()?;
-    let id = req["id"].clone();
-    if id.is_null() {
-        return None; // 通知:不回应
-    }
-    let result = match method {
-        "initialize" => json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {}},
-            "serverInfo": {"name": "cutforge-mcp", "version": env!("CARGO_PKG_VERSION")}
-        }),
-        "ping" => json!({}),
-        "tools/list" => json!({"tools": registry().iter().map(|t| json!({
-            "name": t["name"], "description": t["description"],
-            "inputSchema": t["inputSchema"],
-        })).collect::<Vec<_>>()}),
-        "tools/call" => {
-            let name = req["params"]["name"].as_str().unwrap_or("");
-            let args = req["params"]["arguments"].clone();
-            let env = dispatch_with_actor(name, &args, actor);
-            json!({
-                "content": [{"type": "text", "text": env.to_string()}],
-                "isError": env["ok"] != json!(true),
-            })
-        }
-        other => {
-            return Some(json!({
-                "jsonrpc": "2.0", "id": id,
-                "error": {"code": -32601, "message": format!("method not found: {other}")}
-            }))
-        }
-    };
-    Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
-}
+// JSON-RPC 传输面(册五 T5.2 拆分自本文件——行数红线 A1-3,纯移动;
+// `pub use` 保持 `cutforge_mcp::dispatch::handle_rpc*` 路径逐字不变)
+pub use crate::rpc::{handle_rpc, handle_rpc_as};

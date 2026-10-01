@@ -55,7 +55,7 @@ cutforge/
 ├── tools/
 │   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1–A4 已注册,决策 D-A2)
 │   ├── bench/bench.py          性能基准(T1.8;--check 阈值判定,基线 docs/bench/baseline.json)
-│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;数量以 schemas/mcp-tools.json 为准)
+│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;册五 A5 增调色/音频/队列五工具后 61;A5-BE3 增复合/多机位/场景检测/OTIO 七工具后 68;数量以 schemas/mcp-tools.json 为准)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
 │   ├── schema_gen.py           生成 tools/_generated/cf_validate.py(Python 校验器)
 │   └── validate_regression.py  回归集校验入口(16/16)
@@ -252,7 +252,7 @@ e2e_static / e2e_events / e2e_ui_smoke / e2e_playback_survival / e2e_drag_perf(`
 e2e_perf_timeline(负载敏感项均不进 CI);载体 tools/e2e_{drag_perf,hotkeys,a11y,perf_budget}.py。
 已注册 **`gate.py A4`**(册四,核心工具与媒体管线),**18 项全阻断**(A3 十五项一字不动
 全部继承,另纳册四三份新 e2e):cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/
-pytest / tool_parity(56,时点口径)/ e2e_static / e2e_events / e2e_ui_smoke /
+pytest / tool_parity(68,schema 实配口径)/ e2e_static / e2e_events / e2e_ui_smoke /
 e2e_playback_survival / e2e_drag_perf(`--min-fps 55`)/ e2e_hotkeys / e2e_a11y /
 e2e_perf_budget / e2e_perf_timeline / **e2e_editing_tools**(四件套恰一 Op+实渲逐差+
 锁定轨拒编辑)/ **e2e_subtitle_editor**(SRT byte 级往返+帧证位置+卡拉OK+花字)/
@@ -263,6 +263,16 @@ CI 只跑 M0/M1 + web-e2e(含册二 ui_smoke/playback_survival + 册三 hotkeys/
 A<n> 本机册收官跑;台账见 [A1-PROGRESS.md](A1-PROGRESS.md) /
 [A2-PROGRESS.md](A2-PROGRESS.md) / [A3-PROGRESS.md](A3-PROGRESS.md) /
 [A4-PROGRESS.md](A4-PROGRESS.md)。
+已注册 **`gate.py A5`**(册五,专业深度),**21 项全阻断**(A4 十八项一字不动全部继承,
+另纳册五两份新 e2e):cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/ pytest /
+tool_parity(68,schema 实配口径)/ e2e_static / e2e_events / e2e_ui_smoke /
+e2e_playback_survival / e2e_drag_perf(`--min-fps 55`)/ e2e_hotkeys / e2e_a11y /
+e2e_perf_budget / e2e_perf_timeline / e2e_editing_tools / e2e_subtitle_editor /
+e2e_media_perf(负载敏感项不进 CI)/ **e2e_keyframes**(AC-5.1 壳侧闭环:秒表打点单 Op/
+投影采样对拍/曲线拖锚写回/菱形拖移)/ **e2e_color**(AC-5.2 壳侧闭环:色轮写回/帧色偏/
+LUT/示波器三画布/分屏割线);载体 tools/e2e_{keyframes,color}.py;
+CI 册五新增 keyframes/color 两步(共八步),A5 本机册收官跑;台账见
+[A5-PROGRESS.md](A5-PROGRESS.md)。
 
 ## 八、观察项与已知占位(诚实清单)
 

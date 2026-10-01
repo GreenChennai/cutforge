@@ -14,6 +14,9 @@ import {
 import { buildCurveHost } from "./curve.js";
 import { buildFxStackHost } from "./fxlib.js";
 import { buildHuaziHost } from "./textool.js";
+import { buildKeyframeHost } from "./kf-editor.js";
+import { positionWatchRow } from "./kf-watch.js";
+import { buildGradeHost } from "./grade.js";
 import { ensureCatalogs, motionLists } from "../core/catalogs.js";
 import { clearTransition, applyMotionAlias } from "../core/edit-commands.js";
 import { toast } from "../ui/toast.js";
@@ -107,8 +110,8 @@ export function buildGroup(group, list, ctx) {
       for (const k of expanded) controls.push(mkControl(k, META[k] || { type: "text" }));
       continue;
     }
-    // fx / huazi / speedCurve:整对象数组编辑器走组级附加面(自持草稿,单 Op commit)
-    if (f === "fx" || f === "huazi" || f === "speedCurve") continue;
+    // fx / huazi / speedCurve / grade:整对象数组编辑器走组级附加面(自持草稿,单 Op commit)
+    if (f === "fx" || f === "huazi" || f === "speedCurve" || f === "grade") continue;
     controls.push(mkControl(f, META[f] || { type: "text" }));
   }
   // 组级附加面(自持草稿的整对象编辑器 / 提示面 / 预设条)
@@ -117,6 +120,8 @@ export function buildGroup(group, list, ctx) {
   if (group === "特效") extras.push(buildFxStackHost(ctx.rowOf));
   if (group === "转场") extras.push(transitionExtras(controls, ctx));
   if (group === "动效") extras.push(motionExtras(ctx));
+  if (group === "画面") extras.push(positionWatchRow(ctx.rowOf), buildKeyframeHost(ctx.rowOf));
+  if (group === "调色") extras.push(buildGradeHost(ctx.rowOf));
   if (group === "画面") extras.push(h("div", { class: "hint" }, [
     "变换链(内核口径):裁剪→翻转→旋转→画幅归一;punchIn/position 为只读(ui-fields readonly)。",
   ]));

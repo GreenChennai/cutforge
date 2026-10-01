@@ -48,6 +48,29 @@
     "ns": "ok",
     "ok": true
    }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "trackId": "V2",
+    "src": "01_原始素材/hardcut.mp4",
+    "startMs": 0,
+    "durationMs": 4000,
+    "requestId": "parity-add-hc"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-40"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
   }
  ]
 }

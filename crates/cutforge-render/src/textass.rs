@@ -53,11 +53,13 @@ pub fn generation_warnings(project: &Project) -> Vec<String> {
 
 /// 文本轨视图(kind=Text 且未被 mute/hidden 静默的轨;册四 BE3b:文本轨无音频,
 /// mute 语义落地为"文本静默",与 hidden 同效——定义见 schema track.mute 注记)。
+/// 册五 T5.4:调整层(kind=Adjust)上的文本片段同通道纳入——调整层语义 =
+/// 作用于下方全部轨的顶层叠加,与文本轨烧录通道完全同源。
 pub fn text_tracks(project: &Project) -> Vec<&Track> {
     project
         .tracks
         .iter()
-        .filter(|t| t.kind == TrackKind::Text)
+        .filter(|t| t.kind == TrackKind::Text || t.kind == TrackKind::Adjust)
         .filter(|t| !(t.mute.unwrap_or(false) || t.hidden.unwrap_or(false)))
         .collect()
 }

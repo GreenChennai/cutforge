@@ -347,8 +347,9 @@ fn new_project_cmd(a: &Args) -> i32 {
                 "video" => cutforge_core::model::TrackKind::Video,
                 "audio" => cutforge_core::model::TrackKind::Audio,
                 "text" => cutforge_core::model::TrackKind::Text,
+                "adjust" => cutforge_core::model::TrackKind::Adjust,
                 other => return emit(a.json, false, "PRECONDITION_FAILED",
-                    &format!("未知轨道类型: {other}(允许 video/audio/text)"), serde_json::json!({})),
+                    &format!("未知轨道类型: {other}(允许 video/audio/text/adjust)"), serde_json::json!({})),
             };
             kinds.push(kind);
         }

@@ -2,16 +2,18 @@
 //! 段提取纯函数(步 2 segment;册四 A4-BE2 自 steps.rs 纯移动成模块——行数红线
 //! A1-3,接口经 steps.rs `pub use` 保持 `steps::segment_*` 路径兼容)。
 //!
-//! 段剪辑链的**叠加顺序**(册四 T4.4/T4.9 + BE3a T4.5/T4.6 定案,链图):
+//! 段剪辑链的**叠加顺序**(册四 T4.4/T4.9 + BE3a T4.5/T4.6 定案,链图;册五 T5.2 增 grade):
 //!
 //! ```text
 //! [源] → crop(源像素域裁剪) → flip(h/v) → rotate(±任意角;±90=transpose 精确互换)
-//!      → scale+pad+fps(画幅归一) → punchIn(中心紧构图) → fx.combo(整段特效栈)
+//!      → scale+pad+fps(画幅归一) → punchIn(中心紧构图) → grade(一级/二级调色,LUT 收尾)
+//!      → fx.combo(整段特效栈)
 //!      → reverse(倒放,PTS 重盖) → 变速(单段 setpts / 曲线多段 trim·setpts·fps·concat)
 //!      → motion(入场/出场动画,播放域) → tpad(定格补长+转场尾帧)
 //! ```
 //!
-//! fx 在变换后/变速前(空间域特效与倒放/变速可交换);motion 在变速后/tpad 前
+//! fx 在变换后/变速前(空间域特效与倒放/变速可交换);grade 挂 fx 前(调色喂给
+//! 特效,链内序与定档理由见 grade 模块注释);motion 在变速后/tpad 前
 //! (入场/出场时窗按播放域计;定格克隆发生在动画完成之后)。
 //!
 //! 本文件**不启动任何进程**:全部函数只做输入 → ffmpeg 参数的映射,可在不装
@@ -61,7 +63,11 @@ pub fn transform_pre_chain(clip: &Clip) -> String {
         Some("v") => filters.push("vflip".into()),
         _ => {}
     }
-    if let Some(deg) = clip.rotation {
+    if let Some(kf_rot) = crate::kf_expr::kf_rotate_filter(clip) {
+        // rotation 关键帧(IR v3):keyframed 逐帧覆盖静态值——表达式 rotate 直接
+        // 替换静态档(±90 transpose 精确互换只属静态;连续角无此形态)
+        filters.push(kf_rot);
+    } else if let Some(deg) = clip.rotation {
         let e = deg.rem_euclid(360.0);
         if (e - 90.0).abs() < 1e-9 {
             filters.push("transpose=1".into());
@@ -108,8 +114,8 @@ fn punch_chain(plan: &RenderPlan, clip: &Clip) -> String {
 }
 
 /// 段剪辑链(简单形态:速度为单恒速段,即无曲线或单点曲线):
-/// 画幅归一(scale+pad+fps)→ punch-in → fx.combo → reverse → 变速 setpts
-/// → motion → 尾帧/定格 tpad。
+/// 画幅归一(scale+pad+fps)→ punch-in → grade(调色,T5.2)→ fx.combo → reverse
+/// → 变速 setpts → motion → 尾帧/定格 tpad。
 /// 无新字段时输出与拆分前的既有链**逐字一致**(parity 夹具锁定的兼容红线)。
 pub fn segment_filter(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> String {
     let fps = plan.fps;
@@ -121,6 +127,12 @@ pub fn segment_filter(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> String {
     }
     vf.push_str(&base_filters(plan));
     vf.push_str(&punch_chain(plan, clip));
+    // grade 调色(册五 T5.2):变换后、fx 前(链图定档见 grade 模块注释)
+    let (grade, _) = crate::grade::grade_chain(clip, &plan.project_dir);
+    if !grade.is_empty() {
+        vf.push(',');
+        vf.push_str(&grade);
+    }
     // fx.combo 整段特效栈(册四 T4.6):变换后/变速前(空间域,与 reverse 可交换)
     let (fx, _) = crate::catalog::fx_chain(clip, plan.canvas_w, plan.canvas_h, plan.fps);
     if !fx.is_empty() {
@@ -154,6 +166,12 @@ pub fn segment_filter(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> String {
 /// 重锁 fps,再 concat 回单流,最后 tpad 补定格/尾帧。总输出时长 = Σ段长 =
 /// durationMs(投影端 endMs 与渲染端时长一致性的实现本体)。
 pub fn segment_filter_complex(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> Option<String> {
+    // 关键帧段图(IR v3,T5.1):任一视觉类关键帧(position/scale/rotation/opacity/
+    // fx 参数)存在即走专用段图构建(kf_expr 单源编译;rotation 虽可单滤镜表达,
+    // 统一入图免双路径漂移)。无关键帧 = 既有路径逐字不变(parity 红线)。
+    if crate::kf_expr::has_visual_keyframes(clip) {
+        return segment_filter_complex_kf(plan, clip, tail_ms);
+    }
     let segs = play_segments(clip);
     if segs.len() <= 1 {
         return None;
@@ -167,6 +185,12 @@ pub fn segment_filter_complex(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> O
     }
     head.push_str(&base_filters(plan));
     head.push_str(&punch_chain(plan, clip));
+    // grade 调色(册五 T5.2):归一后、split 前(作用于整段源流)
+    let (grade, _) = crate::grade::grade_chain(clip, &plan.project_dir);
+    if !grade.is_empty() {
+        head.push(',');
+        head.push_str(&grade);
+    }
     // fx.combo(册四 T4.6):归一后、split 前(作用于整段源流)
     let (fx, _) = crate::catalog::fx_chain(clip, plan.canvas_w, plan.canvas_h, plan.fps);
     if !fx.is_empty() {
@@ -210,6 +234,122 @@ pub fn segment_filter_complex(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> O
     } else {
         // 无 pad 有动画:concat+motion 直出为 vout
         parts.push(format!("{concat}{motion}[vout]"));
+    }
+    Some(parts.join(";"))
+}
+
+/// 关键帧段图(IR v3,T5.1;ADR-0018 表达式路线的段内落点):
+///
+/// ```text
+/// [源] → crop → flip → rotate(kf 表达式,源域) → scale+pad+fps(归一)
+///      → punchIn → zoompan(kf scale,源域) → fx.combo(kf sendcmd/segment 分支)
+///      → reverse → 变速(kf speed 已并入 speed_segments;单段 setpts / 多段图)
+///      → kf 合成块(黑底 overlay:opacity geq + position 表达式;播放域)
+///      → motion → tpad
+/// ```
+///
+/// 域纪律(kf_expr 模块注释):空间变换(rotation/scale)挂变速之前 = 源域 t,
+/// 播放域锚点经 play_to_source 折算;合成包络(opacity/position)挂变速之后 =
+/// 播放域 t,锚点零折算——先于 reverse 会被倒放镜像,先于变速会随速度拉伸。
+/// 无关键帧的 clip 不进本函数(既有路径逐字不变,parity 红线)。
+pub fn segment_filter_complex_kf(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> Option<String> {
+    let fps = plan.fps;
+    let (w, h) = (plan.canvas_w, plan.canvas_h);
+    let mut parts: Vec<String> = Vec::new();
+    let mut head = String::new();
+    let pre = transform_pre_chain(clip);
+    if !pre.is_empty() {
+        head.push_str(&pre);
+        head.push(',');
+    }
+    head.push_str(&base_filters(plan));
+    head.push_str(&punch_chain(plan, clip));
+    if let Some(zp) = crate::kf_expr::kf_zoompan_filter(clip, plan) {
+        head.push(',');
+        head.push_str(&zp);
+    }
+    // grade 调色(册五 T5.2):变换后、fx 前(与简单链同位;静态逐像素,不占 kf 通道)
+    let (grade, _) = crate::grade::grade_chain(clip, &plan.project_dir);
+    if !grade.is_empty() {
+        head.push(',');
+        head.push_str(&grade);
+    }
+    // fx 链三形态:sendcmd 命令序列 / segment 分支重建(推迟到 head 落标签后)/ 静态既有链
+    let (fx, _) = crate::catalog::fx_chain(clip, w, h, fps);
+    let seg_fx = crate::kf_expr::fx_keyframe_segments(clip, w, h, fps);
+    if let Some((sc, _)) = crate::kf_expr::fx_keyframe_sendcmd(clip, w, h, fps) {
+        head.push(',');
+        head.push_str(&sc);
+    } else if !fx.is_empty() && seg_fx.is_none() {
+        head.push(',');
+        head.push_str(&fx);
+    }
+    parts.push(format!("[0:v]{head}[k0]"));
+    let mut cur = "k0".to_string();
+    // segment 态 fx:split → 每段 trim+重基+常量链 → concat(段界 = 关键帧锚点)
+    if let Some((bounds, chains)) = seg_fx {
+        let n = chains.len();
+        let splits: Vec<String> = (0..n).map(|i| format!("[sf{i}]")).collect();
+        parts.push(format!("[{cur}]split={n}{}", splits.join("")));
+        let mut refs = String::new();
+        for (i, chain) in chains.iter().enumerate() {
+            let (a, b) = (bounds[i], bounds[i + 1]);
+            refs.push_str(&format!("[bf{i}]"));
+            parts.push(format!(
+                "[sf{i}]trim=start={a:.6}:end={b:.6},setpts=PTS-STARTPTS,{chain}[bf{i}]"
+            ));
+        }
+        parts.push(format!("{refs}concat=n={n}:v=1:a=0[kc]"));
+        cur = "kc".to_string();
+    }
+    if clip.reverse.unwrap_or(false) {
+        parts.push(format!("[{cur}]reverse,setpts=N/FRAME_RATE/TB[kr]"));
+        cur = "kr".to_string();
+    }
+    // 变速(播放域从此开始):多段图 / 单段 setpts+fps 重锁 / 恒速直通
+    let segs = play_segments(clip);
+    let speed = segs.last().map(|(_, _, s)| *s).unwrap_or(1.0);
+    if segs.len() > 1 {
+        let n = segs.len();
+        let splits: Vec<String> = (0..n).map(|i| format!("[sp{i}]")).collect();
+        parts.push(format!("[{cur}]split={n}{}", splits.join("")));
+        let mut refs = String::new();
+        let mut x = 0f64;
+        for (i, (a, b, s)) in segs.iter().enumerate() {
+            let x0 = x / 1000.0;
+            x += (*b - *a) as f64 * s;
+            let x1 = x / 1000.0;
+            refs.push_str(&format!("[sc{i}]"));
+            parts.push(format!(
+                "[sp{i}]trim=start={x0:.6}:end={x1:.6},setpts=(PTS-STARTPTS)/{},fps={fps}[sc{i}]",
+                crate::steps::fmt_f64(*s)
+            ));
+        }
+        parts.push(format!("{refs}concat=n={n}:v=1:a=0[vs]"));
+        cur = "vs".to_string();
+    } else if speed != 1.0 {
+        parts.push(format!("[{cur}]setpts=PTS/{},fps={fps}[vs]", crate::steps::fmt_f64(speed)));
+        cur = "vs".to_string();
+    }
+    // kf 合成块(opacity/position;播放域,黑底画布宿主)
+    if let Some(graph) = crate::kf_expr::kf_composite_block(clip, plan, &cur, "kp") {
+        parts.push(graph);
+        cur = "kp".to_string();
+    }
+    // motion + tpad(与既有链同序:动画后定格补长);全空 → null 直通
+    // (标签→标签空接非法,且 -map 固定吃 [vout])
+    let (mo_in, mo_out, _) = crate::catalog::motion_chains(clip, w, h, fps);
+    let motion: String = [mo_in, mo_out].iter().filter(|c| !c.is_empty()).map(|c| format!(",{c}")).collect();
+    let pad_ms = segment_pad_ms(clip, tail_ms);
+    if pad_ms > 0.0 {
+        parts.push(format!(
+            "[{cur}]{motion}tpad=stop_mode=clone:stop_duration={:.6}[vout]",
+            pad_ms / 1000.0
+        ));
+    } else if motion.is_empty() {
+        parts.push(format!("[{cur}]null[vout]"));
+    } else {
+        parts.push(format!("[{cur}]{motion}[vout]"));
     }
     Some(parts.join(";"))
 }

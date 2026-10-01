@@ -1,11 +1,13 @@
 /* BGM 面板(T2.5,v0.6 对拍):bgm_set / bgm_clear(工程级,可撤销)。
  * 册四 T4.8 增:卡点(audio_beats 纯计算 → 会话节拍;列表/置信度诚实展示;
- * 节拍入统一吸附候选 + 标尺 scrub 播放头吸附,见 gesture-kit/gestures)。 */
+ * 节拍入统一吸附候选 + 标尺 scrub 播放头吸附,见 gesture-kit/gestures)。
+ * 册五 A5-FE2 增(T5.3):ducking 参数化四字段(bgm_set duck*;缺省=既有常量
+ * 0.03/8/80/500,行为零变化),折叠组收放。 */
 import { h, clear } from "../ui/dom.js";
 import { projectStore, ephemeralStore } from "../core/store.js";
 import { setBgm, clearBgm } from "../core/commands.js";
 import { detectBeats, clearBeats } from "../core/edit-commands.js";
-import { numberField, toggleField } from "../ui/controls.js";
+import { numberField, toggleField, collapseGroup } from "../ui/controls.js";
 
 let srcInput = null;
 let gainField = null;
@@ -13,6 +15,15 @@ let duckT = null;
 let loopT = null;
 let stateEl = null;
 let beatsBox = null;
+let duckFields = null;
+
+/** ducking 四字段(schema 缺省 = 既有常量,逐字一致)。 */
+const DUCK_DEFS = [
+  ["duckThreshold", "侧链阈值(线性,0.001..1)", 0.03, 0.001, 1, 0.01],
+  ["duckRatio", "比例(1..20)", 8, 1, 20, 1],
+  ["duckAttackMs", "启动 ms(1..1000)", 80, 1, 1000, 10],
+  ["duckReleaseMs", "释放 ms(10..5000)", 500, 10, 5000, 50],
+];
 
 export function mount(container) {
   container.appendChild(h("h3", null, ["背景乐 BGM(bgm_set,可撤销)"]));
@@ -33,6 +44,17 @@ export function mount(container) {
     h("button", { id: "bgm-clear", testid: "bgm-clear", onclick: () => apply(true) }, ["清除"]),
     stateEl,
   ]));
+
+  /* ducking 参数化(T5.3):四字段折叠组;应用 = bgm_set 同笔携带(缺省=既有常量) */
+  duckFields = DUCK_DEFS.map(([k, lab, dflt, min, max, step]) => {
+    const f = numberField({ testid: `bgm-${k}`, step, min, max });
+    f.set(dflt);
+    return [k, lab, f, dflt];
+  });
+  container.appendChild(collapseGroup("闪避参数(高级;ducking 侧链)", [
+    ...duckFields.map(([, lab, f]) => h("label", { class: "v2-field" }, [lab, f.root])),
+    h("div", { class: "hint" }, ["缺省 = 既有常量(0.03/8/80/500),不填即行为零变化;随「应用 BGM」同笔提交。"]),
+  ], { open: false }));
 
   /* ---- 卡点(audio_beats;纯计算不落盘,节拍为会话态) ---- */
   const sens = numberField({ testid: "beats-sensitivity", min: 0, max: 1, step: 0.1 });
@@ -61,13 +83,26 @@ export function mount(container) {
     + "标尺 scrub 自动吸附最近拍。会话态,刷新即失。",
   ]));
 
-  // 投影到达 → 回填工程 BGM 态(旧壳 refreshBgm 口径:每次 refresh 均回填)
+  // 投影到达 → 回填工程 BGM 态(旧壳 refreshBgm 口径:每次 refresh 均回填)。
+  // A4-L15 竞态根治(焦点守卫):上一笔 op 的 reproject 恰落在「填草稿 → 点应用」
+  // 窗口内时,fillFrom 曾以工程值覆盖输入框 → 草稿被清空 → 本笔点击发空值。
+  // 口径:草稿编辑中(面板任一控件持焦点)的投影回填跳过——草稿归用户,投影只回填
+  // 非编辑态;点应用后焦点移出控件,回填恢复,应用值照常进框。__reset__(切工程)
+  // 不守卫:旧工程草稿无保护价值,强制回填。
   projectStore.subscribe((patch, st) => {
-    if (patch.project !== undefined || patch.__reset__) fillFrom(st.project);
+    if (patch.__reset__ || (patch.project !== undefined && !userEditing())) fillFrom(st.project);
   });
   ephemeralStore.subscribe((patch) => { if (patch.beats !== undefined) renderBeats(); });
   fillFrom(projectStore.get().project);
   renderBeats();
+}
+
+/** 面板任一输入控件持焦点 = 用户草稿编辑中(fillFrom 不得覆盖)。 */
+function userEditing() {
+  const ae = document.activeElement;
+  const duckFocused = (duckFields || []).some(([, , f]) => ae === f.input);
+  return !!ae && (ae === srcInput || ae === gainField.input
+    || ae === duckT.input || ae === loopT.input || duckFocused);
 }
 
 function fillFrom(project) {
@@ -76,6 +111,9 @@ function fillFrom(project) {
   gainField.set(bgm && bgm.gainDb !== undefined ? bgm.gainDb : -18);
   duckT.set(bgm ? bgm.ducking !== false : true);
   loopT.set(bgm ? bgm.loop !== false : true);
+  for (const [k, , f, dflt] of duckFields || []) {
+    f.set(bgm && bgm[k] !== undefined ? bgm[k] : dflt);
+  }
   stateEl.textContent = bgm && bgm.src
     ? `当前:${String(bgm.src).split(/[\\/]/).pop()}(${bgm.gainDb ?? -18}dB)`
     : "(未设置)";
@@ -107,10 +145,20 @@ function apply(clear_) {
     clearBgm();
     return;
   }
+  // ducking 四字段:与工程现值/缺省一致时不下发(缺省 = 既有常量,行为零变化)
+  const bgm = projectStore.get().project?.bgm;
+  const duck = {};
+  for (const [k, , f, dflt] of duckFields || []) {
+    const v = Number(f.get());
+    if (f.get() !== "" && !Number.isNaN(v) && v !== (bgm && bgm[k] !== undefined ? bgm[k] : dflt)) {
+      duck[k] = v;
+    }
+  }
   setBgm({
     src: srcInput.value.trim(),
     gainDb: Number(gainField.get()),
     ducking: duckT.get(),
     loop: loopT.get(),
+    ...(Object.keys(duck).length ? { duck } : {}),
   });
 }

@@ -80,6 +80,52 @@
     "ns": "ok",
     "ok": true
    }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipId": "V1-001",
+    "patch": {
+     "grade": {
+      "lift": [
+       0.2,
+       0.0,
+       -0.1
+      ],
+      "saturation": 1.2,
+      "curves": {
+       "master": [
+        [
+         0.0,
+         0.0
+        ],
+        [
+         0.5,
+         0.7
+        ],
+        [
+         1.0,
+         1.0
+        ]
+       ]
+      },
+      "lut": ".cutforge/luts/test.cube"
+     }
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-35"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
   }
  ]
 }

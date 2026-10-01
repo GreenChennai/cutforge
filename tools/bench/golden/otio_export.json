@@ -1,0 +1,46 @@
+{
+ "tool": "otio_export",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "format": "otio"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "bytes": 10700,
+     "format": "otio",
+     "media": "06_成片输出/parity-main.otio",
+     "out": "06_成片输出/parity-main.otio",
+     "warnings": [
+      "轨 T1(T) 在 OTIO 子集外(仅 Video/Audio),导出略过(留痕不静默丢);"
+     ]
+    },
+    "message": "互操作导出完成(otio)",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/wsimport",
+    "format": "otio",
+    "out": "06_成片输出/roundtrip.otio"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "bytes": 10700,
+     "format": "otio",
+     "media": "06_成片输出/roundtrip.otio",
+     "out": "06_成片输出/roundtrip.otio",
+     "warnings": []
+    },
+    "message": "互操作导出完成(otio)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

@@ -379,13 +379,14 @@ def bench_render(serve: Serve, root: Path, ffprobe: str | None, iters: int = 3) 
         if not rr.get("ok"):
             raise SystemExit(f"FAIL: render_run: {rr}")
         run_id = rr["data"]["runId"]
-        state, err = "running", None
+        state, err = "queued", None
         while True:
             s = serve.call("render_progress", {"root": root_s, "runId": run_id}, timeout=10)
             state = s["data"]["state"]
             output = s["data"].get("output")
             err = s["data"].get("error")
-            if state != "running":
+            # 册五 T5.6 队列化:queued 为合法暂态(入队→worker ≤50ms 派发),非终态
+            if state not in ("running", "queued"):
                 break
             time.sleep(0.25)
         ms = (time.perf_counter() - t0) * 1000.0

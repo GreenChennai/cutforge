@@ -30,7 +30,13 @@ import * as transitions from "./panels/transitions.js";
 import * as fxlib from "./panels/fxlib.js";
 import * as subtitles from "./panels/subtitles.js";
 import * as textool from "./panels/textool.js";
+import * as mixer from "./panels/mixer.js";
+import * as multicam from "./panels/multicam.js";
+import * as scenetool from "./panels/scenetool.js";
+import * as queue from "./panels/queue.js";
 import { mountPreviewTransform } from "./render/preview-transform.js";
+import { mountScopes } from "./panels/scopes.js";
+import { mountCompare } from "./panels/compare.js";
 import { ensureCatalogs } from "./core/catalogs.js";
 import { openWizard } from "./panels/wizard.js";
 import { mountOnboarding } from "./ui/onboarding.js";
@@ -50,7 +56,13 @@ async function boot() {
   bgm.mount($("bgm-panel")); expanel.mount($("export"));
   history.mount($("tab-history")); notes.mount($("tab-notes")); diff.mount($("tab-diff")); conflicts.mount($("tab-conflicts"));
   transitions.mount($("tab-transitions")); fxlib.mountFxPanel($("tab-fx")); subtitles.mount($("tab-subtitles"));
+  // 册五 A5-FE2 三页签:混音台(T5.3)/ 多机位+场景检测(T5.4)/ 渲染队列(T5.6)
+  mixer.mount($("tab-mixer"));
+  multicam.mount($("tab-multicam")); scenetool.mount($("tab-multicam"));
+  queue.mount($("tab-queue"));
   mountPreviewTransform(); // 画布变换把手层(缩放/旋转/文本拖位置;T4.9)
+  mountScopes(); // 示波器面板(T5.2:入口按钮挂预览传输行;开启才采样)
+  mountCompare(); // A/B 分屏对比(T5.2 登记项:基准帧快照 vs 当前帧,拖割线)
   textool.mountToolbarButton(); // 工具栏「T 文本」按钮(键位 T 见 keymap)
   mountMediaPool(); // 宿主 #pv-media 由 preview 面板提供,此处只做绑定校验
   mountPreviewLoop(); // 媒体池对齐 + 预览循环(播放解耦核心)
@@ -136,5 +148,7 @@ function switchTabNow(tab) {
   if (tab === "diff") diff.refresh();
   if (tab === "conflicts") conflicts.refresh();
   if (tab === "subtitles") subtitles.refresh();
+  if (tab === "mixer") mixer.renderTracks();
+  if (tab === "queue") queue.refresh();
 }
 boot();

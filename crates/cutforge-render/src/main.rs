@@ -25,6 +25,8 @@ fn main() {
     let mut frame_ms: Option<u64> = None;
     let mut fmt = cutforge_render::FrameFormat::Png;
     let mut use_proxy = false;
+    // 册五 T5.6 渲染选项(缺省 = 现行为零变化)
+    let mut opts = cutforge_render::plan::RenderOptions::default();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -39,12 +41,28 @@ fn main() {
             }
             // 册四 T4.1 代理预览(显式 opt-in;缺失代理的片段回落原片)
             "--use-proxy" => use_proxy = true,
+            // 册五 T5.6:编码器(auto|hw|sw)/质量预设/显式参数面/响度目标/命令回显
+            "--encoder" => opts.encoder = args.get(i + 1).map(String::from),
+            "--quality" => opts.quality = args.get(i + 1).map(String::from),
+            "--crf" => opts.crf = args.get(i + 1).and_then(|v| v.parse::<u32>().ok()),
+            "--bitrate" => opts.bitrate_kbps = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()),
+            "--gop" => opts.gop = args.get(i + 1).and_then(|v| v.parse::<u32>().ok()),
+            "--pix-fmt" => opts.pix_fmt = args.get(i + 1).map(String::from),
+            "--loudnorm-target" => {
+                // "I:TP" 形(如 "-16:-1.5");只给 I 亦合法
+                if let Some(v) = args.get(i + 1) {
+                    let mut it = v.split(':').filter_map(|n| n.parse::<f64>().ok());
+                    opts.loudnorm_i = it.next();
+                    opts.loudnorm_tp = it.next();
+                }
+            }
+            "--verbose-cmd" => opts.verbose_cmd = true,
             _ => {}
         }
         i += 1;
     }
     let Some(root) = root else {
-        eprintln!("用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>] [--frame <atMs> [--format png|jpeg]] [--use-proxy]");
+        eprintln!("用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>] [--frame <atMs> [--format png|jpeg]] [--use-proxy] [--encoder auto|hw|sw] [--quality fast|balanced|quality] [--crf N] [--bitrate K] [--gop N] [--pix-fmt F] [--loudnorm-target I[:TP]] [--verbose-cmd]");
         std::process::exit(3);
     };
     if let Some(at_ms) = frame_ms {
@@ -63,7 +81,7 @@ fn main() {
         }
         return;
     }
-    // 整片模式(原路径,行为零变化)
+    // 整片模式(原路径行为零变化;新选项显式给定才分叉)
     let project = match load_project_from_disk(&root) {
         Ok(p) => p,
         Err(e) => {
@@ -71,11 +89,14 @@ fn main() {
             std::process::exit(if e.starts_with("SCHEMA_INVALID") { 2 } else { 3 });
         }
     };
-    let outcome = if use_proxy {
-        cutforge_render::render_with(&project, Path::new(&root), ass.as_deref(), true, &mut cutforge_render::write_progress)
-    } else {
-        cutforge_render::render(&project, Path::new(&root), ass.as_deref(), &mut cutforge_render::write_progress)
-    };
+    let outcome = cutforge_render::render_with_opts(
+        &project,
+        Path::new(&root),
+        ass.as_deref(),
+        use_proxy,
+        opts,
+        &mut cutforge_render::write_progress,
+    );
     match outcome {
         Ok(outcome) => {
             for (step, ok) in &outcome.steps {

@@ -191,11 +191,11 @@ TRACK_LETTER = {{"video": "V", "audio": "A", "text": "T"}}
 
 
 def migrate_project_v1_to_v2(doc: dict) -> dict:
-    """v1→v2 迁移(计划书 3.3):幂等——对同一输入迁移两次,结果相等。"""
+    """v1→最新契约迁移(计划书 3.3;册五 T5.1 目标版本 3.0.0):幂等——对同一输入迁移两次,结果相等。"""
     if not isinstance(doc, dict):
         raise ValueError("project 文档必须是 object")
     out = copy.deepcopy(doc)
-    out.setdefault("schemaVersion", "2.0.0")
+    out.setdefault("schemaVersion", "3.0.0")
     out.setdefault("backends", ["ffmpeg"])
     out.setdefault("notes", "notes.json")
     for ti, track in enumerate(out.get("tracks", [])):

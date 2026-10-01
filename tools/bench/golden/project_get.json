@@ -55,6 +55,10 @@
        "cutforge"
       ],
       "bgm": {
+       "duckAttackMs": 40.0,
+       "duckRatio": 6.0,
+       "duckReleaseMs": 300.0,
+       "duckThreshold": 0.05,
        "ducking": true,
        "gainDb": -12.0,
        "loop": true,
@@ -74,6 +78,31 @@
          {
           "denoise": "mid",
           "durationMs": 1800,
+          "grade": {
+           "curves": {
+            "master": [
+             [
+              0.0,
+              0.0
+             ],
+             [
+              0.5,
+              0.7
+             ],
+             [
+              1.0,
+              1.0
+             ]
+            ]
+           },
+           "lift": [
+            0.2,
+            0.0,
+            -0.1
+           ],
+           "lut": ".cutforge/luts/test.cube",
+           "saturation": 1.2
+          },
           "huazi": {
            "template": "hz.pop"
           },
@@ -135,6 +164,20 @@
           "src": "01_原始素材/take1.mp4",
           "startMs": 15000,
           "volume": 1.0
+         },
+         {
+          "durationMs": 1500,
+          "id": "V1-006",
+          "sourceInMs": 0,
+          "src": "01_原始素材/take1.mp4",
+          "startMs": 20000
+         },
+         {
+          "durationMs": 2500,
+          "id": "V1-007",
+          "sourceInMs": 1750,
+          "src": "01_原始素材/take2.mp4",
+          "startMs": 21500
          }
         ],
         "id": "V1",
@@ -149,6 +192,23 @@
           "src": "01_原始素材/sfx.mp3",
           "startMs": 500,
           "volume": 0.8
+         }
+        ],
+        "dyn": {
+         "ratio": 4.0,
+         "thresholdDb": -24.0
+        },
+        "eq": [
+         {
+          "freq": 200.0,
+          "gain": -6.0,
+          "q": 1.0,
+          "type": "peaking"
+         },
+         {
+          "freq": 8000.0,
+          "gain": 3.0,
+          "type": "highshelf"
          }
         ],
         "id": "A1",
@@ -200,6 +260,26 @@
         "id": "T1",
         "kind": "text",
         "name": "字幕轨"
+       },
+       {
+        "clips": [
+         {
+          "durationMs": 2000,
+          "id": "V2-001",
+          "sourceInMs": 0,
+          "src": "01_原始素材/hardcut.mp4",
+          "startMs": 0
+         },
+         {
+          "durationMs": 2000,
+          "id": "V2-002",
+          "sourceInMs": 2000,
+          "src": "01_原始素材/hardcut.mp4",
+          "startMs": 2000
+         }
+        ],
+        "id": "V2",
+        "kind": "video"
        }
       ],
       "version": 1

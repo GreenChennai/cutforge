@@ -300,7 +300,7 @@ export function redo(batch = 1) {
 
 /* ---------------- BGM(工程级,bgm_set/bgm_clear) ---------------- */
 
-export function setBgm({ src, gainDb, ducking, loop }) {
+export function setBgm({ src, gainDb, ducking, loop, duck }) {
   return enqueue(async () => {
     if (!src) {
       toast("先填 BGM 音频路径(或从素材面板选)", false);
@@ -310,6 +310,7 @@ export function setBgm({ src, gainDb, ducking, loop }) {
     if (gainDb !== undefined && !Number.isNaN(gainDb)) args.gainDb = gainDb;
     if (ducking !== undefined) args.ducking = ducking;
     if (loop !== undefined) args.loop = loop;
+    if (duck) Object.assign(args, duck); // ducking 参数化(T5.3):duckThreshold/Ratio/AttackMs/ReleaseMs
     const env = await call("bgm_set", args);
     if (env.ok) {
       await reproject();

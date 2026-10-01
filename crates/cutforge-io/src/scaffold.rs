@@ -24,7 +24,7 @@ pub fn canvas_dim_allowed(v: u32) -> bool {
     (CANVAS_MIN_DIM..=CANVAS_MAX_DIM).contains(&v) && v.is_multiple_of(2)
 }
 
-/// 生成最小合法 IR(version 恒 1 + schemaVersion "2.0.0" + canvas/fps + 空轨道)。
+/// 生成最小合法 IR(version 恒 1 + schemaVersion "3.0.0"(IR v3,册五 T5.1)+ canvas/fps + 空轨道)。
 /// 轨道按 `track_kinds` 顺序确定性生成 id(V1/A1/T1…);clips 恒为空数组。
 /// 模板必须先过 v2 契约校验才允许落盘——"没有 schema 支撑的字段不存在"。
 pub fn new_project_value(
@@ -50,21 +50,23 @@ pub fn new_project_value(
     let mut count_v: u32 = 0;
     let mut count_a: u32 = 0;
     let mut count_t: u32 = 0;
+    let mut count_x: u32 = 0;
     for kind in track_kinds {
         // 同类多轨:序号按 kind 计数递增(V1/V2…),与 Project::next_track_id 规则一致
         let (letter, c) = match kind {
             K::Video => { count_v += 1; ('V', count_v) }
             K::Audio => { count_a += 1; ('A', count_a) }
             K::Text => { count_t += 1; ('T', count_t) }
+            K::Adjust => { count_x += 1; ('X', count_x) }
         };
         let id = format!("{letter}{c}");
         tracks.push(serde_json::json!({"id": id, "kind": match kind {
-            K::Video => "video", K::Audio => "audio", K::Text => "text",
+            K::Video => "video", K::Audio => "audio", K::Text => "text", K::Adjust => "adjust",
         }, "clips": []}));
     }
     let v = serde_json::json!({
         "version": 1,
-        "schemaVersion": "2.0.0",
+        "schemaVersion": "3.0.0",
         "slug": slug.trim(),
         "fps": fps,
         "canvas": {"width": width, "height": height},

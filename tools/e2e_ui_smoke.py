@@ -190,21 +190,21 @@ def ui_rev_eq(page, val: int, timeout: int = 10000) -> None:
 
 
 def ui_edit_until_rev(page, port_: int, token_: str, root_: str, field_testid: str,
-                      value: str, apply_testid: str, prev: int, attempts: int = 3,
-                      window_s: float = 4.0) -> None:
-    """UI 填字段 → 点应用 → 等服务端 rev 变化;失败重试。
+                      value: str, apply_testid: str, prev: int, window_s: float = 4.0) -> None:
+    """UI 填字段 → 点应用 → 等服务端 rev 变化(单次,无重试)。
 
-    重试兜底的竞态:bgm 面板在每笔投影到达时以工程值回填输入框(fillFrom),
-    若上一笔 op 的 reproject 尚未到达,fill 的草稿会被清空 → 本笔点击无效果。"""
-    for _ in range(attempts):
-        page.fill(f'[data-testid="{field_testid}"]', value)
-        page.click(f'[data-testid="{apply_testid}"]')
-        deadline = time.time() + window_s
-        while time.time() < deadline:
-            if rpc(port_, token_, "project_get", {"root": root_})["data"]["rev"] != prev:
-                return
-            time.sleep(0.15)
-    raise AssertionError(f"UI 编辑 {field_testid}={value} 在 {attempts} 次尝试后未落账")
+    A4-L15 根治后撤重试兜底:bgm 面板 fillFrom 竞态(上一笔 op 的 reproject 在
+    「填草稿 → 点应用」窗口内到达,以工程值清空草稿 → 点击发空值)已以焦点守卫
+    根治(bgm.js:编辑中投影回填跳过),重试不再需要——本助手退化为线性步骤,
+    竞态复发即 e2e 直接红。"""
+    page.fill(f'[data-testid="{field_testid}"]', value)
+    page.click(f'[data-testid="{apply_testid}"]')
+    deadline = time.time() + window_s
+    while time.time() < deadline:
+        if rpc(port_, token_, "project_get", {"root": root_})["data"]["rev"] != prev:
+            return
+        time.sleep(0.15)
+    raise AssertionError(f"UI 编辑 {field_testid}={value} 在 {window_s}s 内未落账")
 
 
 def ruler_width(page) -> float:

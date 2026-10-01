@@ -3,7 +3,7 @@
  * 每项可带 keys(快捷键提示)与 why(禁用原因 → title/aria-label,非颜色单线索)。
  * 键盘可达:打开即聚焦,↑↓ 移动、Enter/Space 激活、Home/End 首尾、Esc 关闭。 */
 import { h } from "./dom.js";
-import { selectionStore, timelineStore, projectStore } from "../core/store.js";
+import { selectionStore, timelineStore, projectStore, ephemeralStore } from "../core/store.js";
 import {
   splitSelected, splitAt, duplicateSelectedToPlayhead, deleteSelected,
   addTrack, browseMedia, setBgm, insertMediaAuto, playheadMs,
@@ -13,6 +13,8 @@ import {
 } from "../core/edit-commands.js";
 import { updateClip } from "../core/commands.js";
 import { selectAllClips } from "../core/nav.js";
+import { mcAddAngle, mcRemoveAngle } from "../core/pro-commands.js";
+import { packState, packCompound, unbindCompound, openCompoundCard } from "../panels/compound.js";
 import { toggleTrackVisible } from "../render/timeline-view.js";
 import { trackColorChoices } from "../render/track-head.js";
 import { proxyFor } from "../core/media-cache.js";
@@ -34,6 +36,7 @@ export function openContextMenu(x, y, items) {
   const menu = h("div", { class: "cf-menu", role: "menu", testid: "context-menu", "aria-label": "上下文菜单" });
   const buttons = [];
   for (const item of items) {
+    if (!item) continue; // 条件项(构造处可放 null)
     if (item.sep) {
       menu.appendChild(h("div", { class: "cf-menu-sep", role: "separator" }));
       continue;
@@ -116,6 +119,8 @@ export function openClipContextMenu(x, y) {
   const clickMs = msAtClientX(x);
   const atPlayhead = Boolean(row) && t > row.startMs && t < row.endMs;
   const atClick = Boolean(row) && clickMs > row.startMs && clickMs < row.endMs;
+  const isCompound = Boolean(row && row.compound);
+  const pack = packState();
   openContextMenu(x, y, [
     {
       label: "分割", keys: keys("clip.split", "S"),
@@ -137,6 +142,28 @@ export function openClipContextMenu(x, y) {
     { label: "删除", keys: keys("edit.delete", "Del"), fn: () => deleteSelected(false), disabled: !has, why: !has ? "未选中片段" : null },
     { label: "波纹删除", keys: keys("edit.rippleDelete", "Shift+Del"), fn: () => deleteSelected(true), disabled: !has, why: !has ? "未选中片段" : null },
     { sep: true },
+    // 调色剪贴板(T5.2):会话态复制/粘贴 grade 整对象(粘贴 = clip_update 单 Op)
+    { label: "复制调色", fn: () => copyGrade(row), disabled: !has || !hasGrade(row),
+      why: !has ? "未选中片段" : !hasGrade(row) ? "该片段无调色(grade 为空)" : "会话态复制(不落盘);到另一片段「粘贴调色」" },
+    { label: "粘贴调色", fn: () => pasteGrade(clipId), disabled: !ephemeralStore.get().gradeClipboard || !has,
+      why: !ephemeralStore.get().gradeClipboard ? "调色剪贴板为空:先在别的片段「复制调色」"
+        : "patch.grade 整对象写回(单 Op,可撤销)" },
+    { sep: true },
+    // 复合片段(T5.4):打包=框选 ≥2 同轨相邻视频片段;解包=选中复合片段。
+    // 内部编辑=解包流(ADR-0019 后端语义),双击复合片段弹说明卡引导。
+    {
+      label: "打包为复合片段", fn: () => packCompound(),
+      disabled: !pack.ok,
+      why: pack.why,
+    },
+    {
+      label: "解包复合片段", fn: () => unbindCompound(clipId), disabled: !has || !isCompound,
+      why: !has ? "未选中片段" : !isCompound ? "该片段不是复合片段" : "compound_unbind:子片段平移回主时间线(单 Op,可撤销)",
+    },
+    row && isCompound
+      ? { label: "复合片段说明(子片段概要)", fn: () => openCompoundCard(clipId), why: "投影 compound 概要 + 解包引导" }
+      : null,
+    { sep: true },
     // 定格帧(T4.9):freezeMs = 片段末帧定格时长;0 = 取消(Some(0) 可写回,与 None=不改区分)
     row && row.freezeMs > 0
       ? { label: `取消定格(当前 ${row.freezeMs}ms)`, fn: () => updateClip(clipId, { freezeMs: 0 }, "已取消定格(可撤销)"),
@@ -156,6 +183,21 @@ function pasteTo(srcRow) {
   if (!row) return;
   const trackId = targetTrackForKind(projectStore.get().project?.tracks || [], clipKindOf(row));
   pasteClipAt(trackId, Math.round(playheadMs()));
+}
+
+/** 调色会话剪贴板(T5.2;复制=ephemeral,粘贴=clip_update patch.grade 单 Op)。 */
+function hasGrade(row) {
+  return Boolean(row && row.grade && Object.keys(row.grade).length);
+}
+function copyGrade(row) {
+  if (!hasGrade(row)) return;
+  ephemeralStore.set({ gradeClipboard: JSON.parse(JSON.stringify(row.grade)) });
+  toast("调色已复制(会话态;选中另一片段「粘贴调色」)");
+}
+function pasteGrade(clipId) {
+  const clip = ephemeralStore.get().gradeClipboard;
+  if (!clip || !clipId) return;
+  updateClip(clipId, { grade: clip }, "已粘贴调色(可撤销)");
 }
 
 /** 视口客户坐标 → 时间线内容时刻 ms(与拖拽/框选同一显示映射)。 */
@@ -254,11 +296,18 @@ export function openTimelineContextMenu(x, y) {
 /** ④ 素材卡右键菜单(T4.1 增:复制路径/生成代理;「在资源管理器打开」诚实降级——
  * 浏览器沙箱无此能力,不假实现)。 */
 export function openMediaContextMenu(item, x, y) {
+  const inSet = (ephemeralStore.get().mcAngles || []).includes(item.path);
+  const mcAble = item.kind === "video" || item.kind === "audio";
   openContextMenu(x, y, [
     { label: "插入到播放头", keys: "双击", fn: () => insertMediaAuto(item), why: "插到匹配轨型的播放头处(统一吸附)" },
     item.kind === "audio"
       ? { label: "设为工程 BGM", fn: () => setBgm({ src: item.path }), why: "工程级背景乐(bgm_set,可撤销)" }
       : { label: "设为工程 BGM", disabled: true, why: "仅音频素材可设为 BGM" },
+    // 多机位同步集(T5.4;会话态):集内素材到「多机位」页签做同步分析/生成序列
+    mcAble
+      ? { label: inSet ? "移出多机位同步集" : "加入多机位同步集", fn: () => (inSet ? mcRemoveAngle(item.path) : mcAddAngle(item.path)),
+          why: inSet ? "从会话同步集移除(多机位页签消费)" : "加入会话同步集(angles[0]=基准);到「多机位」页签分析" }
+      : { label: "加入多机位同步集", disabled: true, why: "仅视频/音频素材可作多机位角度" },
     { sep: true },
     { label: "复制完整路径", fn: () => copyPath(item),
       why: "写系统剪贴板(需浏览器权限;失败时路径入 toast 可手选复制)" },

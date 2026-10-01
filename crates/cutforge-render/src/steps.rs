@@ -3,12 +3,11 @@
 //! 本文件**不启动任何进程**:全部函数只做输入 → 命令行字符串的映射,
 //! 可在不装 ffmpeg 的环境单测断言;参数串与拆分前的 render() 逐字一致
 //! (渲染输出逐字节语义不变的底线,由 parity_matrix 实渲夹具锁定)。
-//! 册四 A4-BE2:段提取链(步 2 segment)随曲线/变换扩容,纯移动至
-//! [`crate::segment`](段链模块);此处 `pub use` 保持 `steps::segment_*` 接口路径不变。
+//! 册四 A4-BE2:段提取链(步 2 segment)纯移动至 [`crate::segment`];此处
+//! `pub use` 保持 `steps::segment_*` 接口路径不变。
 
 use crate::plan::{OverlaySeg, RenderPlan};
 use cutforge_core::model::{Clip, Transition};
-use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 // ---- 步 2 segment(实现在 segment.rs;路径兼容再导出,册四 A4-BE2) ----
@@ -17,8 +16,8 @@ pub use crate::segment::{
     segment_pad_ms, segment_read_ms, transform_pre_chain,
 };
 
-/// clip i 的出向转场时长(ms;转场字段在 clip i 上表示 i-1→i 的转场,
-/// i=0 无意义)。type=cut/none 或 durMs<=0 → 硬切(None)。
+/// clip i 的出向转场时长(ms;转场字段在 clip i 上表示 i-1→i 转场,i=0 无意义);
+/// type=cut/none 或 durMs<=0 → 硬切(None)。
 pub fn transition_out_ms(clip: &Clip) -> Option<(String, f64)> {
     if clip.start_ms == 0 && clip.transition.is_none() {
         return None;
@@ -36,10 +35,9 @@ pub fn transition_out_ms(clip: &Clip) -> Option<(String, f64)> {
     Some((kind, dur))
 }
 
-/// 段 i 的尾帧扩展毫秒(ADR-0023):clip i 的转场由 seg_i 与 seg_{i+1} 之间的
-/// xfade 消费,段 i 需要延长 D_{i+1} 保证整链零时间漂移。该值进入段缓存键
-/// (旧键漏掉它 → 改转场会陈旧复用前一段的 tpad)。D 取**有效转场时长**
-/// (册四 BE3a:钳到两侧片段时长,与 compose/acrossfade 同一函数,尾帧只进重叠)。
+/// 段 i 的尾帧扩展毫秒(ADR-0023):段 i 延长 D_{i+1} 供 seg_i/seg_{i+1} 间
+/// xfade 消费,保证整链零时间漂移;该值入段缓存键(漏掉 → 改转场陈旧复用
+/// tpad)。D 取**有效转场时长**(册四 BE3a 钳两侧,与 compose/acrossfade 同源)。
 pub fn segment_tail_ms(video_clips: &[Clip], i: usize) -> f64 {
     if i + 1 < video_clips.len() {
         crate::catalog::effective_transition_ms(video_clips, i + 1)
@@ -76,10 +74,9 @@ pub fn is_xfade_chain(video_clips: &[Clip]) -> bool {
     video_clips.iter().enumerate().any(|(i, c)| i > 0 && transition_out_ms(c).is_some())
 }
 
-/// xfade 链命令行:offset_k = **前序名义时长累计**(ADR-0023 口径:不含尾帧扩展
-/// ——尾帧只进转场重叠不前移 offset;册四 BE3a 实测修复:旧实现把尾帧计入累计,
-/// offset 越过输入末端导致 xfade 坍缩截断,后段整段丢失)。返回 (参数, WARN 列表)
-/// ——转场名经目录直通解析,未注册降级 fade 留痕(册四 T4.5)。
+/// xfade 链命令行:offset_k = **前序名义时长累计**(ADR-0023:尾帧只进转场重叠
+/// 不前移 offset——旧实现把尾帧计入累计导致 xfade 坍缩截断,BE3a 实测修复)。
+/// 返回 (参数, WARN 列表)——转场名经目录直通,未注册降级 fade 留痕(T4.5)。
 pub fn compose_xfade_args(
     video_clips: &[Clip],
     seg_files: &[PathBuf],
@@ -118,7 +115,7 @@ pub fn compose_xfade_args(
     (args, warns)
 }
 
-/// concat 清单内容(路径统一正斜杠;concat demuxer 对引号内反斜杠敏感)。
+/// concat 清单内容(路径统一正斜杠;demuxer 对引号内反斜杠敏感)。
 pub fn concat_list_content(seg_files: &[PathBuf]) -> String {
     let mut list = String::new();
     for f in seg_files {
@@ -157,8 +154,11 @@ pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_ou
         } else {
             format!("{scale_chain},format=rgba,colorchannelmixer=aa={:.4}", ov.spec.opacity)
         };
+        // 层输入 = i+1(基片恒输入 0,叠加源从 1 起;A5-BE3 修复:旧实现 [i:v]
+        // 把基片自身缩放叠加——红底红 logo 不可见的潜伏缺陷,compound 夹具 lime 检出)
+        let inp = i + 1;
         filters.push(format!(
-            "[{i}:v]{chain}[l{i}];{cur}[l{i}]overlay=x={}:y={}:enable='between(t,{:.3},{:.3})'[o{}]",
+            "[{inp}:v]{chain}[l{i}];{cur}[l{i}]overlay=x={}:y={}:enable='between(t,{:.3},{:.3})'[o{}]",
             ov.spec.x, ov.spec.y,
             ov.start_ms as f64 / 1000.0,
             (ov.start_ms + ov.duration_ms) as f64 / 1000.0,
@@ -174,10 +174,72 @@ pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_ou
     args
 }
 
+// ---------------- 步 4.5 adjust(册五 T5.4 调整层) ----------------
+
+/// 调整层时间窗处理命令行(纯函数,可离线单测):每片段
+/// `trim 抽窗 → setpts 归零 → fx+grade 链作用于窗内流 → overlay enable 贴回`;
+/// 不依赖滤镜级 enable(任意链可窗内生效);空链片段跳过;编码与 overlay 同款。
+pub fn adjust_args(
+    adjust_clips: &[Clip],
+    base_video: &Path,
+    adjusted_out: &Path,
+    project_dir: &Path,
+    w: u32,
+    h: u32,
+    fps: u32,
+) -> Vec<String> {
+    let mut args: Vec<String> =
+        vec!["-y".into(), "-v".into(), "error".into(), "-i".into(), base_video.to_string_lossy().into()];
+    let mut filters: Vec<String> = Vec::new();
+    let mut cur = "[0:v]".to_string();
+    let mut n = 0usize;
+    for c in adjust_clips {
+        let (fx, _) = crate::catalog::fx_chain(c, w, h, fps);
+        let (grade, _) = crate::grade::grade_chain(c, project_dir);
+        let mut chain = String::new();
+        for part in [grade, fx] {
+            if !part.is_empty() {
+                if !chain.is_empty() {
+                    chain.push(',');
+                }
+                chain.push_str(&part);
+            }
+        }
+        if chain.is_empty() {
+            continue; // 无 fx/grade 声明 = 无处理(时间窗纯占位)
+        }
+        let s = c.start_ms as f64 / 1000.0;
+        let e = (c.start_ms + c.duration_ms) as f64 / 1000.0;
+        let win_in = format!("[w{n}in]");
+        let win_out = format!("[w{n}]");
+        let merged_out = format!("[a{n}]");
+        filters.push(format!("{cur}trim=start={s:.3}:end={e:.3},setpts=PTS-STARTPTS{win_in}"));
+        filters.push(format!("{win_in}{chain}{win_out}"));
+        filters.push(format!(
+            "{cur}{win_out}overlay=enable='between(t,{s:.3},{e:.3})'{merged_out}"
+        ));
+        cur = merged_out;
+        n += 1;
+    }
+    if filters.is_empty() {
+        // 全部片段无链:透传拷贝(不产滤镜图)
+        args.extend(["-c".into(), "copy".into(), adjusted_out.to_string_lossy().into()]);
+        return args;
+    }
+    args.extend([
+        "-filter_complex".into(), filters.join(";"), "-map".into(), cur,
+        "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
+        adjusted_out.to_string_lossy().into(),
+    ]);
+    args
+}
+
 // ---------------- 步 5 mix(画幅无关,共享缓存) ----------------
 
 /// mix pass A 命令行:主时间线有视频转场时走 acrossfade 链(册四 T4.5,M11-R1;
 /// 见 [`crate::across`] 模块注释),否则既有逐段落点路径(参数逐字一致,parity 红线)。
+/// 册五 T5.3:有轨道处理声明(plan.track_proc 非空)时按轨组建流,per-track
+/// EQ/动态链在组建流 amix 之后、进总线之前插入;无声明 = 既有图零变化。
 pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
     if crate::across::chain_active(plan) {
         return crate::across::mix_pass_a_chain_args(plan, mixed_raw_out);
@@ -186,11 +248,11 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
     let total_ms = plan.total_ms;
     let mut args: Vec<String> = vec!["-y".into(), "-v".into(), "error".into()];
     let mut filters: Vec<String> = Vec::new();
-    let mut labels: Vec<String> = Vec::new();
     if audio_segs.is_empty() && plan.bgm.is_none() {
         args.extend(["-f".into(), "lavfi".into(), "-i".into(), "anullsrc=r=48000:cl=stereo".into()]);
     }
     let mut input_idx = 0usize;
+    let mut event_refs: Vec<String> = Vec::new();
     for seg in audio_segs {
         let read_ms = (seg.duration_ms as f64 * seg.speed).ceil();
         args.extend([
@@ -200,22 +262,39 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
         ]);
         let chain_body = crate::across::event_body(seg);
         filters.push(format!("[{input_idx}:a]{chain_body},adelay={}:all=1[a{input_idx}]", seg.start_ms));
-        labels.push(format!("[a{input_idx}]"));
+        event_refs.push(format!("[a{input_idx}]"));
         input_idx += 1;
+    }
+    if !audio_segs.is_empty() {
+        if plan.track_proc.is_empty() {
+            // 既有路径:逐事件标签直接进总线 amix(参数逐字一致)
+            filters.push(format!(
+                "{}amix=inputs={}:duration=longest:normalize=0[bus]",
+                event_refs.join(""),
+                audio_segs.len()
+            ));
+        } else {
+            // 轨道组建流(册五 T5.3):有处理声明的轨 amix 建流 → per-track 链 → 单标签
+            let (group_parts, labels) = crate::across::grouped_bus_labels(
+                plan,
+                &audio_segs.iter().collect::<Vec<_>>(),
+                &event_refs,
+            );
+            filters.extend(group_parts);
+            filters.push(format!(
+                "{}amix=inputs={}:duration=longest:normalize=0[bus]",
+                labels.join(""),
+                labels.len()
+            ));
+        }
     }
     // 总线([bus] 恒存在:bgm-only 工程用 anullsrc 占位)
     if audio_segs.is_empty() && plan.bgm.is_some() {
         args.extend(["-f".into(), "lavfi".into(), "-i".into(), "anullsrc=r=48000:cl=stereo".into()]);
         filters.push(format!("[{input_idx}:a]anull[bus]"));
         input_idx += 1;
-    } else if !audio_segs.is_empty() {
-        filters.push(format!(
-            "{}amix=inputs={}:duration=longest:normalize=0[bus]",
-            labels.join(""),
-            audio_segs.len()
-        ));
     }
-    // BGM(循环铺满 + gain + ducking 侧链)
+    // BGM(循环铺满 + gain + ducking 侧链,参数化 T5.3)
     if let Some(bgm) = &plan.bgm {
         let bgm_path = plan.project_dir.join(&bgm.src);
         args.extend([
@@ -232,9 +311,7 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
             // [bus] 需被 sidechain(key)与 amix 各消费一次 → asplit 分流
             // (本地 ffmpeg 容忍重复 label,CI 严格报 Invalid stream specifier)
             filters.push("[bus]asplit=2[busA][busB]".into());
-            filters.push(
-                "[bgmg][busA]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]".into(),
-            );
+            filters.push(format!("[bgmg][busA]{}[bgmc]", crate::across::ducking_filter(bgm)));
             filters.push("[busB][bgmc]amix=inputs=2:duration=first:normalize=0[mixout]".into());
         } else {
             filters.push("[bus][bgmg]amix=inputs=2:duration=first:normalize=0[mixout]".into());
@@ -254,60 +331,12 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
     args
 }
 
-/// loudnorm 测量 pass 命令行(测量输出在 stderr 的 JSON)。
-pub fn mix_measure_args(mixed_raw: &Path) -> Vec<String> {
-    [
-        "-hide_banner", "-nostats", "-i", &mixed_raw.to_string_lossy(),
-        "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json",
-        "-f", "null", "-",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
-}
-
-/// 由测量结果构造 linear=true 的 loudnorm 滤镜串(先测后编)。
-pub fn mix_linear_filter(measured: &Value) -> String {
-    format!(
-        "loudnorm=I=-14:TP=-1.0:measured_I={}:measured_TP={}:measured_LRA={}:measured_thresh={}:linear=true",
-        measured["input_i"].as_str().unwrap_or("-14"),
-        measured["input_tp"].as_str().unwrap_or("-1"),
-        measured["input_lra"].as_str().unwrap_or("0"),
-        measured["input_thresh"].as_str().unwrap_or("-30"),
-    )
-}
-
-/// mix pass B(有响度测量值)命令行。
-pub fn mix_pass_b_args(measured: &Value, mixed_raw: &Path, mix_out: &Path) -> Vec<String> {
-    [
-        "-y", "-v", "error", "-i", &mixed_raw.to_string_lossy(),
-        "-af", &mix_linear_filter(measured),
-        "-c:a", "aac", &mix_out.to_string_lossy(),
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
-}
-
-/// mix pass B(静音总线)命令行:原样转封装,无需归一。
-/// (数字静音 -inf 遇 linear=true 的 measured 值,ffmpeg 报 "Result too large" 直接失败。)
-pub fn mix_pass_b_silent_args(mixed_raw: &Path, mix_out: &Path) -> Vec<String> {
-    [
-        "-y", "-v", "error", "-i", &mixed_raw.to_string_lossy(),
-        "-c:a", "copy", &mix_out.to_string_lossy(),
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
-}
-
-/// 测量 JSON 中 input_i 是否需要走 linear=true(静音/-inf/缺失 → false)。
-pub fn mix_measured_is_loud(measured: &Value) -> bool {
-    matches!(
-        measured["input_i"].as_str().and_then(|s| s.parse::<f64>().ok()),
-        Some(v) if v.is_finite() && v > -70.0
-    )
-}
+// ---- loudnorm 测量/双 pass(实现在 across.rs,册五 T5.3 纯移动——行数红线
+// A1-3;`pub use` 保持 `steps::mix_*` 路径兼容) ----
+pub use crate::across::{
+    mix_linear_filter, mix_linear_filter_t, mix_measure_args, mix_measure_args_t,
+    mix_measured_is_loud, mix_pass_b_args, mix_pass_b_silent_args,
+};
 
 // ---------------- 步 6 subtitle(最后叠) ----------------
 
@@ -394,7 +423,7 @@ pub fn fmt_f64(v: f64) -> String {
 mod tests {
     use super::*;
     use cutforge_core::model::Overlay;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::path::PathBuf;
 
     /// 测试计划:fake 路径(纯函数不触 IO)。
@@ -546,7 +575,7 @@ mod tests {
         );
         assert_eq!(
             s[8],
-            "[0:v]scale=60:60,format=rgba,colorchannelmixer=aa=0.5000[l0];\
+            "[1:v]scale=60:60,format=rgba,colorchannelmixer=aa=0.5000[l0];\
 [0:v][l0]overlay=x=40:y=40:enable='between(t,0.000,2.000)'[o0]"
         );
         assert_eq!(&s[9..], ["-map", "[o0]", "-c:v", "libx264", "-preset", "veryfast", "/c/overlay/o.mp4"]);
@@ -561,7 +590,7 @@ mod tests {
             spec: Overlay { x: 1, y: 2, w: 3, h: 4, opacity: 1.0 },
         }];
         let args = overlay_args(&ovs, Path::new("/c.mp4"), Path::new("/o.mp4"));
-        assert!(args[8].starts_with("[0:v]scale=3:4[l0];"), "opacity=1 不引入 rgba 链");
+        assert!(args[8].starts_with("[1:v]scale=3:4[l0];"), "opacity=1 不引入 rgba 链;层输入 = 1(基片恒 0)");
     }
 
     // ---- 步 5:mix ----
@@ -661,37 +690,6 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
     }
 
     #[test]
-    fn mix_measure_and_pass_b_args() {
-        let measured = json!({
-            "input_i": "-14.5", "input_tp": "-1.2", "input_lra": "3.1", "input_thresh": "-24.5"
-        });
-        assert!(mix_measured_is_loud(&measured));
-        assert_eq!(
-            mix_linear_filter(&measured),
-            "loudnorm=I=-14:TP=-1.0:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true"
-        );
-        let raw = Path::new("/c/mix/r.m4a");
-        assert_eq!(
-            strv(&mix_measure_args(raw)),
-            ["-hide_banner", "-nostats", "-i", "/c/mix/r.m4a",
-             "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json", "-f", "null", "-"]
-        );
-        assert_eq!(
-            strv(&mix_pass_b_args(&measured, raw, Path::new("/c/mix/o.m4a"))),
-            ["-y", "-v", "error", "-i", "/c/mix/r.m4a", "-af",
-             "loudnorm=I=-14:TP=-1.0:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true",
-             "-c:a", "aac", "/c/mix/o.m4a"]
-        );
-        // 静音:input_i = -inf → 不走 linear,转封装
-        let silent = json!({"input_i": "-inf", "input_tp": "-inf", "input_lra": "0", "input_thresh": "-70"});
-        assert!(!mix_measured_is_loud(&silent));
-        assert_eq!(
-            strv(&mix_pass_b_silent_args(raw, Path::new("/c/mix/o.m4a"))),
-            ["-y", "-v", "error", "-i", "/c/mix/r.m4a", "-c:a", "copy", "/c/mix/o.m4a"]
-        );
-    }
-
-    #[test]
     fn atempo_chain_decomposes_extreme_speeds() {
         assert_eq!(atempo_chain(1.0), vec!["atempo=1.000000"]);
         assert_eq!(atempo_chain(4.0), vec!["atempo=2.0", "atempo=2.000000"]);
@@ -754,4 +752,49 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
         assert_eq!(fmt_f64(1.5), "1.5");
         assert_eq!(fmt_f64(0.0), "0");
     }
+
+    /// overlay 输入索引锁(A5-BE3 修复):层输入恒 i+1(基片输入 0);
+    /// 旧实现 [i:v] 把基片自身当叠加源(红底红 logo 不可见的潜伏缺陷)。
+    #[test]
+    fn overlay_args_layer_inputs_are_offset_by_one() {
+        let mk = |i: usize| OverlaySeg {
+            src: PathBuf::from(format!("logo{i}.png")),
+            start_ms: (i * 1000) as u64,
+            duration_ms: 500,
+            spec: cutforge_core::model::Overlay { x: 4, y: 5, w: 60, h: 60, opacity: 1.0 },
+        };
+        let args = overlay_args(&[mk(0), mk(1)], Path::new("base.mp4"), Path::new("out.mp4"));
+        let fc = &args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1];
+        assert!(fc.contains("[1:v]scale=60:60[l0];"), "第一层必须吃输入 1: {fc}");
+        assert!(fc.contains("[2:v]scale=60:60[l1];"), "第二层必须吃输入 2: {fc}");
+        assert!(fc.contains("[o0][l1]overlay"), "层链串联: {fc}");
+        assert!(fc.contains(";[0:v][l0]overlay="), "基片恒输入 0: {fc}");
+    }
+
+    /// 册五 T5.4:调整层时间窗命令行——trim 抽窗/setpts 归零/链作用/overlay enable
+    /// 贴回四段式;grade 前置 fx(调色喂特效,与段链序一致);空链片段跳过。
+    #[test]
+    fn adjust_args_window_pipeline_shape() {
+        let mk = |v: serde_json::Value| -> Clip { serde_json::from_value(v).unwrap() };
+        let clips = vec![
+            mk(json!({"id": "X1-001", "startMs": 500, "durationMs": 1000,
+                      "fx": {"combo": [{"fx": "fx.blur"}]}})),
+            mk(json!({"id": "X1-002", "startMs": 2000, "durationMs": 500,
+                      "grade": {"saturation": 1.5}})),
+            mk(json!({"id": "X1-003", "startMs": 3000, "durationMs": 500})),
+        ];
+        let args = adjust_args(&clips, Path::new("base.mp4"), Path::new("out.mp4"), Path::new("/w"), 320, 240, 30);
+        let fc = args.iter().find(|a| a == &&"-filter_complex".to_string()).map(|_| ()).is_some().then(|| args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1].clone()).unwrap();
+        assert!(fc.contains("trim=start=0.500:end=1.500,setpts=PTS-STARTPTS"), "{fc}");
+        assert!(fc.contains("overlay=enable='between(t,0.500,1.500)'"), "{fc}");
+        assert!(fc.contains("trim=start=2.000:end=2.500"), "{fc}");
+        // 饱和度链(eq)在窗内流上;X1-003 无链不产窗
+        assert!(fc.contains("eq="), "grade 链必须在窗内: {fc}");
+        assert!(!fc.contains("trim=start=3.000"), "空链片段不产窗: {fc}");
+        // 全空链 → 透传拷贝
+        let empty = vec![mk(json!({"id": "X1-001", "startMs": 0, "durationMs": 500}))];
+        let args = adjust_args(&empty, Path::new("base.mp4"), Path::new("out.mp4"), Path::new("/w"), 320, 240, 30);
+        assert!(args.contains(&"-c".to_string()) && args.contains(&"copy".to_string()), "全空链透传: {args:?}");
+    }
+
 }

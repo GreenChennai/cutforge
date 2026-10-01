@@ -8,9 +8,14 @@
 //! 工作区指纹),供壳「精确预览」;见 frame.rs。
 
 pub mod across;
+pub mod analyze;
 pub mod cache;
 pub mod catalog;
+pub mod compound;
+pub mod encode;
 pub mod frame;
+pub mod grade;
+pub mod kf_expr;
 pub mod plan;
 pub mod segment;
 pub mod steps;
@@ -36,7 +41,17 @@ use std::process::Command;
 /// 6.0(册四 A4-BE3b):T4.7 文本片段 → 临时 ASS 烧录落地(ADR-0016;文本从
 /// 不可见变可见,旧缓存产物缺文本层,必须整体失效)+ T4.8 denoise/pitch 混音链 +
 /// track mute/solo/hidden 渲染联动收口 + T4.1 代理预览(useProxy)。
-pub const RENDERER_VERSION: &str = "cutforge-render-6.0";
+/// 7.0(册五 T5.1):关键帧引擎(IR v3)——五条表达式通路(rotate/zoompan/geq/
+/// overlay/volume)+ speed 关键帧展开 + fx 三态;旧缓存对关键帧 clip 自然分键
+/// (键含 clip JSON),版本位随行为面整体升版。
+/// 8.0(册五 T5.2/T5.3/T5.6):grade 调色链(colorbalance/curves/eq/colorchannelmixer/
+/// lut3d,键增 LUT 内容哈希)+ 轨道 EQ/动态混音链 + ducking 参数化 + 编码参数面与
+/// bt709 输出标签(encode 步从原子拷贝升级为带标签重编码,ADR-0020 决策 1)+
+/// 每步耗时入进度事件。旧缓存整体失效(键全部含版本位)。
+/// 9.0(册五 T5.4/ADR-0019):compound 递归展开(子时间线中间段挂 compose 层,
+/// 键 = 子内容指纹)+ adjust 调整层步(新缓存层,主合成后按时间窗再过 fx/grade 链)
+/// + 字幕 VTT 子格式(不触缓存键面,随行为面整体升版)。旧缓存整体失效。
+pub const RENDERER_VERSION: &str = "cutforge-render-9.0";
 
 pub struct RenderOutcome {
     pub output: PathBuf,
@@ -138,46 +153,86 @@ pub fn render_with(
     use_proxy: bool,
     progress: &mut dyn FnMut(Value),
 ) -> Result<RenderOutcome, String> {
-    let plan = RenderPlan::build_opts(project, project_dir, ass_path, use_proxy);
+    render_with_opts(project, project_dir, ass_path, use_proxy, plan::RenderOptions::default(), progress)
+}
+
+/// 同 [`render_with`],渲染选项显式给定(册五 T5.6;Default = 现行为零变化)。
+/// 每步耗时入进度事件(elapsedMs);verbose_cmd 开启时事件附命令原文(缺省关)。
+pub fn render_with_opts(
+    project: &Project,
+    project_dir: &Path,
+    ass_path: Option<&Path>,
+    use_proxy: bool,
+    opts: plan::RenderOptions,
+    progress: &mut dyn FnMut(Value),
+) -> Result<RenderOutcome, String> {
+    let plan = RenderPlan::build_full(project, project_dir, ass_path, use_proxy, opts);
     std::fs::create_dir_all(&plan.out_dir).map_err(|e| e.to_string())?;
     cache::ensure_dirs(&plan.cache_dir)?;
     let mut idx = CacheIndex::load(&plan.cache_dir);
     let mut steps: Vec<(&'static str, bool)> = Vec::new();
+    let verbose = plan.opts.verbose_cmd;
+
+    // 带耗时/命令回显的进度发布(T5.6 渲染日志;事件形状向后兼容——加法字段)
+    let mut emit = |rep: &mut StepReport, t0: std::time::Instant, cmds: &[String]| {
+        if let Value::Object(m) = &mut rep.detail {
+            m.insert("elapsedMs".into(), json!(t0.elapsed().as_millis() as u64));
+            if verbose && !cmds.is_empty() {
+                m.insert("cmd".into(), json!(cmds.join(" ; ")));
+            }
+        }
+        progress(rep.to_progress());
+    };
 
     // ---- 步 1 probe(容错:图片等无时长素材合法存在;真坏了会在 segment 步炸) ----
-    let rep = exec_probe(&plan);
-    progress(rep.to_progress());
+    let t0 = std::time::Instant::now();
+    let mut rep = exec_probe(&plan);
+    emit(&mut rep, t0, &[]);
     steps.push((rep.name, rep.ok));
 
-    // ---- 步 2 segment(内容寻址:键含 clip JSON + 尾帧 + 画幅 + fps) ----
-    let (rep, seg_files, seg_keys, cache_hits, cache_misses) = exec_segment(&plan, &mut idx)?;
-    progress(rep.to_progress());
+    // ---- 步 2 segment(内容寻址:键含 clip JSON + 尾帧 + 画幅 + fps + LUT 哈希) ----
+    // 复合片段(册五 T5.4/ADR-0019)在此递归展开:先渲子时间线为中间段
+    // (compound::resolve,compose 层内容寻址),再按普通素材走段管线。
+    let t0 = std::time::Instant::now();
+    let (mut rep, seg_files, seg_keys, cache_hits, cache_misses) = exec_segment(&plan, &mut idx)?;
+    emit(&mut rep, t0, &[]);
     steps.push((rep.name, rep.ok));
 
     // ---- 步 3 compose(xfade 链 / concat 退化) ----
-    let (rep, composed, compose_key) = exec_compose(&plan, &mut idx, &seg_files, &seg_keys)?;
-    progress(rep.to_progress());
+    let t0 = std::time::Instant::now();
+    let (mut rep, composed, compose_key, compose_cmds) = exec_compose(&plan, &mut idx, &seg_files, &seg_keys)?;
+    emit(&mut rep, t0, &compose_cmds);
     steps.push((rep.name, rep.ok));
 
     // ---- 步 4 overlay(品牌/花字位图;无叠加层直接透传) ----
-    let (rep, base_video, video_key) = exec_overlay(&plan, &mut idx, &composed, &compose_key)?;
-    progress(rep.to_progress());
+    let t0 = std::time::Instant::now();
+    let (mut rep, overlaid, overlay_key, overlay_cmds) = exec_overlay(&plan, &mut idx, &composed, &compose_key)?;
+    emit(&mut rep, t0, &overlay_cmds);
+    steps.push((rep.name, rep.ok));
+
+    // ---- 步 4.5 adjust(册五 T5.4 调整层:主合成后按时间窗再过 fx/grade 链;空透传) ----
+    let t0 = std::time::Instant::now();
+    let (mut rep, base_video, video_key, adjust_cmds) = exec_adjust(&plan, &mut idx, &overlaid, &overlay_key)?;
+    emit(&mut rep, t0, &adjust_cmds);
     steps.push((rep.name, rep.ok));
 
     // ---- 步 5 mix(画幅无关 → 共享缓存;多画幅变体真分叉) ----
-    let (rep, mixed, mix_key_str, mix_cache_hit) = exec_mix(&plan, &mut idx)?;
-    progress(rep.to_progress());
+    let t0 = std::time::Instant::now();
+    let (mut rep, mixed, mix_key_str, mix_cache_hit, mix_cmds) = exec_mix(&plan, &mut idx)?;
+    emit(&mut rep, t0, &mix_cmds);
     steps.push((rep.name, rep.ok));
 
     // ---- 步 6 subtitle(最后叠;外部 ASS / 文本轨生成 ASS 烧录,否则零重编码合流) ----
-    let (rep, video_input) =
+    let t0 = std::time::Instant::now();
+    let (mut rep, video_input, sub_cmds) =
         exec_subtitle(&plan, &mut idx, &base_video, &mixed, &video_key, &mix_key_str, project)?;
-    progress(rep.to_progress());
+    emit(&mut rep, t0, &sub_cmds);
     steps.push((rep.name, rep.ok));
 
-    // ---- 步 7 encode(文件名消毒;原子拷贝到 06_成片输出,不走缓存) ----
-    let (rep, output) = exec_encode(&plan, &video_input)?;
-    progress(rep.to_progress());
+    // ---- 步 7 encode(文件名消毒;bt709 标签重编码 + 复验;不走缓存) ----
+    let t0 = std::time::Instant::now();
+    let (mut rep, output, encode_cmds) = exec_encode(&plan, &video_input)?;
+    emit(&mut rep, t0, &encode_cmds);
     steps.push((rep.name, rep.ok));
     idx.save(&plan.cache_dir)?;
 
@@ -194,7 +249,9 @@ fn exec_probe(plan: &RenderPlan) -> StepReport {
 
 type SegOutputs = (StepReport, Vec<PathBuf>, Vec<String>, usize, usize);
 
-/// 步 2:逐段提取(缓存命中即跳过;fx/motion 降级 WARN 并入进度事件)。
+/// 步 2:逐段提取(缓存命中即跳过;fx/motion/调色降级 WARN 并入进度事件)。
+/// 复合片段(compound 字段)先递归渲染子时间线为中间段(compound::resolve,
+/// 共享内容寻址缓存),再按普通素材走段管线;子管线 WARN 并入本步 warnings。
 fn exec_segment(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<SegOutputs, String> {
     let now = cache::now_secs();
     let mut seg_files: Vec<PathBuf> = Vec::new();
@@ -204,9 +261,23 @@ fn exec_segment(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<SegOutputs, S
     let mut degradations: Vec<String> = Vec::new();
     for (i, clip) in plan.video_clips.iter().enumerate() {
         let tail = steps::segment_tail_ms(&plan.video_clips, i);
+        // 复合片段递归展开(T5.4):壳克隆 + src 换写中间段 → 键含整 clip JSON
+        // (含 compound),子时间线任一变化必换键
+        let effective = match &clip.compound {
+            Some(spec) => {
+                let resolved = crate::compound::resolve(plan, clip, spec, idx)?;
+                degradations.extend(resolved.warns.iter().cloned());
+                crate::compound::effective_clip(clip, &resolved)
+            }
+            None => clip.clone(),
+        };
+        let clip = &effective;
         let spec = cache::seg_spec(plan, clip, tail);
         let key = cache::seg_key(plan, clip, tail);
         degradations.extend(crate::catalog::clip_degradations(clip, plan.canvas_w, plan.canvas_h, plan.fps));
+        // grade 降级面(T5.2:HSL 登记不渲染 / LUT 文件缺失)
+        let (_, grade_warns) = crate::grade::grade_chain(clip, &plan.project_dir);
+        degradations.extend(grade_warns);
         let seg = match idx.touch("seg", &key, now) {
             Some(rel) => {
                 hits += 1;
@@ -235,15 +306,17 @@ fn exec_segment(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<SegOutputs, S
 }
 
 /// 步 3:xfade 链 / concat 合成(缓存命中即跳过;转场降级 WARN 并入进度事件)。
+/// 返回 (报告, 产物, 键, 实际执行的命令——verbose_cmd 回显用)。
 fn exec_compose(
     plan: &RenderPlan,
     idx: &mut CacheIndex,
     seg_files: &[PathBuf],
     seg_keys: &[String],
-) -> Result<(StepReport, PathBuf, String), String> {
+) -> Result<(StepReport, PathBuf, String, Vec<String>), String> {
     let now = cache::now_secs();
     let key = cache::compose_key(seg_keys);
     let mut tr_warns: Vec<String> = Vec::new();
+    let mut cmds: Vec<String> = Vec::new();
     let composed = match idx.touch("compose", &key, now) {
         Some(rel) => plan.cache_dir.join(rel),
         None => {
@@ -253,6 +326,7 @@ fn exec_compose(
                 let (args, warns) =
                     steps::compose_xfade_args(&plan.video_clips, seg_files, &composed);
                 tr_warns = warns;
+                cmds.push(args.join(" "));
                 run_ff("ffmpeg", &strs(&args))?;
             } else {
                 // concat 清单写 tmp(内容寻址命名);用完即清。
@@ -272,6 +346,7 @@ fn exec_compose(
                 )
                 .map_err(|e| e.to_string())?;
                 let args = steps::compose_concat_args(&list_path, &composed);
+                cmds.push(args.join(" "));
                 run_ff("ffmpeg", &strs(&args))?;
                 let _ = cutforge_io::atomic::remove(&list_path);
             }
@@ -284,7 +359,7 @@ fn exec_compose(
     if !tr_warns.is_empty() {
         detail["warnings"] = json!(tr_warns);
     }
-    Ok((StepReport::new("compose-video", detail), composed, key))
+    Ok((StepReport::new("compose-video", detail), composed, key, cmds))
 }
 
 /// 步 4:overlay 合成(无叠加层直接透传基片;键 = compose 键 + 叠加清单)。
@@ -293,30 +368,96 @@ fn exec_overlay(
     idx: &mut CacheIndex,
     composed: &Path,
     compose_key: &str,
-) -> Result<(StepReport, PathBuf, String), String> {
+) -> Result<(StepReport, PathBuf, String, Vec<String>), String> {
     let now = cache::now_secs();
     if plan.overlay_segs.is_empty() {
-        return Ok((StepReport::new("overlay", json!({"count": 0})), composed.to_path_buf(), compose_key.to_string()));
+        return Ok((
+            StepReport::new("overlay", json!({"count": 0})),
+            composed.to_path_buf(),
+            compose_key.to_string(),
+            Vec::new(),
+        ));
     }
     let key = cache::overlay_key(compose_key, &plan.overlay_segs);
-    let (overlaid, hit) = match idx.touch("overlay", &key, now) {
-        Some(rel) => (plan.cache_dir.join(rel), true),
+    let (overlaid, hit, cmds) = match idx.touch("overlay", &key, now) {
+        Some(rel) => (plan.cache_dir.join(rel), true, Vec::new()),
         None => {
             let rel = idx.record("overlay", &key, cache::overlay_spec(compose_key, &plan.overlay_segs), now);
             let overlaid = plan.cache_dir.join(rel);
             let args = steps::overlay_args(&plan.overlay_segs, composed, &overlaid);
+            let cmd = args.join(" ");
             run_ff("ffmpeg", &strs(&args))?;
             idx.set_size("overlay", &key, file_size(&overlaid));
-            (overlaid, false)
+            (overlaid, false, vec![cmd])
         }
     };
     idx.save(&plan.cache_dir)?;
-    Ok((StepReport::new("overlay", json!({"count": plan.overlay_segs.len()})).with_cache_hit(hit), overlaid, key))
+    Ok((
+        StepReport::new("overlay", json!({"count": plan.overlay_segs.len()})).with_cache_hit(hit),
+        overlaid,
+        key,
+        cmds,
+    ))
 }
 
-type MixOutputs = (StepReport, PathBuf, String, bool);
+type MixOutputs = (StepReport, PathBuf, String, bool, Vec<String>);
 
-/// 步 5:混音(pass A 逐段落点/变速/淡变 → 总线 → BGM ducking;pass B loudnorm)。
+/// 步 4.5 adjust(册五 T5.4 调整层):主合成(含叠加层)后,adjust 轨片段的
+/// fx/grade 链按时间窗再过一遍(时间窗处理 = trim 抽窗 → 链作用于窗内流 →
+/// overlay enable 贴回;不依赖滤镜级 enable,任意链可窗内生效)。
+/// 无 adjust 片段直接透传(基片与键原样,零重编码零新缓存条目)。
+fn exec_adjust(
+    plan: &RenderPlan,
+    idx: &mut CacheIndex,
+    base_video: &Path,
+    base_key: &str,
+) -> Result<(StepReport, PathBuf, String, Vec<String>), String> {
+    if plan.adjust_clips.is_empty() {
+        return Ok((
+            StepReport::new("adjust", json!({"count": 0})),
+            base_video.to_path_buf(),
+            base_key.to_string(),
+            Vec::new(),
+        ));
+    }
+    let now = cache::now_secs();
+    let mut warns: Vec<String> = Vec::new();
+    for c in &plan.adjust_clips {
+        let (_, gw) = crate::grade::grade_chain(c, &plan.project_dir);
+        warns.extend(gw);
+        let (_, _, mw) = crate::catalog::motion_chains(c, plan.canvas_w, plan.canvas_h, plan.fps);
+        warns.extend(mw);
+    }
+    let spec = cache::adjust_spec(base_key, &plan.adjust_clips, plan.canvas_w, plan.canvas_h, plan.fps);
+    let key = format!("{}-{}x{}f{}", cache::key_hex(&spec), plan.canvas_w, plan.canvas_h, plan.fps);
+    let mut cmds: Vec<String> = Vec::new();
+    let adjusted = match idx.touch("adjust", &key, now) {
+        Some(rel) => (plan.cache_dir.join(rel), true),
+        None => {
+            let rel = idx.record("adjust", &key, spec, now);
+            let adjusted = plan.cache_dir.join(rel);
+            let args = steps::adjust_args(&plan.adjust_clips, base_video, &adjusted, plan.project_dir.as_path(), plan.canvas_w, plan.canvas_h, plan.fps);
+            cmds.push(args.join(" "));
+            run_ff("ffmpeg", &strs(&args))?;
+            idx.set_size("adjust", &key, file_size(&adjusted));
+            (adjusted, false)
+        }
+    };
+    idx.save(&plan.cache_dir)?;
+    let mut detail = json!({"count": plan.adjust_clips.len()});
+    if !warns.is_empty() {
+        detail["warnings"] = json!(warns);
+    }
+    Ok((
+        StepReport::new("adjust", detail).with_cache_hit(adjusted.1),
+        adjusted.0,
+        key,
+        cmds,
+    ))
+}
+
+/// 步 5:混音(pass A 逐段落点/变速/淡变 → 轨道组建流 → 总线 → BGM ducking;
+/// pass B loudnorm——响度目标可由渲染选项注入,响度单参数化 T5.3/T5.6)。
 /// 画幅无关 → 多画幅变体共享(mix_cache_hit 即真分叉判据)。
 fn exec_mix(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<MixOutputs, String> {
     let now = cache::now_secs();
@@ -325,33 +466,40 @@ fn exec_mix(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<MixOutputs, Strin
     if let Some(rel) = idx.touch("mix", &key, now) {
         let mixed = plan.cache_dir.join(rel);
         let rep = StepReport::new("mix", json!({"cacheHit": true})).with_cache_hit(true);
-        return Ok((rep, mixed, key, true));
+        return Ok((rep, mixed, key, true, Vec::new()));
     }
     let rel = idx.record("mix", &key, spec, now);
     let mixed = plan.cache_dir.join(rel);
+    let mut cmds: Vec<String> = Vec::new();
+    let target_i = plan.opts.loudnorm_i.unwrap_or(-14.0);
+    let target_tp = plan.opts.loudnorm_tp.unwrap_or(-1.0);
     // pass A:总线合成 → 原始混音(raw 为临时件,pass B 后即清)
     let raw = mixed.with_file_name(format!("{key}.raw.m4a"));
     let args = steps::mix_pass_a_args(plan, &raw);
+    cmds.push(args.join(" "));
     run_ff("ffmpeg", &strs(&args))?;
 
     // pass B:响度(先测后编 linear=true)。数字静音(-inf,无音频工程)跳过:
     // linear=true 遇 -inf 的 measured 值,ffmpeg 报 "Result too large" 直接失败。
-    let (_m_out, m_err) = run_ff_capture(ff_bin("ffmpeg").as_str(), &strs(&steps::mix_measure_args(&raw)))?;
+    let (_m_out, m_err) =
+        run_ff_capture(ff_bin("ffmpeg").as_str(), &strs(&steps::mix_measure_args_t(&raw, target_i, target_tp)))?;
     let m_start = m_err.rfind('{').ok_or("loudnorm 测量输出无 JSON".to_string())?;
     let m_end = m_err.rfind('}').ok_or("loudnorm 测量输出无 JSON".to_string())? + 1;
     let measured: Value = serde_json::from_str(&m_err[m_start..m_end]).map_err(|e| e.to_string())?;
     if steps::mix_measured_is_loud(&measured) {
-        let args = steps::mix_pass_b_args(&measured, &raw, &mixed);
+        let args = steps::mix_pass_b_args(&steps::mix_linear_filter_t(&measured, target_i, target_tp), &raw, &mixed);
+        cmds.push(args.join(" "));
         run_ff(ff_bin("ffmpeg").as_str(), &strs(&args))?;
     } else {
         let args = steps::mix_pass_b_silent_args(&raw, &mixed);
+        cmds.push(args.join(" "));
         run_ff(ff_bin("ffmpeg").as_str(), &strs(&args))?;
     }
     let _ = cutforge_io::atomic::remove(&raw);
     idx.set_size("mix", &key, file_size(&mixed));
     idx.save(&plan.cache_dir)?;
     let rep = StepReport::new("mix", json!({"cacheHit": false}));
-    Ok((rep, mixed, key, false))
+    Ok((rep, mixed, key, false, cmds))
 }
 
 /// 步 6:字幕(外部 ASS + 文本轨生成 ASS 烧录,否则零重编码合流;键含 video 键 +
@@ -366,7 +514,7 @@ fn exec_subtitle(
     video_key: &str,
     mix_key_str: &str,
     project: &Project,
-) -> Result<(StepReport, PathBuf), String> {
+) -> Result<(StepReport, PathBuf, Vec<String>), String> {
     let now = cache::now_secs();
     let user_bytes = match &plan.ass_path {
         Some(ass) => Some(std::fs::read(ass).map_err(|e| e.to_string())?),
@@ -386,6 +534,7 @@ fn exec_subtitle(
     let burned = combined.is_some();
     let spec = cache::sub_spec(video_key, mix_key_str, combined.as_deref());
     let key = cache::sub_key(video_key, mix_key_str, combined.as_deref());
+    let mut cmds: Vec<String> = Vec::new();
     let subbed = match idx.touch("sub", &key, now) {
         Some(rel) => plan.cache_dir.join(rel),
         None => {
@@ -409,6 +558,7 @@ fn exec_subtitle(
                 // 滤镜参数内路径必须正斜杠:Windows 的 to_string_lossy 产反斜杠,
                 // 会被 filtergraph 转义规则吞掉("tmp\ass-k.ass"→"tmpass-k.ass",烧录必炸)
                 let args = steps::subtitle_burn_args(base_video, mixed, &ass_rels, &subbed);
+                cmds.push(args.join(" "));
                 let r = run_ff_in(&plan.cache_dir, "ffmpeg", &strs(&args));
                 for rel in &ass_rels {
                     let _ = cutforge_io::atomic::remove(&plan.cache_dir.join(rel));
@@ -416,6 +566,7 @@ fn exec_subtitle(
                 r?;
             } else {
                 let args = steps::subtitle_mux_args(base_video, mixed, &subbed);
+                cmds.push(args.join(" "));
                 run_ff("ffmpeg", &strs(&args))?;
             }
             idx.set_size("sub", &key, file_size(&subbed));
@@ -428,18 +579,52 @@ fn exec_subtitle(
     if !warns.is_empty() {
         detail["warnings"] = json!(warns);
     }
-    Ok((StepReport::new("subtitle", detail), subbed))
+    Ok((StepReport::new("subtitle", detail), subbed, cmds))
 }
 
-/// 步 7:encode(原子拷贝到成片输出;不缓存,输出路径与格式不变)。
-fn exec_encode(plan: &RenderPlan, video_input: &Path) -> Result<(StepReport, PathBuf), String> {
+/// 步 7:encode(bt709 标签 remux 缺省 / 显式选项重编码 + ffprobe 复验,ADR-0020;
+/// 硬件选项试编探测,失败优雅降级 libx264——AC-5.6;不走缓存,输出路径与格式不变)。
+fn exec_encode(plan: &RenderPlan, video_input: &Path) -> Result<(StepReport, PathBuf, Vec<String>), String> {
     let output = steps::encode_output_path(plan);
-    let payload = std::fs::read(video_input).map_err(|e| e.to_string())?;
-    cutforge_io::atomic::atomic_write(&output, &payload).map_err(|e| e.to_string())?;
-    Ok((
-        StepReport::new("encode", json!({"output": output.to_string_lossy()})),
-        output,
-    ))
+    let mut detail = json!({});
+    let mut warns: Vec<String> = Vec::new();
+    // 编码器解析(T5.6):auto/缺省 = libx264 确定性基线;hw = 试编探测优先硬件
+    let mut hw: Option<&'static str> = None;
+    if plan.opts.encoder.as_deref() == Some("hw") {
+        hw = encode::resolve_hw_candidate();
+        if hw.is_none() {
+            warns.push("硬件编码探测不可用(nvenc/qsv/amf 试编均失败),优雅降级 libx264(AC-5.6);".into());
+        }
+    }
+    let (args, enc_name) = encode::final_encode_args(video_input, &output, &plan.opts, hw);
+    let mut ok = run_ff("ffmpeg", &strs(&args)).is_ok();
+    if !ok && hw.is_some() {
+        // 试编通过但全片会话失败(驱动会话/显存等)→ 同样优雅降级
+        let (sw_args, sw_name) = encode::final_encode_args(video_input, &output, &plan.opts, None);
+        ok = run_ff("ffmpeg", &strs(&sw_args)).is_ok();
+        if ok {
+            warns.push(format!("硬件编码 {enc_name} 全片失败,优雅降级 {sw_name}(AC-5.6);"));
+        }
+    }
+    if !ok {
+        return Err("encode 步 ffmpeg 失败(含硬件降级后仍失败)".into());
+    }
+    // 色彩标签复验(ADR-0020:标签在位纳入渲染自检;缺标签 WARN 留痕不阻塞)
+    match encode::verify_color_tags(&output) {
+        Ok(tags) => detail["colorTags"] = tags,
+        Err(e) => warns.push(format!("色彩标签复验不可达: {e};")),
+    }
+    if let Some(t) = detail["colorTags"].as_object()
+        && t.get("inPlace").and_then(|v| v.as_bool()) == Some(false)
+    {
+        warns.push("输出色彩标签缺失(ffprobe 复验),渲染自检 WARN;".into());
+    }
+    detail["output"] = json!(output.to_string_lossy());
+    detail["encoder"] = json!(enc_name);
+    if !warns.is_empty() {
+        detail["warnings"] = json!(warns);
+    }
+    Ok((StepReport::new("encode", detail), output, vec![args.join(" ")]))
 }
 
 /// headless 批量:变体矩阵(比例 × 组合)。段缓存键含 canvas;混音键画幅无关 →

@@ -1,0 +1,33 @@
+{
+ "tool": "compound_create",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipIds": [
+     "V2-001",
+     "V2-002"
+    ],
+    "toTrack": "V2",
+    "startMs": 0,
+    "requestId": "parity-compound-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "clipId": "V2-003",
+     "durationMs": 4000,
+     "idempotent": false,
+     "innerClips": 2,
+     "opIds": [
+      "op-42"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

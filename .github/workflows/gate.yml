@@ -93,7 +93,11 @@ jobs:
         run: python tools/e2e_editing_tools.py --bin target/debug/cutforge-mcp
       - name: A4 字幕编辑器全流程 e2e(SRT 往返/批量替换/帧证文字位置/卡拉OK/花字)
         run: python tools/e2e_subtitle_editor.py --bin target/debug/cutforge-mcp
-      # A2/A3/A4 负载敏感 e2e 不进 CI:e2e_perf_timeline / e2e_drag_perf(帧率阈值 --min-fps 55)、
+      - name: A5 关键帧壳侧闭环 e2e(秒表打点单 Op/投影采样对拍/曲线拖锚写回/菱形拖移)
+        run: python tools/e2e_keyframes.py --bin target/debug/cutforge-mcp --cli target/debug/cutforge-cli
+      - name: A5 调色壳侧闭环 e2e(色轮写回单 Op/帧色偏/LUT/示波器三画布/分屏割线)
+        run: python tools/e2e_color.py --bin target/debug/cutforge-mcp --cli target/debug/cutforge-cli
+      # A2/A3/A4/A5 负载敏感 e2e 不进 CI:e2e_perf_timeline / e2e_drag_perf(帧率阈值 --min-fps 55)、
       # e2e_perf_budget(真实导出+媒体池 200 轮导航)、e2e_media_perf(千素材滚动帧率 +min-fps 55,
       # 共享 runner 抖动会假红)——本地册收官在安静时段跑(python tools/gates/gate.py A4)。
 

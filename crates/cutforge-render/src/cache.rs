@@ -21,7 +21,9 @@ use std::path::{Path, PathBuf};
 pub const CACHE_ROOT: &str = ".cutforge/render-cache";
 /// 分层目录:seg(段)/mix(混音)/compose(合成)/overlay(叠加)/sub(字幕合流)
 /// /frame(单帧,T2.4 精确预览;键含工作区指纹,改一笔即 miss)。
-pub const LAYERS: [&str; 6] = ["seg", "mix", "compose", "overlay", "sub", "frame"];
+/// 缓存层(册五 T5.4 增 adjust:调整层时间窗处理产物;复合中间段挂 compose 层,
+/// 键 = 子内容指纹——见 compound.rs 模块注释,不另设层)。
+pub const LAYERS: [&str; 7] = ["seg", "mix", "compose", "overlay", "adjust", "sub", "frame"];
 /// 临时文件目录(concat 清单、burn 用 ASS 副本;不入索引,gc 按超龄清理)。
 pub const TMP_DIR: &str = "tmp";
 /// 清单文件名(相对缓存根)。
@@ -201,7 +203,8 @@ pub fn ensure_dirs(cache_root: &Path) -> Result<(), String> {
 use crate::plan::{OverlaySeg, RenderPlan};
 use cutforge_core::model::Clip;
 
-/// seg 层输入 spec:clip JSON + 尾帧扩展 + 画幅 + fps。
+/// seg 层输入 spec:clip JSON + 尾帧扩展 + 画幅 + fps(+ LUT 内容哈希,册五 T5.2:
+/// clip JSON 只含 grade.lut **路径**,文件内容被替换时必须 miss)。
 /// 尾帧来自**下一 clip 的转场**,必须入键——旧键(仅 clip 自身 JSON)漏掉它,
 /// 改转场时长会陈旧复用前一段的 tpad(R2 的实体案例)。
 pub fn seg_spec(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> Value {
@@ -211,6 +214,7 @@ pub fn seg_spec(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> Value {
         "fps": plan.fps,
         "clip": serde_json::to_string(clip).unwrap_or_default(),
         "tailMs": tail_ms,
+        "lutHash": crate::grade::lut_content_hash(clip, &plan.project_dir),
     })
 }
 
@@ -247,19 +251,41 @@ pub fn overlay_key(base_key: &str, overlays: &[OverlaySeg]) -> String {
     key_hex(&overlay_spec(base_key, overlays))
 }
 
+/// adjust 层输入 spec(册五 T5.4 调整层):基片键 + adjust 片段清单
+/// (整 clip JSON:fx/grade 链 + 时间窗)+ 画幅/帧率。基片变 → 键变;
+/// 改调整层任一片段 → 键变(真分叉)。
+pub fn adjust_spec(base_key: &str, clips: &[Clip], w: u32, h: u32, fps: u32) -> Value {
+    json!({
+        "v": crate::RENDERER_VERSION,
+        "base": base_key,
+        "canvas": [w, h],
+        "fps": fps,
+        "clips": clips.iter().map(|c| serde_json::to_string(c).unwrap_or_default()).collect::<Vec<_>>(),
+    })
+}
+
 /// mix 输入 spec:音频段清单 + BGM + 总长 + 边界转场时长(册四 T4.5:acrossfade
 /// 链由边界决定,改转场时长必须换键)。**画幅无关** → 多画幅变体共享一份
 /// (真分叉判据,与拆分前同构)。册四 T4.4:段元组并入 reverse(倒放改变混音产物)。
 /// 册四 T4.8:段元组并入 denoise/pitch(降噪/变调改变混音产物)。
+/// 册五 T5.3:段元组并入 track_id + 全局 trackProc(轨道 EQ/动态改变混音产物,
+/// 且事件跨轨移动时同键复用会陈旧——track_id 必须逐段入键)。
 pub fn mix_spec(plan: &RenderPlan) -> Value {
     json!({
         "segs": plan.audio_segs.iter().map(|s| (
             s.src.to_string_lossy(), s.start_ms, s.duration_ms, s.source_in_ms,
-            s.volume, s.speed, s.reverse, s.denoise.clone(), s.pitch, s.fade_in_ms, s.fade_out_ms
+            s.volume, s.speed, s.reverse, s.denoise.clone(), s.pitch, s.fade_in_ms, s.fade_out_ms,
+            s.volume_expr.clone(), // volume 关键帧表达式入键(IR v3;改关键帧必换键)
+            s.track_id.clone(),    // 轨道归属入键(T5.3 分组建流;跨轨移动必换键)
         )).collect::<Vec<_>>(),
         "bgm": plan.bgm,
         "total": plan.total_ms,
         "trn": plan.boundary_durs_ms.iter().map(|d| crate::steps::fmt_f64(*d)).collect::<Vec<_>>(),
+        "trackProc": plan.track_proc.iter().map(|p| json!({
+            "trackId": p.track_id, "eq": p.eq, "dyn": p.dyn_,
+        })).collect::<Vec<_>>(),
+        // 响度目标入键(册五 T5.6 loudnormTarget:改目标必换键,pass B 产物不同)
+        "lnTarget": [plan.opts.loudnorm_i, plan.opts.loudnorm_tp],
         "v": crate::RENDERER_VERSION,
     })
 }
@@ -531,6 +557,83 @@ mod tests {
         ] {
             assert_ne!(base, key_of(extra), "新字段必须改变 seg 键: {extra}");
         }
+    }
+
+    /// IR v3(T5.1):seg 键对 clip JSON 全量哈希——keyframes 自动入键,且
+    /// **逐字段改键**:动任一关键帧的 property/timeMs/value/interp/bezier 或
+    /// 增删一条都必换键(陈旧复用零容忍;keyframed clip 渲染产物随曲线变)。
+    #[test]
+    fn seg_key_is_sensitive_to_keyframes_field_by_field() {
+        let mk = |kfs: &str| -> (RenderPlan, Clip) {
+            let raw = r#"{"version":1,"schemaVersion":"3.0.0","slug":"kf","fps":30,
+                    "canvas":{"width":1080,"height":1920},
+                    "tracks":[{"id":"V1","kind":"video","clips":[
+                        {"id":"V1-001","src":"a.mp4","startMs":0,"durationMs":2000@@KFS@@} ]}]}"#
+                .replace("@@KFS@@", kfs);
+            let v: Value = serde_json::from_str(&raw).unwrap();
+            let p: cutforge_core::model::Project = serde_json::from_value(v).unwrap();
+            let plan = RenderPlan::build(&p, Path::new("/w"), None);
+            (plan, p.tracks[0].clips[0].clone())
+        };
+        let key_of = |kfs: &str| {
+            let (plan, clip) = mk(kfs);
+            seg_key(&plan, &clip, 0.0)
+        };
+        let base = key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.5},
+            {"property":"position.x","timeMs":1000,"value":0.7,"interp":"linear"}]"#);
+        // property 变
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.y","timeMs":0,"value":0.5},
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "property 变必换键");
+        // timeMs 变
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":100,"value":0.5},
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "timeMs 变必换键");
+        // value 变
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.6},
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "value 变必换键");
+        // interp 变
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.5,"interp":"hold"},
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "interp 变必换键");
+        // bezier 控制柄变
+        assert_ne!(
+            key_of(r#", "keyframes":[
+                {"property":"position.x","timeMs":0,"value":0.5,"interp":"bezier","bezier":[0.3,0,0.7,1]},
+                {"property":"position.x","timeMs":1000,"value":0.7}]"#),
+            key_of(r#", "keyframes":[
+                {"property":"position.x","timeMs":0,"value":0.5,"interp":"bezier","bezier":[0.1,0,0.9,1]},
+                {"property":"position.x","timeMs":1000,"value":0.7}]"#),
+            "bezier 控制柄变必换键"
+        );
+        // 增删一条
+        assert_ne!(base, key_of(r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.5}]"#), "删一条必换键");
+        // 无关键帧与空差异照常(无 keyframes 字段的 clip 键与 v2 时点同形语义)
+        assert_ne!(base, key_of(""), "有关键帧 vs 无关键帧必不同键");
+    }
+
+    /// mix 键对 volume 关键帧敏感(IR v3:volume_expr 入键)。
+    #[test]
+    fn mix_key_is_sensitive_to_volume_keyframes() {
+        let mk = |kfs: &str| -> RenderPlan {
+            let raw = r#"{"version":1,"schemaVersion":"3.0.0","slug":"m","fps":30,
+                    "canvas":{"width":1080,"height":1920},
+                    "tracks":[{"id":"V1","kind":"video","clips":[
+                        {"id":"V1-001","src":"a.mp4","startMs":0,"durationMs":2000,
+                          "role":"voice","volume":1.0@@KFS@@} ]}]}"#
+                .replace("@@KFS@@", kfs);
+            let p: cutforge_core::model::Project = serde_json::from_str(&raw).unwrap();
+            RenderPlan::build(&p, Path::new("/w"), None)
+        };
+        assert_ne!(
+            mix_key(&mk(r#", "keyframes":[{"property":"volume","timeMs":0,"value":1.0},
+                {"property":"volume","timeMs":1000,"value":0.0}]"#)),
+            mix_key(&mk("")),
+            "volume 关键帧必须改变 mix 键"
+        );
     }
 
     /// mix 键对 reverse 敏感(倒放改变混音产物;T4.4)。

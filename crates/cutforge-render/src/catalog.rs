@@ -280,6 +280,37 @@ fn find_fx(id: &str) -> Option<&'static FxDef> {
 /// combo 叠加上限(schema maxItems 同源;越界渲染端钳制 + WARN)。
 pub const FX_COMBO_CAP: usize = 3;
 
+/// 单条 fx 声明 → 滤镜串(参数覆写默认、越界钳制、未声明键按默认裁决 WARN;
+/// 上下文 = 画布宽高帧率 + 实例标签)。公开给关键帧 fx 通路复用(kf_expr:
+/// sendcmd 打标签/segment 分支重建均需逐条渲染,单源本函数,册五 T5.1)。
+pub fn fx_entry_text(
+    def: &FxDef,
+    entry: &cutforge_core::model::FxEntry,
+    w: u32,
+    h: u32,
+    fps: u32,
+    label: &str,
+) -> (String, Vec<String>) {
+    let mut warns: Vec<String> = Vec::new();
+    let mut text = def.filter.clone();
+    for p in &def.params {
+        let (val, mut w2) = param_value(entry, p);
+        warns.append(&mut w2);
+        text = text.replace(&format!("{{{}}}", p.name), &crate::steps::fmt_f64(val));
+    }
+    for key in entry.params.as_ref().map(|m| m.keys()).into_iter().flatten() {
+        if !def.params.iter().any(|p| &p.name == key) {
+            warns.push(format!("fx({}) 参数 {key} 未声明,按默认值裁决;", def.id));
+        }
+    }
+    let text = text
+        .replace("{W}", &w.to_string())
+        .replace("{H}", &h.to_string())
+        .replace("{FPS}", &fps.to_string())
+        .replace("{L}", label);
+    (text, warns)
+}
+
 /// 片段 fx.combo → 段滤镜链(册四 T4.6):数组顺序即应用顺序;参数覆写默认、
 /// 越界钳制、未声明键按默认裁决(WARN);未知 fxId 逐项降级 WARN。上下文 =
 /// 画布宽高 + 帧率(马赛克/抖镜模板需要);{L} 标签前缀逐实例唯一化。
@@ -296,24 +327,8 @@ pub fn fx_chain(clip: &Clip, w: u32, h: u32, fps: u32) -> (String, Vec<String>) 
             warns.push(format!("fx({}) 未注册,该项降级跳过(fxDegraded);", entry.fx));
             continue;
         };
-        // 参数解析:条目值 > 目录默认;越界钳制;未声明键 WARN + 按默认裁决
-        let mut text = def.filter.clone();
-        for p in &def.params {
-            let (val, mut w) = param_value(entry, p);
-            warns.append(&mut w);
-            text = text.replace(&format!("{{{}}}", p.name), &crate::steps::fmt_f64(val));
-        }
-        for key in entry.params.as_ref().map(|m| m.keys()).into_iter().flatten() {
-            if !def.params.iter().any(|p| &p.name == key) {
-                warns.push(format!("fx({}) 参数 {key} 未声明,按默认值裁决;", def.id));
-            }
-        }
-        let label = format!("c{i}");
-        text = text
-            .replace("{W}", &w.to_string())
-            .replace("{H}", &h.to_string())
-            .replace("{FPS}", &fps.to_string())
-            .replace("{L}", &label);
+        let (text, mut w2) = fx_entry_text(def, entry, w, h, fps, &format!("c{i}"));
+        warns.append(&mut w2);
         parts.push(text);
     }
     (parts.join(","), warns)

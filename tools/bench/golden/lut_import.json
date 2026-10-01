@@ -1,0 +1,23 @@
+{
+ "tool": "lut_import",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/test.cube"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "lut": ".cutforge/luts/test.cube",
+     "rows": 64,
+     "size3d": 4,
+     "title": "parity lut"
+    },
+    "message": "LUT 已导入",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

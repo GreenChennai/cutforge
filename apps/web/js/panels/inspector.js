@@ -12,6 +12,7 @@ import { updateClip, duplicateSelectedToPlayhead, addTrack, selectClip } from ".
 import { batchUpdateClips } from "../core/edit-commands.js";
 import { buildGroup, WHOLE_OBJECT_PARENTS, META } from "./insp-groups.js";
 import { collapseGroup } from "../ui/controls.js";
+import { watchForField } from "./kf-watch.js";
 import { toast } from "../ui/toast.js";
 
 /** field 名 → 控件实例 */
@@ -89,10 +90,13 @@ function wrapField(control) {
   // 关联失效 → axe label critical;册四 FE2 axe 实测)
   if (meta.type === "toggle") return control.root;
   const label = meta.label || control.field;
+  // 秒表(T5.1):可动画属性(scale/opacity/rotation/volume)旁打点开关;
+  // 草稿值经 control.get() 读(打点取当前输入值)
+  const watch = watchForField(control.field, () => selectedRow(), () => control.get());
   return h("label", {
     class: meta.type === "select" || meta.type === "slider" ? "v2-field" : null,
     "data-tip": control.field,
-  }, [label, control.root]);
+  }, watch ? [label, control.root, watch] : [label, control.root]);
 }
 
 function selectedRow() {

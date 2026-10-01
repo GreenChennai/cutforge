@@ -20,6 +20,20 @@
       },
       {
        "bytes": "<BYTES>",
+       "durationMs": null,
+       "kind": "image",
+       "name": "frame.png",
+       "path": "01_原始素材/frame.png"
+      },
+      {
+       "bytes": "<BYTES>",
+       "durationMs": 4000,
+       "kind": "video",
+       "name": "hardcut.mp4",
+       "path": "01_原始素材/hardcut.mp4"
+      },
+      {
+       "bytes": "<BYTES>",
        "durationMs": 1000,
        "kind": "audio",
        "name": "sfx.mp3",
@@ -31,9 +45,16 @@
        "kind": "video",
        "name": "take1.mp4",
        "path": "01_原始素材/take1.mp4"
+      },
+      {
+       "bytes": "<BYTES>",
+       "durationMs": 10000,
+       "kind": "video",
+       "name": "take2.mp4",
+       "path": "01_原始素材/take2.mp4"
       }
      ],
-     "total": 3,
+     "total": 6,
      "truncated": false
     },
     "message": "素材清单",

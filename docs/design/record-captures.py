@@ -29,7 +29,12 @@ PX_PER_MS = 0.06
 FPS = 30
 MEDIA_S = 30
 VIEWPORT = {"width": 960, "height": 600}
+VIEWPORT_NEW = {"width": 720, "height": 450}   # 册五补录段(总量红线;时长压缩后仍超即降此)
 MAX_BYTES = 2 * 1024 * 1024
+# 册五补录段前缀(40-46 微交互 + E-FE2 面板演示;低分辨率录制)
+NEW_CAP_PREFIXES = ("40-", "41-", "42-", "43-", "44-", "45-", "46-",
+                    "06-mixer", "07-mixer", "08-compound", "09-multicam",
+                    "10-scene", "11-encode", "12-queue", "13-otio")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -65,6 +70,16 @@ def sh(cmd: list[str]) -> subprocess.CompletedProcess:
                           encoding="utf-8", errors="replace")
 
 
+def rpc(port: int, token: str, name: str, args: dict, timeout: float = 60) -> dict:
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                       "params": {"name": name, "arguments": args}}).encode()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/rpc", data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
+    out = json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+    return json.loads(out["result"]["content"][0]["text"])
+
+
 def layout_rel(proj: Path) -> tuple[str, str]:
     if (proj / "05_时间线工程").is_dir():
         return "05_时间线工程", "01_原始素材"
@@ -79,6 +94,33 @@ def make_media(ws: Path, name: str, seconds: int, freq: int) -> None:
             "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-shortest",
             str(ws / name)])
     assert r.returncode == 0, f"ffmpeg 夹具失败:{r.stderr[-200:]}"
+
+
+def make_hardcut(ws: Path, name: str = "cut.mp4") -> None:
+    """2s 红 + 2s 蓝硬切夹具(带静音轨;scene_detect 必然检出 ~2s 剪切点)。"""
+    r = sh(["ffmpeg", "-y", "-loglevel", "error",
+            "-f", "lavfi", "-i", "color=c=red:size=480x270:rate=30:duration=2",
+            "-f", "lavfi", "-i", "color=c=blue:size=480x270:rate=30:duration=2",
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v];[2:a]atrim=0:4[a]",
+            "-map", "[v]", "-map", "[a]", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
+            str(ws / name)])
+    assert r.returncode == 0 and (ws / name).is_file(), f"ffmpeg 硬切夹具失败:{r.stderr[-200:]}"
+
+
+def write_compound_fixture(proj: Path, tl_rel: str, mat_rel: str) -> None:
+    """08-compound 用:基准盘面 + V1-003 复合壳(两子片段内联子时间线)。"""
+    write_base_project(proj, tl_rel, mat_rel)
+    pj = json.loads((proj / tl_rel / "project.json").read_text(encoding="utf-8"))
+    pj["tracks"][0]["clips"].append({
+        "id": "V1-003", "src": f"{mat_rel}/a.mp4", "startMs": 60000, "durationMs": 4000,
+        "compound": {"clips": [
+            {"id": "V1-101", "src": f"{mat_rel}/a.mp4", "startMs": 0, "durationMs": 2500},
+            {"id": "V1-102", "src": f"{mat_rel}/b.mp4", "startMs": 2500, "durationMs": 1500},
+        ]},
+    })
+    (proj / tl_rel / "project.json").write_text(json.dumps(pj, ensure_ascii=False), encoding="utf-8")
 
 
 def write_base_project(proj: Path, tl_rel: str, mat_rel: str) -> None:
@@ -408,6 +450,349 @@ def cap_19_perf_panel(page):
     page.wait_for_timeout(600)
 
 
+# ---------------- 册五补录:微交互 #40-46(E-FE1 关键帧/调色面) ----------------
+
+def expand_group(page, name: str) -> None:
+    """检查器折叠组展开(重试至内容可见)。"""
+    grp = page.locator(f'[data-testid="insp-group-{name}"]')
+    for _ in range(3):
+        if "collapsed" not in (grp.get_attribute("class") or ""):
+            return
+        grp.locator("legend").click()
+        page.wait_for_timeout(250)
+    assert "collapsed" not in (grp.get_attribute("class") or ""), f"检查器组「{name}」无法展开"
+
+
+def select_clip(page, clip_id: str = "V1-001") -> None:
+    page.click(f'[data-testid="clip"][data-id="{clip_id}"]')
+    page.wait_for_timeout(350)
+
+
+def cap_40_kf_watch(page):
+    """#40 秒表开/关双态:开启 accent 描边 + aria-pressed,开启即打点(零动画)。"""
+    reset_state(page)
+    select_clip(page)
+    expand_group(page, "画面")
+    btn = page.locator('[data-testid="kw-toggle-opacity"]')
+    btn.scroll_into_view_if_needed()
+    page.wait_for_timeout(400)
+    page.click('[data-testid="kw-toggle-opacity"]')
+    page.wait_for_timeout(600)
+    assert btn.get_attribute("aria-pressed") == "true", "秒表开启态应 aria-pressed=true"
+    page.wait_for_timeout(500)
+
+
+def cap_41_kf_watch_confirm(page):
+    """#41 秒表关闭确认弹窗(复用 confirm-dialog;末属性整组清空文案如实呈现)。"""
+    reset_state(page)
+    select_clip(page)
+    expand_group(page, "画面")
+    page.locator('[data-testid="kw-toggle-opacity"]').scroll_into_view_if_needed()
+    page.click('[data-testid="kw-toggle-opacity"]')
+    page.wait_for_timeout(700)
+    page.click('[data-testid="kw-toggle-opacity"]')
+    page.wait_for_selector('[data-testid="confirm-dialog"]', timeout=6000)
+    page.wait_for_timeout(700)
+    page.click('[data-testid="confirm-ok"]')
+    page.wait_for_timeout(600)
+
+
+def cap_42_kf_diamond_drag(page):
+    """#42 关键帧菱形拖拽跟手(时间码气泡;松手单 Op;末段 Esc 取消)。"""
+    reset_state(page)
+    select_clip(page)
+    expand_group(page, "画面")
+    page.click('[data-testid="kw-toggle-opacity"]')
+    page.wait_for_timeout(500)
+    page.click('[data-testid="ruler"]', position={"x": 240, "y": 10})
+    page.wait_for_timeout(400)
+    page.click('[data-testid="kw-add"]')   # 第二帧走「+ 打点」(秒表二连击=关闭确认,非打点)
+    page.wait_for_timeout(500)
+    dia = page.locator('[data-testid="kw-diamond"][data-time-ms="4000"]')
+    dia.first.scroll_into_view_if_needed()
+    box = dia.first.bounding_box()
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    for i in range(1, 8):
+        page.mouse.move(cx + i * 9, cy)
+        page.wait_for_timeout(55)
+    page.keyboard.press("Escape")   # 拖拽中取消:零 Op 复位
+    page.wait_for_timeout(600)
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    for i in range(1, 8):
+        page.mouse.move(cx + i * 9, cy)
+        page.wait_for_timeout(55)
+    page.mouse.up()                 # 松手提交:单 Op
+    page.wait_for_timeout(600)
+
+
+def cap_43_kf_curve_drag(page):
+    """#43 曲线画布锚点拖拽(拖拽期直线示意 + 采样点云降淡;松手投影刷新真曲线)。"""
+    reset_state(page)
+    select_clip(page)
+    expand_group(page, "画面")
+    page.click('[data-testid="kw-toggle-opacity"]')
+    page.wait_for_timeout(500)
+    page.click('[data-testid="ruler"]', position={"x": 240, "y": 10})
+    page.wait_for_timeout(400)
+    page.click('[data-testid="kw-add"]')
+    page.wait_for_timeout(700)
+    cv = page.locator('[data-testid="kf-curve-canvas"]')
+    cv.scroll_into_view_if_needed()
+    box = cv.bounding_box()
+    ax = box["x"] + (10 + (4000 / 12000) * 320) / 340 * box["width"]
+    ay = box["y"] + (160 - 0.5 * 150) / 170 * box["height"]
+    page.mouse.move(ax, ay)
+    page.mouse.down()
+    for i in range(1, 7):
+        page.mouse.move(ax, ay - i * 9)
+        page.wait_for_timeout(60)
+    page.mouse.up()
+    page.wait_for_timeout(700)
+    ax2 = box["x"] + (10 + (4000 / 12000) * 320) / 340 * box["width"]
+    ay2 = box["y"] + (160 - 0.9333 * 150) / 170 * box["height"]
+    page.mouse.move(ax2, ay2)
+    page.mouse.down()
+    for i in range(1, 6):
+        page.mouse.move(ax2 + i * 8, ay2 + i * 6)
+        page.wait_for_timeout(55)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(700)
+
+
+def cap_44_grade_wheel(page):
+    """#44 色轮指针拖拽跟手(角度=色相 半径=强度;盘面光谱数据面)。"""
+    reset_state(page)
+    select_clip(page)
+    expand_group(page, "调色")
+    wh = page.locator('[data-testid="grade-wheel-lift"]')
+    wh.scroll_into_view_if_needed()
+    box = wh.bounding_box()
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(cx + 8, cy)
+    page.mouse.down()
+    for i in range(1, 13):
+        page.mouse.move(cx + 8 + i * 3, cy - i * 2)
+        page.wait_for_timeout(55)
+    page.mouse.up()
+    page.wait_for_timeout(600)
+    page.click('[data-testid="grade-wheel-lift-reset"]')
+    page.wait_for_timeout(500)
+
+
+def cap_45_scopes_status(page):
+    """#45 示波器采样状态文本态(采样中…→已采样@ms;数据域标注精确帧含调色)。"""
+    reset_state(page)
+    select_clip(page)
+    page.click('[data-testid="scopes-toggle"]')
+    page.wait_for_timeout(400)
+    page.click('[data-testid="scopes-sample"]')
+    page.wait_for_function(
+        """() => document.querySelector('[data-testid="scopes-status"]').textContent.startsWith('已采样')""",
+        timeout=60000)
+    page.wait_for_timeout(800)
+
+
+def cap_46_compare_divider(page):
+    """#46 分屏割线拖拽跟手(clip-path inset 直写;双击复位 50%)。"""
+    reset_state(page)
+    select_clip(page)
+    page.click('[data-testid="compare-toggle"]')
+    page.wait_for_function(
+        """() => { const i = document.querySelector('[data-testid="compare-img-base"]');
+                   return i && !!i.getAttribute('src'); }""", timeout=120000)
+    dv = page.locator('[data-testid="compare-divider"]')
+    dv.scroll_into_view_if_needed()
+    box = dv.bounding_box()
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(cx, cy)
+    page.mouse.down()
+    for i in range(1, 11):
+        page.mouse.move(cx + i * 12, cy)
+        page.wait_for_timeout(50)
+    page.mouse.up()
+    page.wait_for_timeout(500)
+    dv.dblclick()
+    page.wait_for_timeout(500)
+
+
+# ---------------- 册五补录:E-FE2 面板演示(混音/复合/多机位/场景/编码/队列/OTIO) ----------------
+
+def cap_e2_06_mixer_eq(page):
+    """混音台 EQ:轨道条 + EQ 折叠组 → 加段 → 参数 → 应用(track_update 单 Op)。"""
+    reset_state(page)
+    page.click('[data-testid="tab-mixer"]')
+    page.wait_for_selector('[data-testid="mixer-tracks"]', timeout=8000)
+    page.wait_for_timeout(500)
+    eq = page.locator('[data-testid="mix-eq-A1"]')
+    eq.scroll_into_view_if_needed()
+    eq.locator("legend").click()
+    page.wait_for_timeout(400)
+    page.click('[data-testid="mix-eq-add-A1"]')
+    page.wait_for_timeout(400)
+    page.fill('[data-testid="mix-eq-freq-A1"]', "8000")
+    page.fill('[data-testid="mix-eq-gain-A1"]', "3")
+    page.wait_for_timeout(300)
+    page.click('[data-testid="mix-eq-apply-A1"]')
+    page.wait_for_timeout(800)
+
+
+def cap_e2_07_mixer_bus_loudness(page):
+    """响度单:目标 I:TP → 取素材 → 测量 → 偏差徽标(ok/warn 如实)。"""
+    reset_state(page)
+    page.click('[data-testid="tab-mixer"]')
+    page.wait_for_selector('[data-testid="mix-bus"]', timeout=8000)
+    box = page.locator('[data-testid="mix-bus"]')
+    box.scroll_into_view_if_needed()
+    page.fill('[data-testid="mix-target"]', "-14")
+    page.fill('[data-testid="mix-bus-src"]', "01_原始素材/a.mp4")
+    page.wait_for_timeout(300)
+    page.click('[data-testid="mix-bus-measure"]')
+    page.wait_for_function(
+        """() => { const n = document.querySelector('[data-testid="mix-bus-nums"]');
+                   return n && n.textContent.trim() && !n.textContent.includes("—"); }""",
+        timeout=60000)
+    page.wait_for_timeout(900)
+
+
+def cap_e2_08_compound(page):
+    """复合片段:双击复合壳 → 说明卡(子片段概要)→ 解包还原(单 Op)。"""
+    reset_state(page)
+    page.evaluate(
+        """() => { const w = document.querySelector('[data-testid="timeline-wrap"]');
+                    w.scrollLeft = 60000 * 0.06 - 260; }""")
+    page.wait_for_timeout(400)
+    page.dblclick('[data-testid="clip"][data-id="V1-003"]')
+    page.wait_for_selector('[data-testid="cpd-summary"]', timeout=8000)
+    page.wait_for_timeout(800)
+    page.click('[data-testid="cpd-unbind"]')
+    page.wait_for_timeout(1000)
+
+
+def cap_e2_09_multicam(page):
+    """多机位:同步集手输 ×2 → 同步分析(置信度/偏移如实)→ 打切换点 → 生成序列。"""
+    reset_state(page)
+    page.click('[data-testid="tab-multicam"]')
+    page.wait_for_selector('[data-testid="mc-angles"]', timeout=8000)
+    mc = page.locator('[data-testid="mc-angles"]')
+    mc.scroll_into_view_if_needed()
+    for src in ("01_原始素材/a.mp4", "01_原始素材/a2.mp4"):
+        page.fill('[data-testid="mc-angle-src"]', src)
+        page.click('[data-testid="mc-angle-add"]')
+        page.wait_for_timeout(350)
+    page.click('[data-testid="mc-sync"]')
+    page.wait_for_function(
+        """() => { const o = document.querySelector('[data-testid="mc-sync-out"]');
+                   return o && o.textContent.includes("offset"); }""", timeout=120000)
+    page.wait_for_timeout(500)
+    # 切换点打点需播放头定位:页签互斥(tab-multicam 隐藏时间线),故来回切换
+    def seek_and_switch(ms_px: int, angle: str) -> None:
+        page.click('[data-testid="tab-timeline"]')
+        page.wait_for_timeout(250)
+        page.click('[data-testid="ruler"]', position={"x": ms_px, "y": 10})
+        page.wait_for_timeout(300)
+        page.click('[data-testid="tab-multicam"]')
+        page.wait_for_timeout(250)
+        if angle is not None:
+            page.select_option('[data-testid="mc-switch-angle"]', angle)
+        page.click('[data-testid="mc-switch-add"]')
+        page.wait_for_timeout(300)
+    seek_and_switch(180, "0")
+    seek_and_switch(360, "1")
+    cut = page.locator('[data-testid="mc-cut"]')
+    cut.scroll_into_view_if_needed()
+    page.select_option('[data-testid="mc-track"]', "V1")
+    page.fill('[data-testid="mc-duration"]', "6000")
+    page.click('[data-testid="mc-cut"]')
+    page.wait_for_timeout(900)
+    page.click('[data-testid="tab-timeline"]')   # 回时间线展示生成序列
+    page.wait_for_timeout(400)
+
+
+def cap_e2_10_scene(page):
+    """场景检测:硬切夹具检测(切点列表)→ 勾选自动切段 → 单 Op 落轨。"""
+    reset_state(page)
+    page.click('[data-testid="tab-multicam"]')
+    st = page.locator('[data-testid="scene-tool"]')
+    st.scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    page.fill('[data-testid="scene-src"]', "01_原始素材/cut.mp4")
+    page.click('[data-testid="scene-run"]')
+    # 壳侧渲染友好摘要(scene-summary「N 剪切点」),不含原始键名 cutCount —— 等摘要行出现
+    page.wait_for_selector('[data-testid="scene-summary"]', timeout=120000)
+    page.wait_for_timeout(600)
+    # toggleField 的 testid 挂在 checkbox 本体(非包装层)
+    page.click('[data-testid="scene-auto"]')
+    page.wait_for_timeout(300)
+    page.select_option('[data-testid="scene-track"]', "V1")
+    page.click('[data-testid="scene-run"]')
+    page.wait_for_timeout(1100)
+
+
+def cap_e2_11_encode_hw(page):
+    """编码探测:encode_probe 毫秒级清单(硬件在位/试编可用性如实)。"""
+    reset_state(page)
+    enc = page.locator('[data-testid="export-encode"]')
+    enc.scroll_into_view_if_needed()
+    page.wait_for_timeout(300)
+    page.click('[data-testid="export-probe"]')
+    page.wait_for_function(
+        """() => { const o = document.querySelector('[data-testid="export-probe-out"]');
+                   return o && !o.textContent.includes("未探测"); }""", timeout=60000)
+    page.wait_for_timeout(900)
+
+
+def make_cap_e2_12(port: int, token: str, root: str):
+    """队列生命周期录制(需要 serve 端口/令牌/工程根 → 工厂闭包):
+    入队(queued/running)→ 暂停 → 恢复 → 取消(canceled)。"""
+    def run(page) -> None:
+        reset_state(page)
+        rpc(port, token, "render_run", {"root": root}, timeout=30)
+        page.click('[data-testid="tab-queue"]')
+        page.wait_for_timeout(600)
+        page.click('[data-testid="queue-refresh"]')
+        page.wait_for_selector('[data-testid="queue-row"]', timeout=15000)
+        page.wait_for_timeout(800)
+        pause = page.locator('[data-testid="queue-pause"]').first
+        if pause.is_disabled():
+            page.wait_for_timeout(2500)
+        if not pause.is_disabled():
+            pause.click()
+            page.wait_for_timeout(900)
+            resume = page.locator('[data-testid="queue-resume"]').first
+            if not resume.is_disabled():
+                resume.click()
+                page.wait_for_timeout(600)
+        cancel = page.locator('[data-testid="queue-cancel"]').first
+        if not cancel.is_disabled():
+            cancel.click()
+            page.wait_for_timeout(900)
+        page.click('[data-testid="queue-refresh"]')
+        page.wait_for_timeout(600)
+    return run
+
+
+def cap_e2_13_otio(page):
+    """OTIO 往返:导出(派生物落 06_成片输出)→ 导入对话框(预填路径)→ 新工程。"""
+    reset_state(page)
+    ot = page.locator('[data-testid="export-otio"]')
+    ot.scroll_into_view_if_needed()
+    page.select_option('[data-testid="export-otio-format"]', "otio")
+    page.click('[data-testid="export-otio-run"]')
+    page.wait_for_timeout(800)
+    page.click('[data-testid="export-otio-import"]')
+    page.wait_for_selector('[data-testid="otio-run"]', timeout=8000)
+    page.wait_for_timeout(300)
+    page.click('[data-testid="otio-run"]')
+    page.wait_for_function(
+        """() => { const o = document.querySelector('[data-testid="otio-progress"]');
+                   return o && o.textContent.includes("完成"); }""", timeout=60000)
+    page.wait_for_timeout(600)
+    page.click('[data-testid="otio-cancel"]')
+    page.wait_for_timeout(300)
+
 CAPTURES = [
     ("01-first-run-onboarding.webm", cap_01_onboarding,
      "新手引导条(T3.7)"),
@@ -447,6 +832,38 @@ CAPTURES = [
      "清单 27:断连横幅滑入·呼吸点·恢复收起"),
     ("19-perf-panel.webm", cap_19_perf_panel,
      "性能面板(T3.5;预算表逐行可视)"),
+    # ---- 册五补录:微交互 #40-46 ----
+    ("40-kf-watch.webm", cap_40_kf_watch,
+     "清单 40:秒表开/关双态(accent 描边 + aria-pressed;开启即打点)"),
+    ("41-kf-watch-confirm.webm", cap_41_kf_watch_confirm,
+     "清单 41:秒表关闭确认弹窗(confirm-dialog 复用;清空通道文案如实)"),
+    ("42-kf-diamond-drag.webm", cap_42_kf_diamond_drag,
+     "清单 42:关键帧菱形拖拽跟手(时间码气泡;Esc 取消 + 松手单 Op)"),
+    ("43-kf-curve-drag.webm", cap_43_kf_curve_drag,
+     "清单 43:曲线画布锚点拖拽(直线示意;松手投影刷新真曲线)"),
+    ("44-grade-wheel.webm", cap_44_grade_wheel,
+     "清单 44:色轮指针拖拽跟手(角度=色相 半径=强度)"),
+    ("45-scopes-status.webm", cap_45_scopes_status,
+     "清单 45:示波器采样状态文本态(采样中→已采样@ms;数据域标注)"),
+    ("46-compare-divider.webm", cap_46_compare_divider,
+     "清单 46:分屏割线拖拽跟手(clip-path 直写;双击复位 50%)"),
+    # ---- 册五补录:E-FE2 面板演示 ----
+    ("06-mixer-eq.webm", cap_e2_06_mixer_eq,
+     "E-FE2:混音台轨道 EQ(track_update patch.eq 单 Op)"),
+    ("07-mixer-bus-loudness.webm", cap_e2_07_mixer_bus_loudness,
+     "E-FE2:响度单(audio_loudness 测量 + 偏差徽标如实)"),
+    ("08-compound.webm", cap_e2_08_compound,
+     "E-FE2:复合片段说明卡 + 解包(compound_unbind 单 Op;盘面走覆盖夹具)"),
+    ("09-multicam.webm", cap_e2_09_multicam,
+     "E-FE2:多机位同步分析 → 切换点 → 生成序列(multicam_cut 单 Op)"),
+    ("10-scene.webm", cap_e2_10_scene,
+     "E-FE2:场景检测(scene_detect 硬切夹具;可选自动切段单 Op)"),
+    ("11-encode-hw.webm", cap_e2_11_encode_hw,
+     "E-FE2:编码探测(encode_probe;AMF/NVENC 在位如实)"),
+    ("12-queue-lifecycle.webm", None,
+     "E-FE2:渲染队列生命周期(入队→暂停→恢复→取消;工厂闭包注册)"),
+    ("13-otio.webm", cap_e2_13_otio,
+     "E-FE2:OTIO 导出→导入(新工程;往返最小子集)"),
 ]
 
 
@@ -480,6 +897,8 @@ def main() -> int:
     (proj / mat_rel).mkdir(parents=True, exist_ok=True)
     make_media(proj / mat_rel, "a.mp4", MEDIA_S, 440)
     make_media(proj / mat_rel, "b.mp4", MEDIA_S, 660)
+    make_media(proj / mat_rel, "a2.mp4", 6, 440)   # 同源短素材(09 多机位同步演示;秒级互相关)
+    make_hardcut(proj / mat_rel)
     write_base_project(proj, tl_rel, mat_rel)
 
     port = free_port()
@@ -503,15 +922,24 @@ def main() -> int:
 
         with sync_playwright() as pw:
             browser = pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
-            for name, fn, _desc in CAPTURES:
+            # 12 号队列生命周期需要 serve 端口/令牌/工程根 → 此处工厂注册
+            caps = [(n, f, d) for n, f, d in CAPTURES]
+            caps = [(n, make_cap_e2_12(port, token, str(proj)) if f is None else f, d)
+                    for n, f, d in caps]
+            for name, fn, _desc in caps:
                 if args.only and args.only not in name:
                     continue
-                write_base_project(proj, tl_rel, mat_rel)  # 每条回到基准盘面
+                # 每条回到基准盘面(08-compound 走复合壳覆盖夹具)
+                if name.startswith("08-compound"):
+                    write_compound_fixture(proj, tl_rel, mat_rel)
+                else:
+                    write_base_project(proj, tl_rel, mat_rel)
                 vdir = tmp / "videos" / name
                 vdir.mkdir(parents=True, exist_ok=True)
+                size = VIEWPORT_NEW if name.startswith(NEW_CAP_PREFIXES) else VIEWPORT
                 ctx = browser.new_context(
-                    viewport=VIEWPORT, record_video_dir=str(vdir),
-                    record_video_size=VIEWPORT)
+                    viewport=size, record_video_dir=str(vdir),
+                    record_video_size=size)
                 page = ctx.new_page()
                 # 非引导条录制:预写「已读」偏好,统一画面基线(01 号除外)
                 if not name.startswith("01-"):

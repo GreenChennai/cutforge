@@ -16,6 +16,7 @@
 
 mod apply;
 mod batch;
+mod pro_cmds;
 mod invariants;
 mod projection;
 mod replay;

@@ -116,6 +116,7 @@ pub fn clip_split_all_tool(ws: &mut Workspace, args: &Value, actor: &Actor, opts
 
 /// track_update:轨道属性 patch(TrackPatch 按字段合并,None=不改);
 /// 静音/独奏的渲染混音联动候 BE3,本工具先保证契约链就位。
+/// 册五 T5.3:eq(整组替换)/ dyn(整对象替换);显式 null = 清除。
 pub fn track_update_tool(ws: &mut Workspace, args: &Value, actor: &Actor, opts: ApplyOpts) -> Value {
     let Some(track_id) = args["trackId"].as_str() else {
         return envelope(false, "PRECONDITION_FAILED", "缺 trackId", json!({}));
@@ -123,7 +124,28 @@ pub fn track_update_tool(ws: &mut Workspace, args: &Value, actor: &Actor, opts: 
     let p = &args["patch"];
     if !p.is_object() {
         return envelope(false, "PRECONDITION_FAILED",
-            "缺 patch(对象:name/locked/mute/solo/hidden/heightPx/color 按需给出)", json!({}));
+            "缺 patch(对象:name/locked/mute/solo/hidden/heightPx/color/eq/dyn 按需给出)", json!({}));
+    }
+    // eq/dyn 结构非法显式拒绝(零幻觉面);null = 清除(eqClear/dynClear 承接)
+    let mut parse_err: Option<String> = None;
+    let eq = p.get("eq").and_then(|v| {
+        if v.is_null() {
+            return None;
+        }
+        serde_json::from_value::<Vec<cutforge_core::model::EqBand>>(v.clone())
+            .map_err(|e| parse_err = Some(format!("patch.eq 非法: {e}")))
+            .ok()
+    });
+    let dyn_ = p.get("dyn").and_then(|v| {
+        if v.is_null() {
+            return None;
+        }
+        serde_json::from_value::<cutforge_core::model::TrackDyn>(v.clone())
+            .map_err(|e| parse_err = Some(format!("patch.dyn 非法: {e}")))
+            .ok()
+    });
+    if let Some(msg) = parse_err {
+        return envelope(false, "SCHEMA_INVALID", &msg, json!({}));
     }
     let patch = TrackPatch {
         name: p["name"].as_str().map(String::from),
@@ -133,10 +155,14 @@ pub fn track_update_tool(ws: &mut Workspace, args: &Value, actor: &Actor, opts: 
         hidden: p["hidden"].as_bool(),
         height_px: p["heightPx"].as_u64(),
         color: p["color"].as_str().map(String::from),
+        eq,
+        eq_clear: p.get("eq").map(Value::is_null).unwrap_or(false),
+        dyn_,
+        dyn_clear: p.get("dyn").map(Value::is_null).unwrap_or(false),
     };
     if patch.is_empty() {
         return envelope(false, "PRECONDITION_FAILED",
-            "patch 至少给 name/locked/mute/solo/hidden/heightPx/color 之一", json!({}));
+            "patch 至少给 name/locked/mute/solo/hidden/heightPx/color/eq/dyn 之一", json!({}));
     }
     crate::dispatch::finish_apply(ws.apply(Command::TrackUpdate { track_id: track_id.into(), patch }, actor.clone(), opts))
 }
@@ -208,7 +234,40 @@ fn kind_str(k: TrackKind) -> &'static str {
         TrackKind::Video => "video",
         TrackKind::Audio => "audio",
         TrackKind::Text => "text",
+        TrackKind::Adjust => "adjust",
     }
+}
+
+/// 关键帧采样投影(IR v3,T5.1 求值单源纪律):per-property 采样点集
+/// [{property, samples:[[tMs,v],…]}];网格 100ms ∪ 关键帧时刻,壳只画点零插值。
+pub(crate) fn keyframe_samples_projection(clip: &cutforge_core::model::Clip) -> Value {
+    use cutforge_core::keyframes::{sample_property, FIXED_PROPERTIES};
+    let Some(kfs) = &clip.keyframes else { return json!([]) };
+    let mut out: Vec<Value> = Vec::new();
+    let mut props: Vec<&str> = FIXED_PROPERTIES.to_vec();
+    // fx 键(按目录三态裁决后的可打点参数)动态并入
+    for k in kfs {
+        if k.property.starts_with("fx.")
+            && !props.iter().any(|p| *p == k.property)
+            && !out.iter().any(|e| e["property"] == json!(k.property))
+        {
+            out.push(json!({
+                "property": k.property,
+                "samples": sample_property(clip, &k.property, 100)
+                    .into_iter().map(|(t, v)| json!([t, v])).collect::<Vec<_>>(),
+            }));
+        }
+    }
+    for p in props.drain(..) {
+        if kfs.iter().any(|k| k.property == p) {
+            out.push(json!({
+                "property": p,
+                "samples": sample_property(clip, p, 100)
+                    .into_iter().map(|(t, v)| json!([t, v])).collect::<Vec<_>>(),
+            }));
+        }
+    }
+    Value::Array(out)
 }
 
 /// E2-2:时间线投影的逐 clip 全字段(endMs 在服务端算好;壳零时间线语义)。
@@ -222,6 +281,7 @@ pub(crate) fn timeline_projection(project: &cutforge_core::model::Project) -> Ve
                     cutforge_core::model::TrackKind::Video => "video",
                     cutforge_core::model::TrackKind::Audio => "audio",
                     cutforge_core::model::TrackKind::Text => "text",
+                    cutforge_core::model::TrackKind::Adjust => "adjust",
                 },
                 "src": c.src, "startMs": c.start_ms, "endMs": c.start_ms + c.duration_ms,
                 "durationMs": c.duration_ms, "sourceInMs": c.source_in_ms,
@@ -240,6 +300,17 @@ pub(crate) fn timeline_projection(project: &cutforge_core::model::Project) -> Ve
                 // withFxReadback 只读桥自此退化(投影含 fx 键后合并恒空操作)
                 "fx": c.fx,
                 "denoise": c.denoise, "pitch": c.pitch,
+                // 调色(册五 T5.2 收口):grade 随投影下放(同 fx 先例——壳读回桥
+                // 自此退化,调色面板七杆/曲线/LUT 直读投影)
+                "grade": c.grade,
+                // 关键帧(IR v3,T5.1):原始数组 + 采样点集(求值单源;壳零插值)
+                "keyframes": c.keyframes, "keyframeSamples": keyframe_samples_projection(c),
+                // 复合片段概要(册五 T5.4):子 clips 数量与总时长(壳据此展示与
+                // 进入复合编辑视图;全量子 clips 不随投影下发——投影载荷纪律)
+                "compound": c.compound.as_ref().map(|cp| json!({
+                    "clipCount": cp.clips.len(), "durationMs": cp.duration_ms(),
+                    "canvas": cp.canvas,
+                })),
                 // E4-3 只读展示面:渲染已支持但 ClipPatch 未承接的分散字段,原样下放
                 // (transition/motion 已于 ClipPatch 扩展后承接,不再列只读)
                 "fade": c.fade,
@@ -288,6 +359,69 @@ mod tests {
         assert_eq!(with["fx"]["combo"].as_array().unwrap().len(), 1, "挂特效必须整对象下放");
         assert_eq!(with["fx"]["combo"][0]["fx"], json!("fx.blur"));
         assert_eq!(without["fx"], json!(Value::Null), "未挂特效 fx 键必须为 null(键不可缺席)");
+    }
+
+    /// IR v3(T5.1):投影携带 keyframes 原始数组 + keyframeSamples 采样点集
+    /// (求值单源;壳零插值);无关键帧 clip 两键恒在(null / 空数组)。
+    #[test]
+    fn timeline_projection_carries_keyframes_and_samples() {
+        let project: cutforge_core::model::Project = serde_json::from_value(json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "proj-kf", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "startMs": 0, "durationMs": 2000, "keyframes": [
+                    // interp 语义 = 本帧→下一帧区间 → 缓动标注打区间首帧
+                    {"property": "position.x", "timeMs": 0, "value": 0.5, "interp": "easeIn"},
+                    {"property": "position.x", "timeMs": 1000, "value": 0.7},
+                    {"property": "opacity", "timeMs": 0, "value": 0.0},
+                    {"property": "opacity", "timeMs": 800, "value": 1.0}
+                ]},
+                {"id": "V1-002", "startMs": 2000, "durationMs": 2000}
+            ]}]
+        })).expect("夹具必须过 v3 校验");
+        let rows = timeline_projection(&project);
+        let with = rows.iter().find(|r| r["id"] == json!("V1-001")).unwrap();
+        let without = rows.iter().find(|r| r["id"] == json!("V1-002")).unwrap();
+        assert_eq!(with["keyframes"].as_array().unwrap().len(), 4, "原始数组整组下放");
+        let samples = with["keyframeSamples"].as_array().unwrap();
+        assert_eq!(samples.len(), 2, "position.x 与 opacity 两组");
+        let px = samples.iter().find(|s| s["property"] == json!("position.x")).unwrap();
+        let sarr = px["samples"].as_array().unwrap();
+        // 网格 100ms ∪ 关键帧时刻 0/1000;末点 = 时长 2000
+        assert!(sarr.iter().any(|pt| pt[0] == json!(0)), "t=0 网格点必须在样本");
+        assert!(sarr.iter().any(|pt| pt[0] == json!(1000)), "关键帧时刻入样本");
+        assert_eq!(sarr.last().unwrap()[0], json!(2000), "末样本 = 片段时长");
+        // 采样值 = 求值器同点输出(单源):2000ms 处端点外延 = 0.7
+        let last = sarr.last().unwrap()[1].as_f64().unwrap();
+        assert!((last - 0.7).abs() < 1e-12, "外延取末值: {last}");
+        // easeIn 中点应显著偏离线性 0.6(壳画曲线形状,不重算公式)
+        let at500 = sarr.iter().find(|pt| pt[0] == json!(500)).unwrap()[1].as_f64().unwrap();
+        assert!((at500 - 0.6).abs() > 0.02, "easeIn 采样必须偏离线性: {at500}");
+        // 无关键帧 clip:键恒在,null / 空数组
+        assert_eq!(without["keyframes"], json!(Value::Null));
+        assert_eq!(without["keyframeSamples"], json!([]));
+    }
+
+    /// 册五收口:投影必须含 grade 键(同 fx 先例)——挂了调色的片段下发整对象,
+    /// 未挂的下发 null(键恒在;壳读回桥自此退化,调色面板直读投影)。
+    #[test]
+    fn timeline_projection_carries_grade_key_always() {
+        let project: cutforge_core::model::Project = serde_json::from_value(json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "proj-grade", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "startMs": 0, "durationMs": 2000,
+                 "grade": {"exposure": 0.3, "saturation": 1.2,
+                           "curves": {"master": [[0, 0], [0.5, 0.55], [1, 1]]}}},
+                {"id": "V1-002", "startMs": 2000, "durationMs": 2000}
+            ]}]
+        })).expect("夹具必须过 v3 校验");
+        let rows = timeline_projection(&project);
+        let with = rows.iter().find(|r| r["id"] == json!("V1-001")).unwrap();
+        let without = rows.iter().find(|r| r["id"] == json!("V1-002")).unwrap();
+        assert_eq!(with["grade"]["exposure"], json!(0.3), "挂调色必须整对象下放");
+        assert_eq!(with["grade"]["curves"]["master"].as_array().unwrap().len(), 3, "曲线点集原样");
+        assert_eq!(without["grade"], json!(Value::Null), "未挂调色 grade 键必须为 null(键不可缺席)");
     }
 }
 

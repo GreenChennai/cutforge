@@ -24,11 +24,14 @@ mod tests;
 
 mod dispatch;
 mod edit_ops;
+mod grade_tools;
 mod media_tools;
+mod pro_ops;
 mod subtitle_ops;
 mod orchestrate;
 mod progress;
 mod registry;
+mod rpc;
 mod resident;
 mod session;
 mod tools_nolock;

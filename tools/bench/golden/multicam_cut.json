@@ -1,0 +1,50 @@
+{
+ "tool": "multicam_cut",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "trackId": "V1",
+    "startMs": 20000,
+    "durationMs": 4000,
+    "angles": [
+     {
+      "src": "01_原始素材/take1.mp4",
+      "offsetMs": 0
+     },
+     {
+      "src": "01_原始素材/take2.mp4",
+      "offsetMs": 250
+     }
+    ],
+    "switches": [
+     {
+      "tMs": 0,
+      "angle": 0
+     },
+     {
+      "tMs": 1500,
+      "angle": 1
+     }
+    ],
+    "requestId": "parity-mc-1"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "angles": 2,
+     "firstClipId": "V1-006",
+     "idempotent": false,
+     "opIds": [
+      "op-38"
+     ],
+     "rev": "<REV>",
+     "segments": 2
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

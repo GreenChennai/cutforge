@@ -148,11 +148,12 @@ def render_once(port: int, token: str, root: str, proj: Path, tag: str) -> float
     assert rr["ok"], f"render_run({tag}): {rr}"
     run_id = rr["data"]["runId"]
     deadline = time.time() + RENDER_TIMEOUT_S
-    state, output = "running", None
+    state, output = "queued", None
     while time.time() < deadline:
         s = rpc(port, token, "render_progress", {"root": root, "runId": run_id})
         state, output = s["data"]["state"], s["data"].get("output")
-        if state != "running":
+        # 册五 T5.6 队列化:queued 为合法暂态(入队→worker ≤50ms 派发),非终态
+        if state not in ("running", "queued"):
             break
         time.sleep(0.5)
     assert state == "ok", f"渲染({tag})未成功: {state}"

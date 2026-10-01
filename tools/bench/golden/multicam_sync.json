@@ -1,0 +1,46 @@
+{
+ "tool": "multicam_sync",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "angles": [
+     "01_原始素材/take1.mp4",
+     "01_原始素材/take2.mp4"
+    ]
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "angles": [
+      {
+       "confidence": 1.0,
+       "index": 0,
+       "offsetMs": 0,
+       "src": "01_原始素材/take1.mp4"
+      },
+      {
+       "confidence": 1.0,
+       "index": 1,
+       "offsetMs": 0,
+       "src": "01_原始素材/take2.mp4"
+      }
+     ],
+     "confidence": 1.0,
+     "degraded": true,
+     "durationsMs": [
+      10000,
+      10000
+     ],
+     "engine": "pcm-xcorr",
+     "hint": "纯计算不落盘不产 Op;offset 语义 = 角度源时间轴相对基准的滞后毫秒(读角度 i 内容于时间线 T:sourceInMs = T + offsetMs);落序列用 multicam_cut",
+     "reference": "01_原始素材/take1.mp4",
+     "windowMs": 5000
+    },
+    "message": "多机位同步分析完成(启发式;置信度如实)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

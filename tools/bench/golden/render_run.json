@@ -8,9 +8,10 @@
    "response": {
     "code": "OK",
     "data": {
+     "concurrency": 1,
      "runId": "<RUN_ID>"
     },
-    "message": "渲染已开始",
+    "message": "渲染任务已入队",
     "ns": "ok",
     "ok": true
    }

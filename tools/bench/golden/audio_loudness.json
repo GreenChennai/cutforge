@@ -1,0 +1,28 @@
+{
+ "tool": "audio_loudness",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/bgm.mp3",
+    "target": -14
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "deviation": 8.45,
+     "inputI": "-22.5",
+     "inputLra": "0",
+     "inputThresh": "-32.5",
+     "inputTp": "-18.5",
+     "src": "01_原始素材/bgm.mp3",
+     "target": -14.0,
+     "within1LU": false
+    },
+    "message": "响度测量",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

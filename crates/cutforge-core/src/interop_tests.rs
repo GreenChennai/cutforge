@@ -1,6 +1,6 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
-//! 互操作单测(册五 T5.5;拆分自 interop.rs——行数红线 A1-3,纯移动;
-//! `#[path]` 内联为 interop::tests,断言路径与语义零变化)。
+// 互操作单测(册五 T5.5;拆分自 interop.rs——行数红线 A1-3,纯移动;
+// `#[path]` 内联为 interop::tests,断言路径与语义零变化)。
 
 use super::*;
 use serde_json::json;

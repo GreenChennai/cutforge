@@ -1,6 +1,6 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
-//! model 字段 roundtrip 测试(册四 T4.6 fx 字段;自 model.rs 纯移动拆分——行数
-//! 红线 A1-3;断言内容零改动,sample()/导入自持)。
+// model 字段 roundtrip 测试(册四 T4.6 fx 字段;自 model.rs 纯移动拆分——行数
+// 红线 A1-3;断言内容零改动,sample()/导入自持)。
 
 use crate::model::*;
 use serde_json::{json, Value};

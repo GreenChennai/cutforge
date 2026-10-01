@@ -148,7 +148,9 @@ export const uiStore = createStore("ui", {
  * T4.1/T4.3 增:recentMedia(素材最近使用,会话序)/ historyMarks(历史快照标记)。
  * T4.2 增:trimLineMs(roll/slide 边界拖拽指示线,ephemeral 不落盘)。
  * T4.8 增:beats(audio_beats 会话节拍 {src,bpm,beats[],confidence,at};不落盘,
- * 吸附候选源之一 + 标尺旗标;刷新即失,重按「检测节拍」再生)。 */
+ * 吸附候选源之一 + 标尺旗标;刷新即失,重按「检测节拍」再生)。
+ * T5.1/T5.2 增:kfProp(关键帧行「当前属性」,时间线打点共用);gradeClipboard(调色
+ * 复制粘贴会话剪贴板);lutLib(会话 LUT 导入记录;.cube 非媒体,media_browse 不列)。 */
 export const ephemeralStore = createStore("ephemeral", {
   dragGhost: null,   // {clipId, trackId, startMs, durationMs, trim:"l"|"r"|null}
   snapMs: null,      // 吸附指示线位置(ms)
@@ -158,6 +160,9 @@ export const ephemeralStore = createStore("ephemeral", {
   recentMedia: [],   // 最近使用素材 path 序(插入即前插;会话态)
   historyMarks: [],  // 历史面板快照标记 [{rev,label,t}](导出/批量前自动打标)
   beats: null,       // audio_beats 会话节拍 {src,bpm,beats[],confidence,degraded}
+  kfProp: null,      // 关键帧当前属性(T5.1;时间线关键帧行打点与编辑器共用)
+  gradeClipboard: null, // 调色会话剪贴板(T5.2;整 grade 对象,不落盘)
+  lutLib: [],        // 会话 LUT 导入记录(T5.2;.cube 路径序)
 }, { ephemeral: true });
 
 /** 调试面:全局 patch 记录(测试断言 ephemeral.* 前缀纪律用)。 */

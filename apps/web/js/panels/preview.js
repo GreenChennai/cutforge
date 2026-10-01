@@ -106,6 +106,10 @@ function rowCoversLocal(row, t) {
 }
 
 /** 精确预览:render_frame(工具未落库/失败 → 服务端错误如实呈现)。 */
+export async function runPrecisePreview() {
+  await runPrecise();
+}
+
 async function runPrecise() {
   const t = playback.clockMs();
   preciseHint.textContent = "内核渲染中…";

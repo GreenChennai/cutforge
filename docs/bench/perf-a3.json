@@ -1,24 +1,24 @@
 {
-  "capturedAt": "2026-10-01T02:39:07+08:00",
+  "capturedAt": "2026-10-01T10:09:51+08:00",
   "env": {
     "cpu": "AMD64 Family 25 Model 80 Stepping 0, AuthenticAMD",
     "os": "Windows-11-10.0.26200-SP0",
     "profile": "debug(local e2e)"
   },
-  "bootMs": 345,
-  "tabMs": 45.3,
+  "bootMs": 365,
+  "tabMs": 45.6,
   "tabPanelRow": {
     "pass": "1",
-    "text": "✓页签切换5ms<100ms"
+    "text": "✓页签切换6ms<100ms"
   },
   "export": {
     "updates": 5,
-    "steadyP95GapS": 0.985,
+    "steadyP95GapS": 1.037,
     "barPreserved": true,
     "barAnimated": true,
     "panelRow": {
       "pass": "1",
-      "text": "✓导出进度回调2.5Hz≥2Hz"
+      "text": "✓导出进度回调2.4Hz≥2Hz"
     },
     "measuredHz": 0.0,
     "budgetHz": 2,

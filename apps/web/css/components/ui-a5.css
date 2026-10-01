@@ -1,0 +1,124 @@
+/* 组件:册五 A5 新面(关键帧 UI + 调色 UI;T5.1/T5.2 壳侧)。
+ * 色值纪律(ADR-0014/R5):本文件零裸色值,一律 var(--cf-*) token;
+ * 色轮盘面/示波器热图的光谱为 JS 逐像素数学生成(取色器数据面),不落本文件。 */
+
+/* ===== 检查器:秒表 / 位置打点行 ===== */
+.kw-watch {
+  flex: 0 0 auto; width: 22px; height: 20px; padding: 0;
+  border: 1px solid var(--cf-line); border-radius: var(--cf-r-s);
+  background: var(--cf-panel-deep); color: var(--cf-dim);
+  font-size: var(--cf-fs-xs); line-height: 1; cursor: pointer;
+}
+.kw-watch:hover { border-color: var(--cf-accent); color: var(--cf-fg); }
+.kw-watch.on {
+  border-color: var(--cf-accent); color: var(--cf-accent);
+  box-shadow: inset 0 0 0 1px var(--cf-accent);
+}
+.kw-pos-row {
+  flex-basis: 100%; display: flex; gap: var(--cf-s2); align-items: center;
+  border-top: 1px dashed var(--cf-line); padding-top: var(--cf-s2);
+}
+.kw-pos-read { font-family: var(--cf-font-mono); font-size: var(--cf-fs-xs); }
+
+/* ===== 关键帧编辑器(双面板:列表 + 画布)===== */
+.kw-host { flex-basis: 100%; display: flex; flex-direction: column; gap: var(--cf-s2); border-top: 1px dashed var(--cf-line); padding-top: var(--cf-s2); }
+.kw-head { display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap; }
+.kw-head select { max-width: 130px; }
+.kw-panes { display: flex; gap: var(--cf-s3); align-items: flex-start; flex-wrap: wrap; }
+.kw-list {
+  flex: 1 1 150px; min-width: 150px; max-height: 190px; overflow: auto;
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-s);
+  background: var(--cf-panel-deep); padding: var(--cf-s1);
+}
+.kw-kf-row { display: flex; gap: var(--cf-s1); align-items: center; cursor: pointer; border-radius: var(--cf-r-s); padding: 0 2px; }
+.kw-kf-row:hover { background: var(--cf-elevated); }
+.kw-kf-row.sel { outline: 1px solid var(--cf-select); }
+.kw-kf-row label { display: inline-flex; gap: 2px; align-items: center; color: var(--cf-dim); font-size: var(--cf-fs-xs); }
+.kw-t, .kw-v { width: 64px; }
+.kw-canvas-pane { flex: 1 1 300px; min-width: 260px; display: flex; flex-direction: column; gap: var(--cf-s1); }
+.kfc-canvas {
+  width: 100%; max-width: 360px; height: auto; aspect-ratio: 2 / 1;
+  border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-s);
+  touch-action: none; cursor: crosshair;
+}
+.kw-interp-row { display: flex; gap: var(--cf-s1); align-items: center; flex-wrap: wrap; }
+.kw-interp-row .mini.on { border-color: var(--cf-select); color: var(--cf-select); }
+.kw-bezier-cp { font-family: var(--cf-font-mono); font-size: var(--cf-fs-xs); }
+
+/* ===== 时间线关键帧行(选中片段下方菱形)===== */
+.kf-row {
+  position: absolute; top: 40px; height: 14px; z-index: 2;
+  display: flex; align-items: center; pointer-events: auto;
+}
+.kf-row-add { height: 12px; line-height: 1; font-size: 9px; padding: 0 2px; flex: 0 0 auto; opacity: .72; }
+.kf-diamonds { position: relative; flex: 1 1 auto; height: 100%; }
+.kf-diamond {
+  position: absolute; top: 2px; width: 10px; height: 10px; padding: 0;
+  background: var(--cf-accent); border: 1px solid var(--cf-bg);
+  transform: rotate(45deg); cursor: ew-resize;
+  box-shadow: var(--cf-shadow-1);
+}
+.kf-diamond:hover { background: var(--cf-select); }
+
+/* ===== 调色面板 ===== */
+.grade-host { flex-basis: 100%; display: flex; flex-direction: column; gap: var(--cf-s2); border-top: 1px dashed var(--cf-line); padding-top: var(--cf-s2); }
+.grade-actions { display: flex; gap: var(--cf-s1); align-items: center; flex-wrap: wrap; }
+.grade-primary { display: flex; flex-direction: column; gap: var(--cf-s1); }
+.grade-wheels { display: flex; gap: var(--cf-s2); flex-wrap: wrap; }
+.grade-wheel-box {
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-m);
+  padding: var(--cf-s1) var(--cf-s2); background: var(--cf-panel-deep);
+}
+.grade-wheel-head { display: flex; gap: var(--cf-s1); align-items: center; justify-content: space-between; }
+.grade-wheel { width: 116px; height: 116px; touch-action: none; cursor: crosshair; border-radius: 50%; }
+.grade-wheel-nums { display: flex; gap: 3px; }
+.grade-wheel-num { width: 44px; font-family: var(--cf-font-mono); font-size: var(--cf-fs-xs); }
+.grade-curve-bar { display: flex; gap: var(--cf-s1); align-items: center; }
+.grade-curve-pane { display: flex; flex-direction: column; gap: var(--cf-s1); }
+.grade-lut-pane { display: flex; flex-direction: column; gap: var(--cf-s1); margin-top: var(--cf-s2); }
+.grade-lut-row { display: flex; gap: var(--cf-s1); align-items: center; }
+.grade-lut-row input { flex: 1 1 150px; min-width: 120px; }
+.grade-lut-row select { flex: 1 1 150px; min-width: 120px; max-width: 260px; }
+
+/* ===== 示波器面板 ===== */
+.scope-panel { padding: var(--cf-s2); }
+.scope-bar { display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap; }
+.scope-bar button.on, #pv-transport button.on, #pv-compare-toggle.on {
+  border-color: var(--cf-accent); color: var(--cf-accent);
+}
+.scope-canvases { display: flex; gap: var(--cf-s3); flex-wrap: wrap; margin-top: var(--cf-s1); }
+.scope-canvases figure { margin: 0; display: flex; flex-direction: column; gap: 2px; }
+.scope-canvases canvas {
+  border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-s);
+  background: var(--cf-sunken); display: block; max-width: 100%; height: auto;
+}
+
+/* ===== A/B 分屏对比 ===== */
+.compare-bar { display: flex; gap: var(--cf-s1); align-items: center; flex-wrap: wrap; margin-bottom: var(--cf-s2); }
+.compare-overlay {
+  position: absolute; inset: 0; overflow: hidden;
+  background: var(--cf-stage); border-radius: var(--cf-r-s);
+}
+.compare-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: contain; user-select: none; pointer-events: none;
+}
+.compare-tag {
+  position: absolute; top: 4px; font-size: var(--cf-fs-xs);
+  color: var(--cf-dim); background: var(--cf-mask);
+  border-radius: var(--cf-r-s); padding: 0 4px; pointer-events: none;
+}
+.compare-tag-l { left: 4px; }
+.compare-tag-r { right: 4px; }
+.compare-divider {
+  position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px;
+  background: var(--cf-accent); cursor: ew-resize; touch-action: none;
+}
+.compare-grip {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  background: var(--cf-accent); color: var(--cf-bg);
+  border-radius: var(--cf-r-pill); font-size: var(--cf-fs-xs);
+  width: 22px; height: 16px; display: flex; align-items: center; justify-content: center;
+}

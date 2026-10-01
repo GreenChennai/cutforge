@@ -52,23 +52,34 @@ async function reprojectOnce() {
 }
 
 /**
- * fx 读回桥(册四 T4.6;候 BE):timeline_projection 尚未下放 clip.fx(特效栈读回
- * 缺口,BE 侧 edit_ops.rs 投影表漏列),此处从 project_get 工程文档按 clip id 只读
- * 合并——单一真相源仍是内核文档,壳不加工语义。BE 补投影后本合并自然退化为空操作。
+ * 投影读回桥(册四 T4.6 fx;册五 T5.2 grade 同桥扩列):timeline_projection 尚未
+ * 下放 clip.grade(调色读回缺口),此处从 project_get 工程文档按 clip id 只读合并
+ * ——单一真相源仍是内核文档,壳不加工语义。BE 补投影后本合并自然退化为空操作
+ * (fx 列已同先例:投影含 fx 键后合并恒空操作)。
  */
 function withFxReadback(envP, envT) {
   const project = envP.ok && envP.data.project;
   if (!project || !Array.isArray(project.tracks)) return envT.data.clips;
   /** @type {Object<string, *>} */
-  const fxById = {};
+  const byId = {};
   for (const t of project.tracks) {
     for (const c of t.clips || []) {
-      if (c && c.id && c.fx !== undefined) fxById[c.id] = c.fx;
+      if (c && c.id) {
+        if (c.fx !== undefined) (byId[c.id] = byId[c.id] || {}).fx = c.fx;
+        if (c.grade !== undefined) (byId[c.id] = byId[c.id] || {}).grade = c.grade;
+      }
     }
   }
-  return envT.data.clips.map((c) => (c.fx === undefined && fxById[c.id] !== undefined
-    ? { ...c, fx: fxById[c.id] }
-    : c));
+  return envT.data.clips.map((c) => {
+    const extra = byId[c.id];
+    if (!extra) return c;
+    const merged = { ...c };
+    let touched = false;
+    for (const k of Object.keys(extra)) {
+      if (merged[k] === undefined) { merged[k] = extra[k]; touched = true; }
+    }
+    return touched ? merged : c;
+  });
 }
 
 /** 冲突计数(E8 停写横幅的数据源)。 */

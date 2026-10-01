@@ -87,3 +87,21 @@
 | 39 | 历史快照分隔线(导出/批量前自动打标,ephemeral 不落盘) | `js/core/edit-commands.js` markHistory + `js/panels/history.js` markRow | `history-mark` | 已实现 | 待录 |
 
 降级登记:素材缩略图/波形不可用(无 ffmpeg/无音轨)回落图标/装饰纹理,不假图;外部文件拖入导入面板 = 诚实提示(无拷入通道,登记候 BE 补);「在资源管理器打开」= 禁用项(浏览器沙箱),不假实现。
+
+## 八、册五 A5 新增微交互(E-FE1:T5.1 关键帧 UI / T5.2 调色 UI;实现位置登记,录屏候 e2e 波补录)
+
+| # | 微交互 | 实现位置 | testid/锚点 | 状态 | 录屏 |
+|---|---|---|---|---|---|
+| 40 | 秒表开/关双态(accent 描边 + aria-pressed;开启即打点,零动画) | `js/panels/kf-watch.js` + `css/components/ui-a5.css` `.kw-watch.on` | `kw-toggle-<prop>` | 已实现 | 待录 |
+| 41 | 秒表关闭确认弹窗(复用 confirm-dialog;末属性整组清空受阻时弹窗明示 minItems 1 通道候 BE) | `js/panels/kf-watch.js` confirmKfOff | `confirm-dialog` | 已实现 | 待录 |
+| 42 | 关键帧菱形拖拽跟手(邻居夹取 + 时间码气泡;拖拽零 Op 零动画,松手单 Op,Esc 取消) | `js/panels/kf-row.js` mountDrag + gesture-kit showBubble | `kf-row / kw-diamond` | 已实现 | 待录 |
+| 43 | 曲线画布锚点/贝塞尔柄拖拽(拖拽期采样点云降淡 + 直线示意,提交后投影采样刷新真曲线;ADR-0018 壳零插值) | `js/panels/kf-curve.js` + `js/panels/kf-editor.js` | `kf-curve-canvas` | 已实现 | 待录 |
+| 44 | 色轮指针拖拽跟手(角度=色相 半径=强度;盘面光谱逐像素数学生成=取色器数据面,轮圈/指针经 token) | `js/panels/grade-wheel.js` + `.grade-wheel` | `grade-wheel-lift|-gamma|-gain` | 已实现 | 待录 |
+| 45 | 示波器采样状态文本态(采样中…→已采样@ms;数据域标注「精确帧含调色」/降级「源素材未调色」) | `js/panels/scopes.js` | `scopes-status / scopes-note` | 已实现 | 待录 |
+| 46 | 分屏割线拖拽跟手(clip-path inset 直写,零动画;Esc/双击复位 50%) | `js/panels/compare.js` mountDividerDrag | `compare-divider` | 已实现 | 待录 |
+
+降级登记(本册新增):色轮盘面光谱与矢量示波器热图为 JS 逐像素数学生成的展示色
+(取色器/示波器数据面,同 `<input type=color>` 原生光谱口径),非主题色,不落
+tokens.css 之外的任何色值字面量;示波器 render_frame 不可用时降级直吃源素材
+(「未调色」如实标注);分屏对比因内核 render_frame 无「不带 grade」开关且壳零 Op
+纪律禁止临时清写,落地为「基准帧快照 vs 当前帧」口径(面板恒显说明)。

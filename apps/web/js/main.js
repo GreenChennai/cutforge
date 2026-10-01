@@ -31,6 +31,8 @@ import * as fxlib from "./panels/fxlib.js";
 import * as subtitles from "./panels/subtitles.js";
 import * as textool from "./panels/textool.js";
 import { mountPreviewTransform } from "./render/preview-transform.js";
+import { mountScopes } from "./panels/scopes.js";
+import { mountCompare } from "./panels/compare.js";
 import { ensureCatalogs } from "./core/catalogs.js";
 import { openWizard } from "./panels/wizard.js";
 import { mountOnboarding } from "./ui/onboarding.js";
@@ -51,6 +53,8 @@ async function boot() {
   history.mount($("tab-history")); notes.mount($("tab-notes")); diff.mount($("tab-diff")); conflicts.mount($("tab-conflicts"));
   transitions.mount($("tab-transitions")); fxlib.mountFxPanel($("tab-fx")); subtitles.mount($("tab-subtitles"));
   mountPreviewTransform(); // 画布变换把手层(缩放/旋转/文本拖位置;T4.9)
+  mountScopes(); // 示波器面板(T5.2:入口按钮挂预览传输行;开启才采样)
+  mountCompare(); // A/B 分屏对比(T5.2 登记项:基准帧快照 vs 当前帧,拖割线)
   textool.mountToolbarButton(); // 工具栏「T 文本」按钮(键位 T 见 keymap)
   mountMediaPool(); // 宿主 #pv-media 由 preview 面板提供,此处只做绑定校验
   mountPreviewLoop(); // 媒体池对齐 + 预览循环(播放解耦核心)

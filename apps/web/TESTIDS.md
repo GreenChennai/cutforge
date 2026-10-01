@@ -278,3 +278,51 @@ T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeC
 | `pv-text-ghost` | div | 文本拖位置 ghost(textStyle.x/y,PlayRes=画布像素经预览缩放比换算) |
 | `pv-text-dragzone` | div(画布把手层) | 文本选中态全画布拖拽面(图层空置时 CSS :empty 断接,故文本态显式铺面;点选不拖不产 Op) |
 | 片段右键「定格帧」/「取消定格」 | 菜单项 | freezeMs=1000 / 0(单 Op) |
+
+## 六、册五 A5(T5.1 关键帧 UI / T5.2 调色 UI;E-FE1)
+
+### 关键帧:秒表与位置行(core/kf-model.js + panels/kf-watch.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `kw-toggle-<prop>` | button(检查器可动画字段旁) | 秒表:开 = 播放头时刻打当前值;关 = 确认后整属性移除(aria-pressed;prop ∈ scale/rotation/opacity/volume/position-x/position-y;`.`→`-`) |
+| `kw-position-row` / `kw-position-read` | div/span(检查器·画面组) | position.x/y 只读投影的专属秒表行 + 现值读数 |
+| `confirm-dialog` / `confirm-ok` / `confirm-cancel` | 模态(复用) | 秒表关闭确认;末属性整组清空受阻时弹窗明示(minItems 1 通道候 BE) |
+
+### 关键帧:双面板编辑器(panels/kf-editor.js + kf-curve.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `kw-editor` / `kw-prop-select` / `kw-add` / `kw-count` | div/select/button/span(检查器·画面组) | 属性选择(固定白名单 + fx 动态键)/ 播放头打点 / 帧数 |
+| `kw-kf-list` / `kw-time-<n>` / `kw-value-<n>` / `kw-kf-del-<n>` | div/input/button | 关键帧列表(增删改;change 才提交) |
+| `kw-interp` / `kw-interp-<interp>` / `kw-bezier-cp` | div/button/span | 插值预设(线性/缓入/缓出/缓入缓出/保持/贝塞尔;回弹不可表达——bezier y 钳 0..1 无过冲,诚实不设) |
+| `kf-curve-canvas` | canvas | 贝塞尔画布:采样点云(keyframeSamples,壳零插值)+ 锚点拖拽 + bezier 双柄 + 播放头线;拖拽期直线示意(提交后以采样刷新) |
+
+### 关键帧:时间线关键帧行(panels/kf-row.js;仅选中片段)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `kf-row` / `kw-row-add` | div/button(轨内) | 关键帧行(clip 下方)/ 播放头打点(属性 = 编辑器当前属性,ephemeral.kfProp) |
+| `kw-diamond` | button | 菱形 per 关键帧(dataset.prop/timeMs;拖动移动邻居夹取 / 双击删除;悬停 title 给属性@时刻=值) |
+
+### 调色面板(检查器·调色组;panels/grade.js + grade-wheel.js + kf-curve.js points 模式)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `grade-panel` / `grade-preview-hint` / `grade-precise` | div/div/button | 面板宿主 + 「预览代理不含调色」恒显提示 + 精确预览按钮(render_frame) |
+| `grade-<field>` | slider(7 杆) | 色温/色调/曝光/对比/高光/阴影/饱和度(松手整对象提交) |
+| `grade-wheels` / `grade-wheel-lift|-gamma|-gain` / `grade-wheel-<x>-reset` | div/canvas/button | 三色轮(角度=色相 半径=强度 → RGB 三值;拖拽零 Op 松手单 Op)/ 归零 |
+| `grade-advanced` / `grade-curves` / `grade-curve-channel` / `grade-curve-canvas` / `grade-curve-clear` / `grade-curve-hint` | fieldset/div/select/canvas/button/span | 二级折叠:曲线点集(master/red/green/blue;每通道 ≥2 点才提交——minItems 2 实测契约,1 点挂草稿明示) |
+| `grade-lut` / `grade-lut-src` / `grade-lut-import` / `grade-lut-select` / `grade-lut-clear` | div/input/button/select/button | LUT:lut_import 导入(工程内相对路径)/ 会话库下拉(导入记录 ∪ 工程 grade.lut 引用;media_browse 不列 .cube,诚实口径)/ 清除 |
+| `grade-copy` / `grade-paste` / `grade-clear` / `grade-clipboard` | button | 调色会话剪贴板(ephemeral.gradeClipboard)/ 清除(patch.grade=null → grade_clear) |
+| 片段右键「复制调色」/「粘贴调色」 | 菜单项 | 同上(会话态;粘贴 = clip_update patch.grade 单 Op) |
+
+### 示波器(panels/scopes.js;开启才采样)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `scopes-toggle` | button(预览传输行) | 示波器开关(aria-pressed;关 = 摘订阅零采样) |
+| `scopes-panel` / `scopes-sample` / `scopes-status` / `scopes-note` | div/button/span | 面板 / 采样当前帧(render_frame→scope_data)/ 状态 / 数据域标注(精确帧含调色;降级 = 源素材域未调色,如实标注) |
+| `scope-wave` / `scope-vector` / `scope-hist` | canvas | 亮度波形(luma 0..255 min-max-avg)/ 矢量(UV 64×64 密度热图)/ RGB 直方图(64 桶;通道色 = token) |
+
+### A/B 分屏对比(panels/compare.js;登记项落地)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `compare-toggle` | button(预览传输行) | A/B 对比开关(aria-pressed) |
+| `compare-bar` / `compare-baseline` / `compare-refresh` / `compare-status` | div/button | 基准抓取(render_frame 快照,调色前抓 = 调色前参照)/ 当前帧刷新 / 状态 |
+| `compare-overlay` / `compare-img-base` / `compare-img-cur` / `compare-divider` | div/img/div | 叠层(clip-path 分割;左基准右当前;恒显口径:render_frame 无「不带 grade」开关,零 Op 基准快照方案) |

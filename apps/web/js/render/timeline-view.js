@@ -16,6 +16,7 @@ import { drawWaveIfAudio } from "./waveform.js";
 import { onClipPointerDown } from "./clip-gestures.js";
 import { onLanePointerDown, onLaneDragOver, onLaneDragLeave, onLaneDrop } from "./gestures.js";
 import { buildTrackHead, syncTrackHead } from "./track-head.js";
+import { syncKfRow } from "../panels/kf-row.js";
 import { openClipContextMenu, openTrackContextMenu, openTimelineContextMenu } from "../ui/menu.js";
 
 /** @type {Map<string, HTMLElement>} */
@@ -107,6 +108,7 @@ export function renderTimelineView() {
   const win = virt ? virt.window() : { t0: 0, t1: (wrap.clientWidth || 1200) / PX_PER_MS, scrollLeft: wrap.scrollLeft };
   renderLanes(project.tracks, contentW);
   renderClips(clips, win);
+  renderKfRow(clips);
   renderGhost();
   const phMs = playheadMsCache();
   drawRuler(phMs, win.scrollLeft);
@@ -260,8 +262,17 @@ function renderClips(clips, win) {
   }
 }
 
-function createClipEl(row, cls, text) {
-  const el = h("div", {
+/** 关键帧行(T5.1):仅选中片段所在轨挂载;选中变化/投影变化随本轮重排。 */
+function renderKfRow(clips) {
+  const selId = selectionStore.get().clipId;
+  const selRow = selId ? clips.find((c) => c.id === selId) : null;
+  for (const [trackId, lane] of laneEls) {
+    const active = selRow && selRow.track === trackId;
+    syncKfRow(lane, active ? selRow : null, Boolean(active));
+  }
+}
+
+function createClipEl(row, cls, text) {  const el = h("div", {
     class: cls, dataset: { id: row.id, track: row.track }, testid: "clip",
     "aria-label": `片段 ${text}`,
   }, [

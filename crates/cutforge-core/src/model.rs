@@ -641,8 +641,10 @@ pub fn source_read_ms(clip: &Clip) -> f64 {
 }
 
 #[cfg(test)]
-#[path = "fx_roundtrip_tests.rs"]
-mod fx_roundtrip_tests; // 册四 T4.6 fx 字段 roundtrip(纯移动拆分,行数红线 A1-3)
+mod fx_roundtrip_tests {
+    // include! 相对当前文件(src/)解析,POSIX/Windows 一致(同 interop.rs 注)。
+    include!("fx_roundtrip_tests.rs");
+} // 册四 T4.6 fx 字段 roundtrip(纯移动拆分,行数红线 A1-3)
 
 #[cfg(test)]
 mod tests {

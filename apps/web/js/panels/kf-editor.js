@@ -14,7 +14,7 @@ import { projectStore } from "../core/store.js";
 import {
   WATCHABLE, PROP_META, INTERP_PRESETS, EASE_CP,
   kfsOfProp, samplesOf, domainOf, currentValueOf, kfTimeAt,
-  draftOf as kfDraftOf, upsertKf, dropKf, moveKf, kfPatch, emptyBlocked, CLEAR_BLOCKED_MSG,
+  draftOf as kfDraftOf, upsertKf, dropKf, moveKf, kfPatch,
 } from "../core/kf-model.js";
 import { createCurveCanvas } from "./kf-curve.js";
 import { toast } from "../ui/toast.js";
@@ -169,11 +169,7 @@ export function buildKeyframeHost(rowOf) {
   function commit(msg) {
     const row = rowOf();
     if (!row) return;
-    if (emptyBlocked(draft)) {
-      // 内核 minItems=1 拒空数组(实测):不发注定失败的写,诚实提示
-      toast(CLEAR_BLOCKED_MSG, false);
-      return;
-    }
+    // 空数组 = 清除全部关键帧(册五收口:内核已接受 [])
     updateClip(row.id, kfPatch(draft), msg);
   }
 

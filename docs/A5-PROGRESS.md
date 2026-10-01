@@ -230,3 +230,58 @@
     ADR-0019 落地证据登记)。
 11. multicam_sync 只支持音频同源素材(视频画面差分对齐未做;诚实标注 engine=pcm-xcorr)。
 12. scene_detect 阈值只收硬切级跳变(溶解/渐变检出候 ffmpeg scdet 选件评估)。
+
+## 十一、收口波(2026-10-01,续作子代理实测)
+
+**BE 两补**(E-FE1 钉坑收口):
+- `patch.keyframes` 空数组=清空全部关键帧:schema `clip.keyframes` `minItems:1` 移除
+  + description 写明「空数组 [] 合法 = 清除(整组替换语义)」;生成校验器
+  `tools/_generated/cf_validate.py` 同步重生成(keyframes 块已无 minItems);
+  单测 `crates/cutforge-core/tests/keyframes_clear.rs`:空数组单 Op/after=[](非 null)/
+  before 携原整组/undo 还原整组/redo 复现清空/`to_validated_value` 放行。
+- grade 入 `timeline_projection`(同 fx 先例,壳读回桥退化)+单测
+  `timeline_projection_carries_grade_key_always`(挂=整对象/未挂=null 键恒在);
+  `gradeCurves` description 回写「每通道 minItems=2 契约」(渲染端 curves 两点定一段;
+  壳拖点前须补齐两端点)。
+
+**parity 68**:新七工具夹具落库(multicam_sync 双素材=同源字节复制锁零偏移/
+multicam_cut/scene_detect 硬切 2s 红+2s 蓝(含静音轨绕混音图 :a specifier)/
+compound_create→compound_unbind/otio_export→otio_import→otio_export 往返,
+`product_assert` 产物级断言:unbound=2、OTIO 语义 diff=0);golden 重录 **68**,
+连跑两次 `67 PASS/1 WARN(audio_beats 启发式,既有口径)/0 DRIFT`。
+
+**两份新 e2e**:`e2e_keyframes.py` 七断言 PASS(12.7s;秒表打点单 Op/投影
+keyframes+keyframeSamples 121 点对拍/求值一致性帧亮度比 0.751≈0.75/曲线拖锚
+round4(vAt) 写回/菱形拖移 60px=1000ms/easeIn 预设);`e2e_color.py` 九断言 PASS
+(8.0s;基线中性帧/色轮 Lift 写回单 Op/帧色偏 meanR−meanB=105/LUT 帧压暗/
+示波器三画布非空/分屏割线 50%→72.27%/grade 拷贝粘贴逐字段等价)。
+TESTIDS.md 已登记 testid 全覆盖,apps/web 零改动。
+
+**gate A5 注册**(`tools/gates/gate.py`,D-A2 制:A4 十八项一字不动全部继承,
+另纳 e2e-keyframes/e2e-color/bench-threshold,**21 项全阻断**);CI web-e2e
+只加两新步;`gate.yml` yaml.safe_load 校验过。
+
+**录屏补录**:前任缺 `10-scene.webm`——收口修 capture 剧本两处 bug
+(等待条件错对原始键名 `cutCount`→改等 `scene-summary` 摘要行;`scene-auto`
+testid 挂 checkbox 本体,选择器去掉 ` input`)后补录成功(238KB)。目录 34 支
+总量 **7.27MB ≤ 8MB 红线**(册五 15 支新录屏 VP9 CRF40 重编码压溃,时长逐支
+不变;单文件 ≤2MB 口径不破)。micro-interactions.md #40-46 录屏回链 + 新增
+第九节(E-FE2 面板演示 D1-D8)。
+
+**全量验证(本机收官实测)**:
+- `cargo test --workspace --locked`:40 套件全绿零失败(含 keyframes_clear 新测);
+  `cargo clippy --workspace --all-targets --locked -- -D warnings` 零告警;
+- e2e 17 份全绿(15 既有+2 新):轻量 11 份 + 负载敏感 4 份安静时段复跑
+  (drag_perf P95 60.2fps/perf_timeline P95 60.2fps/media_perf P95 64.1fps 掉帧 0/
+  perf_budget boot 408ms,perf-a3.json 重生成);
+- `check_doc_counts`:**68 = 15 查询+34 写+19 编排** 与 schema 一致;
+- `bench --check`(AC-5.7):render 中位 **6063ms vs 基线 6586ms(Δ −8.0%)**,
+  阈值 ≤+20% PASS,存档 `docs/bench/2026-10-01.json`;
+- pytest 12 passed。
+
+**收口新增遗留**:
+13. ~~秒表「末属性清空」壳侧接线~~ **已闭合(主控收尾,2026-10-01)**:kf-watch/kf-editor/
+    kf-row 三处删除路径统一改为直写 `patch.keyframes: []`(空数组=整组清空,内核已接受),
+    撤 emptyBlocked/CLEAR_BLOCKED 拦截与过期文案;node --check 过,e2e_keyframes/e2e_color
+    复跑 PASS。「末属性清空」路径的 e2e 专项断言留待册六 e2e 扩充时补(现状:三路径
+    手工冒烟一致,自动化未覆盖该单点)。

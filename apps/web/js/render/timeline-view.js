@@ -17,6 +17,7 @@ import { onClipPointerDown } from "./clip-gestures.js";
 import { onLanePointerDown, onLaneDragOver, onLaneDragLeave, onLaneDrop } from "./gestures.js";
 import { buildTrackHead, syncTrackHead } from "./track-head.js";
 import { syncKfRow } from "../panels/kf-row.js";
+import { openCompoundCard } from "../panels/compound.js";
 import { openClipContextMenu, openTrackContextMenu, openTimelineContextMenu } from "../ui/menu.js";
 
 /** @type {Map<string, HTMLElement>} */
@@ -220,8 +221,10 @@ function renderClips(clips, win) {
     const selected = row.id === sel || selIds.has(row.id);
     const text = clipLabelOf(row);
     // T4.2:overlay(画中画)片段视觉区分(虚线描边 + 角标);音频轨静音/独奏态灰化由 lane class 下传
+    // T5.4:复合片段视觉标识(compound 类描边 + 「复合」徽标;徽标=节点创建期挂载,
+    // compound 只在新壳 id 上出现/消失——打包/解包都换 id,旧元素不复用,无更新路径)
     const cls = `clip${kind !== "video" ? ` ${kind}` : ""}${selected ? " selected" : ""}`
-      + `${row.overlay ? " overlay" : ""}`;
+      + `${row.overlay ? " overlay" : ""}${row.compound ? " compound" : ""}`;
     const meta = clipEls.get(row.id);
     if (!meta) {
       // 新增(创建即落几何:absolute 无 left/width 会退化为 shrink-to-fit)
@@ -278,10 +281,17 @@ function createClipEl(row, cls, text) {  const el = h("div", {
   }, [
     h("span", { class: "clip-name" }, [text]),
     row.overlay ? h("span", { class: "clip-pip", "data-tip": "画中画(overlay 层)" }, ["画中画"]) : null,
+    row.compound
+      ? h("span", {
+          class: "clip-compound", testid: "clip-compound",
+          "data-tip": `复合片段:${row.compound.clipCount ?? "?"} 个子片段 · ${row.compound.durationMs ?? "?"}ms(双击看说明卡)`,
+        }, ["复合"]) : null,
     h("span", { class: "edge edge-l", testid: "clip-edge-l", "data-tip": "拖动裁剪入点(Shift+拖 = 双边联动 roll)" }),
     h("span", { class: "edge edge-r", testid: "clip-edge-r", "data-tip": "拖动裁剪出点(Shift+拖 = 双边联动 roll)" }),
   ]);
   el.addEventListener("pointerdown", onClipPointerDown);
+  // T5.4:复合片段双击 = 说明卡(投影概要 + 解包引导;内部编辑=解包流,诚实标注)
+  el.addEventListener("dblclick", () => { if (row.compound) openCompoundCard(row.id); });
   el.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     e.stopPropagation(); // 轨道/空白菜单不得顶替片段菜单

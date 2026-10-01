@@ -20,6 +20,26 @@
     "ns": "ok",
     "ok": true
    }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "kind": "video",
+    "requestId": "parity-track-2"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-39"
+     ],
+     "rev": "<REV>"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
   }
  ]
 }

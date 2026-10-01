@@ -301,7 +301,7 @@
     "gradeCurves": {
       "type": "object",
       "additionalProperties": false,
-      "description": "RGB/亮度曲线组(册五 T5.2):每通道独立点集(升序),缺通道 = 恒等;master = 亮度近似(RGB 同步)。整组替换(随 clip.grade 整对象)",
+      "description": "RGB/亮度曲线组(册五 T5.2):每通道独立点集(升序),缺通道 = 恒等;master = 亮度近似(RGB 同步)。**每通道 minItems=2 契约**(至少恒等两端点 [0,0]/[1,1];渲染端编译为 ffmpeg curves 至少需要两点定一段,单点无法表达曲线)——壳侧曲线编辑器拖点前须补齐两端点(E-FE2 收口回写)。整组替换(随 clip.grade 整对象)",
       "properties": {
         "master": {
           "type": "array",
@@ -1121,8 +1121,7 @@
         },
         "keyframes": {
           "type": "array",
-          "minItems": 1,
-          "description": "关键帧(IR v3,册五 T5.1/ADR-0004 扩为正式 + ADR-0018 渲染路线):[{property,timeMs,value,interp,bezier}]。timeMs 相对片段起点(播放域毫秒);value 数值;interp 封闭枚举描述**本关键帧到下一关键帧**的缓动(linear 默认/hold/easeIn/easeOut/easeInOut/bezier+四参数控制柄)。渲染映射(ADR-0018 按属性分级):position.x/y→overlay 表达式、rotation→rotate 表达式、scale→zoompan 逐帧表达式、opacity→geq alpha、volume→volume 表达式(eval=frame)、speed→展开 speed_segments(B 级分段,与 speedCurve 同机制且互斥)、fx.<fxId>.<param>→按 fx-catalog 注册表三态(sendcmd|segment|static;static 打点诚实拒绝)。未知 property 整组 SCHEMA_INVALID(防静默丢);keyframed 属性逐帧覆盖静态值;求值单源 = cutforge-core 求值器,壳零插值(投影下发 keyframeSamples 采样点集)。整组替换(clip_update patch.keyframes)",
+          "description": "关键帧(IR v3,册五 T5.1/ADR-0004 扩为正式 + ADR-0018 渲染路线):[{property,timeMs,value,interp,bezier}]。空数组 [] 合法 = 清除全部关键帧(整组替换语义,壳侧秒表全灭所需;E-FE1 实测钉坑收口)。timeMs 相对片段起点(播放域毫秒);value 数值;interp 封闭枚举描述**本关键帧到下一关键帧**的缓动(linear 默认/hold/easeIn/easeOut/easeInOut/bezier+四参数控制柄)。渲染映射(ADR-0018 按属性分级):position.x/y→overlay 表达式、rotation→rotate 表达式、scale→zoompan 逐帧表达式、opacity→geq alpha、volume→volume 表达式(eval=frame)、speed→展开 speed_segments(B 级分段,与 speedCurve 同机制且互斥)、fx.<fxId>.<param>→按 fx-catalog 注册表三态(sendcmd|segment|static;static 打点诚实拒绝)。未知 property 整组 SCHEMA_INVALID(防静默丢);keyframed 属性逐帧覆盖静态值;求值单源 = cutforge-core 求值器,壳零插值(投影下发 keyframeSamples 采样点集)。整组替换(clip_update patch.keyframes)",
           "items": {
             "type": "object",
             "additionalProperties": false,

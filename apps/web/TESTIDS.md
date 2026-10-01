@@ -326,3 +326,62 @@ T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeC
 | `compare-toggle` | button(预览传输行) | A/B 对比开关(aria-pressed) |
 | `compare-bar` / `compare-baseline` / `compare-refresh` / `compare-status` | div/button | 基准抓取(render_frame 快照,调色前抓 = 调色前参照)/ 当前帧刷新 / 状态 |
 | `compare-overlay` / `compare-img-base` / `compare-img-cur` / `compare-divider` | div/img/div | 叠层(clip-path 分割;左基准右当前;恒显口径:render_frame 无「不带 grade」开关,零 Op 基准快照方案) |
+
+## 七(续)、册五 A5-FE2 新增 testid(T5.3 混音台 / T5.4 复合·多机位 / T5.6 队列·编码)
+
+### 静态骨架(index.html)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `tab-mixer` / `panel-mixer` | button/div | 新页签「混音台」(T5.3) |
+| `tab-multicam` / `panel-multicam` | button/div | 新页签「多机位」(T5.4;含场景检测) |
+| `tab-queue` / `panel-queue` | button/div | 新页签「渲染队列」(T5.6) |
+
+### 混音台(panels/mixer.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `mixer-tracks` | div | 轨道条容器(video/audio 轨各一条) |
+| `mix-strip-<轨id>` | div | 每轨条:头部徽标/M/S + 推子占位 + EQ/动态折叠 + 源响度 |
+| `mix-mute-<id>` / `mix-solo-<id>` | button | 静音/独奏(track_update.mute/solo;aria-pressed) |
+| `mix-fader-<id>` | input[range disabled] | 轨道音量推子占位(IR 无 track volume/pan,候 BE 登记;片段音量走检查器) |
+| `mix-eq-<id>`(组)/ `mix-eq-add|apply|clear-<id>` | fieldset/button | EQ ≤8 段(整组替换单 Op);清除 = patch.eq null |
+| `mix-eq-band` / `mix-eq-type|freq|gain|q-<id>` | div/input | 段行(peaking/lowshelf/highshelf;20..20000/-24..24/0.1..16) |
+| `mix-dyn-<id>`(组)/ `mix-dyn-apply|clear-<id>` / `mix-dyn-<字段>-<id>` | fieldset/button/input | 动态 acompressor+alimiter 五字段(整对象替换单 Op) |
+| `mix-loud-<id>` / `mix-loud-out-<id>` | button/span | 测源响度(audio_loudness 对该轨最后片段源;「源域,未含轨道 EQ/动态」标注) |
+| `mix-bus` / `mix-target` / `mix-bus-src` / `mix-bus-latest` / `mix-bus-measure` | fieldset/input/button | 总线:响度目标 I[:TP](与导出面板双入口,写 prefs)/ 成片路径(render_probe 预填)/ 测量 |
+| `mix-bus-out` / `mix-bus-meter` / `mix-bus-nums` / `mix-bus-dev` | div/span | 响度单:LUFS/TP/LRA + 偏差徽标(≤1LU 达标)+ 静态电平条(实时候播放链采样口,登记) |
+
+### 复合片段(T5.4;panels/compound.js + menu.js + timeline-view.js)
+| testid/锚点 | 元素 | 说明 |
+|---|---|---|
+| `clip-compound` | span(clip 内) | 「复合」徽标(title 给子片段数/总时长;`.clip.compound` 紫描边) |
+| 片段右键「打包为复合片段」 | 菜单项 | compound_create(框选 ≥2 同轨相邻视频片段;前置校验失败禁用 + why) |
+| 片段右键「解包复合片段」/「复合片段说明」 | 菜单项 | compound_unbind(单 Op)/ 说明卡入口 |
+| `compound-card` / `cpd-summary` / `cpd-hint` / `cpd-unbind` / `cpd-close` | div | 双击复合片段弹说明卡:投影概要(clipCount/durationMs/canvas)+ 解包引导(内部编辑=解包流,诚实标注) |
+
+### 多机位 + 场景检测(T5.4;panels/multicam.js + scenetool.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| 素材右键「加入/移出多机位同步集」 | 菜单项 | 会话集维护(video/audio;angles[0]=基准) |
+| `mc-angle-src` / `mc-angle-add` / `mc-angle-clear` / `mc-angles` / `mc-angle` | input/button/div/span | 手输加入 / 同步集 chips([0]=基准徽标) |
+| `mc-sync` / `mc-window` / `mc-sync-out` / `mc-sync-summary` / `mc-sync-angles` / `mc-sync-angle` | button/input/div | multicam_sync:最小置信度 + 每角(src/offsetMs/confidence)+ engine=pcm-xcorr 如实标注 |
+| `mc-switch-add` / `mc-switch-angle` / `mc-switches` / `mc-switch` | button/select/div/span | 播放头逐点打切换点(会话态;生成时以首点归一) |
+| `mc-cut` / `mc-track` / `mc-duration` | button/select/input | multicam_cut 单 Op 生成序列(angles offsets 取最近同步结果) |
+| `scene-tool` / `scene-src` / `scene-run` / `scene-sens` / `scene-auto` / `scene-track` | fieldset/input/button | scene_detect(frame-diff;勾选 autoSplit = 单 Op 自动切段) |
+| `scene-out` / `scene-summary` / `scene-cuts` / `scene-cut` | div/span | 检测点列表(tMs/置信度;degraded 如实标注) |
+
+### 导出面板升级(T5.6/T5.5;panels/export.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `export-encode`(组)/ `export-encoder` / `export-quality` | fieldset/select | 编码器(缺省 remux 零代损/auto/hw/sw)+ 质量预设三档 |
+| `export-probe` / `export-probe-out` | button/span | encode_probe(本机 hw 可用名;如 h264_amf) |
+| `export-crf` / `export-bitrate` / `export-gop` / `export-pixfmt` | input | 高级折叠(crf 0..51 覆盖预设/码率 kbps/GOP/像素格式) |
+| `export-loudnorm` / `export-verbose` | input | 响度目标 I[:TP](混音台双入口,prefs 同源)/ 命令回显开关(缺省关,安全口径) |
+| `export-otio` / `export-otio-format` / `export-otio-run` / `export-otio-import` | div/select/button | otio_export(otio|edl,落 06_成片输出)/ otio_import 对话框入口 |
+| `otio-import-dialog` / `otio-src` / `otio-name` / `otio-run` / `otio-cancel` / `otio-progress` | div/input/button | 导入新工程(目标目录必须不存在;src 预填最近导出产物绝对拼接) |
+
+### 渲染队列(T5.6;panels/queue.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `queue-head` / `queue-refresh` / `queue-count` | div/button/span | 头部:刷新 + 任务数/渲染中/并发上限 |
+| `queue-rows` / `queue-row` / `queue-state` / `queue-runid` / `queue-empty` | div/span | 行:data-runId/data-state;状态徽标(queued/running/paused/ok/fail/canceled,色 + 文本双通道) |
+| `queue-pause` / `queue-resume` / `queue-cancel` / `queue-retry` | button(行内) | 五 action 按态给/不给(禁用态 title 说明状态机;render.progress 事件联动刷新) |

@@ -12,7 +12,7 @@
      "error": null,
      "lines": [
       "{\"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"probe\"}",
-      "{\"cacheHits\": 0, \"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"segments\": 5, \"step\": \"segment\"}",
+      "{\"cacheHits\": 0, \"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"segments\": 9, \"step\": \"segment\"}",
       "{\"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"compose-video\"}",
       "{\"count\": 0, \"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"overlay\"}",
       "{\"count\": 0, \"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"adjust\"}",
@@ -27,7 +27,7 @@
       "{\"ok\": true, \"step\": \"mix\"}",
       "{\"ok\": true, \"step\": \"subtitle\"}",
       "{\"ok\": true, \"step\": \"encode\"}",
-      "{\"cacheHits\": 0, \"done\": true, \"output\": \"<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4\", \"segments\": 5}",
+      "{\"cacheHits\": 0, \"done\": true, \"output\": \"<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4\", \"segments\": 9}",
       "RENDER_OK <TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4"
      ],
      "output": "<TMP>/proot/06_成片输出/final_cutforge_parity-main_1080x1920.mp4",

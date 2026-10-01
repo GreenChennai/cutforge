@@ -175,8 +175,7 @@ export function moveKf(draft, kf, wantMs, durMs) {
   return kf.timeMs;
 }
 
-/** patch 载荷(整组替换;内核 minItems=1,空数组会被 SCHEMA_INVALID 拒——
- * 整组清空通道候 BE,调用方须先经 emptyBlocked() 预检并诚实告知)。 */
+/** patch 载荷(整组替换;册五收口起空数组 [] = 清除全部关键帧,内核已接受)。 */
 export function kfPatch(draft) {
   const clean = draft.map((k) => {
     const out = { property: k.property, timeMs: k.timeMs, value: k.value };
@@ -186,13 +185,3 @@ export function kfPatch(draft) {
   });
   return { keyframes: clean };
 }
-
-/** 删除后草稿为空 = 内核无整组清空通道(实测:minItems 1 拒绝);调用方跳过写并如实提示。 */
-export function emptyBlocked(draft) {
-  return !draft.length;
-}
-
-/** 整组清空受阻的诚实文案(三处删除路径共用)。 */
-export const CLEAR_BLOCKED_MSG =
-  "整组清空受阻:内核 patch.keyframes 空数组被拒(minItems 1,SCHEMA_INVALID),清空通道候 BE;"
-  + "可先给其他属性打帧后再删本属性,或用撤销回到打点前";

@@ -88,20 +88,37 @@
 
 降级登记:素材缩略图/波形不可用(无 ffmpeg/无音轨)回落图标/装饰纹理,不假图;外部文件拖入导入面板 = 诚实提示(无拷入通道,登记候 BE 补);「在资源管理器打开」= 禁用项(浏览器沙箱),不假实现。
 
-## 八、册五 A5 新增微交互(E-FE1:T5.1 关键帧 UI / T5.2 调色 UI;实现位置登记,录屏候 e2e 波补录)
+## 八、册五 A5 新增微交互(E-FE1:T5.1 关键帧 UI / T5.2 调色 UI;实现位置登记,收口波已补录)
 
 | # | 微交互 | 实现位置 | testid/锚点 | 状态 | 录屏 |
 |---|---|---|---|---|---|
-| 40 | 秒表开/关双态(accent 描边 + aria-pressed;开启即打点,零动画) | `js/panels/kf-watch.js` + `css/components/ui-a5.css` `.kw-watch.on` | `kw-toggle-<prop>` | 已实现 | 待录 |
-| 41 | 秒表关闭确认弹窗(复用 confirm-dialog;末属性整组清空受阻时弹窗明示 minItems 1 通道候 BE) | `js/panels/kf-watch.js` confirmKfOff | `confirm-dialog` | 已实现 | 待录 |
-| 42 | 关键帧菱形拖拽跟手(邻居夹取 + 时间码气泡;拖拽零 Op 零动画,松手单 Op,Esc 取消) | `js/panels/kf-row.js` mountDrag + gesture-kit showBubble | `kf-row / kw-diamond` | 已实现 | 待录 |
-| 43 | 曲线画布锚点/贝塞尔柄拖拽(拖拽期采样点云降淡 + 直线示意,提交后投影采样刷新真曲线;ADR-0018 壳零插值) | `js/panels/kf-curve.js` + `js/panels/kf-editor.js` | `kf-curve-canvas` | 已实现 | 待录 |
-| 44 | 色轮指针拖拽跟手(角度=色相 半径=强度;盘面光谱逐像素数学生成=取色器数据面,轮圈/指针经 token) | `js/panels/grade-wheel.js` + `.grade-wheel` | `grade-wheel-lift|-gamma|-gain` | 已实现 | 待录 |
-| 45 | 示波器采样状态文本态(采样中…→已采样@ms;数据域标注「精确帧含调色」/降级「源素材未调色」) | `js/panels/scopes.js` | `scopes-status / scopes-note` | 已实现 | 待录 |
-| 46 | 分屏割线拖拽跟手(clip-path inset 直写,零动画;Esc/双击复位 50%) | `js/panels/compare.js` mountDividerDrag | `compare-divider` | 已实现 | 待录 |
+| 40 | 秒表开/关双态(accent 描边 + aria-pressed;开启即打点,零动画) | `js/panels/kf-watch.js` + `css/components/ui-a5.css` `.kw-watch.on` | `kw-toggle-<prop>` | 已实现 | [录屏:recordings/40-kf-watch.webm](recordings/40-kf-watch.webm) |
+| 41 | 秒表关闭确认弹窗(复用 confirm-dialog;空数组清除通道已随 BE 收口打通:schema minItems 移除 + 单 Op 清空/undo 还原) | `js/panels/kf-watch.js` confirmKfOff | `confirm-dialog` | 已实现 | [录屏:recordings/41-kf-watch-confirm.webm](recordings/41-kf-watch-confirm.webm) |
+| 42 | 关键帧菱形拖拽跟手(邻居夹取 + 时间码气泡;拖拽零 Op 零动画,松手单 Op,Esc 取消) | `js/panels/kf-row.js` mountDrag + gesture-kit showBubble | `kf-row / kw-diamond` | 已实现 | [录屏:recordings/42-kf-diamond-drag.webm](recordings/42-kf-diamond-drag.webm) |
+| 43 | 曲线画布锚点/贝塞尔柄拖拽(拖拽期采样点云降淡 + 直线示意,提交后投影采样刷新真曲线;ADR-0018 壳零插值) | `js/panels/kf-curve.js` + `js/panels/kf-editor.js` | `kf-curve-canvas` | 已实现 | [录屏:recordings/43-kf-curve-drag.webm](recordings/43-kf-curve-drag.webm) |
+| 44 | 色轮指针拖拽跟手(角度=色相 半径=强度;盘面光谱逐像素数学生成=取色器数据面,轮圈/指针经 token) | `js/panels/grade-wheel.js` + `.grade-wheel` | `grade-wheel-lift|-gamma|-gain` | 已实现 | [录屏:recordings/44-grade-wheel.webm](recordings/44-grade-wheel.webm) |
+| 45 | 示波器采样状态文本态(采样中…→已采样@ms;数据域标注「精确帧含调色」/降级「源素材未调色」) | `js/panels/scopes.js` | `scopes-status / scopes-note` | 已实现 | [录屏:recordings/45-scopes-status.webm](recordings/45-scopes-status.webm) |
+| 46 | 分屏割线拖拽跟手(clip-path inset 直写,零动画;Esc/双击复位 50%) | `js/panels/compare.js` mountDividerDrag | `compare-divider` | 已实现 | [录屏:recordings/46-compare-divider.webm](recordings/46-compare-divider.webm) |
 
 降级登记(本册新增):色轮盘面光谱与矢量示波器热图为 JS 逐像素数学生成的展示色
 (取色器/示波器数据面,同 `<input type=color>` 原生光谱口径),非主题色,不落
 tokens.css 之外的任何色值字面量;示波器 render_frame 不可用时降级直吃源素材
 (「未调色」如实标注);分屏对比因内核 render_frame 无「不带 grade」开关且壳零 Op
 纪律禁止临时清写,落地为「基准帧快照 vs 当前帧」口径(面板恒显说明)。
+
+## 九、册五 A5-FE2 面板演示录屏(E-FE2:T5.3/T5.4/T5.5/T5.6 新面板;收口波补录)
+
+| # | 演示 | 面板/工具 | 录屏 |
+|---|---|---|---|
+| D1 | 混音台轨道 EQ(整组替换单 Op) | `panels/mixer.js` / track_update patch.eq | [录屏:recordings/06-mixer-eq.webm](recordings/06-mixer-eq.webm) |
+| D2 | 总线响度单(audio_loudness 测量 + 偏差徽标如实) | `panels/mixer.js` / audio_loudness | [录屏:recordings/07-mixer-bus-loudness.webm](recordings/07-mixer-bus-loudness.webm) |
+| D3 | 复合片段说明卡 + 解包(compound_unbind 单 Op) | `panels/compound.js` / compound_create→compound_unbind | [录屏:recordings/08-compound.webm](recordings/08-compound.webm) |
+| D4 | 多机位同步分析 → 切换点 → 生成序列(multicam_cut 单 Op) | `panels/multicam.js` / multicam_sync→multicam_cut | [录屏:recordings/09-multicam.webm](recordings/09-multicam.webm) |
+| D5 | 场景检测(硬切夹具;可选自动切段单 Op) | `panels/scenetool.js` / scene_detect | [录屏:recordings/10-scene.webm](recordings/10-scene.webm) |
+| D6 | 编码探测(AMF/NVENC 在位如实) | `panels/export.js` / encode_probe | [录屏:recordings/11-encode-hw.webm](recordings/11-encode-hw.webm) |
+| D7 | 渲染队列生命周期(入队→暂停→恢复→取消) | `panels/queue.js` / render_queue | [录屏:recordings/12-queue-lifecycle.webm](recordings/12-queue-lifecycle.webm) |
+| D8 | OTIO 导出→导入(新工程;往返最小子集) | `panels/export.js` / otio_export→otio_import | [录屏:recordings/13-otio.webm](recordings/13-otio.webm) |
+
+录制口径:`docs/design/record-captures.py` 册五补录段(#40-46 微交互 + D1-D8 面板
+演示)统一 720×450 低分辨率,单文件 ≤2MB、目录总量红线 ≤8MB;复跑命令
+`python docs/design/record-captures.py [--only <子串>]`。

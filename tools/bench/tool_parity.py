@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """T1.1/AC-1.2 门禁:MCP 工具黄金响应库(golden 响应对拍;册一建 41,册二 A2 增
 render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,册四 A4-BE3b 增文本/字幕/媒体
-八工具后 56,数量口径以 schemas/mcp-tools.json 为准)。
+八工具后 56,册五 A5 增专业编辑/互操作七工具后 68,数量口径以 schemas/mcp-tools.json 为准)。
 
     python tools/bench/tool_parity.py                  # 对比模式:重跑采集,与 golden 逐字段对拍
     python tools/bench/tool_parity.py --update-golden  # 采集模式:重建 tools/bench/golden/*.json
@@ -32,16 +32,23 @@ render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,册四 A4-BE3
     0.2 步进档(0.42/0.33 同归 0.4)、onsets 时间戳 100ms 网格化 + 去重 —— 启发式
     检测值对 ffmpeg 解码舍入敏感(Windows/ubuntu 样本微差让个别 onset 跨过自适应
     阈值),与 media_probe 的 durationMs 100ms 量化同策。
+  - 册五 A5 启发式面(scene_detect 帧差分 / multicam_sync 包络互相关;同 audio_beats
+    "检测值反映外部工具链产物"口径):cuts[].tMs 500ms 网格化(吸收 ±1 抽帧的
+    剪切点漂移)、cuts[].confidence 走 0.2 档量化、frames/cutCount 走计数容差
+    (≤1,WARN)、durationsMs 逐项 100ms 量化(AAC 解码样本数跨 build 微差);
+    multicam_sync 的 offsetMs 用**同源字节复制**夹具(take2 = take1 复制)锁死
+    确定性零偏移,不进容差。
 
 对比语义(**加法容忍**,适配后续有计划的加法演进):
   - golden 有的键:实际必须有且值相等,否则 DRIFT(阻断);
   - 实际多出的键:仅警告(WARN),不失败;
   - 数组:长度与逐元素(按下标)严格一致;
-  - 唯一宽口径(仅 audio_beats 启发式面):onsets 网格化后计数差 ≤2 且首个 onset
+  - 唯一宽口径(仅启发式检测面:audio_beats 的 onsets/onsetCount、scene_detect 的
+    cuts/cutCount/frames):网格化后计数差 ≤2(a5 cuts/frames ≤1)且首个网格值相等
     网格值相等、onsetCount 计数差 ≤2 → WARN 不 DRIFT;超差仍 DRIFT
     (不弱化其他工具的严格度)。
 
-退出码:0 = 42/42 PASS;2 = 有 DRIFT/FAIL;3 = 环境缺失(ffmpeg)。
+退出码:0 = 68/68 PASS;2 = 有 DRIFT/FAIL;3 = 环境缺失(ffmpeg)。
 依赖:Python 标准库 + 已构建的 cutforge-mcp(+ 同目录 cutforge-render)+ ffmpeg。
 """
 from __future__ import annotations
@@ -173,20 +180,34 @@ ONSET_GRID_MS = 100  # onsets 时间戳 100ms 网格(与 durationMs 量化同格
 ONSET_COUNT_TOL = 2  # onset 计数容忍差(网格化后 golden/actual 允许 ±2)
 CONF_BIN = 0.2       # confidence 量化档(见 _conf_bin:0.1 档无法并档,取 0.2 步进)
 
+# 册五 A5:scene_detect(帧差分启发式)跨平台容差口径 —— 抽帧输出帧数跨 ffmpeg
+# build 可差 ±1,剪切点时间戳随之漂移一个采样帧(5fps 下 200ms)。与 audio_beats
+# 同策:网格化(500ms,吸收 ±1 采样帧)+ 计数容差。
+CUT_GRID_MS = 500    # cuts[].tMs 网格(粗于采样帧 200ms,吸收 ±1 帧漂移)
+CUT_COUNT_TOL = 1    # cuts/cutCount/frames 计数容忍差(±1 抽帧)
+
+
+def _grid(values: list, grid_ms: int) -> list[int] | None:
+    """数值时间戳 → 网格就近取整 + 保序去重(采集与对比同规则)。
+
+    非数值列表返回 None,交回严格对比(能力面若变更形态不静默放宽)。
+    """
+    out: list[int] = []
+    for v in values:
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+            return None
+        g = int(round(v / grid_ms) * grid_ms)
+        if not out or out[-1] != g:
+            out.append(g)
+    return out
+
 
 def _onset_grid(values: list) -> list[int] | None:
     """onsets 时间戳 → 100ms 网格就近取整 + 保序去重(采集与对比同规则)。
 
     非数值列表返回 None,交回严格对比(onset 能力面若变更形态不静默放宽)。
     """
-    out: list[int] = []
-    for v in values:
-        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
-            return None
-        g = int(round(v / ONSET_GRID_MS) * ONSET_GRID_MS)
-        if not out or out[-1] != g:
-            out.append(g)
-    return out
+    return _grid(values, ONSET_GRID_MS)
 
 
 def _conf_bin(f: float) -> float:
@@ -301,6 +322,21 @@ class Normalizer:
                     # 漂移的吸收口径;仅 audio_beats 有此键,probe_mode 限定不外溢)
                     gridded = _onset_grid(val)
                     out[k] = gridded if gridded is not None else val
+                elif k == "cuts" and probe_mode and isinstance(val, list):
+                    # scene_detect 剪切点:[{tMs,confidence}] → tMs 500ms 网格化
+                    # (吸收 ±1 抽帧漂移);confidence 走下方统一档位量化
+                    if all(isinstance(c, dict) and "tMs" in c for c in val):
+                        out[k] = [dict(c, tMs=int(round(c["tMs"] / CUT_GRID_MS) * CUT_GRID_MS))
+                                  for c in val]
+                    else:
+                        out[k] = self(val, probe_mode)
+                elif k == "durationsMs" and probe_mode and isinstance(val, list):
+                    # multicam_sync 各角度 PCM 时长(ms):AAC 解码样本数跨 build 微差
+                    # → 逐项 100ms 量化(与 durationMs 同格)
+                    if all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in val):
+                        out[k] = [int(round(x / 100.0) * 100) for x in val]
+                    else:
+                        out[k] = self(val, probe_mode)
                 elif k in LUFS_KEYS and probe_mode and isinstance(val, str):
                     # 响度测量值(跨 ffmpeg build 有 0.x LU 漂移)→ 0.5LU 量化
                     try:
@@ -347,6 +383,26 @@ def _tolerant_pair(k: str, g, a, path: str, extras: list[str]) -> bool:
         if abs(g - a) <= ONSET_COUNT_TOL:
             extras.append(f"{path}: 启发式容差计数差 golden={g} actual={a}"
                           f"(≤ {ONSET_COUNT_TOL})")
+            return True
+    # scene_detect 帧差分启发式面(册五 A5;同 audio_beats 口径):cuts 数组在归一化层
+    # 已 500ms 网格化,这里对计数(±1 抽帧)与首个剪切点网格值放宽 → WARN;超差落回
+    # 严格对比报 DRIFT。
+    if k == "cuts" and isinstance(g, list) and isinstance(a, list):
+        gg = [int(round(c.get("tMs", 0) / CUT_GRID_MS) * CUT_GRID_MS) for c in g
+              if isinstance(c, dict)] if g else []
+        aa = [int(round(c.get("tMs", 0) / CUT_GRID_MS) * CUT_GRID_MS) for c in a
+              if isinstance(c, dict)] if a else []
+        d = abs(len(gg) - len(aa))
+        if g != a and len(g) == len(gg) and len(a) == len(aa) and d <= CUT_COUNT_TOL and gg[:1] == aa[:1]:
+            extras.append(f"{path}: 启发式容差 golden={len(gg)} actual={len(aa)} 个剪切点"
+                          f"(计数差 {d} ≤ {CUT_COUNT_TOL} 且首个剪切点网格值相等)")
+            return True
+        return False  # 超差/形态不符 → 严格对比,按数组长度/逐元素报 DRIFT
+    if k in ("cutCount", "frames") and isinstance(g, (int, float)) and isinstance(a, (int, float)) \
+            and not isinstance(g, bool) and not isinstance(a, bool):
+        if g != a and abs(g - a) <= CUT_COUNT_TOL:
+            extras.append(f"{path}: 启发式容差计数差 golden={g} actual={a}"
+                          f"(≤ {CUT_COUNT_TOL};抽帧输出帧数跨 build ±1)")
             return True
     return False  # 超差/不适用 → 严格对比
 
@@ -479,12 +535,28 @@ def make_media(ws: Path) -> None:
         (["-f", "lavfi", "-i", "color=c=0x4080C0:size=64x48",
           "-frames:v", "1"],
          src_dir / "frame.png"),
+        # 册五 T5.4:硬切夹具(2s 红 + 2s 蓝 CFR 拼接;scene_detect 帧差分在 2s
+        # 边界必然触发,红/蓝灰度差 ≈47 级远超自适应阈值)。带**静音轨**(anullsrc):
+        # 混音图按片段数引 [N:a],纯视频源会让 mix pass A 报 Stream specifier ':a'
+        # 失效(既有限制:plan 以 clip 为粒度建音频事件,无音轨探测,登记遗留)——
+        # 夹具侧带静音轨绕开,不给对拍引入与工具行为无关的渲染失败。
+        (["-f", "lavfi", "-i", "color=c=red:size=320x180:rate=30:duration=2",
+          "-f", "lavfi", "-i", "color=c=blue:size=320x180:rate=30:duration=2",
+          "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+          "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v];[2:a]atrim=0:4[a]",
+          "-map", "[v]", "-map", "[a]", "-pix_fmt", "yuv420p",
+          "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-shortest"],
+         src_dir / "hardcut.mp4"),
     ]
     for extra, out in jobs:
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *extra, str(out)],
                            capture_output=True, text=True)
         if r.returncode != 0 or not out.is_file():
             raise ParityError(f"FAIL: ffmpeg 生成夹具失败({out.name}): {r.stderr[-200:]}", 2)
+    # 册五 T5.4:multicam_sync 双素材夹具 —— take2 = take1 字节级复制(同源素材),
+    # 互相关零偏移恒成立(offsetMs=0,confidence=1.0),跨 ffmpeg build 零漂移;
+    # 检测偏移值的跨平台量化口径不做(检测质量不进 golden,确定性进)。
+    shutil.copyfile(src_dir / "take1.mp4", src_dir / "take2.mp4")
     # 册五 T5.2:3D .cube 夹具(4³ 主格式;LUT_3D_SIZE 4 + 64 数据行)
     rows = []
     for b in range(4):
@@ -661,6 +733,38 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         ("scope_data", {"root": "{MAIN}", "src": "01_原始素材/frame.png"}, False),
         ("audio_loudness", {"root": "{MAIN}", "src": "01_原始素材/bgm.mp3", "target": -14}, True),
         ("encode_probe", {"root": "{MAIN}", "trial": False}, True),
+        # -- 阶段 C5:册五 T5.4/T5.5 专业编辑与互操作(新七工具;68 收口) --
+        # multicam_sync 双素材(take2 = take1 字节级复制 → 零偏移确定性);
+        # probe_mode:confidence 档位量化 + durationsMs 100ms 量化(AAC 样本数微差)
+        ("multicam_sync", {"root": "{MAIN}",
+                           "angles": ["01_原始素材/take1.mp4", "01_原始素材/take2.mp4"]}, True),
+        # multicam_cut:切换序列展开(单 Op;V1 此时空闲 [20000,24000))
+        ("multicam_cut", {"root": "{MAIN}", "trackId": "V1", "startMs": 20000,
+                          "durationMs": 4000,
+                          "angles": [{"src": "01_原始素材/take1.mp4", "offsetMs": 0},
+                                     {"src": "01_原始素材/take2.mp4", "offsetMs": 250}],
+                          "switches": [{"tMs": 0, "angle": 0}, {"tMs": 1500, "angle": 1}],
+                          "requestId": "parity-mc-1"}, False),
+        # scene_detect:硬切夹具(2s 红 + 2s 蓝;5fps 抽帧)——先纯检测,
+        # 再 autoSplit 真切段(单 Op;切点 ~2000ms 落在 V2 的 [0,4000) 片段内部)
+        ("track_add", {"root": "{MAIN}", "kind": "video", "requestId": "parity-track-2"}, False),
+        ("clip_add", {"root": "{MAIN}", "trackId": "V2", "src": "01_原始素材/hardcut.mp4",
+                      "startMs": 0, "durationMs": 4000, "requestId": "parity-add-hc"}, False),
+        ("scene_detect", {"root": "{MAIN}", "src": "01_原始素材/hardcut.mp4",
+                          "sampleFps": 5}, True),
+        ("scene_detect", {"root": "{MAIN}", "src": "01_原始素材/hardcut.mp4",
+                          "sampleFps": 5, "autoSplit": {"trackId": "V2"}}, True),
+        # compound_create → compound_unbind 轻量组合(V2 两段切后首尾相接;
+        # 真实产物断言见 product_assert:innerClips=2 / unbound=2)
+        ("compound_create", {"root": "{MAIN}", "clipIds": ["V2-001", "V2-002"],
+                             "toTrack": "V2", "startMs": 0,
+                             "requestId": "parity-compound-1"}, False),
+        ("compound_unbind", {"root": "{MAIN}", "clipId": "@COMPOUND_ID@"}, False),
+        # otio_export → otio_import → otio_export 往返(真实产物断言:语义 diff=0)
+        ("otio_export", {"root": "{MAIN}", "format": "otio"}, False),
+        ("otio_import", {"root": "{NEW2}", "src": "@OTIO_OUT@"}, False),
+        ("otio_export", {"root": "{NEW2}", "format": "otio",
+                         "out": "06_成片输出/roundtrip.otio"}, False),
         # -- 阶段 D:写后查询(投影面) --
         ("project_get", {"root": "{MAIN}"}, False),
         ("timeline_get", {"root": "{MAIN}"}, False),
@@ -691,13 +795,17 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
     ]
 
 
-def resolve_placeholders(args: dict, ctx: dict, main_ws: Path, new_ws: Path) -> dict:
-    """深递归替换:{MAIN}/{NEW} 路径标记与 @...@ 动态接线占位(含列表内元素)。"""
+def resolve_placeholders(args: dict, ctx: dict, main_ws: Path, new_ws: Path,
+                         import_ws: Path) -> dict:
+    """深递归替换:{MAIN}/{NEW}/{NEW2} 路径标记与 @...@ 动态接线占位(含列表内元素)。"""
     def walk(v):
         if isinstance(v, str):
             v = (v.replace("{MAIN}", str(main_ws)).replace("{NEW}", str(new_ws))
+                  .replace("{NEW2}", str(import_ws))
                   .replace("@OP_OF_CAUSED_UPDATE@", ctx.get("caused_update_op", ""))
-                  .replace("@RUN_ID@", ctx.get("run_id", "")))
+                  .replace("@RUN_ID@", ctx.get("run_id", ""))
+                  .replace("@COMPOUND_ID@", ctx.get("compound_id", ""))
+                  .replace("@OTIO_OUT@", ctx.get("otio_out", "")))
             if "@" in v and "@" in ctx_marker_scan(v):
                 raise ParityError(f"FAIL: 动态接线占位未解析(序列/回执接线有误): {v!r}", 2)
             return v
@@ -714,6 +822,74 @@ def ctx_marker_scan(v: str) -> str:
     import re as _re
     m = _re.search(r"@[A-Z_]+@", v)
     return m.group(0) if m else ""
+
+
+def _rt_ms(v: dict | None) -> int:
+    """RationalTime.value(秒)→ 毫秒(与 Rust 侧 rt_ms 同式:×1000 四舍五入)。"""
+    if not isinstance(v, dict):
+        return 0
+    return int(round(float(v.get("value", 0)) * 1000))
+
+
+def otio_semantic_rows(doc: dict) -> list:
+    """OTIO 文档 → 语义行 [轨序, kind, (src, 轨位ms, durms, sourceInms), …]。
+
+    clip 名/id 不进比较 —— 导入侧 id 重新确定性分配,语义等价即可(与 Rust 侧
+    pro_ops_tools_full_chain 往返投影等价同口径,多一道产物级实证)。轨位由
+    Gap/Clip 游标累计重建(Transition 不占轨位,与导出写序一致)。
+    """
+    rows: list = []
+    for tr in doc.get("tracks", {}).get("children", []):
+        if tr.get("OTIO_SCHEMA") != "Track.1":
+            continue
+        items: list = []
+        cursor = 0
+        for ch in tr.get("children", []):
+            schema = ch.get("OTIO_SCHEMA")
+            sr = ch.get("source_range") or {}
+            if schema == "Gap.1":
+                cursor += _rt_ms(sr.get("duration"))
+            elif schema == "Clip.1":
+                dur = _rt_ms(sr.get("duration"))
+                src = ch.get("media_reference", {}).get("target_url", "")
+                items.append((src, cursor, dur, _rt_ms(sr.get("start_time"))))
+                cursor += dur
+            elif schema == "Stack.1":
+                items.append(("compound", cursor, json.dumps(ch).count("Clip.1"), 0))
+        rows.append((tr.get("kind"), tr.get("name"), items))
+    return rows
+
+
+def product_assert(name: str, args: dict, resp: dict, ctx: dict) -> None:
+    """新七工具轻量组合的**真实产物断言**(采集/对比两模式都跑;失败 = ParityError(2)
+    阻断,不进 golden 也不降级 WARN)——响应值进 golden 之外,组合行为必须有实证。"""
+    if not isinstance(resp, dict) or not resp.get("ok"):
+        return  # 失败响应由 golden 逐字段对拍把关(本断言只锁成功面)
+    data = resp.get("data", {})
+    if name == "multicam_sync":
+        offs = [a.get("offsetMs") for a in data.get("angles", [])]
+        if offs != [0, 0]:
+            raise ParityError(f"FAIL: 同源复制素材互相关偏移必须为 [0,0]: {offs}", 2)
+        if data.get("confidence") != 1.0:
+            raise ParityError(f"FAIL: 同源素材置信度必须为 1.0: {data.get('confidence')}", 2)
+    elif name == "multicam_cut":
+        if data.get("segments") != 2 or data.get("angles") != 2:
+            raise ParityError(f"FAIL: 多机位展开必须 2 段 2 角度: {data}", 2)
+    elif name == "scene_detect" and "autoSplit" in args:
+        if (data.get("cutCount") or 0) < 1 or not data.get("autoSplit", {}).get("points"):
+            raise ParityError(f"FAIL: 硬切夹具必须检出 ≥1 剪切点且完成自动切段: {data}", 2)
+    elif name == "compound_create":
+        if data.get("innerClips") != 2 or data.get("durationMs") != 4000:
+            raise ParityError(f"FAIL: 打包产物必须 2 子片段/4000ms: {data}", 2)
+    elif name == "compound_unbind":
+        if data.get("unbound") != 2:
+            raise ParityError(f"FAIL: 解包必须还原 2 子片段: {data}", 2)
+    elif name == "otio_export" and "roundtrip.otio" in str(args.get("out", "")):
+        if "otio_first_doc" not in ctx:
+            raise ParityError("FAIL: 往返断言缺第一次导出上下文", 2)
+        second_doc = json.loads(Path(args["root"], args["out"]).read_text(encoding="utf-8"))
+        if otio_semantic_rows(ctx["otio_first_doc"]) != otio_semantic_rows(second_doc):
+            raise ParityError("FAIL: OTIO 往返语义 diff ≠ 0(导出→导入→再导出必须等价)", 2)
 
 
 # ---------------- serve 生命周期 ----------------
@@ -805,13 +981,14 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
 
         collected: dict[str, list[dict]] = {}
         for name, raw_args, probe_mode in seq:
-            args = resolve_placeholders(raw_args, ctx, main_ws, tmp / "wsnew")
+            args = resolve_placeholders(raw_args, ctx, main_ws, tmp / "wsnew", tmp / "wsimport")
             try:
                 resp = rpc(port, TOKEN, name, args)
             except Exception as exc:  # noqa: BLE001
                 report.add(name, "FAIL", f"/rpc 调用异常: {exc!r}")
                 continue
-            # 动态接线:回执喂给后续调用(render_progress 的 runId、notes_resolve 的 opIds)
+            # 动态接线:回执喂给后续调用(render_progress 的 runId、notes_resolve 的 opIds、
+            # compound_unbind 的壳 id、otio_import 的产物路径)
             if name == "render_run" and resp.get("ok"):
                 ctx["run_id"] = resp["data"]["runId"]
                 done = wait_render_done(port, ctx["run_id"])
@@ -821,6 +998,17 @@ def run(update: bool, bin_arg: str | None) -> tuple[int, Report, str, int]:
                     continue
             if name == "clip_update" and args.get("causedBy") == ["n-0001"] and resp.get("ok"):
                 ctx["caused_update_op"] = resp["data"]["opIds"][0]
+            if name == "compound_create" and resp.get("ok"):
+                ctx["compound_id"] = resp["data"]["clipId"]
+            if name == "otio_export" and resp.get("ok"):
+                if "roundtrip.otio" in str(args.get("out", "")):
+                    pass  # 往返第二跳:产物断言在 product_assert 里做语义 diff
+                else:
+                    ctx["otio_out"] = str(main_ws / resp["data"]["out"])
+                    ctx["otio_first_doc"] = json.loads(
+                        (main_ws / resp["data"]["out"]).read_text(encoding="utf-8"))
+            # 新七工具轻量组合的真实产物断言(采集/对比同跑;失败 → ParityError)
+            product_assert(name, args, resp, ctx)
             collected.setdefault(name, []).append({
                 "args": norm(args),  # 参数仅存档不参与对比(动态接线值已确定)
                 "response": norm(resp, probe_mode),

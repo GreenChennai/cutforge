@@ -263,6 +263,16 @@ CI 只跑 M0/M1 + web-e2e(含册二 ui_smoke/playback_survival + 册三 hotkeys/
 A<n> 本机册收官跑;台账见 [A1-PROGRESS.md](A1-PROGRESS.md) /
 [A2-PROGRESS.md](A2-PROGRESS.md) / [A3-PROGRESS.md](A3-PROGRESS.md) /
 [A4-PROGRESS.md](A4-PROGRESS.md)。
+已注册 **`gate.py A5`**(册五,专业深度),**21 项全阻断**(A4 十八项一字不动全部继承,
+另纳册五两份新 e2e):cargo 全绿 / clippy / js 行数红线 / shell-purity(v3 含 R5)/ pytest /
+tool_parity(68,schema 实配口径)/ e2e_static / e2e_events / e2e_ui_smoke /
+e2e_playback_survival / e2e_drag_perf(`--min-fps 55`)/ e2e_hotkeys / e2e_a11y /
+e2e_perf_budget / e2e_perf_timeline / e2e_editing_tools / e2e_subtitle_editor /
+e2e_media_perf(负载敏感项不进 CI)/ **e2e_keyframes**(AC-5.1 壳侧闭环:秒表打点单 Op/
+投影采样对拍/曲线拖锚写回/菱形拖移)/ **e2e_color**(AC-5.2 壳侧闭环:色轮写回/帧色偏/
+LUT/示波器三画布/分屏割线);载体 tools/e2e_{keyframes,color}.py;
+CI 册五新增 keyframes/color 两步(共八步),A5 本机册收官跑;台账见
+[A5-PROGRESS.md](A5-PROGRESS.md)。
 
 ## 八、观察项与已知占位(诚实清单)
 

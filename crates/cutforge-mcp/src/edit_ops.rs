@@ -300,6 +300,9 @@ pub(crate) fn timeline_projection(project: &cutforge_core::model::Project) -> Ve
                 // withFxReadback 只读桥自此退化(投影含 fx 键后合并恒空操作)
                 "fx": c.fx,
                 "denoise": c.denoise, "pitch": c.pitch,
+                // 调色(册五 T5.2 收口):grade 随投影下放(同 fx 先例——壳读回桥
+                // 自此退化,调色面板七杆/曲线/LUT 直读投影)
+                "grade": c.grade,
                 // 关键帧(IR v3,T5.1):原始数组 + 采样点集(求值单源;壳零插值)
                 "keyframes": c.keyframes, "keyframeSamples": keyframe_samples_projection(c),
                 // 复合片段概要(册五 T5.4):子 clips 数量与总时长(壳据此展示与
@@ -397,6 +400,28 @@ mod tests {
         // 无关键帧 clip:键恒在,null / 空数组
         assert_eq!(without["keyframes"], json!(Value::Null));
         assert_eq!(without["keyframeSamples"], json!([]));
+    }
+
+    /// 册五收口:投影必须含 grade 键(同 fx 先例)——挂了调色的片段下发整对象,
+    /// 未挂的下发 null(键恒在;壳读回桥自此退化,调色面板直读投影)。
+    #[test]
+    fn timeline_projection_carries_grade_key_always() {
+        let project: cutforge_core::model::Project = serde_json::from_value(json!({
+            "version": 1, "schemaVersion": "3.0.0", "slug": "proj-grade", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "startMs": 0, "durationMs": 2000,
+                 "grade": {"exposure": 0.3, "saturation": 1.2,
+                           "curves": {"master": [[0, 0], [0.5, 0.55], [1, 1]]}}},
+                {"id": "V1-002", "startMs": 2000, "durationMs": 2000}
+            ]}]
+        })).expect("夹具必须过 v3 校验");
+        let rows = timeline_projection(&project);
+        let with = rows.iter().find(|r| r["id"] == json!("V1-001")).unwrap();
+        let without = rows.iter().find(|r| r["id"] == json!("V1-002")).unwrap();
+        assert_eq!(with["grade"]["exposure"], json!(0.3), "挂调色必须整对象下放");
+        assert_eq!(with["grade"]["curves"]["master"].as_array().unwrap().len(), 3, "曲线点集原样");
+        assert_eq!(without["grade"], json!(Value::Null), "未挂调色 grade 键必须为 null(键不可缺席)");
     }
 }
 

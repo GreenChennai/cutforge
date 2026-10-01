@@ -1,0 +1,96 @@
+/* 组件:册五 A5-FE2 新面(混音台 T5.3 / 多机位·场景检测 T5.4 / 渲染队列 T5.6 /
+ * 复合片段 T5.4)。色值纪律(ADR-0014/R5):本文件零裸色值,一律 var(--cf-*) token;
+ * 电平表填充 = 语义 token(非数据映射渐变;LUFS 读数以文本双通道呈现,非颜色单线索)。 */
+
+/* ===== 混音台(mixer.js)===== */
+.mix-strip {
+  display: flex; flex-direction: column; gap: var(--cf-s1);
+  border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-m);
+  background: var(--cf-panel-deep); padding: var(--cf-s2) var(--cf-s3);
+  margin-bottom: var(--cf-s2);
+}
+.mix-head { display: flex; gap: var(--cf-s2); align-items: center; }
+.mix-name { color: var(--cf-fg); font-size: var(--cf-fs-s); }
+.mix-ms { display: inline-flex; gap: 3px; margin-left: auto; }
+.mix-ms .mini[aria-pressed="true"] {
+  border-color: var(--cf-select); color: var(--cf-select);
+}
+.mix-row { display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap; }
+.mix-lab { display: inline-flex; gap: var(--cf-s1); align-items: center; color: var(--cf-dim); font-size: var(--cf-fs-s); }
+.mix-fader { width: 140px; accent-color: var(--cf-accent); }
+.mix-actions { display: flex; gap: var(--cf-s1); align-items: center; flex-wrap: wrap; }
+.mix-eq-band { display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap; }
+.mix-eq-band label { display: inline-flex; gap: 2px; align-items: center; color: var(--cf-dim); font-size: var(--cf-fs-xs); }
+.mix-eq-band input { width: 72px; }
+.mix-eq-rows { display: flex; flex-direction: column; gap: var(--cf-s1); }
+.mix-loud-out { color: var(--cf-dim); font-size: var(--cf-fs-xs); }
+.mix-loud-nums { display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap; }
+
+/* 电平表(静态;LUFS −60..0 → 宽度百分比) */
+.lvl-bar {
+  position: relative; height: 10px; width: 100%; max-width: 320px;
+  background: var(--cf-sunken); border: 1px solid var(--cf-line-soft);
+  border-radius: var(--cf-r-s); overflow: hidden;
+}
+.lvl-fill { position: absolute; inset: 0 auto 0 0; background: var(--cf-accent); opacity: .8; }
+.badge.ok { color: var(--cf-ok-fg); }
+.badge.warn { color: var(--cf-warn-fg); }
+
+/* ===== 多机位 / 场景检测(multicam.js / scenetool.js)===== */
+.mc-row { display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap; margin: var(--cf-s1) 0; }
+.mc-row input[type="text"] { flex: 1 1 220px; min-width: 160px; }
+.mc-row label { display: inline-flex; gap: var(--cf-s1); align-items: center; color: var(--cf-dim); font-size: var(--cf-fs-s); }
+.mc-angles, .mc-switches { display: flex; flex-wrap: wrap; gap: var(--cf-s1); margin: var(--cf-s1) 0; }
+.mc-angle-chip, .mc-switch-chip {
+  display: inline-flex; gap: 3px; align-items: center;
+  font-size: var(--cf-fs-xs); color: var(--cf-fg);
+  background: var(--cf-panel-deep); border: 1px solid var(--cf-line-soft);
+  border-radius: var(--cf-r-pill); padding: 1px var(--cf-s2);
+}
+.mc-sync-out { margin: var(--cf-s1) 0; display: flex; flex-direction: column; gap: 2px; }
+.mc-sync-head { display: flex; gap: var(--cf-s1); align-items: baseline; flex-wrap: wrap; }
+.mc-sync-rows { display: flex; flex-direction: column; gap: 2px; }
+.mc-sync-row {
+  display: flex; gap: var(--cf-s2); align-items: center;
+  border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-s);
+  background: var(--cf-panel-deep); padding: 1px var(--cf-s2); font-size: var(--cf-fs-xs);
+}
+.mono { font-family: var(--cf-font-mono); }
+
+/* ===== 渲染队列(queue.js)===== */
+.q-head { display: flex; gap: var(--cf-s2); align-items: center; margin: var(--cf-s1) 0; }
+.q-rows { display: flex; flex-direction: column; gap: var(--cf-s1); }
+.q-row {
+  display: flex; gap: var(--cf-s2); align-items: center; flex-wrap: wrap;
+  border: 1px solid var(--cf-line-soft); border-radius: var(--cf-r-m);
+  background: var(--cf-panel-deep); padding: var(--cf-s1) var(--cf-s2);
+}
+.q-id { color: var(--cf-fg); font-size: var(--cf-fs-xs); }
+.q-detail {
+  flex: 1 1 120px; min-width: 0; color: var(--cf-dim); font-size: var(--cf-fs-xs);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.q-actions { display: inline-flex; gap: 3px; margin-left: auto; }
+.q-state {
+  font-size: var(--cf-fs-xs); border-radius: var(--cf-r-s);
+  padding: 0 var(--cf-s1); border: 1px solid var(--cf-line);
+  color: var(--cf-dim); background: var(--cf-panel);
+}
+.q-running { color: var(--cf-accent); border-color: var(--cf-accent); }
+.q-ok { color: var(--cf-ok-fg); border-color: var(--cf-ok-fg); }
+.q-fail { color: var(--cf-danger-fg); border-color: var(--cf-danger-fg); }
+.q-paused, .q-canceled { color: var(--cf-warn-fg); border-color: var(--cf-warn-fg); }
+
+/* ===== 复合片段(T5.4;timeline-view 徽标 + 说明卡)===== */
+.clip.compound { box-shadow: inset 0 0 0 2px var(--cf-violet-300); }
+.clip-compound {
+  position: absolute; right: 2px; top: 2px;
+  font-size: var(--cf-fs-xs); line-height: 1.2;
+  color: var(--cf-violet-300); background: var(--cf-sunken);
+  border: 1px solid var(--cf-violet-300); border-radius: var(--cf-r-s);
+  padding: 0 3px; pointer-events: none;
+}
+.cpd-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: var(--cf-s1) var(--cf-s3);
+  align-items: baseline; margin-bottom: var(--cf-s2);
+}

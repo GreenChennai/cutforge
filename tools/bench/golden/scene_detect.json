@@ -1,0 +1,75 @@
+{
+ "tool": "scene_detect",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/hardcut.mp4",
+    "sampleFps": 5
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "cutCount": 1,
+     "cuts": [
+      {
+       "confidence": 1.0,
+       "tMs": 2000
+      }
+     ],
+     "degraded": true,
+     "engine": "frame-diff",
+     "frames": 20,
+     "hint": "纯计算不落盘不产 Op;自动切段传 autoSplit.trackId(单 Op)",
+     "sampleFps": 5.0,
+     "sensitivity": 0.5,
+     "src": "01_原始素材/hardcut.mp4"
+    },
+    "message": "剪切点检测完成(启发式;置信度如实)",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "src": "01_原始素材/hardcut.mp4",
+    "sampleFps": 5,
+    "autoSplit": {
+     "trackId": "V2"
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "autoSplit": {
+      "points": [
+       2000
+      ],
+      "trackId": "V2"
+     },
+     "cutCount": 1,
+     "cuts": [
+      {
+       "confidence": 1.0,
+       "tMs": 2000
+      }
+     ],
+     "degraded": true,
+     "engine": "frame-diff",
+     "idempotent": false,
+     "opIds": [
+      "op-41"
+     ],
+     "rev": "<REV>",
+     "sampleFps": 5.0,
+     "sensitivity": 0.5,
+     "src": "01_原始素材/hardcut.mp4"
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

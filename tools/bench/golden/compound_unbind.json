@@ -1,0 +1,25 @@
+{
+ "tool": "compound_unbind",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "clipId": "V2-003"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "idempotent": false,
+     "opIds": [
+      "op-43"
+     ],
+     "rev": "<REV>",
+     "unbound": 2
+    },
+    "message": "已应用",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

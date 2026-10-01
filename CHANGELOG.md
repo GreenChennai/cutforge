@@ -6,14 +6,34 @@
 
 > 册一「内核重构与架构加固」批次(128856c / 3ce2884 / 7157178)+ 册二「前端壳重写」
 > 批次(7f02955 之后的未提交工作面)+ 册三「UX 动效/键位/可访问性」批次 +
-> 册四「核心工具与媒体管线」批次(a2ba870~77cade5 已提交;FE2/收口波为未提交工作面);
-> 版本号待发行时定(沿用仓库惯例:发行时才把本段改为版本号。此前的 v0.6 批次——
-> 编辑器 NLE 化、schema v2 M14 双仓同步——发行时一并补记)。
+> 册四「核心工具与媒体管线」批次(a2ba870~77cade5 已提交;FE2/收口波为未提交工作面)+
+> 册五「专业深度」批次(E-BE1 6de2f23 / E-BE2 492bc1b / E-BE3 a45f52f / E-FE1 9b33927 已提交;
+> E-FE2/收口波为未提交工作面);版本号待发行时定(沿用仓库惯例:发行时才把本段改为版本号。
+> 此前的 v0.6 批次——编辑器 NLE 化、schema v2 M14 双仓同步——发行时一并补记)。
 > 册二台账见 [docs/A2-PROGRESS.md](docs/A2-PROGRESS.md);册三台账见
 > [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md);册四台账见
-> [docs/A4-PROGRESS.md](docs/A4-PROGRESS.md)。
+> [docs/A4-PROGRESS.md](docs/A4-PROGRESS.md);册五台账见
+> [docs/A5-PROGRESS.md](docs/A5-PROGRESS.md)。
 
 ### 新增
+
+- **册五(A5)专业深度**:关键帧引擎 IR v3(schemaVersion 3.0.0 双读兼容;白名单属性
+  + closed interp + 贝塞尔精确求值,求值器单源,投影下发 `keyframes`/`keyframeSamples`
+  采样点集,壳零插值;五条渲染通路按 ADR-0018 分级:position/rotation/scale/opacity/volume
+  表达式,speed 并入 speed_segments,fx 参数三态;parity K1–K6 含 Rust↔ffmpeg 逐样本对拍);
+  调色 `clip.grade` 整对象(色温/色调/曝光/对比/高光阴影/饱和度/Lift/Gamma/Gain + 曲线 +
+  LUT `.cube` 库;HSL 限定器诚实降级)+ `scope_data` 示波器数据(波形/矢量/直方图);
+  轨道 EQ(≤8 段 biquad)/动态(acompressor+alimiter)/响度单(audio_loudness,loudnormTarget
+  实测偏差 0.05LU)/ducking 参数化;编码缺省 **remux+bt709 标签**(零重编码零代损)+
+  显式重编码参数面(encoder/quality/crf/bitrate/gop/pixFmt)+ 硬件探测优雅降级(本机 AMF
+  实证)+ 渲染队列(排队/暂停/恢复/取消/重试);复合片段内联子时间线(两级,递归渲染,
+  内容寻址中间段)+ 调整层 adjust 轨(时间窗 fx/grade 作用于下方全轨)+ 多机位(波形互相关
+  同步,展开为普通片段)+ 场景检测;OTIO 手写最小子集(出→入→再出语义 diff=0)+ EDL CMX3600
+  + VTT + `docs/PROJECT-FORMAT.md` 工程格式文档。工具 **68 = 15 查询 + 34 写 + 19 编排**;
+  壳侧:关键帧秒表打点/时间线关键帧行/双面板贝塞尔曲线编辑器、调色面板+LGG 三色轮+示波器
+  三画布+分屏快照对比、混音台(EQ/动态/响度单;实时电平表候播放链采样口,诚实占位)、
+  复合打包/解包、多机位页签、渲染队列页签、编码设置。决策见 ADR-0018/0019/0020;
+  e2e 新增 `e2e_keyframes.py`/`e2e_color.py`(AC-5.1/5.2 壳侧闭环);gate A5 注册。
 
 - **渲染七步分解(RenderPlan)**:`render()` 单函数(≈440 行)拆为 `plan.rs`(纯函数计划)
   + `steps.rs`(命令行生成纯函数,可单测)+ 执行器;步骤 probe → segment → compose-video →

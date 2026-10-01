@@ -150,7 +150,10 @@ export const uiStore = createStore("ui", {
  * T4.8 增:beats(audio_beats 会话节拍 {src,bpm,beats[],confidence,at};不落盘,
  * 吸附候选源之一 + 标尺旗标;刷新即失,重按「检测节拍」再生)。
  * T5.1/T5.2 增:kfProp(关键帧行「当前属性」,时间线打点共用);gradeClipboard(调色
- * 复制粘贴会话剪贴板);lutLib(会话 LUT 导入记录;.cube 非媒体,media_browse 不列)。 */
+ * 复制粘贴会话剪贴板);lutLib(会话 LUT 导入记录;.cube 非媒体,media_browse 不列)。
+ * A5-FE2 增(T5.3/T5.4/T5.6):mcAngles/multicam/mcSwitches(多机位同步集/结果/切换点)、
+ * scene(场景检测结果)、loudness(响度单最近测量)、encodeProbe(编码探测)、
+ * otioLast(最近 OTIO/EDL 导出产物,导入预填)。全部会话态,刷新即失。 */
 export const ephemeralStore = createStore("ephemeral", {
   dragGhost: null,   // {clipId, trackId, startMs, durationMs, trim:"l"|"r"|null}
   snapMs: null,      // 吸附指示线位置(ms)
@@ -163,6 +166,13 @@ export const ephemeralStore = createStore("ephemeral", {
   kfProp: null,      // 关键帧当前属性(T5.1;时间线关键帧行打点与编辑器共用)
   gradeClipboard: null, // 调色会话剪贴板(T5.2;整 grade 对象,不落盘)
   lutLib: [],        // 会话 LUT 导入记录(T5.2;.cube 路径序)
+  mcAngles: [],      // 多机位同步集(素材相对路径序;素材右键维护,angles[0]=基准)
+  multicam: null,    // multicam_sync 结果 {angles[],confidence,degraded,reference,windowMs}
+  mcSwitches: [],    // 多机位切换点 [{tAbs, angle}](播放头绝对 ms;会话态)
+  scene: null,       // scene_detect 结果 {src,cuts[],cutCount,degraded}
+  loudness: null,    // audio_loudness 最近测量(混音台电平静态呈现;会话态)
+  encodeProbe: null, // encode_probe 最近结果 {encoders{nvenc|qsv|amf:{listed,usable}}}
+  otioLast: null,    // 最近 otio_export 产物 {format,file}(导入对话框预填)
 }, { ephemeral: true });
 
 /** 调试面:全局 patch 记录(测试断言 ephemeral.* 前缀纪律用)。 */

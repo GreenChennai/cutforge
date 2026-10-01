@@ -27,13 +27,22 @@ function report(env, name, okMsg) {
  * @param {(state: string, text: string) => void} onProgress
  * @param {boolean} [useProxy] T4.1 代理预览:显式 opt-in(缺省 false = 原片导出;
  *   后端对缺失代理的片段回落原片,不悄悄降质)
+ * @param {Object} [enc] T5.6 编码设置(全部缺省 = 现行为 remux+bt709 零代损;显式
+ *   编码选项才重编码):{encoder, quality, crf, bitrate, gop, pixFmt,
+ *   loudnormTarget, verboseCmd} — 只携带已提供的键
  */
-export async function runExportCutforge(onProgress, useProxy = false) {
+export async function runExportCutforge(onProgress, useProxy = false, enc = null) {
   const project = projectStore.get().project;
   const ass = project && project.subtitle && project.subtitle.ass;
   const args = {};
   if (ass) args.ass = ass;
   if (useProxy) args.useProxy = true;
+  if (enc) {
+    for (const k of ["encoder", "quality", "crf", "bitrate", "gop", "pixFmt", "loudnormTarget", "verboseCmd"]) {
+      const v = enc[k];
+      if (v !== undefined && v !== null && v !== "" && !(k === "verboseCmd" && !v)) args[k] = v;
+    }
+  }
   onProgress("submit", "提交中…");
   const r = await call("render_run", args);
   if (!r.ok) {

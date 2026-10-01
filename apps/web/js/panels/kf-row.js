@@ -13,7 +13,7 @@ import { updateClip, playheadMs } from "../core/commands.js";
 import { PX_PER_MS, snapMs, frameMsOf } from "../core/model.js";
 import {
   PROP_META, currentValueOf, kfTimeAt,
-  draftOf as kfDraftOf, upsertKf, dropKf, moveKf, kfPatch, emptyBlocked, CLEAR_BLOCKED_MSG,
+  draftOf as kfDraftOf, upsertKf, dropKf, moveKf, kfPatch,
 } from "../core/kf-model.js";
 import { runGesture, showBubble, hideBubble } from "../render/gesture-kit.js";
 import { toast } from "../ui/toast.js";
@@ -164,10 +164,6 @@ function delKf(clipId, propK, timeMs) {
   const target = draft.find((k) => k.property === propK && k.timeMs === timeMs);
   if (!target) return;
   dropKf(draft, target);
-  if (emptyBlocked(draft)) {
-    // 内核 minItems=1 拒空数组(实测):不发注定失败的写,诚实提示
-    toast(CLEAR_BLOCKED_MSG, false);
-    return;
-  }
+  // 空数组 = 清除全部关键帧(册五收口:内核已接受 [])
   updateClip(clipId, kfPatch(draft), `已删除关键帧 ${propLabel(propK)} @${timeMs}ms(可撤销)`);
 }

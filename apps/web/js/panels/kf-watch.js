@@ -12,7 +12,7 @@ import { updateClip, playheadMs } from "../core/commands.js";
 import { snapMs, frameMsOf } from "../core/model.js";
 import {
   WATCHABLE, PROP_META, propAnimated, kfsOfProp, currentValueOf, kfTimeAt,
-  draftOf as kfDraftOf, upsertKf, removePropKfs, kfPatch, emptyBlocked, CLEAR_BLOCKED_MSG,
+  draftOf as kfDraftOf, upsertKf, removePropKfs, kfPatch,
 } from "../core/kf-model.js";
 import { openDialog } from "../ui/dialog.js";
 import { toast } from "../ui/toast.js";
@@ -61,11 +61,7 @@ async function toggleWatch(prop, rowOf, draftOf) {
   if (!yes) return;
   const draft = kfDraftOf(row);
   removePropKfs(draft, prop);
-  if (emptyBlocked(draft)) {
-    // 内核 minItems=1 拒空数组(实测):跳过注定失败的写,诚实提示(登记候 BE)
-    toast(CLEAR_BLOCKED_MSG, false);
-    return;
-  }
+  // 空数组 = 清除全部关键帧(册五收口:schema minItems 已移除,内核接受 [])
   updateClip(row.id, kfPatch(draft), `已移除 ${propLabel(prop)} 全部关键帧(${list.length} 帧,可撤销)`);
 }
 
@@ -89,7 +85,7 @@ function confirmKfOff(prop, count, isLast) {
         body.appendChild(h("p", null, [`该属性共 ${count} 个关键帧,移除后按整组替换写回(单笔 Op,可撤销)。`]));
         if (isLast) {
           body.appendChild(h("p", { class: "warn-hint" }, [
-            "注意:这是工程内最后一个含关键帧的属性——整组清空(空数组)目前被内核拒绝(minItems 1),移除不会生效(通道候 BE)。",
+            "注意:这是工程内最后一个含关键帧的属性——移除后该片段将没有任何关键帧(整组清空 = 空数组,单笔 Op 可撤销)。",
           ]));
         }
         const ok = h("button", { testid: "confirm-ok" }, [isLast ? "知道了(仍不生效)" : "移除"]);

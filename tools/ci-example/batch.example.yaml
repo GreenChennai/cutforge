@@ -1,0 +1,17 @@
+# 批处理清单样例(册七 T7.4;最小 YAML 子集,纪律见 docs/HEADLESS.md)
+# 用法: cutforge-cli batch tools/ci-example/batch.example.yaml --report out/batch-report.json
+version: 1
+concurrency: 1
+report: out/batch-report.json
+defaults:
+  format: mp4
+  quality: high
+projects:
+  - root: OUTPUT_REQUIRED     # 占位:替换为工程目录绝对路径(相对路径相对当前工作目录)
+    name: 工程甲
+  - root: OUTPUT_REQUIRED
+    name: 工程乙
+    format: gif
+  - root: OUTPUT_REQUIRED
+    name: 工程丙
+    ass: subtitles.ass        # 相对工程根;文件不存在时不烧录而非失败

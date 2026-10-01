@@ -40,6 +40,12 @@ pub(crate) fn tool_def(name: &str) -> Option<&'static Value> {
     registry().iter().find(|t| t["name"].as_str() == Some(name))
 }
 
+/// 工具分类(query/write/orchestrate);未知工具 None。
+/// 插件权限裁决(T7.2)与 plan 准入面(T7.5)共用的分类口径。
+pub(crate) fn tool_kind(name: &str) -> Option<&'static str> {
+    tool_def(name).and_then(|t| t["kind"].as_str())
+}
+
 pub(crate) fn envelope(ok: bool, code: &str, message: &str, data: Value) -> Value {
     // T1.7 三面同码:MCP/HTTP 工具面在此统一派生 ns;CLI 面经 cutforge_mcp::code_namespace
     // 同源取值。`ns` 是加法字段,ok/code/message/data 老字段逐字不变。

@@ -79,6 +79,37 @@ impl Workspace {
         Ok(())
     }
 
+    /// 追加线程回复(册七 T7.5 note_reply):不改 state、不碰 resolved_by,
+    /// 多轮对话入 notes.json 的 thread 数组并登记 Op(与其他标注写面同一落盘点)。
+    /// 返回回复后标注 id(= note_id,线程 id 即标注 id)与累计回复数。
+    pub fn notes_reply(
+        &mut self,
+        note_id: &str,
+        author: NoteAuthor,
+        body: String,
+        actor: Actor,
+    ) -> io::Result<(String, usize)> {
+        let before = self.notes.to_value();
+        match self.notes.reply(note_id, author, body) {
+            Ok(_) => {}
+            Err(cutforge_core::notes::NoteReject::UnknownNote(_)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("PRECONDITION_FAILED: 标注 {note_id} 不存在"),
+                ))
+            }
+            Err(e) => {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("PRECONDITION_FAILED: {e:?}")))
+            }
+        }
+        self.record_notes_change(
+            &before, OpKind::Set, actor,
+            format!("标注 {note_id} 追加回复(第 {} 轮)", self.notes.reply_count(note_id)),
+            None, None, false,
+        )?;
+        Ok((note_id.to_string(), self.notes.reply_count(note_id)))
+    }
+
     pub fn notes_reject(&mut self, note_id: &str, reason: String, actor: Actor) -> io::Result<()> {
         let before = self.notes.to_value();
         match self.notes.reject(note_id, reason) {

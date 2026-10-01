@@ -155,6 +155,14 @@ pub fn _clear_for_tests() {
     }
 }
 
+/// 预演副本用后即弃(preview_plan):逐出指定 root 键的缓存条目,防副本目录
+/// 已删除后的陈旧条目堆积(下次指纹核验本会失败,但显式逐出不占内存)。
+pub(crate) fn evict(root_key: &str) {
+    if let Ok(mut cache) = cache().lock() {
+        cache.remove(root_key);
+    }
+}
+
 /// 常驻缓存键(测试用;生产路径直接用 args["root"] 原串):键 = root 原串。
 /// Windows 下同一目录的不同拼法(斜杠/大小写)会各自建缓存,互不串味——
 /// 每个缓存条目都经独立指纹核验,正确性与无状态实现一致,仅多占一份内存。

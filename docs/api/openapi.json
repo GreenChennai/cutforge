@@ -3,7 +3,7 @@
  "info": {
   "title": "CutForge Editor API",
   "version": "1.0.0",
-  "description": "URL 版本化 Editor API(册七 T7.1/ADR-0025)。工具统一入口 `POST /api/v1/tools/<tool>`;常用查询 GET 别名;事件流 `/api/v1/events`。本文件是**生成物**(tools/gen_openapi.py ← schemas/mcp-tools.json 单一真相源,禁止手改);所有工具返回 `{ok, code, ns, message, data}` envelope,HTTP 状态码 由 code 确定性映射。鉴权:Bearer token(serve 启动时落盘 .cutforge/session),仅监听 127.0.0.1;CORS 默认关闭。旧 `/rpc` 保留别名至少两册(册七/册八)。工具数以契约文件实时为准(本文件生成时点:78)。",
+  "description": "URL 版本化 Editor API(册七 T7.1/ADR-0025)。工具统一入口 `POST /api/v1/tools/<tool>`;常用查询 GET 别名;事件流 `/api/v1/events`。本文件是**生成物**(tools/gen_openapi.py ← schemas/mcp-tools.json 单一真相源,禁止手改);所有工具返回 `{ok, code, ns, message, data}` envelope,HTTP 状态码 由 code 确定性映射。鉴权:Bearer token(serve 启动时落盘 .cutforge/session),仅监听 127.0.0.1;CORS 默认关闭。旧 `/rpc` 保留别名至少两册(册七/册八)。工具数以契约文件实时为准(本文件生成时点:83)。",
   "x-contract-version": 2,
   "x-adrs": [
    "docs/adr/0025",
@@ -6408,6 +6408,427 @@
         "required": [
          "root",
          "src"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/preview_plan": {
+   "post": {
+    "operationId": "preview_plan",
+    "summary": "AI 改动预演:plan=[{tool,args}] 批量变更集在副本工程上逐项 dry-run(不落盘不产真 Op),逐项回 ok/错误码/变更摘要(字段级 before/after 预估)/依赖冲突;全链预演在副本上防部分应用",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": [
+         [
+          "root",
+          {
+           "type": "string",
+           "description": "工程目录绝对路径"
+          }
+         ],
+         [
+          "plan",
+          {
+           "type": "array",
+           "minLength": 1,
+           "description": "变更集:逐项 {tool, args, id?};工具限工作区命令通道面(渲染/编排/免锁探测/plan 自身不参与)",
+           "items": {
+            "type": "object",
+            "properties": [
+             [
+              "tool",
+              {
+               "type": "string",
+               "description": "工具名"
+              }
+             ],
+             [
+              "args",
+              {
+               "type": "object",
+               "description": "该工具参数(可省 root,预演固定在副本工程)"
+              }
+             ],
+             [
+              "id",
+              {
+               "type": "string",
+               "description": "项自定义 id(apply_plan approvals 以此引用)"
+              }
+             ]
+            ],
+            "required": [
+             "tool"
+            ]
+           }
+          }
+         ]
+        ],
+        "required": [
+         "root",
+         "plan"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/apply_plan": {
+   "post": {
+    "operationId": "apply_plan",
+    "summary": "批准应用:仅执行 approvals 显式批准项(逐项原 Op 通道,actor 保持调用方,causedBy 链关联 planId);被拒/未批准项跳过并回执——默认拒绝,无越权写入",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": [
+         [
+          "root",
+          {
+           "type": "string",
+           "description": "工程目录绝对路径"
+          }
+         ],
+         [
+          "plan",
+          {
+           "type": "array",
+           "description": "与 preview_plan 同构;建议先 preview_plan 预演再批准"
+          }
+         ],
+         [
+          "planId",
+          {
+           "type": "string",
+           "description": "plan 标识(缺省自动生成);逐项 Op 的 causedBy 绑定此 id"
+          }
+         ],
+         [
+          "approvals",
+          {
+           "type": "object",
+           "description": "批准面:{approveAll:true} 或 {approve:[下标|id…], reject:[下标|id…]};缺省=全部跳过(default-deny),显式 reject 恒胜出",
+           "properties": [
+            [
+             "approveAll",
+             {
+              "type": "boolean"
+             }
+            ],
+            [
+             "approve",
+             {
+              "type": "array",
+              "items": {
+               "type": [
+                "integer",
+                "string"
+               ]
+              }
+             }
+            ],
+            [
+             "reject",
+             {
+              "type": "array",
+              "items": {
+               "type": [
+                "integer",
+                "string"
+               ]
+              }
+             }
+            ]
+           ]
+          }
+         ]
+        ],
+        "required": [
+         "root",
+         "plan",
+         "approvals"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/note_reply": {
+   "post": {
+    "operationId": "note_reply",
+    "summary": "标注线程化:同一标注多轮追加回复(线程 id = 标注 id);不改 state、不碰 resolvedBy(结案回执独立留痕)",
+    "description": "kind: write · idempotent: False · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "写"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": [
+         [
+          "root",
+          {
+           "type": "string",
+           "description": "工程目录绝对路径"
+          }
+         ],
+         [
+          "noteId",
+          {
+           "type": "string",
+           "description": "标注 id(= 线程 id)"
+          }
+         ],
+         [
+          "body",
+          {
+           "type": "string",
+           "description": "回复正文(非空)"
+          }
+         ],
+         [
+          "author",
+          {
+           "enum": [
+            "user",
+            "agent"
+           ],
+           "description": "回复者(缺省 user)"
+          }
+         ]
+        ],
+        "required": [
+         "root",
+         "noteId",
+         "body"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/session_report": {
+   "post": {
+    "operationId": "session_report",
+    "summary": "会话报告:一次会话(sinceRev 起)的改动摘要——改了哪些段/操作分布/耗时/标注回执率;人话 Markdown+JSON 双形态",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": [
+         [
+          "root",
+          {
+           "type": "string",
+           "description": "工程目录绝对路径"
+          }
+         ],
+         [
+          "sinceRev",
+          {
+           "type": "integer",
+           "description": "起始 rev(缺省 0 = 全程);会话起点可用服务启动时的 rev"
+          }
+         ]
+        ],
+        "required": [
+         "root"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     },
+     "default": {
+      "description": "结果协议 envelope(ok/code/ns/message/data);HTTP 状态码由 code 确定性映射(OK→200,NO_CONFIG→404,CONFLICT→409,DEP_MISSING→503,INTERNAL→500,其余→400)。",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/envelope"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/tools/plugin_validate": {
+   "post": {
+    "operationId": "plugin_validate",
+    "summary": "插件 manifest 校验(册七 T7.2):权限字段/入口/版本合法性;schema 契约 + 语义面(形态-入口匹配/贡献点 id 去重);权限模型见 docs/PLUGIN-SPEC.md",
+    "description": "kind: query · idempotent: True · 与 /rpc 的 tools/call 同一 dispatch 单表(M4-1 三通道同源)。工作区通道(serve --root)对缺 root 的调用注入绑定根;辅通道(/rpc 同端口面)root 必须显式给出。",
+    "tags": [
+     "查询"
+    ],
+    "security": [
+     {
+      "bearerAuth": []
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": [
+         [
+          "manifest",
+          {
+           "type": "object",
+           "description": "插件清单对象(schemas/plugin-manifest.schema.json)"
+          }
+         ]
+        ],
+        "required": [
+         "manifest"
         ]
        }
       }

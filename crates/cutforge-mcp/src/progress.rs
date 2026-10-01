@@ -11,7 +11,8 @@ use std::sync::OnceLock;
 // ---------------- 渲染后端分派(E5/B6:cutforge-render 子进程,不依赖 CutFlow) ----------------
 
 /// E5-2:cutforge-render 可执行定位:当前可执行文件同目录 → PATH → env CUTFORGE_RENDER。
-pub(crate) fn resolve_render_bin() -> Option<PathBuf> {
+/// (pub:CLI batch/watch 与 MCP 渲染面共用同一解析,不建第二套定位。)
+pub fn resolve_render_bin() -> Option<PathBuf> {
     let exe_name = format!("cutforge-render{}", std::env::consts::EXE_SUFFIX);
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent() {
@@ -45,7 +46,7 @@ pub(crate) fn existing_rel<'a>(root: &Path, rel: Option<&'a str>) -> Option<&'a 
 /// 缺省参数不产生任何 CLI 旗标 = 现行为零变化)。export=true 时附带导出矩阵
 /// 参数面(册六 T6.3);render_frame 的 format 参数是 png/jpeg 帧格式,不走导出
 /// 分派(调用方传 false,避免参数名撞车)。
-pub(crate) fn build_render_extra(args: &Value, export: bool) -> Vec<String> {
+pub fn build_render_extra(args: &Value, export: bool) -> Vec<String> {
     let mut extra: Vec<String> = Vec::new();
     let mut flag = |name: &str, v: Option<String>| {
         if let Some(v) = v.filter(|s| !s.is_empty()) {
@@ -119,7 +120,7 @@ fn spawn_render(root: &Path, ass: Option<&str>, use_proxy: bool, extra: &[String
 }
 
 /// 同步渲染(MCP 工具 render,backend=cutforge):输出 JSON 行进度进 data.stdout。
-pub(crate) fn render_cutforge_sync(root: &Path, ass: Option<&str>, use_proxy: bool, extra: &[String]) -> Value {
+pub fn render_cutforge_sync(root: &Path, ass: Option<&str>, use_proxy: bool, extra: &[String]) -> Value {
     if resolve_render_bin().is_none() {
         return render_missing_dep();
     }

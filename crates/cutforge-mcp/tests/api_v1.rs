@@ -164,7 +164,7 @@ fn api_v1_rest_surface_end_to_end() {
     let (code, env) = get(port, "/api/v1/tools");
     assert_eq!(code, 200, "{env}");
     let n = env["data"]["tools"].as_array().unwrap().len();
-    assert_eq!(n, 78, "GET /api/v1/tools = 注册表全集(单一真相源): {n}");
+    assert_eq!(n, 83, "GET /api/v1/tools = 注册表全集(单一真相源;册七 A7 78→83): {n}");
 
     // ---- 3) 事件流别名:长轮询降级面老字段齐(SSE 同一实现) ----
     let (code, env) = get(port, "/api/v1/events");

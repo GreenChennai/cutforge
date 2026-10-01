@@ -18,7 +18,10 @@ pub(crate) fn is_readonly_tool(name: &str) -> bool {
         | "library_list"
         // 册六 T6.3/T6.2:导出前检查(轻探测)/ 素材库清单(库根扫描 +
         // manifest 派生索引,不触工程 IR)
-        | "export_preflight" | "media_library")
+        | "export_preflight" | "media_library"
+        // 册七 T7.5/T7.2:改动预演(副本 dry-run,真工程零写入)/ 会话报告(只读投影)/
+        // 插件 manifest 校验(纯契约面)
+        | "preview_plan" | "session_report" | "plugin_validate")
 }
 
 /// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。

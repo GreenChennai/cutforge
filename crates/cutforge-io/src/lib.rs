@@ -32,6 +32,7 @@ pub mod paths;
 pub mod probe;
 pub mod recover;
 pub mod scaffold;
+pub mod scratch;
 pub mod snapshot;
 pub mod stage;
 pub mod watcher;

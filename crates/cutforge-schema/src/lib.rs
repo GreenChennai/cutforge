@@ -1,6 +1,7 @@
 //! CutForge 契约层(ARL-CORE,ADR-0034)。
 //!
-//! 职责(计划书 2.1):持有五份 JSON Schema(draft-07 子集 + 两个 x- 断言);
+//! 职责(计划书 2.1):持有 JSON Schema 契约面(draft-07 子集 + x- 断言;
+//! 五份工程契约 + 册七 T7.2 起 plugin-manifest);
 //! 供 Rust 侧校验与 v1→v2 迁移;与 Python 生成校验器(tools/_generated/cf_validate.py)
 //! 双端对拍(M1-3)。不含业务逻辑;不内联第二份常量表(常量经 constants.ratios.json)。
 //!
@@ -10,13 +11,15 @@ pub mod engine;
 pub mod finalize;
 pub mod migrate;
 
-/// 五份契约 schema(唯一手写契约的 Rust 侧嵌入;与 schemas/ 目录一一对应)。
+/// 契约 schema(唯一手写契约的 Rust 侧嵌入;与 schemas/ 目录一一对应)。
+/// 册七 T7.2 起 +plugin-manifest(插件清单;五工程契约语义不动,加法维度)。
 pub const SCHEMA_SOURCES: &[(&str, &str)] = &[
     ("project", include_str!("../../../schemas/project.schema.json")),
     ("wordline", include_str!("../../../schemas/wordline.schema.json")),
     ("cutlist", include_str!("../../../schemas/cutlist.schema.json")),
     ("notes", include_str!("../../../schemas/notes.schema.json")),
     ("oplog", include_str!("../../../schemas/oplog.schema.json")),
+    ("plugin-manifest", include_str!("../../../schemas/plugin-manifest.schema.json")),
 ];
 
 /// MCP 工具契约(G5-1 比对基准,M4 填充 schema)。
@@ -58,9 +61,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schemas_manifest_has_five_entries() {
-        assert_eq!(SCHEMA_SOURCES.len(), 5);
-        assert_eq!(schemas().len(), 5);
+    fn schemas_manifest_has_six_entries() {
+        assert_eq!(SCHEMA_SOURCES.len(), 6);
+        assert_eq!(schemas().len(), 6);
+    }
+
+    /// 册七 T7.2:plugin-manifest 契约可校验(正例过 / 缺必填与坏字段拒)。
+    #[test]
+    fn plugin_manifest_schema_validates() {
+        let good = serde_json::json!({
+            "id": "demo-clip", "name": "示例插件", "version": "1.0.0",
+            "form": "process", "entry": "plugin.py",
+            "permissions": {"read": true, "write": true}
+        });
+        assert!(validate("plugin-manifest", &good).is_empty(), "合法 manifest 必须过");
+        let bad = serde_json::json!({
+            "id": "Demo", "name": "", "version": "1.0",
+            "form": "vm", "permissions": {"read": true}
+        });
+        let errs = validate("plugin-manifest", &bad);
+        assert!(errs.len() >= 4, "id/name/version/form 四处必须点名:{errs:?}");
     }
 
     #[test]

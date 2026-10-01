@@ -38,6 +38,15 @@ fn protocol_conformance() {
         ("timeline_get", json!({"root": root_s})),
         // E3-3:素材浏览(夹具无媒体 → 空清单,仍必须 OK 且协议完整)
         ("media_browse", json!({"root": root_s})),
+        // 册七 A7 T7.5/T7.2:AI 协作面(预演在副本上 dry-run,对真工程零写入)
+        // / 会话报告 / 插件 manifest 校验
+        ("preview_plan", json!({"root": root_s, "plan": [
+            {"id": "vol", "tool": "clip_update", "args": {"clipId": "V1-001", "patch": {"volume": 0.5}}},
+            {"id": "bad", "tool": "clip_split", "args": {"clipId": "V1-001", "tMs": 999999}}
+        ]})),
+        ("session_report", json!({"root": root_s})),
+        ("plugin_validate", json!({"manifest": {"id": "demo-clip", "name": "示例", "version": "1.0.0",
+            "form": "process", "entry": "p.py", "permissions": {"read": true}}})),
     ];
     for (name, args) in queries {
         let resp = cutforge_mcp::dispatch(name, &args);
@@ -89,6 +98,16 @@ fn protocol_conformance() {
         ("media_import", json!({"root": root_s})),
         ("media_import", json!({"root": root_s, "src": "无此素材.mp4"})),
         ("media_library", json!({"root": root_s, "action": "tag"})),
+        // 册七 A7 T7.5/T7.2:AI 协作面与插件面缺参
+        ("preview_plan", json!({"root": root_s})),
+        ("preview_plan", json!({"root": root_s, "plan": []})),
+        ("preview_plan", json!({"root": root_s, "plan": [{"tool": "render"}]})),
+        ("apply_plan", json!({"root": root_s})),
+        ("apply_plan", json!({"root": root_s, "plan": [{"tool": "clip_update"}]})),
+        ("note_reply", json!({"root": root_s})),
+        ("note_reply", json!({"root": root_s, "noteId": "n-9999", "body": "x"})),
+        ("session_report", json!({})),
+        ("plugin_validate", json!({"root": root_s})),
     ] {
         let resp = cutforge_mcp::dispatch(name, &args);
         assert_envelope(&resp, name);
@@ -123,21 +142,23 @@ fn protocol_conformance() {
     //  migrate_layout/library_manage/library_recover(写)+ library_list(查询)→ 72;
     //  T6.3/T6.2 增 export_preflight/media_library(查询)+ media_import(写)+
     //  export_all_variants(编排)→ 76;册七 A7 T7.6 增 project_package/
-    //  project_unpackage(写,.cfpkg 打包/解包)→ 78)
+    //  project_unpackage(写,.cfpkg 打包/解包)→ 78;T7.5/T7.2 增
+    //  preview_plan/session_report/plugin_validate(查询)+ apply_plan/note_reply
+    //  (写,AI 协作面与插件面)→ 83)
     let names = cutforge_mcp::tool_names();
-    assert_eq!(names.len(), 78, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册七 A7 增 cfpkg 打包/解包两工具)");
+    assert_eq!(names.len(), 83, "B7 口径:工具数以 schemas/mcp-tools.json 为准(册七 A7 增 AI 协作面三查询两写 + 插件校验一查询)");
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
         assert!(t["inputSchema"].is_object(), "{} 缺 inputSchema", t["name"]);
         assert!(t["outputSchema"].is_object(), "{} 缺 outputSchema", t["name"]);
     }
-    // kind 口径:18 查询 + 40 写 + 20 编排(与 _doc 同句;册七 A7 76→78)
+    // kind 口径:21 查询 + 42 写 + 20 编排(与 _doc 同句;册七 A7 78→83)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds.entry(t["kind"].as_str().unwrap().to_string()).or_insert(0usize) += 1;
     }
-    assert_eq!(kinds.get("query"), Some(&18), "查询 18:{kinds:?}");
-    assert_eq!(kinds.get("write"), Some(&40), "写 40:{kinds:?}");
+    assert_eq!(kinds.get("query"), Some(&21), "查询 21:{kinds:?}");
+    assert_eq!(kinds.get("write"), Some(&42), "写 42:{kinds:?}");
     assert_eq!(kinds.get("orchestrate"), Some(&20), "编排 20:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有

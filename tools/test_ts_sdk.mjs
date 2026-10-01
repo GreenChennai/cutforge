@@ -93,7 +93,7 @@ async function main() {
     const caps = await client.capabilityMatrix();
     ok("capabilityMatrix() → OK envelope", caps.ok === true && typeof caps.data.matrix === "object", JSON.stringify(caps).slice(0, 200));
     const list = await client.listTools();
-    ok(`listTools() → ${list.data.tools.length} 工具(=78)`, list.ok === true && list.data.tools.length === 78);
+    ok(`listTools() → ${list.data.tools.length} 工具(=83;册七 A7 T7.5/T7.2 后)`, list.ok === true && list.data.tools.length === 83);
 
     // 3-4) 从零建 v3 工程 + 读回(绑定根客户端)
     const created = await client.call("project_new", { root: work, slug: "sdk冒烟", fps: 30, canvasW: 320, canvasH: 240, tracks: ["video"], layout: "v3" });

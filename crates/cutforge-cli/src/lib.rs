@@ -18,6 +18,12 @@ mod doctor;
 mod bundle;
 /// 门禁判定器(册二 T2.6):check-shell-purity v2 / check-write-paths v2(自本文件迁入并升级)。
 mod gates;
+/// 批处理清单(册七 T7.4):batch——多工程渲染单排队 + 报告 schema 固化。
+mod batch;
+/// watch 模式(册七 T7.4):文件变更 → 自动重渲(轮询 watcher 复用,防抖)。
+mod watch;
+/// 插件调用通道(册七 T7.2):plugin-call——manifest 校验 + 权限裁决 + actor=plugin。
+mod plugin;
 /// 库面与管理子命令(册六 T6.1):library / migrate / recover。
 mod library;
 
@@ -123,6 +129,7 @@ pub fn run(argv: Vec<String>) -> i32 {
             "subcommands": ["new", "project", "timeline", "clip", "clip-update", "split", "undo", "redo",
                 "oplog", "notes", "notes-add", "notes-resolve", "notes-reject", "conflicts",
                 "cache", "doctor", "serve", "library", "migrate", "recover",
+                "batch", "watch", "plugin-call",
                 "check-shell-purity", "check-write-paths", "check-deps", "check-ui-fields"]
         }));
     };
@@ -261,6 +268,7 @@ pub fn run(argv: Vec<String>) -> i32 {
                         "agent" => Some(ActorKind::Agent),
                         "user" => Some(ActorKind::User),
                         "script" => Some(ActorKind::Script),
+                        "plugin" => Some(ActorKind::Plugin),
                         _ => None,
                     });
                     match ws.engine().query(Query::OpLogTail { since_rev: since, actor_kind: kind }) {
@@ -285,6 +293,10 @@ pub fn run(argv: Vec<String>) -> i32 {
         "library" => library::library_cmd(&args),
         "migrate" => library::migrate_cmd(&args),
         "recover" => library::recover_cmd(&args),
+        // 册七 T7.4/T7.2:批处理清单 / watch 自动重渲 / 插件调用(actor=plugin)
+        "batch" => batch::run(&args),
+        "watch" => watch::run(&args),
+        "plugin-call" => plugin::run(&args),
         "check-shell-purity" => gates::check_shell_purity(args.json),
         "check-write-paths" => gates::check_write_paths(args.json),
         "check-deps" => check_deps(args.json),

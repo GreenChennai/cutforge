@@ -1,0 +1,29 @@
+# CI 自动出片工作流样例(册七 T7.4;给用户抄的最小 GitHub Actions 步骤)
+# 前提:runner 上有 ffmpeg(ffprobe)+ Rust 工具链;CutForge 仓库 checkout 到工作目录。
+name: cutforge-auto-publish
+on:
+  push:
+    paths: ["projects/**", "batch.yaml"]
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建 cutforge-cli / cutforge-render
+        run: cargo build --release --locked -p cutforge-cli -p cutforge-render
+      - name: 批处理渲染(单排队)
+        run: |
+          target/release/cutforge-cli batch batch.yaml --report out/batch-report.json
+      - name: 产物校验(时长对拍 + 像素抽样)
+        run: |
+          python3 tools/ci-example/check_output.py out/batch-report.json \
+            --expect-duration-ms 30000 --tolerance-ms 800
+      - name: 上传报告与成片
+        uses: actions/upload-artifact@v4
+        with:
+          name: cutforge-out
+          path: |
+            out/batch-report.json
+            06_成片输出/
+          if-no-files-found: error

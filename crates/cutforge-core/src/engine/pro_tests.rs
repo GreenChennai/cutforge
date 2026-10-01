@@ -1,6 +1,6 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
-//! apply 命令单测(册五 T5.4 起部分拆分自 engine::apply——行数红线 A1-3,
-//! 纯移动;`#[path]` 内联回 apply::tests,断言路径与语义零变化)。
+// apply 命令单测(册五 T5.4 起部分拆分自 engine::apply——行数红线 A1-3,
+// 纯移动;`#[path]` 内联回 apply::tests,断言路径与语义零变化)。
 
 use super::*;
 use serde_json::json;

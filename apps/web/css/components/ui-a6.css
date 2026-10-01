@@ -1,0 +1,85 @@
+/* 组件:册六 A6-F3(工程库视图 / 导出矩阵 / 素材库页签)。
+ * 纪律:色值唯一来源 var(--cf-*)(R5,定义层仅 tokens.css);动效一律
+ * transform/opacity + 时长/缓动 token(T3.2);文本信息不做颜色单线索
+ * (warn 行带文字标签 + data-warn 属性双通道)。 */
+
+/* ---------------- 工程库视图(library.js) ---------------- */
+.cf-dialog.lib-body { width: min(960px, 94vw); max-height: 88vh; }
+.lib-toolbar { display: flex; gap: var(--cf-s2); align-items: center; margin: var(--cf-s2) 0; }
+.lib-root-row { display: flex; gap: var(--cf-s2); align-items: center; flex: 1; min-width: 0; }
+.lib-root-row input { flex: 1; min-width: 0; font-family: var(--cf-font-mono); }
+.lib-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--cf-s3); margin: var(--cf-s3) 0; min-height: 80px;
+}
+.lib-card {
+  display: flex; flex-direction: column; gap: var(--cf-s2);
+  background: var(--cf-panel); border: 1px solid var(--cf-line-soft);
+  border-radius: var(--cf-r-l); padding: var(--cf-s3);
+  box-shadow: var(--cf-shadow-1);
+  transition: border-color var(--cf-dur-fast) var(--cf-ease),
+    transform var(--cf-dur-fast) var(--cf-ease);
+}
+.lib-card:hover { border-color: var(--cf-line-strong); transform: translateY(-1px); }
+.lib-thumb {
+  width: 100%; aspect-ratio: 16 / 9; border-radius: var(--cf-r-m);
+  background: var(--cf-sunken); overflow: hidden; display: flex;
+  align-items: center; justify-content: center;
+}
+.lib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-thumb.empty::after {
+  content: "缩略位"; color: var(--cf-lane-fg-off); font-size: var(--cf-fs-s);
+}
+.lib-name {
+  display: flex; gap: var(--cf-s2); align-items: center; min-width: 0;
+  font-size: var(--cf-fs-n); font-weight: 600;
+}
+.lib-name > span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.lib-meta { color: var(--cf-dim); font-size: var(--cf-fs-s); font-family: var(--cf-font-mono); }
+.lib-ops { display: flex; gap: var(--cf-s1); flex-wrap: wrap; }
+.lib-cmd {
+  display: block; padding: var(--cf-s2) var(--cf-s3); border-radius: var(--cf-r-m);
+  background: var(--cf-panel-deep); border: 1px solid var(--cf-line);
+  font-family: var(--cf-font-mono); font-size: var(--cf-fs-s);
+  user-select: all; overflow-wrap: anywhere;
+}
+.lib-recover {
+  border: 1px solid var(--cf-warn-line); background: var(--cf-warn-bg);
+  border-radius: var(--cf-r-m); padding: var(--cf-s2) var(--cf-s3);
+  color: var(--cf-warn-fg); margin: var(--cf-s2) 0;
+}
+.lib-recover-title { font-size: var(--cf-fs-m); margin-bottom: var(--cf-s1); }
+.lib-recover-row {
+  display: flex; gap: var(--cf-s3); align-items: center; padding: var(--cf-s1) 0;
+}
+.lib-recover-name { font-weight: 600; }
+.lib-recover-row .hint { flex: 1; min-width: 0; }
+
+/* ---------------- 导出矩阵(export-matrix.js) ---------------- */
+.exp-pf-row { display: flex; gap: var(--cf-s2); padding: var(--cf-s1) 0; font-size: var(--cf-fs-s); }
+.exp-pf-row.warn { color: var(--cf-warn-fg); }
+.exp-pf-k { color: var(--cf-dim); flex: 0 0 8em; }
+.exp-pf .exp-actions { margin-top: var(--cf-s2); }
+#export [data-testid="export-matrix"] legend,
+#export [data-testid="export-preflight"] legend { cursor: pointer; }
+
+/* ---------------- 素材面板双页签 + 素材库(media-panel/media-lib) ----------------
+ * 面板骨架保持:media-pane 接管原 #media-panel 的纵向 flex 链
+ * (#media-list 的 flex:1 + overflow-y 滚动依赖这条高度约束,断链即失去内部滚动)。 */
+.media-pane {
+  display: flex; flex-direction: column; flex: 1 1 auto;
+  min-height: 0; overflow: hidden;
+}
+.media-pane[hidden] { display: none; }
+.media-lib-list { display: flex; flex-direction: column; min-height: 60px; }
+.media-lib-item {
+  display: flex; gap: var(--cf-s2); align-items: center;
+  padding: var(--cf-s2) 0; border-bottom: 1px dashed var(--cf-line);
+}
+.media-lib-item:last-child { border-bottom: none; }
+.media-lib-item .media-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sr-file { max-width: 130px; font-size: var(--cf-fs-s); color: var(--cf-dim); }

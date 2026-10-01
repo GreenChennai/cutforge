@@ -369,7 +369,7 @@ export function undoBatch(batch) {
 
 /* ---------------- 新建工程向导 ---------------- */
 
-export function createProject({ name, fps, canvasW, canvasH, tracks }) {
+export function createProject({ name, fps, canvasW, canvasH, tracks, layout }) {
   return enqueue(async () => {
     const root = projectStore.get().root;
     // 新工程目录 = 当前工程根的同名父目录下(壳只做字符串拼接,创建由服务端完成)
@@ -377,7 +377,8 @@ export function createProject({ name, fps, canvasW, canvasH, tracks }) {
     const parts = root.replace(/[\\/]+$/, "").split(/[\\/]/);
     parts.pop();
     const target = parts.join(sep) + sep + name;
-    const env = await call("project_new", { root: target, slug: name, fps, canvasW, canvasH, tracks });
+    // 册六 T6.1:layout v2(缺省)/v3(ADR-0021 过渡期;服务端缺省面同值,显式携带保明确)
+    const env = await call("project_new", { root: target, slug: name, fps, canvasW, canvasH, tracks, layout: layout === "v3" ? "v3" : "v2" });
     if (env.ok) {
       const hint = `已创建 ${env.data.project}。新工程需单独启动服务:cutforge-cli serve "${target}" --open`;
       uiStore.set({ tokenBanner: `✅ ${hint}` });

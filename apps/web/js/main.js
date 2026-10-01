@@ -41,6 +41,8 @@ import { ensureCatalogs } from "./core/catalogs.js";
 import { openWizard } from "./panels/wizard.js";
 import { mountOnboarding } from "./ui/onboarding.js";
 import { mountWave3Wiring, measuredSwitchTab } from "./ui/wire-wave3.js";
+import { openProjectMenu, mountMigrateNotice } from "./panels/library.js";
+import { checkRecoverBanner } from "./panels/library-ops.js";
 import { recordBoot } from "./ui/perf.js";
 import { $ } from "./ui/dom.js";
 
@@ -89,6 +91,9 @@ async function boot() {
   await mediaPanel.initialMediaBrowse();
   ensureCatalogs();          // 转场/特效/花字目录预热(面板各自也会 ensure,幂等)
   startEvents(sess.token);
+  // 册六 T6.1:v2/v1 工程迁移提示条(可关,常驻入口在「工程」菜单)+ 崩溃残留锁提示
+  mountMigrateNotice();
+  checkRecoverBanner();
   window.__cutforgeSelfTest = selfTestRebuild; // T2.2 重建铁律自测入口(TESTIDS.md §五)
   recordBoot(performance.now() - tBoot); // T3.5 首屏可交互预算(投影+素材首览完成)
 }
@@ -125,6 +130,11 @@ function bindChrome() {
     b.addEventListener("click", () => uiStore.set({ tab: b.dataset.tab }));
   }
   $("btn-project-new").addEventListener("click", openWizard);
+  // 册六 T6.1:「工程」菜单(向导/工程库/布局迁移常驻入口)
+  $("btn-project-menu").addEventListener("click", (e) => {
+    const r = /** @type {HTMLElement} */ (e.currentTarget).getBoundingClientRect();
+    openProjectMenu(Math.round(r.left), Math.round(r.bottom + 4));
+  });
   $("btn-undo").addEventListener("click", () => commands.undo());
   $("btn-redo").addEventListener("click", () => commands.redo());
   $("pv-to-start").addEventListener("click", () => commands.toStart());

@@ -30,8 +30,11 @@ function report(env, name, okMsg) {
  * @param {Object} [enc] T5.6 编码设置(全部缺省 = 现行为 remux+bt709 零代损;显式
  *   编码选项才重编码):{encoder, quality, crf, bitrate, gop, pixFmt,
  *   loudnormTarget, verboseCmd} — 只携带已提供的键
+ * @param {Object} [mx] 册六 T6.3 导出矩阵:{format, preset, qualityTier,
+ *   bitrateTier, inMs, outMs, videoOnly} — 只携带已提供的键;全缺省 = 既有
+ *   渲染路径参数面逐字不变
  */
-export async function runExportCutforge(onProgress, useProxy = false, enc = null) {
+export async function runExportCutforge(onProgress, useProxy = false, enc = null, mx = null) {
   const project = projectStore.get().project;
   const ass = project && project.subtitle && project.subtitle.ass;
   const args = {};
@@ -41,6 +44,12 @@ export async function runExportCutforge(onProgress, useProxy = false, enc = null
     for (const k of ["encoder", "quality", "crf", "bitrate", "gop", "pixFmt", "loudnormTarget", "verboseCmd"]) {
       const v = enc[k];
       if (v !== undefined && v !== null && v !== "" && !(k === "verboseCmd" && !v)) args[k] = v;
+    }
+  }
+  if (mx) {
+    for (const k of ["format", "preset", "qualityTier", "bitrateTier", "inMs", "outMs", "videoOnly"]) {
+      const v = mx[k];
+      if (v !== undefined && v !== null && v !== "" && !(k === "videoOnly" && !v)) args[k] = v;
     }
   }
   onProgress("submit", "提交中…");

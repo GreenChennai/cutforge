@@ -342,6 +342,83 @@ pub fn delete(library: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+// ---------- .cfproj 工程描述文件(册六 T6.4 应用化) ----------
+
+/// `.cfproj` kind 标识(解析时校验;防拿任意 JSON 当工程描述)。
+pub const CFPROJ_KIND: &str = "cutforge-project";
+
+/// `.cfproj` 导出快照(轻量描述,不是工程真相源——真相源恒为 root 下的 project.json)。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CfprojSnapshot {
+    /// 描述文件落点。
+    pub path: PathBuf,
+    /// project.json 的 slug(缺省回退库内目录名,与卡片口径一致)。
+    pub name: String,
+    /// 工程根绝对路径(描述文件的核心字段;关联打开按它 serve)。
+    pub root: PathBuf,
+    /// 导出时刻的 `.cutforge/rev` 快照(仅描述性,不参与打开)。
+    pub rev: Option<u64>,
+}
+
+/// 导出 `.cfproj`(library_manage action=export_cfproj 的单一实现):
+/// JSON `{kind,version,name,root,rev,createdAt}`;`out` 缺省 = `<库根>/<名>.cfproj`。
+/// 写入走 atomic 唯一落盘点(描述文件也是落盘,不旁路)。
+pub fn export_cfproj(library: &Path, name: &str, out: Option<&Path>) -> Result<CfprojSnapshot, String> {
+    if !valid_name(name) {
+        return Err(format!("非法工程名: {name}"));
+    }
+    let project = library.join(name);
+    if !paths::has_project(&project) {
+        return Err(format!("工程不存在: {name}"));
+    }
+    let rev = std::fs::read_to_string(project.join(".cutforge/rev"))
+        .ok()
+        .and_then(|t| t.trim().parse().ok());
+    let slug = std::fs::read_to_string(paths::project_path(&project))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v["slug"].as_str().map(String::from))
+        .unwrap_or_else(|| name.to_string());
+    let out_path = match out {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => library.join(format!("{name}.cfproj")),
+    };
+    let doc = serde_json::json!({
+        "kind": CFPROJ_KIND,
+        "version": 1,
+        "name": slug,
+        "root": project.to_string_lossy(),
+        "rev": rev,
+        "createdAt": cutforge_core::timeutil::now_rfc3339(),
+    });
+    let bytes = serde_json::to_vec_pretty(&doc).map_err(|e| e.to_string())?;
+    crate::atomic::atomic_write(&out_path, &bytes)
+        .map_err(|e| format!("写入失败({}): {e}", out_path.display()))?;
+    Ok(CfprojSnapshot { path: out_path, name: slug, root: project, rev })
+}
+
+/// 解析 `.cfproj` → 工程根(`serve <x.cfproj>` 关联打开的单一实现):
+/// kind 必须匹配;root 相对路径按描述文件所在目录解释;工程根须仍是可识别工程。
+pub fn parse_cfproj(path: &Path) -> Result<PathBuf, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cfproj 不可读({}): {e}", path.display()))?;
+    let v: Value = serde_json::from_str(&text)
+        .map_err(|e| format!("cfproj 非法 JSON({}): {e}", path.display()))?;
+    if v["kind"].as_str() != Some(CFPROJ_KIND) {
+        return Err(format!("cfproj kind 不匹配(期望 {CFPROJ_KIND}): {}", path.display()));
+    }
+    let root_s = v["root"].as_str().filter(|s| !s.is_empty())
+        .ok_or_else(|| format!("cfproj 缺 root: {}", path.display()))?;
+    let root = PathBuf::from(root_s);
+    let root = if root.is_absolute() { root } else { path.parent().unwrap_or(Path::new(".")).join(root) };
+    if !paths::has_project(&root) {
+        return Err(format!(
+            "cfproj 指向的工程不可识别(工程被移动/删除?): {} → {}",
+            path.display(), root.display()));
+    }
+    Ok(root)
+}
+
 /// 原子写导入(library 模块内唯一写盘点纪律:测试造盘走 atomic)。
 #[cfg(test)]
 pub(crate) fn write_atomic(path: &Path, data: &[u8]) -> io::Result<()> {
@@ -356,6 +433,47 @@ mod tests {
     fn make_project(dir: &Path, slug: &str) {
         let kinds = [cutforge_core::model::TrackKind::Video, cutforge_core::model::TrackKind::Audio];
         crate::scaffold::scaffold_project_layout(dir, slug, 30, 1080, 1920, &kinds, LayoutKind::V2).unwrap();
+    }
+
+    #[test]
+    fn cfproj_export_parse_roundtrip() {
+        let lib = fsutil::temp_dir("library-cfproj");
+        let p = lib.join("工程甲");
+        make_project(&p, "工程甲");
+        // 导出:缺省落点 = <库根>/<名>.cfproj;rev 快照容忍 None(未开过写的工程)
+        let snap = export_cfproj(&lib, "工程甲", None).unwrap();
+        assert_eq!(snap.path, lib.join("工程甲.cfproj"));
+        assert_eq!(snap.name, "工程甲");
+        assert_eq!(snap.root, p);
+        assert!(snap.path.is_file());
+        // 解析往返:root 绝对路径直取
+        assert_eq!(parse_cfproj(&snap.path).unwrap(), p);
+        // root 相对路径:按描述文件所在目录解释
+        let rel = serde_json::json!({"kind": CFPROJ_KIND, "version": 1, "name": "工程甲", "root": "工程甲"});
+        let rel_path = lib.join("rel.cfproj");
+        write_atomic(&rel_path, serde_json::to_vec_pretty(&rel).unwrap().as_slice()).unwrap();
+        assert_eq!(parse_cfproj(&rel_path).unwrap(), p);
+        // kind 不匹配 / 缺 root / 工程已移走:三种失效面都给可读错误
+        let bad_kind = lib.join("bad-kind.cfproj");
+        write_atomic(&bad_kind, b"{\"kind\":\"other\",\"root\":\"x\"}").unwrap();
+        assert!(parse_cfproj(&bad_kind).is_err());
+        let no_root = lib.join("no-root.cfproj");
+        write_atomic(&no_root, b"{\"kind\":\"cutforge-project\"}").unwrap();
+        assert!(parse_cfproj(&no_root).is_err());
+        let moved = lib.join("moved.cfproj");
+        write_atomic(&moved,
+            serde_json::to_vec_pretty(&serde_json::json!({"kind": CFPROJ_KIND, "root": lib.join("无此")})).unwrap().as_slice()).unwrap();
+        let err = parse_cfproj(&moved).unwrap_err();
+        assert!(err.contains("不可识别"), "工程消失要如实说: {err}");
+        // 非法工程名 / 工程不存在
+        assert!(export_cfproj(&lib, "../逃逸", None).is_err());
+        assert!(export_cfproj(&lib, "无此工程", None).is_err());
+        // 自定义 out 落点
+        let custom = lib.join("自定义.cfproj");
+        let snap2 = export_cfproj(&lib, "工程甲", Some(&custom)).unwrap();
+        assert_eq!(snap2.path, custom);
+        assert!(custom.is_file());
+        fsutil::cleanup(&lib);
     }
 
     #[test]

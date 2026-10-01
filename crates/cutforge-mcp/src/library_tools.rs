@@ -35,12 +35,13 @@ pub(crate) fn migrate_layout_tool(root: &Path, args: &Value) -> Value {
     }
 }
 
-/// `library_manage`(写,action 参数化):new/rename/copy/archive/unarchive/delete。
+/// `library_manage`(写,action 参数化):new/rename/copy/archive/unarchive/delete/
+/// export_cfproj(T6.4:导出 `.cfproj` 工程描述,关联打开面)。
 /// 目录级移动/复制,OpLog 完整性不动;活进程持锁的工程拒绝移动。
 pub(crate) fn library_manage_tool(root: &Path, args: &Value) -> Value {
     let Some(action) = args["action"].as_str() else {
         return envelope(false, "PRECONDITION_FAILED",
-            "缺 action(new|rename|copy|archive|unarchive|delete)", json!({}));
+            "缺 action(new|rename|copy|archive|unarchive|delete|export_cfproj)", json!({}));
     };
     let name = args["name"].as_str().unwrap_or_default();
     let to = args["to"].as_str().unwrap_or_default();
@@ -105,7 +106,17 @@ pub(crate) fn library_manage_tool(root: &Path, args: &Value) -> Value {
                 };
                 Ok(json!({"name": name, "action": action, "at": p.to_string_lossy()}))
             }
-            other => Err(format!("未知 action: {other}(允许 new/rename/copy/archive/unarchive/delete)")),
+            "export_cfproj" => {
+                if name.is_empty() {
+                    return Err("缺 name(export_cfproj 的对象)".into());
+                }
+                let out = args["out"].as_str().filter(|s| !s.is_empty()).map(Path::new);
+                let s = library::export_cfproj(root, name, out)?;
+                Ok(json!({"name": s.name, "cfproj": s.path.to_string_lossy(),
+                    "root": s.root.to_string_lossy(), "rev": s.rev,
+                    "note": "描述文件不是工程真相源(root 指向工程目录);关联打开: cutforge-cli serve <该文件> --open"}))
+            }
+            other => Err(format!("未知 action: {other}(允许 new/rename/copy/archive/unarchive/delete/export_cfproj)")),
         }
     })();
     match res {

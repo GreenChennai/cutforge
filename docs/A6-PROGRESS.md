@@ -145,9 +145,136 @@
   响度实测偏差 0.05LU)/media_import 真实落盘(byte 级一致,v3 → media/)/
   export_jianying 无 CUTFLOW_REPO 走随包 scriptSource=bundled + DRAFT_OK 门禁全 PASS。
 
+## T6.1+T6.3 UI(F3)——工程库视图/向导模板/导出矩阵面板/素材库双页签
+
+实码(apps/web 无构建 ESM;工具数不变,纯壳活 + TESTIDS.md 第九节全量登记):
+
+- **工程库视图**(panels/library.js + library-ops.js,「工程 ▾」菜单常驻入口):卡片栅格
+  (缩略图/fps/画幅/时长/rev/修改时间,徽标 current/archived/locked/invalid)、七操作
+  (open 给 serve 命令一键复制——一个 serve 一个工程,诚实口径;rename/copy/archive/
+  unarchive/delete 确认框含 `.trash` 捞回提示)、搜索(服务端 query)、归档区并入、
+  恢复清单(library_recover list→recover)、**v2/v1 迁移提示条 + 迁移确认框**、
+  启动静默扫描可恢复项的顶栏提示条。
+- **新建向导升级**:模板三套(竖屏单轨口播 9:16·V+A / 横屏双机位 16:9·V+V+A /
+  方形社媒 1:1·V+A+文本;选即预填,手改即脱离)+ 布局 v2/v3 选择。
+- **导出矩阵面板**(panels/export-matrix.js,挂 #export 面板):七格式出口说明行
+  (gif=12fps、m4a/mp3=仅音频、png-seq=序列帧)、画幅/清晰度/码率三档位、区域 in/out
+  (selectionStore 回填可手改)、videoOnly、**preflight 检查门**(清单行 data-warn 双通道,
+  问题项裁决「仍要导出/先不导出」)、export_all_variants 批量入队。
+- **媒体面板双页签**:工程素材(原面红线不动)/ 素材库(库根手填偏好记忆/kind chips/
+  标签过滤/搜索/一键导入/标签整组替换);**media_import 拷贝导入三通道**(绝对路径输入/
+  文件选择器/素材库引用,FE1 登记的拷贝导入通道就此闭环)。
+- 顺手修复:media-pane flex 滚动链回退(e2e_media_perf P95 63.7fps 不降反升)。
+
+## T6.4 应用化 + T6.5 独立验收 + gate A6 + 文档收官(F4)
+
+实码(crates 少量 + tools/packaging/docs;工具数 **76 = 18+38+20 不变**——cfproj 面全走
+既有 library_manage 参数面,零新工具):
+
+- **`.cfproj` 工程描述文件(T6.4)**:轻量 JSON `{kind:"cutforge-project",version,name,root,
+  rev,createdAt}` 快照——**不是真相源**(root 指向工程目录),失效给可读错误(工程被移走/
+  kind 不匹配/缺 root)。单一实现进 `cutforge_io::library`(export_cfproj/parse_cfproj,
+  写走 atomic 唯一落盘点);生成入口 = `library_manage action=export_cfproj`(MCP)+
+  `cutforge-cli library cfproj`(CLI,同实现);关联打开 = `serve <x.cfproj> --open`
+  (cli serve 与 mcp serve 共用 `resolve_root_arg`,安装器文件关联即此命令)。
+- **端口占用自动换端口 + 横幅(T6.4)**:收敛 `serve_workspace` 单一实现——请求端口被占
+  → 自动换 +1..+20 首个空闲并打横幅(排查命令内联);两面旧行为(CLI 静默预选 /
+  MCP 直接 bind 失败)不一致且用户不知情,就此统一;`.cutforge/session` 的 port 改为
+  **绑定后**写入(实际端口,不再可能记账假端口);全窗占满才失败(退出码 4 不变)。
+- **`doctor --bundle`(T6.4)**:诊断包 = 单文件 zip(doctor.json + environment.txt +
+  session/session-summary/rev/project.json 快照,在位才收、单件 512KB 上限)。zip 为
+  **零依赖手写 store 形**(method 0 + UTF-8 名 + CRC-32;新增 Cargo 依赖违反纪律而包体
+  KB 级压缩收益趋零),落盘走 atomic;Python zipfile 实测可解(testzip 干净)。
+  顺带:CLI `library` action 面同步增 `cfproj`。
+- **安装器与验收面(T6.4/T6.5,诚实登记)**:`packaging/cutforge.iss`(Inno Setup 6:
+  core 固定组件 + ffmpeg 默认勾选可选组件(构建时 `packaging/ffmpeg/` 放入即启用,
+  ADR-0022)、快捷方式、卸载器(用户工程不删)、`.cfproj` 关联、勾选内嵌时写
+  HKCU\Environment 两个变量;`cutforge://` 协议注册注释留白未做)、
+  `packaging/README.md`(内容清单/启动方式/便携版与安装器差异;**顺带诚实登记 release
+  job zip 只拷 web 三件的现状**,全树化留 A6-L)、`packaging/pure-checklist.md`
+  (AC-6.5/6.6 人工清单:装机→全流程→卸载核查)。**ISCC 不在开发机,实际编译与 VM
+  验收为人工项**(脚本经结构人工核对,未经编译的 Pascal 代码一律不写)。
+- **`tools/e2e_independence.py`(T6.5,AC-6.3 判定器)**:
+  - 环境隔离:剥离全部 `CUTFLOW_*` 再起 serve(serve 子进程 env 干净,断言"独立机器"
+    语义;CI ubuntu 无 CUTFLOW_REPO 天然隔离,恰是主场);
+  - 四大件全走内置工具链:clip_add+裁 → subtitle_import(SRT,纯绿 textStyle)→
+    text_add 花字(hz.neon)→ audio_beats(onset-energy,脉冲夹具 onsetCount=19)→
+    reframe 承载防丢(种子片段在真相源,工具链写链后 anchorY 原样在——渲染端零消费
+    与编辑面未承接均为登记口径,不虚标)→ render_run 导出;
+  - **AC-6.3 核心判定**:采样线程对 serve 进程子树全程采样(psutil 优先,Windows wmic /
+    POSIX /proc 兜底),断言零 python 子进程(本机实证子树名单
+    `['cutforge-render.exe','ffmpeg.exe','ffprobe.exe']`;剪映导出豁免——本脚本不调用
+    export_jianying,ADR-0023 注明);
+  - 产物校验:ffprobe 时长对拍(6.00s ≈ 6s)+ 像素抽样(t=2.0s 深灰底上纯绿字样
+    1704 像素 = 字幕烧录实证,零 PIL 依赖 rawvideo 解析);
+  - 纯 CLI 面(AC-7.4 预演):v3 布局新工程 → run-script 无头建卡(沙箱零逃逸)→
+    `cutforge-cli clip-update` 改字段 → `cutforge-render` 直渲 → v3 产物落 exports/ →
+    ffprobe 校验——全程无 UI 无 serve。
+- **gate A6 注册**(D-A2 制):A5 二十一项一字不动全部继承 + e2e-independence,
+  **22 项全阻断**;CI web-e2e 只加 e2e_independence 一步(gate.yml 结构校验过)。
+- **录屏 6 支补录**(record-captures 口径,册六 50- 段低分辨率):工程库七操作/迁移 v3/
+  向导模板/导出矩阵/preflight 检查门/素材库(见下验证节)。
+- **文档收官**:本台账 F3/F4 补账 + AC-6.1~6.7 状态表(下);CHANGELOG 册五收口波补记 +
+  册六 F3/F4 条目;README(册六段/门禁表 A6/e2e ×18/快速开始 cfproj+bundle+端口横幅/
+  gate 命令 A6);FLOW(gate 段 A6 注册 + 工具面 76);capability-matrix #43–#51(F2
+  已落,本轮零结构变化)。
+
+验证(2026-09-30 本机,F4):
+
+- `cargo test --workspace --locked` 全绿(io 新增 cfproj_export_parse_roundtrip;cli 新增
+  bundle 三测:CRC-32 已知向量/DOS 时间抽样/zip 结构逐字段回读);
+- `cargo clippy --workspace --all-targets -- -D warnings` 零告警;
+- 18 份 e2e 全绿(17 份既有 + e2e_independence;负载敏感项安静时段复跑);
+- `tool_parity --update-golden` 后连跑两次 0 DRIFT(76 工具;library_manage 增 action
+  为加法参数面,golden 夹具无键变化);
+- `check_doc_counts`:76 = 18 + 38 + 20 四文档零漂移;
+- gate A6 二十二项全绿 + A1–A5 复跑全绿 + M0/M1 绿(M2–M7 外部红项如实注明);
+- `doctor --bundle` 产物 zipfile 实测:testzip 干净、entries=[doctor.json, environment.txt,
+  project.json];serve 端口占用横幅实测(CLI 与 MCP 两面);`.cfproj` 导出→解析→serve
+  打开与坏描述报错实测;
+- 录屏:34+6=40 支,目录总量 7.89MB ≤ 8MB 红线(册六 6 支 50- 段 720×450 低分辨率
+  录制 + VP9 CRF46 重编码压总量,时长逐支不变、单文件 ≤2MB;54-preflight 走「导出成片」
+  自动门触发——裁决按钮只在 runPreflight(auto) 路径渲染,手动检查面无裁决;
+  回链 micro-interactions.md 第十节,TESTIDS 第九节为 F3 已登记面)。
+
+## AC-6.1~6.7 状态表(册六收官口径)
+
+| # | 验收项 | 状态 | 判定证据 |
+|---|---|---|---|
+| AC-6.1 | 工程库七操作 + 崩溃恢复零数据丢失 | ✅ | F1(io 单测:七操作/活锁拒绝/崩溃恢复 OpLog 完整性 + dispatch 闭环)+ F3(库视图七操作 UI);强杀恢复 e2e 化登记 A6-L(既有单测覆盖 pid 探测/清锁/校验) |
+| AC-6.2 | 布局 v3 + v2 兼容读写 + 迁移幂等 | ✅ | F1(迁移器幂等 NOOP/冲突整体拒绝/project.json 字节零改动)+ F3(向导 v3/迁移入口);**缺省翻转 V3 未做**(前提:FE+安装器收编,ADR-0021 过渡期,见 A6-L) |
+| AC-6.3 | 四大件内置,零外部脚本调用 | ✅ | `tools/e2e_independence.py`(CUTFLOW_* 剥离 + 进程树断言零 python 子进程 + 剪映豁免注明);诚实口径:重构图=anchorY 承载防丢(渲染零消费登记 #50),转写=明确不做(#51,ADR-0023) |
+| AC-6.4 | 导出矩阵格式/预设/区域/队列/多画幅 | ✅ | F2(七出口渲染端 + 队列 + 批量变体,parity 夹具+手工冒烟)+ F3(矩阵面板/preflight 门 UI);导出期间编辑不阻塞为册二既有 e2e 断言 |
+| AC-6.5 | 安装器纯净机装/卸干净 + 文件关联 + 单实例 | ◐ | 安装器脚本/关联/env 写入**就绪**;ISCC 编译验证 + VM 装/卸核查 + 关联双击生效 = **人工项**(pure-checklist §1/§3/§4);单实例唤起协议 = 可选未做(A6-L) |
+| AC-6.6 | 纯净机全流程(T6.5 脚本在无 Python 环境通过) | ◐ | 清单脚本化 `packaging/pure-checklist.md`;e2e_independence 已在"剥离 CUTFLOW_*"语义下实证;真实 VM(无 Python)执行 = **人工项** |
+| AC-6.7 | 全量回归零劣化 | ✅ | gate A6 二十二项全绿(A1–A5 一字不动继承);media_perf P95 63.7fps(F3 修复后)不降;bench 阈值 AC-5.7 照跑 |
+
+## 遗留(A6-L,册六收官登记)
+
+1. **缺省布局翻转 V3**:过渡期 scaffold 缺省仍 v2(ADR-0021);翻转前提 = FE(v3 全路径
+   打磨)+ 安装器收编(纯净机首装即 v3),e2e 断言(目录树/media 落点)同步翻转。
+2. **serve `projectRel` 迁移后刷新**:`.cutforge/session` 的 projectRel 是启动时快照,
+   serve 进行中迁移 v3 后壳读到的是旧相对路径(重启即正;待做:迁移完成通知刷新)。
+3. **他工程缩略图**:库卡片缩略图取自 `.cutforge/thumb-cache`,仅当前(或曾打开)工程有
+   产物;冷工程卡片无缩略图(诚实留白;候 media_thumbnail 批量派生评估)。
+4. **media_library e2e 覆盖**:素材库 manifest 扫描/标签/过滤面当前为 parity 夹具 +
+   手工冒烟,无独立 e2e(册七候选)。
+5. **单实例协议 `cutforge://`**:计划书标可选——未做;文件关联已用 `.cfproj` + serve
+   落地(同一用户诉求的最低成本面),唤起式单实例待真实用例出现再评估。
+6. **Inno 编译验证**:`packaging/cutforge.iss` 结构人工核对过,开发机无 ISCC;实际编译、
+   VM 装/卸、关联双击、env 即时生效(要不要补 WM_SETTINGCHANGE 广播)按
+   pure-checklist 执行——未经编译验证的 Pascal 代码一律不入库。
+7. **release job zip 的 web 全树**:gate.yml release 打包目前只拷 web/ 三件
+   (index.html/app.js/style.css;packaging/README.md 已如实登记),js/ 全树待补——
+   便携版全功能依赖它;修 CI 步骤属一行改动,登记以免遗忘。
+
 ## 待办(册六后续任务)
 
-- T6.1 模板面(画幅/轨道/品牌色预设)、FE 工程库页;
-- T6.2 内置能力收编(字幕/花字/卡点/重构图,AC-6.3 零外部脚本);
-- T6.3 导出矩阵与编辑不阻塞(AC-6.4);T6.4 应用化(安装器/文件关联/单实例/内嵌 ffmpeg);
-- T6.5 纯净机全流程;缺省布局翻转为 V3(前提:FE + 安装器收编,e2e 断言同步)。
+- ~~T6.1 模板面、FE 工程库页~~ **已闭合(F3)**;
+- ~~T6.2 内置能力收编(字幕/花字/卡点/重构图,AC-6.3 零外部脚本)~~ **已闭合(F2 收口
+  + F4 e2e_independence 判定器;重构图/转写诚实降级与不做)**;
+- ~~T6.3 导出矩阵与编辑不阻塞(AC-6.4)~~ **已闭合(F2 BE + F3 面板)**;
+- ~~T6.4 应用化(安装器/文件关联/单实例/内嵌 ffmpeg)~~ **已闭合到脚本面(F4);单实例
+  协议可选未做、Inno 编译验证人工(见 A6-L 5/6)**;
+- ~~T6.5 纯净机全流程~~ **清单与判定器已闭合(F4);真实 VM 执行人工(AC-6.6,见上表)**;
+- 缺省布局翻转为 V3(前提:FE + 安装器收编,e2e 断言同步)——**A6-L 1,候册七**。

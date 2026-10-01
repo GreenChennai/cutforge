@@ -42,13 +42,13 @@ fn track_kinds(flag: Option<&String>) -> Result<Vec<cutforge_core::model::TrackK
     Ok(kinds)
 }
 
-/// `library <action> …`:`list|search|new|rename|copy|archive|unarchive|delete`。
+/// `library <action> …`:`list|search|new|rename|copy|archive|unarchive|delete|cfproj`。
 /// 库根 = `--library R` > env CUTFORGE_PROJECTS > %USERPROFILE%\CutForge\Projects。
 pub fn library_cmd(a: &crate::Args) -> i32 {
     let Some(action) = a.positional.first().cloned() else {
         return emit(a.json, false, "PRECONDITION_FAILED",
-            "用法: library <list|search|new|rename|copy|archive|unarchive|delete> […] [--library R]",
-            serde_json::json!({"actions": ["list", "search", "new", "rename", "copy", "archive", "unarchive", "delete"]}));
+            "用法: library <list|search|new|rename|copy|archive|unarchive|delete|cfproj> […] [--library R]",
+            serde_json::json!({"actions": ["list", "search", "new", "rename", "copy", "archive", "unarchive", "delete", "cfproj"]}));
     };
     let library = lib_root(a.flags.get("library"));
     let rest = a.positional.get(1).cloned().unwrap_or_default();
@@ -117,7 +117,18 @@ pub fn library_cmd(a: &crate::Args) -> i32 {
                 };
                 Ok(serde_json::json!({"name": rest, "action": action, "at": p.to_string_lossy()}))
             }
-            other => Err(format!("未知 action: {other}(允许 list/search/new/rename/copy/archive/unarchive/delete)")),
+            "cfproj" => {
+                // T6.4:导出 .cfproj 工程描述(与 MCP library_manage action=export_cfproj 同一实现)
+                if rest.is_empty() {
+                    return Err("用法: library cfproj <工程名> [--out 路径.cfproj]".into());
+                }
+                let out = a.flags.get("out").map(PathBuf::from);
+                let s = library::export_cfproj(&library, &rest, out.as_deref())?;
+                Ok(serde_json::json!({"name": s.name, "cfproj": s.path.to_string_lossy(),
+                    "root": s.root.to_string_lossy(), "rev": s.rev,
+                    "note": "描述文件不是工程真相源(root 指向工程目录);关联打开: cutforge-cli serve <该文件> --open"}))
+            }
+            other => Err(format!("未知 action: {other}(允许 list/search/new/rename/copy/archive/unarchive/delete/cfproj)")),
         }
     })();
     match result {

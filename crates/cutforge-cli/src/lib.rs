@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 mod cache;
 /// 工程环境诊断(T1.7):doctor——每项失败给可复制执行的修复命令。
 mod doctor;
+/// doctor --bundle(T6.4):诊断包单文件 zip(零依赖 store 形手写)。
+mod bundle;
 /// 门禁判定器(册二 T2.6):check-shell-purity v2 / check-write-paths v2(自本文件迁入并升级)。
 mod gates;
 /// 库面与管理子命令(册六 T6.1):library / migrate / recover。
@@ -297,12 +299,16 @@ fn serve_cmd(a: &Args) -> i32 {
     use std::io::IsTerminal as _;
     let root = a.positional.first().cloned().or_else(|| a.flags.get("root").cloned());
     let root = match root {
-        Some(r) => PathBuf::from(r),
+        Some(r) => match cutforge_mcp::resolve_root_arg(&r) {
+            // T6.4:`.cfproj` 工程描述 → 其 root(文件关联「双击打开」单一实现)
+            Ok(p) => p,
+            Err(e) => return emit(a.json, false, "NO_CONFIG", &e, serde_json::json!({})),
+        },
         None => {
             // E6-1(提前落):无 --root 时交互列候选工程;非交互环境必须显式给目录
             if !std::io::stdin().is_terminal() {
                 return emit(a.json, false, "PRECONDITION_FAILED",
-                    "用法: serve <工程目录> [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录",
+                    "用法: serve <工程目录|.cfproj> [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录",
                     serde_json::json!({}));
             }
             // 单一实现:E1-4 交互选择器迁至 cutforge_mcp(mcp serve 无 --root 同一行为)
@@ -314,17 +320,9 @@ fn serve_cmd(a: &Args) -> i32 {
             }
         }
     };
-    let explicit_port = a.flags.get("port").and_then(|s| s.parse::<u16>().ok());
-    let mut port = explicit_port.unwrap_or(8787);
-    if explicit_port.is_none() {
-        // E1-4:未指定端口时自动挑空闲(+1..+20;探测即放手的竞态由 serve 自检兜底)
-        for cand in port..port.saturating_add(20) {
-            if std::net::TcpListener::bind(("127.0.0.1", cand)).is_ok() {
-                port = cand;
-                break;
-            }
-        }
-    }
+    // T6.4 端口占用处理收敛 serve_workspace 单一实现(被占自动换下一空闲 + 横幅;
+    // 此处的预选只决定「缺省起点」,占用与否不再由 CLI 静默裁决)
+    let port = a.flags.get("port").and_then(|s| s.parse::<u16>().ok()).unwrap_or(8787);
     let token = a.flags.get("token").cloned().unwrap_or_else(cutforge_mcp::new_token);
     let web = a.flags.get("web").map(PathBuf::from).unwrap_or_else(cutforge_mcp::default_web_dir);
     let open = a.flags.contains_key("open");

@@ -128,6 +128,21 @@ pub fn pick_project_interactive() -> Option<PathBuf> {
     cands.get(idx.saturating_sub(1)).cloned()
 }
 
+/// serve 目标解析(册六 T6.4):`.cfproj` 工程描述文件 → 其 root(安装器文件关联的
+/// 「双击打开」落点);其余参数按工程目录原样。单一实现:cli serve 与 mcp serve 共用。
+pub fn resolve_root_arg(arg: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(arg);
+    let is_cfproj = p.extension().and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cfproj"));
+    if is_cfproj {
+        return cutforge_io::library::parse_cfproj(&p);
+    }
+    Ok(p)
+}
+
+/// 端口占用时的换端口搜索窗(与 cli doctor 的 PORT_WINDOW 同一口径:+1..+20)。
+const PORT_WINDOW: u16 = 20;
+
 /// 工作区常驻服务(M10 本地服务化):静态托管 Web 编辑器 + /rpc + /events +
 /// /session 会话信息 + /media(E2)+ /media/browse 与 /ui-fields(E3/E4)。
 /// 随机 token 落盘 `.cutforge/session`(仅 127.0.0.1)。
@@ -143,6 +158,28 @@ pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open
     for sub in [".cutforge", ".cutforge/bases", ".cutforge/oplog"] {
         let _ = std::fs::create_dir_all(root.join(sub));
     }
+    // T6.4 端口纪律:先绑定、后写会话记账(session.port 必须是**实际**端口)。
+    // 请求端口被占 → 自动换 +1..+20 首个空闲并打横幅(cli serve 与 mcp serve 单一实现;
+    // 此前 cli 侧静默换、mcp 侧直接失败,两面不一致且用户不知情);全窗占满才失败。
+    let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => l,
+        Err(bind_err) => {
+            let alt = (port.saturating_add(1)..=port.saturating_add(PORT_WINDOW))
+                .find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+                .and_then(|p| std::net::TcpListener::bind(("127.0.0.1", p)).ok());
+            match alt {
+                Some(l) => {
+                    eprintln!("⚠ 端口 {port} 已被占用({bind_err}),已自动改用 {}(仅监听 127.0.0.1;排查占用:netstat -ano | findstr :{port})", l.local_addr().map(|a| a.port()).unwrap_or(0));
+                    l
+                }
+                None => {
+                    eprintln!("bind 失败:{bind_err}(端口 {port}..+{PORT_WINDOW} 全部被占用;补救:关闭占用它的旧服务窗口,netstat -ano | findstr :{port} 排查)");
+                    return 4;
+                }
+            }
+        }
+    };
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     let session = json!({
         "root": root.to_string_lossy(),
         "port": port,
@@ -168,13 +205,6 @@ pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open
     eprintln!("  基线快照: {}", dir.join("bases").display());
     eprintln!("  本次变更摘要: {}", session_summary_path(root).display());
     eprintln!("────────────────────────");
-    let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("bind 失败: {e}(端口 {port} 可能被占用;补救:--port 换一个端口,或关闭占用它的旧服务窗口)");
-            return 4;
-        }
-    };
     let url = format!("http://127.0.0.1:{port}/?token={token}");
     eprintln!("cutforge 编辑器:{url}");
     if open_browser {

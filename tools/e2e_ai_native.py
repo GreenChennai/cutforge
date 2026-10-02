@@ -20,7 +20,9 @@
   4. 标注线程两轮(note_reply 不改 state)+ session_report 人话 Markdown 渲染。
 
 断言纪律(M10-R5):UI 动作只作驱动,断言以服务端状态(rev/oplog/工程回读)为准;
-toast/徽标仅作 UI 到达性辅助观察。风格与既有 e2e 同(pathlib/testid/服务端断言)。
+toast/徽标仅作 UI 到达性辅助观察(toast 走收集器模式:动作前给 #toasts 容器挂
+MutationObserver 推入 window.__toasts,动作后轮询数组——toast 会自动淡出移除,
+触发后再定位元素在慢机器上必竞态)。风格与既有 e2e 同(pathlib/testid/服务端断言)。
 退出码:0 通过 / 2 失败。依赖:playwright(chromium)+ ffmpeg + cutforge-cli。
 """
 from __future__ import annotations
@@ -174,16 +176,51 @@ def scratch_residue(root: Path) -> list[str]:
     return [p.name for p in parent.iterdir() if p.name.startswith(".cf-scratch")]
 
 
+# toast 收集器(壳 js/ui/toast.js:#toasts 容器静态驻留 index.html;shell/插件桥/
+# 崩溃路径全部经同一 toast() 落进该容器,子元素带 .toast 类)。toast 会在 TTL 后
+# 自动淡出并从 DOM 移除——「先触发动作→再定位元素读文本」在慢机器上必竞态(CI
+# ubuntu 实证)。改为收集器模式:动作触发前挂 MutationObserver,把每条 toast 文本
+# 追加进 window.__toasts;动作后轮询该数组,命中即过。数组只在挂载后追加,永不因
+# 淡出 / TTL / 超过 4 条上限挤掉而丢条;每次挂载重置数组并断开旧观察器,上一步旧
+# toast 不会污染本轮断言。
+TOAST_COLLECTOR_JS = """() => {
+  const box = document.getElementById('toasts');
+  if (!box) return false;
+  if (window.__toastObs) window.__toastObs.disconnect();
+  window.__toasts = [];
+  window.__toastObs = new MutationObserver((muts) => {
+    for (const m of muts) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType === 1 && n.classList.contains('toast')) {
+          window.__toasts.push(n.textContent || '');
+        }
+      }
+    }
+  });
+  window.__toastObs.observe(box, { childList: true });
+  return true;
+}"""
+
+
+def arm_toast_collector(page) -> None:
+    """动作前挂 toast 收集器(每个会产生 toast 的动作触发前调用一次)。"""
+    if not page.evaluate(TOAST_COLLECTOR_JS):
+        raise AssertionError("toast 容器 #toasts 不存在(壳 index.html 结构变更?)")
+
+
 def wait_toast(page, substr: str, timeout_s: float = 10.0) -> str:
-    """轮询 toast 文本(到达性辅助观察;断言仍以服务端为准)。"""
+    """轮询收集器数组匹配期望子串(到达性辅助观察;断言仍以服务端为准)。
+
+    须先 arm_toast_collector 挂载、再触发动作;命中返回该条 toast 完整文本。
+    """
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        for sel in ('[data-testid="toast"]', '[data-testid="toast-err"]'):
-            for loc in page.locator(sel).all():
-                t = loc.text_content() or ""
-                if substr in t:
-                    return t
-        page.wait_for_timeout(200)
+        toasts = page.evaluate("() => window.__toasts || null")
+        assert toasts is not None, "toast 收集器未挂载(wait_toast 前须先 arm_toast_collector)"
+        for t in toasts:
+            if substr in t:
+                return t
+        page.wait_for_timeout(100)
     raise AssertionError(f"toast 在 {timeout_s}s 内未出现: {substr!r}")
 
 
@@ -191,9 +228,14 @@ def load_and_run_builtin(page, index: int, expect_steps: int, tool: str) -> None
     """脚本页签:选中内置片段 → 载入 → 运行(预演)→ 结构化输出断言。"""
     page.select_option('[data-testid="script-lib-select"]', index=index)
     page.click('[data-testid="script-lib-load"]')
-    page.wait_for_timeout(150)
-    assert "已载入" in page.inner_text('[data-testid="script-status"]'), \
-        f"内置片段 #{index} 载入失败:{page.inner_text('[data-testid=\"script-status\"]')}"
+    deadline = time.time() + 5  # 状态行轮询(慢机器不赌固定 sleep 后的即时读)
+    status_txt = ""
+    while time.time() < deadline:
+        status_txt = page.inner_text('[data-testid="script-status"]')
+        if "已载入" in status_txt:
+            break
+        page.wait_for_timeout(200)
+    assert "已载入" in status_txt, f"内置片段 #{index} 载入失败:{status_txt}"
     page.click('[data-testid="script-run"]')
     deadline = time.time() + 30
     while time.time() < deadline:
@@ -312,6 +354,7 @@ def main() -> int:
                 page.wait_for_function(
                     "ms => Math.abs(Number(document.querySelector('[data-testid=\"playhead-ms\"]')"
                     ".textContent) - ms) <= 34", arg=ms, timeout=5000)
+                arm_toast_collector(page)
                 page.keyboard.press("m")
                 wait_toast(page, "已加标记")
             page.click('[data-testid="tab-script"]')
@@ -328,6 +371,7 @@ def main() -> int:
             # ---------- 场景 2:计划批准流(AC-7.5)+ P0 文件级断言 ----------
             page.select_option('[data-testid="script-lib-select"]', index=1)  # 批量变色
             page.click('[data-testid="script-lib-load"]')
+            arm_toast_collector(page)
             page.click('[data-testid="script-submit"]')
             wait_toast(page, "已送批准流(2 项)")
             page.click('[data-testid="tab-diff"]')
@@ -396,6 +440,7 @@ def main() -> int:
             assert page.locator('[data-testid="plugin-row"]').count() == 3, "三插件应全部入列"
             log("① 安装 ×3 + ② 校验(plugin_valid 徽标 + 权限五面列示): PASS")
             # ③ 权限确认(首启对话框;三插件各一次)
+            arm_toast_collector(page)
             for pid in ("demo-command", "demo-menu", "demo-panel"):
                 enable_plugin(page, pid, first_run=True)
             wait_toast(page, "插件已启用")
@@ -407,10 +452,12 @@ def main() -> int:
             menu_txt = page.inner_text('[data-testid="context-menu"]')
             assert "插件:统计片段数(示例·统计命令)" in menu_txt, f"命令贡献点未进右键菜单: {menu_txt}"
             assert "插件:片段信息卡(示例·片段信息菜单)" in menu_txt, f"菜单贡献点未进右键菜单: {menu_txt}"
+            arm_toast_collector(page)
             page.click('[data-testid="context-menu"] button:has-text("统计片段数")')
             wait_toast(page, "时间线共 2 个片段")
             page.click('[data-testid="clip"]', button="right")
             page.wait_for_selector('[data-testid="context-menu"]', timeout=5000)
+            arm_toast_collector(page)
             page.click('[data-testid="context-menu"] button:has-text("片段信息卡")')
             wait_toast(page, f"片段 {clips[0]['id']}")
             page.click('[data-testid="tab-plugin-demo-panel-stats"]', timeout=5000)
@@ -449,6 +496,7 @@ def main() -> int:
                 "})();\n", encoding="utf-8")
             rev_pre_forbidden = server_rev(serve.port, token, root)
             install_plugin(page, [naughty / "manifest.json", naughty / "main.js"], "naughty-plugin")
+            arm_toast_collector(page)
             enable_plugin(page, "naughty-plugin", first_run=True)
             blocked = wait_toast(page, "越权被拦")
             assert "FORBIDDEN" in blocked and "GUARD_FAILED" in blocked, f"宿主拦截回执: {blocked}"
@@ -483,6 +531,7 @@ def main() -> int:
             boom_row = page.locator('[data-testid="plugin-row"][data-pid="boom-plugin"]')
             boom_row.locator('[data-testid="plugin-enable"]').click()
             page.wait_for_selector('[data-testid="plugin-confirm-dialog"]', timeout=5000)
+            arm_toast_collector(page)
             page.click('[data-testid="plugin-confirm-ok"]')
             # 崩溃路径:不等 running(必然到不了)——等崩溃 toast;徽标经 plugin-refresh
             # 观察刷新后断言(crashPlugin 内 stopPlugin 触发的重渲先于 setEnabled 落账,
@@ -546,6 +595,7 @@ def main() -> int:
             nid = notes_open[0]["id"]
             # 第一轮:UI 线程回复(note_reply,不改 state);行重渲竞态重试(ui_smoke 同口径)
             for _ in range(4):
+                arm_toast_collector(page)
                 row = page.locator('[data-testid="note-row"]').filter(has_text=nid).first
                 row.locator('[data-testid="note-thread-body"]').fill("第一轮:人问,能再快 5% 吗")
                 row.locator('[data-testid="note-thread-send"]').click()

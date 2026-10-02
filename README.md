@@ -112,6 +112,12 @@ CI 示例;**`e2e_ai_native.py`**(AC-7.3/7.5 判定器:脚本三片段预演/批�
 (AC-7.4 纯 CLI 全链);`gate.py A7` 24 项全绿;决策见 ADR-0024/0025/0026,
 台账见 [docs/A7-PROGRESS.md](docs/A7-PROGRESS.md)。
 
+**七册迭代全部收官(2026-09-27 ~ 10-02)**:A1 内核重构 → A2 前端重写 → A3 用户工学 →
+A4 核心工具 → A5 专业深度 → A6 独立化 → A7 AI 原生;工具面 41→83、e2e 3→20 份、
+ADR 0009–0026(附录 C 决策登记全落库);总收官记录与诚实落差清单见
+[docs/A8-ITERATION-SUMMARY.md](docs/A8-ITERATION-SUMMARY.md)(含纯净机 VM 验收等
+跨册人工项清单)。
+
 - **M0**:ARL-1.0 混合授权三件套、命名核查存档、工具链 pin(与上游一致)、统一门禁入口、CI 骨架。
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
 - **M2**:`cutforge-core`(领域模型/命令通道/撤销栈/OpLog/三路合并骨架/锚点,行覆盖 ≥80%,wasm32 可构建)+ `cutforge-io`(工程读写/原子写唯一落盘点/锁/备份/媒体探测/轮询 watcher)+ `cutforge-cli`(打开/查询/应用/撤销重做/OpLog + 门禁判定器)。

@@ -8,14 +8,46 @@
 > 批次(7f02955 之后的未提交工作面)+ 册三「UX 动效/键位/可访问性」批次 +
 > 册四「核心工具与媒体管线」批次(a2ba870~77cade5 已提交;FE2/收口波为未提交工作面)+
 > 册五「专业深度」批次(E-BE1 6de2f23 / E-BE2 492bc1b / E-BE3 a45f52f / E-FE1 9b33927 已提交;
-> E-FE2/收口波为未提交工作面);版本号待发行时定(沿用仓库惯例:发行时才把本段改为版本号。
+> E-FE2/收口波为未提交工作面)+ 册六「独立化」批次 + 册七「AI 原生与开放生态」批次
+> (G0 68927f7 / G1 ea3065a / G2 ec23bbe+a7fad76 已提交;G2 壳侧与 G3 收口波为未提交
+> 工作面);版本号待发行时定(沿用仓库惯例:发行时才把本段改为版本号。
 > 此前的 v0.6 批次——编辑器 NLE 化、schema v2 M14 双仓同步——发行时一并补记)。
 > 册二台账见 [docs/A2-PROGRESS.md](docs/A2-PROGRESS.md);册三台账见
 > [docs/A3-PROGRESS.md](docs/A3-PROGRESS.md);册四台账见
 > [docs/A4-PROGRESS.md](docs/A4-PROGRESS.md);册五台账见
-> [docs/A5-PROGRESS.md](docs/A5-PROGRESS.md)。
+> [docs/A5-PROGRESS.md](docs/A5-PROGRESS.md);册六台账见
+> [docs/A6-PROGRESS.md](docs/A6-PROGRESS.md);册七台账见
+> [docs/A7-PROGRESS.md](docs/A7-PROGRESS.md)。
 
 ### 新增
+
+- **册七(A7)AI 原生与开放生态**:**Editor API 版本化(T7.1)**——`/api/v1` REST 面
+  (POST `tools/<tool>` 单表转发 + 7 GET 别名 + SSE 事件流 + 5.4 状态码映射;旧 `/rpc`
+  保留为别名,ADR-0025 URL 版本);OpenAPI 3.1 由工具注册表生成(`docs/api/openapi.json`,
+  `--check` 漂移门)+ TS SDK 生成物(`apps/sdk/cutforge.ts`,真 serve 16 断言;
+  Python SDK 未做,登记 A7-L);**工程打包(T7.6)**——`.cfpkg` 打包/解包
+  (`project_package`/`project_unpackage`,zipstore 单源 + zip-slip 防线,往返 byte 等价);
+  **AI 协作面(T7.5)**——`preview_plan`(同卷副本工程逐项 dry-run,与真实写通道同一
+  dispatch 实现,真工程零落盘)/`apply_plan`(default-deny 逐项批准,causedBy 绑 planId
+  审计链,未批准/被拒项绝不落地)/`note_reply`(标注线程化)/`session_report`(人话
+  Markdown 会话报告);**插件系统(T7.2,ADR-0024 分级:JS Worker 先行)**——服务端
+  manifest schema + `plugin_validate` + `plugin-call`(actor=plugin 归因,权限裁决
+  查询→read/写→write/编排→exec,越权 GUARD_FAILED/FORBIDDEN)+ `docs/PLUGIN-SPEC.md`;
+  壳侧 Worker 宿主(安装→校验卡→首启权限确认→启停/卸载;命令/菜单/面板三贡献点;
+  面板 HTML 受控渲染;宿主权限裁决镜像 + 崩溃自动禁用)+ 三件套示例
+  (`apps/web/examples/plugins/`);**脚本页签(T7.3)**——cutforge-script-v1 编辑/
+  片段库(内置三片段:按标记切割/批量变色/批量转场)/运行(preview_plan 预演,
+  `script_run` RPC 候 BE 登记A7-L)/以 plan 提交进批准流/AI 粘贴区(人在环);
+  **Headless(T7.4)**——`cutforge-cli batch`(JSON/YAML 清单 + 报告 schema 生成物)+
+  `watch`(防抖自动重渲)+ `tools/ci-example/`;**验收**——`tools/e2e_ai_native.py`
+  (AC-7.3/7.5 判定器:脚本三片段预演/批准流 causedBy 对账+被拒项零落地/插件九步/
+  标注线程+报告;含 P0 文件级断言)+ `tools/e2e_headless.py`(AC-7.4 纯 CLI 全链);
+  **P0 修复(G3)**——`scratch.rs::copy_tree` 硬链接穿透(OpLog append-only 直写
+  inode,预演 Op 穿透写回真工程):append-only 面(oplog/rev)强制整拷贝 + 文件级
+  回归测试两道(红绿证据留档);**gate A7 注册**(A6 二十二项继承 + 两份新 e2e,
+  24 项全阻断;CI 只加 e2e_ai_native);录屏补录 5 支(56-60,总量 ≈7.77MB ≤ 8MB)。
+  工具 **76→78→83 = 21 查询 + 42 写 + 20 编排**。决策见 ADR-0024/0025/0026;
+  台账见 [docs/A7-PROGRESS.md](docs/A7-PROGRESS.md)。
 
 - **册六(A6)独立化 · T6.1 工程库与布局 v3**:工程布局 **v3 扁平目录**(真相源全部在根
   `project.json/wordline.json/cutlist.json/cutlist.applied.json/notes.json` + `media/` +
@@ -78,6 +110,14 @@
   AC-6.1~6.7 状态表与 A6-L 遗留(缺省布局翻转/单实例协议/Inno 编译验证等七项)见
   [docs/A6-PROGRESS.md](docs/A6-PROGRESS.md)。
 
+- **册六(A6)补漏(册七收官查漏补记)**:T6.3 收口波补钉——**v3 工程导出产物落点**
+  (`RenderPlan::build_full` 补 v3 → `exports/` 分支,`render_matrix` 布局三态集成
+  测试钉坑)+ **export 编码分派归位**(`exec_export_encode` 自 lib.rs 平移至
+  `export.rs`,lib.rs 760/export.rs 710/plan.rs 794 全部 ≤800 行红线,clippy 新告警
+  同轮清零);T6.1 顺手收口——`grade_tools.rs` lut_import 旁路写入改走
+  `atomic::atomic_write`(A5 遗留,`check-write-paths` 复绿)+ `atomic.rs` 增
+  `rename`/`remove_dir_all` 结构性原语(目录级操作收敛唯一落盘点纪律)。
+
 - **册五(A5)专业深度**:关键帧引擎 IR v3(schemaVersion 3.0.0 双读兼容;白名单属性
   + closed interp + 贝塞尔精确求值,求值器单源,投影下发 `keyframes`/`keyframeSamples`
   采样点集,壳零插值;五条渲染通路按 ADR-0018 分级:position/rotation/scale/opacity/volume
@@ -97,7 +137,7 @@
   e2e 新增 `e2e_keyframes.py`/`e2e_color.py`(AC-5.1/5.2 壳侧闭环);gate A5 注册。
   **收口波补记**(2026-10-01):`patch.keyframes` 空数组=清空全部关键帧(schema minItems
   移除 + 单测 `keyframes_clear.rs`)+ grade 入投影键恒在;parity 68 新七工具夹具落库,
-  golden 重录后连跑两次 0 DRIFT;录屏补齐 34 支(7.27MB ≤ 8MB 红线,册五 15 支 VP9 重编码);
+  golden 重录后连跑两次 0 DRIFT;录屏补齐 34 支(7.27MB ≤ 8MB 红线,册五 15 支 VP9 重编码;顺手修 capture 剧本两处 bug——10-scene 等待条件错对原始键名 cutCount→改等 scene-summary 摘要行、scene-auto testid 挂 checkbox 本体选择器去掉 ` input`);
   gate A5 二十一项全绿,台账收口波节留档。
 
 - **渲染七步分解(RenderPlan)**:`render()` 单函数(≈440 行)拆为 `plan.rs`(纯函数计划)

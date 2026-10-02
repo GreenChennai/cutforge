@@ -94,6 +94,24 @@ motion 真实渲染 19 项、文本渲染(`textStyle` 14 字段→确定性 ASS 
 **进程树断言零 python 子进程** + 产物像素校验 + 纯 CLI 面);`gate.py A6` 22 项全绿;
 决策见 ADR-0021/0022/0023,台账见 [docs/A6-PROGRESS.md](docs/A6-PROGRESS.md)。
 
+**册七(A7 · AI 原生与开放生态)已完成**:**Editor API 版本化**——`/api/v1` REST 面
+(POST `tools/<tool>` 单表转发 + 7 个 GET 别名 + SSE 事件流 + 状态码映射;旧 `/rpc`
+保留为别名,ADR-0025)、OpenAPI 3.1 描述由工具注册表生成(`docs/api/openapi.json`,
+`--check` 漂移门)、TS SDK 生成物(`apps/sdk/cutforge.ts`,真 serve 实测;Python SDK
+未做,登记 A7-L)、`.cfpkg` 工程打包/解包(zipstore 单源 + zip-slip 防线);**AI 协作面**——
+`preview_plan`(同卷副本工程逐项 dry-run,真工程零落盘)/`apply_plan`(default-deny
+逐项批准,causedBy 绑 planId 可审计)/`note_reply`(标注线程化)/`session_report`
+(人话 Markdown 会话报告);**插件系统**(ADR-0024 分级:JS Worker 先行)——manifest
+schema + `plugin_validate` + `plugin-call` 服务端权限裁决(actor=plugin 归因)+
+壳侧 Worker 宿主(命令/菜单/面板三贡献点、首启权限确认、越权双拦截、崩溃隔离)、
+三件套示例(`apps/web/examples/plugins/`);**脚本页签**(cutforge-script-v1 以 plan
+形态运行,三内置片段:按标记切割/批量变色/批量转场;script_run RPC 候 BE,登记 A7-L);
+**Headless**——批清单(JSON/YAML)排队 + watch 防抖自动重渲 + batch-report schema +
+CI 示例;**`e2e_ai_native.py`**(AC-7.3/7.5 判定器:脚本三片段预演/批准流 causedBy
+对账+被拒项零落地/插件九步/标注线程+报告;含 P0 文件级断言)+ `e2e_headless.py`
+(AC-7.4 纯 CLI 全链);`gate.py A7` 24 项全绿;决策见 ADR-0024/0025/0026,
+台账见 [docs/A7-PROGRESS.md](docs/A7-PROGRESS.md)。
+
 - **M0**:ARL-1.0 混合授权三件套、命名核查存档、工具链 pin(与上游一致)、统一门禁入口、CI 骨架。
 - **M1**:五份 schema(唯一手写契约)+ 双端代码生成(Python 生成校验器 / Rust `cutforge-schema`)+ 常量单源零漂移 + 迁移器幂等 + 回归集对拍(双端结论逐样本一致)。
 - **M2**:`cutforge-core`(领域模型/命令通道/撤销栈/OpLog/三路合并骨架/锚点,行覆盖 ≥80%,wasm32 可构建)+ `cutforge-io`(工程读写/原子写唯一落盘点/锁/备份/媒体探测/轮询 watcher)+ `cutforge-cli`(打开/查询/应用/撤销重做/OpLog + 门禁判定器)。
@@ -129,13 +147,14 @@ motion 真实渲染 19 项、文本渲染(`textStyle` 14 字段→确定性 ASS 
 | `check-ui-fields` | 检查器可编辑字段 ⊆ 内核 `ClipPatch`(从实码解析,单一真相源) |
 | `check_doc_counts` | 文档里的工具数口径必须与 `schemas/mcp-tools.json` 一致,漂移点名到文件:行 |
 | `protocol_conformance` | MCP 注册表与 dispatch 逐一相等,stdio 与内嵌 HTTP 差异恒为 0 |
-| `tool_parity` | 工具黄金响应库逐键对拍,行为漂移即红(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增八工具后 56;册五 A5 增调色/音频/队列五工具后 61,A5-BE3 增专业编辑/互操作七工具后 68,册六 A6 增布局迁移/工程库四工具后 72、导出矩阵/素材库四工具后 76,册七 A7 增 .cfpkg 打包/解包两工具后 78,随后册七 T7.5/T7.2 新工具与 golden 重录同批对账;数量以 schemas/mcp-tools.json 实配为准) |
+| `tool_parity` | 工具黄金响应库逐键对拍,行为漂移即红(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增八工具后 56;册五 A5 增调色/音频/队列五工具后 61,A5-BE3 增专业编辑/互操作七工具后 68,册六 A6 增布局迁移/工程库四工具后 72、导出矩阵/素材库四工具后 76,册七 A7 增 .cfpkg 打包/解包两工具后 78、AI 协作面/插件校验五工具(preview_plan/apply_plan/note_reply/session_report/plugin_validate)后 83;数量以 schemas/mcp-tools.json 实配为准) |
 | `cargo test` | 领域模型/合并/OpLog/渲染对拍(ffmpeg 实测矩阵)/脚手架/只读并发/HTTP 加固/缓存寻址 |
-| e2e × 18 | 编辑操作全链(Playwright)、预览(画面/声音/seek/像素非黑)、**从零剪**(新建→导入→改字段→导出+并发+会话摘要)、静态托管(穿越 100% 拒绝/ETag 304)、事件推送(SSE P95/长轮询降级)、UI 冒烟(data-testid 驱动/DOM 变更预算/selfTest/超时-401-降级)、播放生存(播放零中断)、时间线性能(1k clips 虚拟化+帧率,本机跑)、**拖拽手感**(P95/跟手 ≤1 帧/Esc 取消零 Op)、**键位体系**(45 条注册表遍历+实按+重绑定)、**可访问性**(键盘闭环+axe 扫描 0 critical/serious)、**性能预算**(首屏/页签/导出节奏/池有界)、**编辑全工具**(四件套恰一 Op+实渲逐差+锁定拒编辑)、**字幕编辑器**(SRT byte 级往返+帧证位置+卡拉OK+花字)、**媒体池千素材**(P95 63.3fps+懒加载+听觉存档)、**关键帧闭环**(秒表打点单 Op/投影采样对拍/曲线拖锚写回/菱形拖移)、**调色闭环**(色轮写回/帧色偏/LUT/示波器三画布/分屏割线)、**独立运行**(CUTFLOW_* 剥离环境隔离/四大件零 python 进程树断言/纯 CLI 面)——册三新增四份、册四新增三份、册五新增两份、册六新增一份,帧率类本机跑 |
+| e2e × 20 | 编辑操作全链(Playwright)、预览(画面/声音/seek/像素非黑)、**从零剪**(新建→导入→改字段→导出+并发+会话摘要)、静态托管(穿越 100% 拒绝/ETag 304)、事件推送(SSE P95/长轮询降级)、UI 冒烟(data-testid 驱动/DOM 变更预算/selfTest/超时-401-降级)、播放生存(播放零中断)、时间线性能(1k clips 虚拟化+帧率,本机跑)、**拖拽手感**(P95/跟手 ≤1 帧/Esc 取消零 Op)、**键位体系**(45 条注册表遍历+实按+重绑定)、**可访问性**(键盘闭环+axe 扫描 0 critical/serious)、**性能预算**(首屏/页签/导出节奏/池有界)、**编辑全工具**(四件套恰一 Op+实渲逐差+锁定拒编辑)、**字幕编辑器**(SRT byte 级往返+帧证位置+卡拉OK+花字)、**媒体池千素材**(P95 63.3fps+懒加载+听觉存档)、**关键帧闭环**(秒表打点单 Op/投影采样对拍/曲线拖锚写回/菱形拖移)、**调色闭环**(色轮写回/帧色偏/LUT/示波器三画布/分屏割线)、**独立运行**(CUTFLOW_* 剥离环境隔离/四大件零 python 进程树断言/纯 CLI 面)、**纯 CLI 全链**(headless:单链+批清单 3 工程+报告 schema+插件面+watch)、**AI 原生**(脚本三片段预演/批准流 causedBy 对账/插件九步/标注线程+报告)——册三新增四份、册四新增三份、册五新增两份、册六新增一份、册七新增两份,帧率类本机跑 |
 | `gate.py A3`(册级) | UX/键位/可访问性册级聚合:**15 项全阻断**(纯度 v3 含 R5 色值/行数红线/tool_parity 42,时点口径/九份 e2e 聚合/pytest);负载敏感项本机册收官跑 |
 | `gate.py A4`(册级) | 核心工具与媒体管线册级聚合:**18 项全阻断**(A3 十五项一字不动全部继承 + editing_tools/subtitle_editor/media_perf 三份新 e2e;tool_parity 61);千素材帧率等负载敏感项本机册收官跑 |
 | `gate.py A5`(册级) | 专业深度册级聚合:**21 项全阻断**(A4 十八项一字不动全部继承 + keyframes/color 两份新 e2e + bench 阈值 AC-5.7 ≤20%;tool_parity(schema 实配口径));负载敏感项本机册收官跑 |
 | `gate.py A6`(册级) | 独立化册级聚合:**22 项全阻断**(A5 二十一项一字不动全部继承 + e2e_independence:AC-6.3 环境隔离+四大件+零 python 进程树断言+纯 CLI 面);负载敏感项本机册收官跑;CI 只加 e2e_independence(ubuntu 天然隔离) |
+| `gate.py A7`(册级) | AI 原生与开放生态册级聚合:**24 项全阻断**(A6 二十二项一字不动全部继承 + e2e_ai_native(AC-7.3/7.5 判定器 + P0 文件级断言)+ e2e_headless(AC-7.4 纯 CLI 全链));负载敏感项本机册收官跑;CI 只加 e2e_ai_native |
 
 ```bash
 python tools/gates/gate.py M0 --json     # 统一门禁入口(结果协议见下)
@@ -156,12 +175,15 @@ python tools/e2e_editing_tools.py                # 册四新增(四件套恰一 
 python tools/e2e_subtitle_editor.py              # 册四新增(SRT byte 级往返+帧证位置+卡拉OK+花字)
 python tools/e2e_media_perf.py --min-fps 55      # 册四新增(千素材 P95+懒加载+听觉存档;负载敏感,本机跑)
 python tools/e2e_independence.py                 # 册六新增(AC-6.3:环境隔离+四大件+零 python 进程树断言+纯 CLI 面)
+python tools/e2e_headless.py                     # 册七新增(AC-7.4:纯 CLI 全链,无 UI 无 serve)
+python tools/e2e_ai_native.py                    # 册七新增(AC-7.3/7.5:脚本三片段/批准流/插件九步/线程+报告)
 python tools/gates/gate.py A1 --json     # 册级门禁(clippy/≤800 行红线/tool_parity/e2e/bench 聚合)
 python tools/gates/gate.py A2 --json     # 册二册级门禁(12 项:壳行数/纯度 v2/e2e 面;1 观察)
 python tools/gates/gate.py A3 --json     # 册三册级门禁(15 项全阻断:纯度 v3 含 R5/拖拽/键位/可访问性/性能预算)
 python tools/gates/gate.py A4 --json     # 册四册级门禁(18 项全阻断:继承 A3 + 编辑工具/字幕/千素材三份新 e2e)
 python tools/gates/gate.py A5 --json     # 册五册级门禁(21 项全阻断:继承 A4 + 关键帧/调色 e2e + bench 阈值)
 python tools/gates/gate.py A6 --json     # 册六册级门禁(22 项全阻断:继承 A5 + 独立运行 e2e)
+python tools/gates/gate.py A7 --json     # 册七册级门禁(24 项全阻断:继承 A6 + AI 原生/纯 CLI 两份新 e2e)
 ```
 
 结果协议:`{"ok":bool,"code":str,"message":str,"data":object}`;退出码 `0`=通过、`2`=门禁失败、`3`=前置/环境缺失、`4`=内部错误。

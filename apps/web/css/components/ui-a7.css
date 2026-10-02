@@ -1,0 +1,111 @@
+/* 组件:册七 A7(T7.3 脚本页签 / T7.2 插件宿主 / T7.5 计划批准流 + 标注线程)。
+ * 色值零硬编码:全部经 var(--cf-*) token(壳纯度 R5)。 */
+
+/* ---------------- T7.3 脚本页签 ---------------- */
+.script-editor-wrap { display: flex; gap: var(--cf-s2); align-items: stretch; margin: var(--cf-s3) 0; }
+.script-gutter {
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-fs-m);
+  line-height: var(--cf-lh-m);
+  color: var(--cf-dim);
+  text-align: right;
+  padding: var(--cf-s3) var(--cf-s2);
+  background: var(--cf-panel-deep);
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-r-s);
+  overflow: hidden;
+  white-space: pre;
+  min-width: 3em;
+  user-select: none;
+}
+.script-editor {
+  flex: 1;
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--cf-font-mono);
+  font-size: var(--cf-fs-m);
+  line-height: var(--cf-lh-m);
+  background: var(--cf-panel-deep);
+  color: var(--cf-input-fg);
+  border: 1px solid var(--cf-input-border);
+  border-radius: var(--cf-r-s);
+  padding: var(--cf-s3);
+  white-space: pre;
+}
+.script-editor.ai { min-height: 96px; }
+#tab-script .filter-row { margin: var(--cf-s2) 0; }
+
+/* ---------------- T7.5 计划批准流 ---------------- */
+.plan-card {
+  border: 1px solid var(--cf-line-soft);
+  border-radius: var(--cf-r-m);
+  padding: var(--cf-s3);
+  margin: var(--cf-s2) 0;
+  background: var(--cf-panel-deep);
+}
+.plan-card.approve { border-color: var(--cf-ok-fg); }
+.plan-card.reject { border-color: var(--cf-warn-fg); opacity: .75; }
+.plan-card.err { border-color: var(--cf-danger-line); }
+.plan-decision { font-size: var(--cf-fs-s); color: var(--cf-dim); margin: var(--cf-s1) 0; }
+.plan-dec { min-width: 3.5em; }
+.plan-dec.approve.on { border-color: var(--cf-ok-fg); color: var(--cf-ok-fg); }
+.plan-dec.reject.on { border-color: var(--cf-warn-fg); color: var(--cf-warn-fg); }
+.plan-changes { margin-top: var(--cf-s2); display: grid; gap: var(--cf-s1); }
+.plan-change {
+  display: flex; flex-wrap: wrap; gap: var(--cf-s2); align-items: baseline;
+  font-size: var(--cf-fs-s); padding: var(--cf-s1) 0;
+  border-top: 1px dashed var(--cf-line);
+}
+.plan-opid { color: var(--cf-dim); }
+.plan-path { font-family: var(--cf-font-mono); }
+.plan-delta { font-family: var(--cf-font-mono); font-size: var(--cf-fs-s); overflow-wrap: anywhere; }
+.plan-delta.elided { color: var(--cf-warn-fg); }
+.plan-rev { font-family: var(--cf-font-mono); font-size: var(--cf-fs-s); color: var(--cf-dim); }
+.plan-actions { border-top: 1px solid var(--cf-line); padding-top: var(--cf-s3); margin-top: var(--cf-s3); }
+.plan-err { color: var(--cf-danger-fg); font-size: var(--cf-fs-s); margin: var(--cf-s2) 0; }
+.plan-warn { color: var(--cf-warn-fg); font-size: var(--cf-fs-s); margin: var(--cf-s1) 0; }
+.plan-causedby { font-size: var(--cf-fs-s); color: var(--cf-dim); }
+.plan-causedby .plan-id { color: var(--cf-accent-soft); }
+.plan-result { flex-wrap: wrap; }
+.plan-paste { font-family: var(--cf-font-mono); font-size: var(--cf-fs-s); }
+.plan-report { max-width: 860px; }
+.md-render { font-size: var(--cf-fs-n); line-height: var(--cf-lh-n); }
+.md-h { margin: var(--cf-s4) 0 var(--cf-s2); color: var(--cf-accent-soft); }
+.md-ul { margin: var(--cf-s2) 0; padding-left: var(--cf-s8); }
+.md-p { margin: var(--cf-s2) 0; }
+.md-pre {
+  background: var(--cf-sunken); color: var(--cf-fg);
+  padding: var(--cf-s3); border-radius: var(--cf-r-s); overflow-x: auto;
+  font-family: var(--cf-font-mono); font-size: var(--cf-fs-s);
+}
+
+/* ---------------- T7.5 标注线程 ---------------- */
+.note-thread { margin-top: var(--cf-s2); display: grid; gap: var(--cf-s1); }
+.note-thread-item { display: flex; gap: var(--cf-s2); align-items: baseline; font-size: var(--cf-fs-s); }
+.note-thread-at { color: var(--cf-dim); font-family: var(--cf-font-mono); font-size: var(--cf-fs-xs); }
+.note-thread-body { overflow-wrap: anywhere; }
+.note-thread input[type="text"] { flex: 1; max-width: 420px; }
+.note-done-row { opacity: .85; }
+
+/* ---------------- T7.2 插件面板 ---------------- */
+.plugin-card {
+  border: 1px solid var(--cf-line-soft);
+  border-radius: var(--cf-r-m);
+  padding: var(--cf-s3);
+  margin: var(--cf-s2) 0;
+  background: var(--cf-panel-deep);
+}
+.plugin-perms { display: grid; gap: var(--cf-s1); margin: var(--cf-s2) 0; }
+.plugin-perm-row { display: flex; gap: var(--cf-s2); align-items: center; font-size: var(--cf-fs-s); }
+.plugin-contribs { display: flex; flex-wrap: wrap; gap: var(--cf-s3); align-items: center; margin: var(--cf-s2) 0; }
+.plugin-panel-body { margin-top: var(--cf-s3); }
+.plugin-panel-html { border: 1px solid var(--cf-line); border-radius: var(--cf-r-s); padding: var(--cf-s3); background: var(--cf-sunken); }
+.plugin-panel-html table { border-collapse: collapse; }
+.plugin-panel-html td { border: 1px solid var(--cf-line); padding: var(--cf-s1) var(--cf-s2); font-size: var(--cf-fs-s); }
+.plugin-panel-raw {
+  background: var(--cf-sunken); color: var(--cf-fg);
+  font-family: var(--cf-font-mono); font-size: var(--cf-fs-s);
+  padding: var(--cf-s3); border-radius: var(--cf-r-s);
+  overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+#tab-plugins .filter-row { margin: var(--cf-s2) 0; }

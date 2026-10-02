@@ -32,6 +32,16 @@ pub struct ResolvedBy {
     pub op_ids: Vec<String>,
 }
 
+/// 标注线程的一条追加回复(册七 T7.5 note_reply):同一标注多轮人机对话,
+/// 线程 id = 标注自身 id(不另设线程表,避免第二真相源)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteReply {
+    pub at: String,
+    pub author: NoteAuthor,
+    pub body: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
@@ -51,6 +61,10 @@ pub struct Note {
     pub rejected_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// 追加回复线程(册七 T7.5):按时间序追加,不与 resolved_by 混用
+    /// (结案回执留在 resolved_by;thread 只记多轮对话)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<Vec<NoteReply>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +133,7 @@ impl NotesStore {
             resolved_by: None,
             rejected_reason: None,
             tags: if tags.is_empty() { None } else { Some(tags) },
+            thread: None,
         };
         self.notes.push(note);
         self.notes.last().expect("刚推入必有元素")
@@ -152,6 +167,26 @@ impl NotesStore {
         note.state = NoteState::Rejected;
         note.rejected_reason = Some(reason);
         Ok(note)
+    }
+
+    /// 追加线程回复(册七 T7.5 note_reply):不改 state、不碰 resolved_by——
+    /// 多轮对话是标注的讨论史,结案与否是另一件事;空回复拒绝,未知标注拒绝。
+    pub fn reply(&mut self, id: &str, author: NoteAuthor, body: String) -> Result<&Note, NoteReject> {
+        if body.trim().is_empty() {
+            return Err(NoteReject::EmptyReply(id.to_string()));
+        }
+        let note = self.notes.iter_mut().find(|n| n.id == id).ok_or_else(|| NoteReject::UnknownNote(id.to_string()))?;
+        note.thread.get_or_insert_with(Vec::new).push(NoteReply {
+            at: timeutil::now_rfc3339(),
+            author,
+            body,
+        });
+        Ok(note)
+    }
+
+    /// 线程回复数(会话报告/线程化视图用)。
+    pub fn reply_count(&self, id: &str) -> usize {
+        self.find(id).and_then(|n| n.thread.as_ref()).map(|t| t.len()).unwrap_or(0)
     }
 
     /// 重定位(3.6 规则表):元素位移→跟随;消失→≤nearest_ms 重挂;否则 orphan。
@@ -253,6 +288,28 @@ mod tests {
         let v = store.to_value();
         let back = NotesStore::from_value(&v).expect("自产 notes 必须过 schema");
         assert_eq!(back.notes().len(), 1);
+    }
+
+    /// 册七 T7.5 note_reply:线程多轮追加——state 不变、thread 按序追加、
+    /// 空回复/未知标注拒绝、往返过 schema(thread 可选,老数据零迁移)。
+    #[test]
+    fn reply_thread_appends_and_roundtrips() {
+        let mut store = NotesStore::new();
+        store.add(clip_anchor("V1-001", 4000), "这里语速太快".into(), NoteAuthor::User, vec!["节奏".into()]);
+        store.reply("n-0001", NoteAuthor::Agent, "建议 1.15x,要我改吗?".into()).unwrap();
+        store.reply("n-0001", NoteAuthor::User, "好,改吧".into()).unwrap();
+        // 空回复 / 未知标注拒绝
+        assert!(matches!(store.reply("n-0001", NoteAuthor::Agent, "  ".into()), Err(NoteReject::EmptyReply(_))));
+        assert!(matches!(store.reply("n-9999", NoteAuthor::Agent, "x".into()), Err(NoteReject::UnknownNote(_))));
+        let n = store.find("n-0001").unwrap();
+        assert_eq!(n.state, NoteState::Open, "回复不得改状态");
+        assert_eq!(n.thread.as_ref().unwrap().len(), 2);
+        assert_eq!(n.thread.as_ref().unwrap()[0].author, NoteAuthor::Agent);
+        assert_eq!(store.reply_count("n-0001"), 2);
+        assert_eq!(store.reply_count("无"), 0);
+        // 往返:thread 落盘后再读回必须过 schema
+        let back = NotesStore::from_value(&store.to_value()).expect("带 thread 的 notes 必须过 schema");
+        assert_eq!(back.reply_count("n-0001"), 2);
     }
 
     #[test]

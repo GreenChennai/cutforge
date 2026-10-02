@@ -22,6 +22,7 @@
 #[cfg(test)]
 mod tests;
 
+mod ai_ops;
 mod cutlist_ops;
 mod dispatch;
 mod edit_ops;
@@ -30,9 +31,11 @@ mod grade_tools;
 mod library_tools;
 mod media_library;
 mod media_tools;
+mod plugin;
 mod pro_ops;
 mod subtitle_ops;
 mod orchestrate;
+mod pkg_tools;
 mod progress;
 mod registry;
 mod rpc;
@@ -44,6 +47,8 @@ mod workspace_svc;
 
 // ---- 公开 API:路径与拆分前完全一致(main.rs、cutforge-cli、tests/ 零改动) ----
 pub use dispatch::{dispatch, dispatch_with_actor, handle_rpc, handle_rpc_as};
+pub use plugin::{authorize, plugin_actor, validate_manifest};
+pub use progress::{build_render_extra, render_cutforge_sync, resolve_render_bin};
 pub use registry::{code_namespace, registry, tool_names, CODE_NS, CAPABILITY_MATRIX_JSON, CODES, MCP_TOOLS_JSON, UI_FIELDS_JSON};
 pub use session::new_token;
 pub use transport::http::serve_http;

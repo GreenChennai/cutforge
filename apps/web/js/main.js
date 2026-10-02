@@ -37,6 +37,9 @@ import * as queue from "./panels/queue.js";
 import { mountPreviewTransform } from "./render/preview-transform.js";
 import { mountScopes } from "./panels/scopes.js";
 import { mountCompare } from "./panels/compare.js";
+import { mount as mountScript } from "./panels/script.js";
+import { mountPlugins } from "./plugins/manager.js";
+import { startAllEnabled } from "./plugins/host.js";
 import { ensureCatalogs } from "./core/catalogs.js";
 import { openWizard } from "./panels/wizard.js";
 import { mountOnboarding } from "./ui/onboarding.js";
@@ -62,6 +65,9 @@ async function boot() {
   mixer.mount($("tab-mixer"));
   multicam.mount($("tab-multicam")); scenetool.mount($("tab-multicam"));
   queue.mount($("tab-queue"));
+  // 册七 A7:脚本页签(T7.3,以 plan 形态运行)+ 插件宿主管理(T7.2,Worker 桥)
+  mountScript($("tab-script"));
+  mountPlugins($("tab-plugins"));
   mountPreviewTransform(); // 画布变换把手层(缩放/旋转/文本拖位置;T4.9)
   mountScopes(); // 示波器面板(T5.2:入口按钮挂预览传输行;开启才采样)
   mountCompare(); // A/B 分屏对比(T5.2 登记项:基准帧快照 vs 当前帧,拖割线)
@@ -94,6 +100,8 @@ async function boot() {
   // 册六 T6.1:v2/v1 工程迁移提示条(可关,常驻入口在「工程」菜单)+ 崩溃残留锁提示
   mountMigrateNotice();
   checkRecoverBanner();
+  // 册七 T7.2:已启用插件拉起(须在 sessionRoot 就绪后——桥代理调用注入工程根)
+  startAllEnabled();
   window.__cutforgeSelfTest = selfTestRebuild; // T2.2 重建铁律自测入口(TESTIDS.md §五)
   recordBoot(performance.now() - tBoot); // T3.5 首屏可交互预算(投影+素材首览完成)
 }
@@ -126,9 +134,11 @@ function wireEvents() {
 }
 
 function bindChrome() {
-  for (const b of document.querySelectorAll("#tabs button")) {
-    b.addEventListener("click", () => uiStore.set({ tab: b.dataset.tab }));
-  }
+  // 页签切换走事件委托:插件面板贡献点的动态页签(T7.2)装配后才出现,逐钮绑定够不着
+  $("tabs").addEventListener("click", (e) => {
+    const b = e.target && /** @type {HTMLElement} */ (e.target).closest("button[data-tab]");
+    if (b) uiStore.set({ tab: b.dataset.tab });
+  });
   $("btn-project-new").addEventListener("click", openWizard);
   // 册六 T6.1:「工程」菜单(向导/工程库/布局迁移常驻入口)
   $("btn-project-menu").addEventListener("click", (e) => {

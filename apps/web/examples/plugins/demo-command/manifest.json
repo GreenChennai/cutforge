@@ -1,0 +1,20 @@
+{
+  "id": "demo-command",
+  "name": "示例·统计命令",
+  "version": "1.0.0",
+  "form": "worker",
+  "entry": "main.js",
+  "description": "命令贡献点示例:统计时间线片段数(只读;timeline_get 经宿主代理,token 不下发给插件)。",
+  "permissions": {
+    "read": true,
+    "write": false,
+    "network": false,
+    "filesystem": [],
+    "exec": false
+  },
+  "contributes": {
+    "commands": [
+      { "id": "clip-count", "title": "统计片段数" }
+    ]
+  }
+}

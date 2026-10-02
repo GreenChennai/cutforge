@@ -1,0 +1,72 @@
+{
+ "tool": "plugin_validate",
+ "calls": [
+  {
+   "args": {
+    "manifest": {
+     "id": "parity-plugin",
+     "name": "对拍插件",
+     "version": "1.0.0",
+     "form": "worker",
+     "entry": "main.js",
+     "description": "对拍夹具",
+     "permissions": {
+      "read": true,
+      "write": true
+     },
+     "contributes": {
+      "commands": [
+       {
+        "id": "cmd-1",
+        "title": "命令甲"
+       }
+      ]
+     }
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "errors": [],
+     "valid": true,
+     "warnings": [
+      "声明了写权限但未给 permissions.filesystem 白名单(建议显式声明允许写入的工程内目录)"
+     ]
+    },
+    "message": "manifest 合法",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "manifest": {
+     "id": "Bad",
+     "version": "1.0",
+     "form": "vm",
+     "entry": "p.py",
+     "permissions": {
+      "root": true
+     }
+    }
+   },
+   "response": {
+    "code": "SCHEMA_INVALID",
+    "data": {
+     "errors": [
+      "$: 缺必填键 'name'",
+      "$.form: enum [String(\"worker\"), String(\"process\")] 不含 \"vm\"",
+      "$.id: pattern \"^[a-z][a-z0-9-]{1,63}$\" 不匹配 \"Bad\"",
+      "$.permissions: additionalProperties=false 拒绝多余键 'root'",
+      "$.version: pattern \"^[0-9]+/.[0-9]+/.[0-9]+$\" 不匹配 \"1.0\""
+     ],
+     "valid": false,
+     "warnings": []
+    },
+    "message": "manifest 不合法",
+    "ns": "core",
+    "ok": false
+   }
+  }
+ ]
+}

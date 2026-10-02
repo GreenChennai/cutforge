@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CutForge 批处理报告 v1(册七 T7.4;cutforge-cli batch 产物,生成物对拍基准)",
+  "description": "cutforge-cli batch <manifest.json|yaml> 的结构化报告:逐工程渲染回执 + 汇总。e2e_headless 以本 schema 做生成物对拍;CI 可据 fail>0 判红。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "version", "startedAt", "finishedAt", "durationMs", "manifest", "jobs", "summary"],
+  "properties": {
+    "kind": {
+      "const": "cutforge-batch-report",
+      "description": "报告类型标识(机器识别面)"
+    },
+    "version": {
+      "const": 1
+    },
+    "startedAt": {
+      "type": "string",
+      "description": "ISO 8601 含时区;批处理开始时间"
+    },
+    "finishedAt": {
+      "type": "string",
+      "description": "ISO 8601 含时区;批处理结束时间"
+    },
+    "durationMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "总耗时(墙钟毫秒)"
+    },
+    "manifest": {
+      "type": "string",
+      "description": "清单文件路径(原样回执)"
+    },
+    "renderBin": {
+      "type": ["string", "null"],
+      "description": "实际使用的 cutforge-render 可执行路径(未定位到时 null)"
+    },
+    "jobs": {
+      "type": "array",
+      "description": "逐工程渲染回执,顺序与清单 projects 一致(单排队)",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "project", "name", "ok", "code", "durationMs"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "清单内下标(0 起)"
+          },
+          "project": {
+            "type": "string",
+            "description": "工程根目录(缺 root 的非法条目为空串)"
+          },
+          "name": {
+            "type": "string",
+            "description": "工程名(条目 name 或目录名)"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "code": {
+            "enum": ["OK", "PRECONDITION_FAILED", "NO_CONFIG", "DEP_MISSING", "INTERNAL"],
+            "description": "结果协议码(5.4 表子集;渲染链路实际出口)"
+          },
+          "output": {
+            "type": "string",
+            "description": "成片产物路径(成功时)"
+          },
+          "error": {
+            "type": "string",
+            "description": "失败原因(失败时)"
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "该工程渲染耗时(毫秒)"
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "ok", "fail"],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "清单工程总数"
+        },
+        "ok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fail": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "report": {
+      "type": "string",
+      "description": "报告自身落盘路径(--report 或清单 report 键;仅在写盘时出现)"
+    }
+  }
+}

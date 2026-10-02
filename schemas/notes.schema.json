@@ -152,6 +152,37 @@
        "type": "string"
       },
       "description": "自由标签(如'节奏')"
+     },
+     "thread": {
+      "type": "array",
+      "description": "追加回复线程(册七 T7.5 note_reply):同一标注多轮人机对话,线程 id = 标注自身 id;按时间序追加,不改 state、不碰 resolvedBy(结案回执独立留痕)",
+      "items": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "at",
+        "author",
+        "body"
+       ],
+       "properties": {
+        "at": {
+         "type": "string",
+         "description": "ISO 8601 含时区与毫秒"
+        },
+        "author": {
+         "enum": [
+          "user",
+          "agent"
+         ],
+         "description": "回复者(user=人 / agent=AI)"
+        },
+        "body": {
+         "type": "string",
+         "minLength": 1,
+         "description": "回复正文(非空)"
+        }
+       }
+      }
      }
     }
    }

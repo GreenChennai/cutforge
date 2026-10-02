@@ -1,0 +1,35 @@
+{
+ "tool": "project_package",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/wsmig",
+    "out": "<TMP>/wsmig-pkg.cfpkg"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "counts": {
+      "exports": 0,
+      "media": 0,
+      "oplog": 0,
+      "project": 1
+     },
+     "files": 2,
+     "format": "cfpkg",
+     "formatVersion": 1,
+     "missing": [],
+     "name": "parity-mig",
+     "note": "解包:project_unpackage(src=该文件,root=新工程目录);布局语义见 docs/PROJECT-FORMAT.md",
+     "out": "<TMP>/wsmig-pkg.cfpkg",
+     "rev": "<REV>",
+     "schemaVersion": "3.0.0",
+     "sourceLayout": "v3"
+    },
+    "message": "工程已打包(.cfpkg)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

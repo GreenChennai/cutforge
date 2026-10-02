@@ -1,0 +1,131 @@
+{
+ "$schema": "http://json-schema.org/draft-07/schema#",
+ "title": "CutForge 插件 manifest v1(册七 T7.2/ADR-0024:双形态共用一套权限模型)",
+ "description": "插件清单:Worker 形态(壳内 Web Worker)与外部进程形态(CLI 协议)共用;权限面五类声明(读/写/网络/文件系统/执行进程),一切工程写操作必须走 Op 通道(actor=plugin,OpLog 如实归因)。服务端权限裁决 = manifest 声明 vs 工具分类(查询/写/编排);契约见 docs/PLUGIN-SPEC.md。",
+ "type": "object",
+ "additionalProperties": false,
+ "required": [
+  "id",
+  "name",
+  "version",
+  "form",
+  "entry",
+  "permissions"
+ ],
+ "properties": {
+  "id": {
+   "type": "string",
+   "pattern": "^[a-z][a-z0-9-]{1,63}$",
+   "description": "插件稳定标识(小写字母开头,字母数字连字符);OpLog actor=plugin 的归因 id,安装目录名必须与此一致"
+  },
+  "name": {
+   "type": "string",
+   "minLength": 1,
+   "maxLength": 64,
+   "description": "人读名称(面板/命令面板展示)"
+  },
+  "version": {
+   "type": "string",
+   "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+   "description": "语义化版本 x.y.z(三段数字;不做范围表达式——个人自用场景,升级=改数字)"
+  },
+  "form": {
+   "enum": [
+    "worker",
+    "process"
+   ],
+   "description": "双形态(ADR-0024):worker=壳内 Web Worker(浏览器内,受限 API 面);process=外部进程(stdio JSON 协议,capability 最大,CI/批处理唯一可选)"
+  },
+  "entry": {
+   "type": "string",
+   "minLength": 1,
+   "description": "入口相对路径:worker 形态 .js/.mjs 模块;process 形态可执行文件/脚本(带扩展名);禁止绝对路径与 ..(安装目录内寻址)"
+  },
+  "description": {
+   "type": "string",
+   "maxLength": 500,
+   "description": "一句话说明(首次启用确认对话框展示)"
+  },
+  "permissions": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "权限面(缺省一律 false=未声明即无权限);服务端按工具分类裁决:查询→read、写→write、编排→exec",
+   "properties": {
+    "read": {
+     "type": "boolean",
+     "description": "允许调用查询类工具(读工程视图/时间线/标注等)"
+    },
+    "write": {
+     "type": "boolean",
+     "description": "允许调用写类工具;写了也必须走 Op 通道(actor=plugin,OpLog 留痕可撤销)——插件无旁路"
+    },
+    "network": {
+     "type": "boolean",
+     "description": "允许网络访问(worker 形态经宿主代理;process 形态自律声明,审计面)"
+    },
+    "filesystem": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "允许访问的工程根内相对目录白名单(如 01_原始素材);空数组=不允许;process 形态由宿主按此校验路径参数"
+    },
+    "exec": {
+     "type": "boolean",
+     "description": "允许编排/执行面(编排类工具会拉起脚本或子进程)"
+    }
+   }
+  },
+  "contributes": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "贡献点(可选;worker 形态的 UI 面,process 形态可省略)",
+   "properties": {
+    "commands": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "id",
+       "title"
+      ],
+      "properties": {
+       "id": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9.-]{1,64}$",
+        "description": "命令 id(插件内唯一;全局面 <pluginId>.<commandId>)"
+       },
+       "title": {
+        "type": "string",
+        "minLength": 1,
+        "description": "命令面板展示名"
+       }
+      }
+     }
+    },
+    "panels": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+       "id",
+       "title"
+      ],
+      "properties": {
+       "id": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9.-]{1,64}$"
+       },
+       "title": {
+        "type": "string",
+        "minLength": 1
+       }
+      }
+     }
+    }
+   }
+  }
+ }
+}

@@ -49,6 +49,8 @@
   <button data-tab="notes" data-testid="tab-notes">标注</button>
   <button data-tab="diff" data-testid="tab-diff">差异面板</button>
   <button data-tab="conflicts" data-testid="tab-conflicts">冲突</button>
+  <button data-tab="script" data-testid="tab-script">脚本</button>
+  <button data-tab="plugins" data-testid="tab-plugins">插件</button>
 </nav>
 <main>
   <!-- 面板内部结构由 js/panels/* 在装配期建入(T2.5);此处只留容器与 e2e 兼容锚点 -->
@@ -84,6 +86,8 @@
   <div id="tab-notes" class="tab" data-testid="panel-notes"></div>
   <div id="tab-diff" class="tab" data-testid="panel-diff"></div>
   <div id="tab-conflicts" class="tab" data-testid="panel-conflicts"></div>
+  <div id="tab-script" class="tab" data-testid="panel-script"></div>
+  <div id="tab-plugins" class="tab" data-testid="panel-plugins"></div>
 </main>
 <div id="wizard" class="wizard-mask" hidden data-testid="wizard"></div>
 <footer>

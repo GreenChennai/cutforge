@@ -57,6 +57,7 @@
 | 49 | 剪映草稿导出随包化(零 CutFlow 依赖) | 原生 | 不适用 | ✅ achieved(册六 T6.2/ADR-0023:rs_jy_draft.py 收编随包资产(tools/jianying/ + 归属声明);orchestrate 定位序=env CUTFLOW_REPO(显式)→工程内→随包(<exe>/scripts/ 与 tools/jianying/)→CutFlow 回退一版期;诚实标注仍依赖 Python 运行时) | 可选 | scriptSource 来源标注入编排响应;ADR-0023 |
 | 50 | 重构图全自动构图 | 支持 | 不支持 | ❌ missing(诚实降级,不虚标 AI 构图:无可靠自动构图算法——运动能量/响度重心启发式对构图质量不可判定,人脸检测不可做;clip.reframe(anchorY) 契约承载防丢,渲染端零消费) | 加分 | 触发条件=anchorY 渲染消费落地 + 可判定构图规则,届时逐案 ADR |
 | 51 | 本地转写(whisper 系) | 不适用 | 不适用 | ❌ missing(ADR-0023 明确不做,非待办:体积/速度/维护三指标全不达标且无用例;上游转写件 wordline.json 直读已覆盖真实工作流) | 可选 | 触发条件=无网环境批量长素材真实用例,届时逐案 ADR |
+| 52 | .cfpkg 工程打包/解包(单文件分享搬运) | 不适用 | 不适用 | ✅ achieved(册七 T7.6/ADR-0026:project_package/project_unpackage 两写工具,zipstore 零依赖单一实现;容器 = manifest + project 真相源(v3 契约名)+ oplog 随包(撤销链保留)+ media 引用素材(缺文件记 missing 不阻断)+ 可选 exports;解包防 zip-slip/拒绝覆盖;打包→解包→再打包 byte 语义等价(manifest 时间戳归一)) | 必达 | Rust 单测(容器布局/v2 上提/往返等价/zip-slip 负例)+ protocol_conformance dispatch 级闭环 + parity 两调用逐字段对拍 |
 
 ## 结论(M11-1 追平后口径)
 
@@ -64,6 +65,7 @@
 - 册四 A4-BE3a 新增 3 项(#19/#20/#21)全部 achieved:转场库 58 项目录直通 + acrossfade 声画同步 / fx 注册表 11 项 combo 叠加 / motion 19 项真实渲染
 - 册五 T5.2/T5.3/T5.6 新增 16 项(#22–#37):13 项 achieved(调色一级/曲线/LUT/示波器数据/分屏与拷贝/轨道 EQ/动态/响度计/ducking 参数化/硬件编码降级/编码参数面/bt709 标签/渲染队列/渲染日志)、HSL 限定器登记降级 + HDR 按 ADR-0020 明确暂缓(missing=诚实标注,非未评估)
 - 可选 2 项:0 项实现(关键词 6、蒙版 10)
+- 册七 A7 新增 #52(.cfpkg 打包/解包)achieved:zipstore 单一实现 + dispatch 级闭环 + parity 对拍;多实例协作按 ADR-0026 明确暂缓(非待办,触发条件落档)
 - **整体 = 16/18 ≈ 89%**(M8 止血时 47%;V1 虚报 93.3% 的差值 = 可选两项;基线 15 项口径 87%,A4-BE3a 新增 3 项全达成分母加 3)
 - ~~旋转:契约无字段~~ 册四 A4(T4.9)起 rotation/crop/flip 入契约并渲染落地(#4/#16/#18,ADR-0015 画布范围同批)
 - 册六 T6.3/T6.2 新增 9 项(#43–#51):7 项 achieved(导出格式矩阵/导出预设/区域导出/导出预检/多画幅批量/素材库/剪映随包)、2 项 missing 为**诚实标注**(重构图自动构图=无可靠算法不虚标;本地转写=ADR-0023 明确不做,非待办)

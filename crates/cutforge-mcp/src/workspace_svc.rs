@@ -295,7 +295,11 @@ fn handle_workspace_conn(
     let is_get_session = path_only == "/session";
     let is_get_static = static_files::is_static_path(path_only);
     let is_rpc = path_only == "/rpc" && first_line.starts_with("POST");
-    let is_events = path_only == "/events";
+    // 册七 T7.1:/api/v1 版本化 REST 面(ADR-0025);事件流别名并入既有 /events 分支
+    // (SSE 单一实现),其余 /api/v1/* 走 transport::rest(转发既有 dispatch 单表)
+    let is_events = crate::transport::rest::is_events_path(path_only);
+    // events 别名不进 rest 面(SSE/长轮询单一实现;rest 管其余 /api/v1/*)
+    let is_api_v1 = !is_events && crate::transport::rest::is_api_v1(path_only);
     let is_media = path_only == "/media" && first_line.starts_with("GET");
     // E3-3 素材浏览 + E4-2 检查器字段真相源:数据面(带 token),不进静态白名单
     let is_media_browse = path_only == "/media/browse" && first_line.starts_with("GET");
@@ -382,6 +386,13 @@ fn handle_workspace_conn(
                 }
         }
         HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: v.into_bytes() }
+    } else if is_api_v1 {
+        // 册七 T7.1:/api/v1 版本化 REST 面(ADR-0025)——POST /api/v1/tools/<tool>
+        // 与 GET 别名全部转发既有 dispatch 单表(不做第二套业务逻辑);绑定根注入,
+        // actor=editor 与 /rpc 数据面同归因(OpLog 如实归因)
+        crate::transport::rest::handle_api_v1(
+            path_only, query, first_line.starts_with("POST"), body, Some(root), Actor::user("editor"),
+        )
     } else if is_events {
         // 长轮询降级路径(A1-R2:兼容旧壳,册二完成后移除;负载老字段一个不少,
         // ok/code/event/seq 原样);新壳走上方 SSE,事件面经 transport::events。

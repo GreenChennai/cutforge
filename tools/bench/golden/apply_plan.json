@@ -1,0 +1,96 @@
+{
+ "tool": "apply_plan",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "planId": "plan-parity-1",
+    "plan": [
+     {
+      "id": "p-vol",
+      "tool": "clip_update",
+      "args": {
+       "clipId": "V1-001",
+       "patch": {
+        "volume": 0.7
+       },
+       "summary": "对拍:批准项落地"
+      }
+     },
+     {
+      "id": "p-rej",
+      "tool": "clip_update",
+      "args": {
+       "clipId": "V1-001",
+       "patch": {
+        "volume": 0.2
+       }
+      }
+     },
+     {
+      "id": "p-un",
+      "tool": "clip_update",
+      "args": {
+       "clipId": "V1-999",
+       "patch": {
+        "volume": 0.3
+       }
+      }
+     }
+    ],
+    "approvals": {
+     "approve": [
+      "p-vol"
+     ],
+     "reject": [
+      "p-rej"
+     ]
+    }
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "applied": 1,
+     "items": [
+      {
+       "code": "OK",
+       "id": "p-vol",
+       "index": 0,
+       "message": "已应用",
+       "ok": true,
+       "opIds": [
+        "op-44"
+       ],
+       "rev": "<REV>",
+       "tool": "clip_update"
+      },
+      {
+       "id": "p-rej",
+       "index": 1,
+       "ok": false,
+       "reason": "rejected_by_caller",
+       "skipped": true,
+       "tool": "clip_update"
+      },
+      {
+       "id": "p-un",
+       "index": 2,
+       "ok": false,
+       "reason": "not_approved",
+       "skipped": true,
+       "tool": "clip_update"
+      }
+     ],
+     "planId": "plan-parity-1",
+     "rejected": 1,
+     "revFrom": 44,
+     "revTo": 45,
+     "skipped": 1
+    },
+    "message": "apply_plan 完成(仅批准项落地;未批准项零写入)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

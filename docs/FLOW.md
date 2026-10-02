@@ -53,9 +53,9 @@ cutforge/
 │   └── cutforge-script/        脚本宿主:cutforge-script-v1 批式步骤 + 策略沙箱(白名单/路径/步数/超时,逃逸面结构性为零)
 ├── apps/web/                   壳:core/render/panels/ui 四层无构建 ESM(SSE 主通道 + 长轮询断线降级;data-testid 锚点登记 TESTIDS.md;旧壳 legacy/ 已于册三收尾删除,回退期结束;ADR-0011~0017)
 ├── tools/
-│   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1–A6 已注册,决策 D-A2)
+│   ├── gates/gate.py           ★ 统一门禁入口(M0–M7 与册级 A1–A7 已注册,决策 D-A2)
 │   ├── bench/bench.py          性能基准(T1.8;--check 阈值判定,基线 docs/bench/baseline.json)
-│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;册五 A5 增调色/音频/队列五工具后 61;A5-BE3 增复合/多机位/场景检测/OTIO 七工具后 68;册六 A6 增 migrate_layout/library_manage/library_recover/library_list 四工具后 72,增 export_preflight/media_library/media_import/export_all_variants 四工具后 76;数量以 schemas/mcp-tools.json 为准)
+│   ├── bench/tool_parity.py    工具黄金响应库对拍(册一 AC-1.2 建 41;册二 A2 增 render_frame 后 42;册四 A4 增六编辑工具后 48;册四 A4-BE3b 增文本/字幕/媒体八工具后 56;册五 A5 增调色/音频/队列五工具后 61;A5-BE3 增复合/多机位/场景检测/OTIO 七工具后 68;册六 A6 增 migrate_layout/library_manage/library_recover/library_list 四工具后 72,增 export_preflight/media_library/media_import/export_all_variants 四工具后 76,册七 A7 增 project_package/project_unpackage(.cfpkg 打包/解包)两工具后 78、preview_plan/apply_plan/note_reply/session_report/plugin_validate(AI 协作面/插件校验)五工具后 83;数量以 schemas/mcp-tools.json 为准)
 │   ├── gen_constants.py        常量生成器(--check 零漂移)
 │   ├── schema_gen.py           生成 tools/_generated/cf_validate.py(Python 校验器)
 │   └── validate_regression.py  回归集校验入口(16/16)
@@ -281,6 +281,19 @@ ADR-0023 注明)→ 产物时长/像素抽样 → 纯 CLI 面(run-script 建卡�
 cutforge-render 直渲→ffprobe,AC-7.4 预演));载体 tools/e2e_independence.py;
 CI 册六新增 e2e_independence 一步(共九步;ubuntu 无 CUTFLOW_REPO 天然主场),
 A6 本机册收官跑;台账见 [A6-PROGRESS.md](A6-PROGRESS.md)。
+已注册 **`gate.py A7`**(册七,AI 原生与开放生态),**24 项全阻断**(A6 二十二项
+一字不动全部继承,另纳册七两份新 e2e):A6 全项 / **e2e_ai_native**(AC-7.3/7.5
+判定器:脚本页签三内置片段载入→preview_plan 预演→结构化输出,真工程零写入 /
+计划批准流 preview 卡片→逐项批准/拒绝→apply_plan 回执→causedBy=planId 对账→
+被拒项真相源零落地 / 插件九步:安装→校验→权限确认→三贡献点生效→越权双拦截
+FORBIDDEN→崩溃隔离→禁用→卸载 / 标注线程两轮 + session_report 渲染;含 **P0
+文件级回归断言**:预演后真工程 rev 不变 + oplog 逐文件字节一致 + 零 .cf-scratch
+残留——scratch.rs copy_tree 对 append-only 面强制整拷贝)/ **e2e_headless**
+(AC-7.4 纯 CLI 全链:单工程 new→run-script→clip-update→直渲→ffprobe/像素;
+批清单 3 工程排队 + batch-report schema 对拍;插件服务端面越权零写入 + actor=plugin
+归因;watch 防抖;ci-example 自证);载体 tools/e2e_{ai_native,headless}.py;
+CI 册七只加 e2e_ai_native 一步(headless 含 watch 真实渲染与批处理,分钟级,
+本机册收官跑),A7 本机册收官跑;台账见 [A7-PROGRESS.md](A7-PROGRESS.md)。
 
 ## 八、观察项与已知占位(诚实清单)
 

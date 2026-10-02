@@ -14,6 +14,9 @@ pub enum ActorKind {
     User,
     Agent,
     Script,
+    /// 外部进程插件(册七 T7.2/ADR-0024):经 plugin-call 协议面写入,
+    /// OpLog 归因如实记 plugin——写通道纪律与撤销能力与其他 actor 完全一致。
+    Plugin,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -31,6 +34,10 @@ impl Actor {
     }
     pub fn script(id: &str) -> Self {
         Self { kind: ActorKind::Script, id: id.into() }
+    }
+    /// 插件 actor(册七 T7.2):id = manifest 的插件 id(权限裁决后的如实归因)。
+    pub fn plugin(id: &str) -> Self {
+        Self { kind: ActorKind::Plugin, id: id.into() }
     }
 }
 

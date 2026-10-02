@@ -435,3 +435,57 @@ T3.4 增:`window.__cfKeymap`(键位注册表观察面:`table()` 全表 / `routeC
 | `wiz-template` | select | 模板三套:竖屏单轨口播(9:16·V+A)/ 横屏双机位(16:9·V+V+A)/ 方形社媒(1:1·V+A+文本);选即预填画幅/帧率/轨道,手改即脱离 |
 | `wiz-layout` | select | 布局 v2(缺省)/v3 扁平(project_new layout;ADR-0021 过渡期) |
 
+
+## 十、册七 A7 新增 testid(T7.3 脚本页签 / T7.2 插件宿主 / T7.5 批准流+线程)
+
+### 静态骨架(index.html)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `tab-script` / `panel-script` | button/div | 新页签「脚本」(T7.3;cutforge-script-v1 以 plan 形态运行) |
+| `tab-plugins` / `panel-plugins` | button/div | 新页签「插件」(T7.2;JS Worker 宿主管理面) |
+| `tab-plugin-<san>` / `panel-plugin-<san>` | button/div | 插件面板贡献点动态页签(san=贡献点 id 的 dom 安全化;启用才有) |
+
+### 脚本页签(panels/script.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `script-editor` / `script-gutter` | textarea/div | 等宽编辑区 / 行号槽(checkbox `script-linenum` 开关;语法高亮不做=诚实口径) |
+| `script-lib-select` / `script-lib-load` / `script-lib-name` / `script-lib-save` / `script-lib-del` | select/input/button | 片段库(内置 3 项按当前会话态生成:按标记切割/批量变色(调色)/批量转场;库脚本存 localStorage) |
+| `script-export` | button | 导出 plan JSON({plan:[{tool,args}]}) |
+| `script-run` / `script-stop` / `script-submit` | button | 运行=preview_plan 副本预演(真工程零写入)/ 停止=丢弃在途结果 / 以 plan 提交=进差异面板批准流 |
+| `script-status` / `script-output` / `script-out-item` / `script-out-error` | div | 运行状态行 / 结构化逐步回执 |
+| `script-ai-src` / `script-ai-preview` | textarea/button | AI 产出 plan JSON 粘贴区 → 预演+送人审(人在环) |
+
+### 计划批准流(panels/diff.js 第二区;core/plan.js 状态)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `plan-host` / `plan-empty` / `plan-draft-head` | div | 审批台宿主 / 空态 / 草稿头(来源+项数) |
+| `plan-preview` / `plan-repreview` / `plan-preview-error` / `plan-preview-summary` | button/div | 预演(副本 dry-run)/ 预演失败重试与错误 / 汇总(total·ok·err·rev 链) |
+| `plan-items` / `plan-item` / `plan-item-approve` / `plan-item-reject` / `plan-item-decision` | div/button | 逐项卡片与批准/拒绝双钮(再点撤销;未决=默认拒绝) |
+| `plan-item-changes` / `plan-change` / `plan-delta-before` / `plan-delta-after` | div/span | 字段级 before/after(小值直显;`elided`=大值折叠提示经 oplog_tail 查) |
+| `plan-approve-all` / `plan-reject-all` / `plan-clear` / `plan-approval-count` / `plan-apply` | button/span | 全批(ok 项)/ 全拒 / 清 approvals / 批准计数 / apply_plan(仅批准项落地) |
+| `plan-apply-result` / `plan-apply-planid` / `plan-result-refresh` | div/code/button | 回执(落地/跳过/拒绝 + rev 链)/ planId 归因入口 / 刷 OpLog 对账 |
+| `diff-causedby` / `diff-plan-id` | div/code(OpLog 行内) | causedBy 链显式成行(plan-* 高亮 = planId 可对账) |
+| `batch-plan-src` / `batch-plan-submit` / `insp-batch-ops` | textarea/button/fieldset | 检查器「批量操作」区(折叠;与脚本页签共用批准流) |
+
+### 标注线程与会话报告(panels/notes.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `notes-done` / `note-done-row` | div | 已结案/否决留档区(不进 notes-open 红线行集;e2e 行集=服务端 open 清单) |
+| `note-thread` / `note-thread-item` / `note-thread-body` / `note-thread-send` | div/span/button | 线程块(thread[] 多轮;author 徽标 AI/人)/ open 行回复输入 `note-thread-body` + 发送(note_reply,不改 state) |
+| `report-run` / `report-download` / `report-body` / `report-markdown` | button/div | session_report 生成 / 下载 .md(Blob) / 渲染面(极简 Markdown,零 innerHTML) |
+
+### 插件宿主(plugins/manager.js + host.js + manifest.js;contributes.js)
+| testid | 元素 | 说明 |
+|---|---|---|
+| `plugin-files` / `plugin-install` / `plugin-refresh` | input/button | 文件多选(manifest.json+入口 .js/.mjs)/ 校验并安装 / 重扫 |
+| `plugin-candidate` / `plugin-candidate-card` / `plugin-valid` / `plugin-invalid` / `plugin-error` / `plugin-warning` | div/span | 校验展示卡(plugin_validate:valid/errors/warnings) |
+| `plugin-perms` / `plugin-perm` | div | 权限五面列示(首启确认对话框同表;已声明/未声明+文件系统白名单值) |
+| `plugin-install-confirm` | button | 写入注册表(默认停用) |
+| `plugin-list` / `plugin-empty` / `plugin-row` / `plugin-state` | div/span | 已安装列表(行 dataset.pid)/ 空态 / 运行态徽标(data-state=running/starting/disabled) |
+| `plugin-enable` / `plugin-disable` / `plugin-uninstall` | button | 生命周期(首启弹 `plugin-confirm-dialog`:plugin-confirm-ok/cancel;卸载=移出注册表,目录删除手动) |
+| `plugin-contribs` / `plugin-menu-toggle` | div/input | 贡献点观察面 / 命令→右键菜单呈现开关(menuOff,localStorage) |
+| `plugin-panel-body-<san>` / `plugin-panel-html-<san>` / `plugin-panel-raw` / `plugin-panel-text-<san>` | div/pre/button | 面板贡献点受控渲染区(标签白名单+剥属性)/ 文本视图对照 |
+
+__zcode_status=$?
+if [ "$__zcode_status" -eq 0 ]; then pwd -P > '/c/Users/Velon/AppData/Local/Temp/zcode-4afdccf8-7279-4b53-a6e8-64cab283991f-cwd'; fi
+exit "$__zcode_status"

@@ -36,7 +36,8 @@
      "enum": [
       "user",
       "agent",
-      "script"
+      "script",
+      "plugin"
      ]
     },
     "id": {

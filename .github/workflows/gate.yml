@@ -102,6 +102,11 @@ jobs:
       # 走 /proc 兜底采样(Linux 主路径)。
       - name: A6 独立运行 e2e(AC-6.3:环境隔离 + 四大件内置 + 零 python 进程树断言 + 纯 CLI 面)
         run: python tools/e2e_independence.py --bin target/debug/cutforge-mcp --cli target/debug/cutforge-cli
+      # A7(册七):AI 原生 e2e——脚本页签三内置片段/计划批准流(causedBy 对账+被拒项
+      # 零落地,P0 文件级断言)/插件九步(三贡献点+越权双拦截+崩溃隔离)/标注线程+报告。
+      # e2e_headless(watch 真实渲染+批处理,分钟级)不进 CI,本地册收官跑(gate A7)。
+      - name: A7 AI 原生 e2e(AC-7.3/7.5:脚本三片段预演/批准流/插件九步/线程+报告)
+        run: python tools/e2e_ai_native.py --bin target/debug/cutforge-mcp --cli target/debug/cutforge-cli
       # A2/A3/A4/A5 负载敏感 e2e 不进 CI:e2e_perf_timeline / e2e_drag_perf(帧率阈值 --min-fps 55)、
       # e2e_perf_budget(真实导出+媒体池 200 轮导航)、e2e_media_perf(千素材滚动帧率 +min-fps 55,
       # 共享 runner 抖动会假红)——本地册收官在安静时段跑(python tools/gates/gate.py A4)。

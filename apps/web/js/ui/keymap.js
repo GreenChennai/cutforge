@@ -11,7 +11,7 @@ import * as nav from "../core/nav.js";
 import * as edit from "../core/edit-commands.js";
 import { playback } from "../render/preview-loop.js";
 import { registerShortcut, clearRoutes, routeCount, keyOf } from "./shortcuts.js";
-import { defineBinding, comboOf, exportTable, onOverridesChange } from "./keymap-registry.js";
+import { defineBinding, comboOf, exportTable, onOverridesChange, onDefsChange, runOf } from "./keymap-registry.js";
 import { toggleMarker, prevMarker, nextMarker, setInOut } from "./markers.js";
 import { zoomBy, fitTimeline, togglePreviewFullscreen, togglePanels, focusExportPanel } from "./view-ops.js";
 import { openHelpPanel } from "./help-panel.js";
@@ -202,6 +202,7 @@ export function installEditorShortcuts() {
     defineAll();
     defined = true;
     onOverridesChange(reinstall);
+    onDefsChange(reinstall); // 插件贡献点命令注册/注销(册七 T7.2)同走重装
   }
   reinstall();
   // e2e/控制台观察面(下波键位 e2e 遍历口;导出全表含默认与生效组合)
@@ -213,13 +214,13 @@ export function installEditorShortcuts() {
   };
 }
 
-/** 依当前生效组合重装调度路由(覆盖变更/恢复默认后调用)。 */
+/** 依当前生效组合重装调度路由(覆盖变更/恢复默认/插件贡献点变化后调用)。 */
 function reinstall() {
   clearRoutes();
   for (const b of exportTable()) {
     const combo = comboOf(b.id);
     if (!combo) continue; // 用户停用/默认不绑
-    const fn = RUN[b.id];
+    const fn = RUN[b.id] || runOf(b.id); // 动态绑定(插件命令)经注册表回查执行面
     if (fn) registerShortcut(combo, fn);
   }
 }

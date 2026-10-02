@@ -154,6 +154,21 @@ cargo test -p cutforge-mcp --test protocol_conformance   # M4-5:envelope/码表/
 **门禁**:gate M4 `protocol`、`mcp-tools`(注册表与 mcp-tools.json 逐名一致 + 双通道工具集恒等)、
 `doc-tool-counts`(见第六节)。
 
+**收尾(册七 T7.1 起):Editor API 生成物同步**——`schemas/mcp-tools.json` 是工具契约
+单一真相源,三个生成物随它走(ADR-0003「描述文件是生成物」同纪律;新增/删除/改参的
+同 commit 必须重跑,`--check` 进 CI 拦漂移):
+
+```bash
+python tools/gen_openapi.py && python tools/gen_openapi.py --check   # docs/api/openapi.json(OpenAPI 3.1)
+python tools/gen_ts_sdk.py    && python tools/gen_ts_sdk.py --check  # apps/sdk/cutforge.ts(TS SDK)
+node tools/test_ts_sdk.mjs                                           # SDK 冒烟(≥10 典型调用对真 serve)
+```
+
+注意:`GET /api/v1` 别名表在 `tools/gen_openapi.py` 的 `GET_ALIASES` 与
+`crates/cutforge-mcp/src/transport/rest.rs` 的 `GET_ALIASES` 两处同域——加别名必须同批
+(rest.rs 单测锁行为,生成器锁文档);版本策略见 ADR-0025(URL 版本 /api/v1,
+/rpc 别名至少保留两册)。
+
 ---
 
 ## 五、步骤 5:ui-fields(检查器单一真相源)
@@ -312,6 +327,10 @@ cargo test --workspace --locked
 python tools/gates/gate.py M0 --json && python tools/gates/gate.py M1 --json
 # ---- 口径对拍(改了工具集/文档数字后必跑)----
 python tools/check_doc_counts.py
+# ---- Editor API 生成物(新增/删除工具的同 commit 必跑;册七 T7.1 起)----
+python tools/gen_openapi.py && python tools/gen_openapi.py --check
+python tools/gen_ts_sdk.py && python tools/gen_ts_sdk.py --check
+node tools/test_ts_sdk.mjs
 ```
 
 > 维护纪律:本文描述的是**机制**而非数量;数量(工具数/字段集/分组)以

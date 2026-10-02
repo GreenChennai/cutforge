@@ -14,6 +14,7 @@ import { buildGroup, WHOLE_OBJECT_PARENTS, META } from "./insp-groups.js";
 import { collapseGroup } from "../ui/controls.js";
 import { watchForField } from "./kf-watch.js";
 import { toast } from "../ui/toast.js";
+import * as plan from "../core/plan.js";
 
 /** field 名 → 控件实例 */
 const fields = new Map();
@@ -49,6 +50,7 @@ export function mount(container) {
     h("button", { id: "track-add-audio", testid: "track-add-audio", onclick: () => addTrack("audio") }, ["+音频轨"]),
     h("button", { id: "track-add-text", testid: "track-add-text", onclick: () => addTrack("text") }, ["+文本轨"]),
   ]));
+  container.appendChild(buildBatchOps());
 
   uiStore.subscribe((patch, st) => {
     if (patch.uiFields !== undefined || patch.__reset__) buildGroups(st.uiFields);
@@ -254,6 +256,33 @@ function computePatch(row, anchor = null) {
 /** 供 main 装配:取消选中走这里(保持旧壳「点空白即取消」文案一致性)。 */
 export function inspectorDeselectHint() {
   selectClip(null);
+}
+
+/** 批量操作区(册七 T7.5):粘贴 AI 产出的 plan JSON → preview_plan 预演 →
+ * 送差异面板批准流(与脚本页签「以 plan 提交」共用 core/plan.js 同一 draft)。 */
+function buildBatchOps() {
+  const box = h("textarea", {
+    class: "insp-textarea plan-paste", testid: "batch-plan-src", spellcheck: "false",
+    "aria-label": "批量操作 plan JSON 粘贴区",
+    placeholder: "{\"plan\":[{\"tool\":\"clip_update\",\"args\":{…}}]}(AI 产出,人审后落地)",
+    style: "width:100%;min-height:64px",
+  });
+  const run = async () => {
+    const r = plan.parsePlanText(box.value);
+    if (r.error) {
+      toast(r.error, false);
+      return;
+    }
+    plan.submitDraft(r.plan, "检查器批量");
+    toast(`已送批准流(${r.plan.length} 项):到「差异面板」预演并逐项人审`);
+  };
+  return collapseGroup("批量操作(plan 批准流)", [
+    h("div", { class: "hint" }, ["粘贴 plan JSON → 进差异面板批准流(preview_plan 预演,人审后 apply_plan;默认拒绝未批准项)。"]),
+    box,
+    h("div", { class: "filter-row" }, [
+      h("button", { testid: "batch-plan-submit", onclick: run, title: "送差异面板批准流(不直接执行)" }, ["送批准流"]),
+    ]),
+  ], { open: false, testid: "insp-batch-ops" });
 }
 
 // META 仅供调试/对表(e2e 可经控制台读);防 tree-shake 语义导出

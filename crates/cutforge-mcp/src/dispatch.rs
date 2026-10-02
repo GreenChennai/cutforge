@@ -36,6 +36,10 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             "matrix": capability_matrix(),
         }));
     }
+    // 册七 T7.2:插件 manifest 校验(纯契约面,免工程根;权限模型见 docs/PLUGIN-SPEC.md)
+    if name == "plugin_validate" {
+        return crate::plugin::plugin_validate_tool(args);
+    }
     let Some(root_str) = args["root"].as_str() else {
         return envelope(false, "PRECONDITION_FAILED", "缺 root(工程目录)", json!({}));
     };
@@ -112,9 +116,40 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         // 不产 Op 不改 IR,与 lut_import 同类写面)
         "media_library" => return crate::media_library::media_library_tool(&ws_root, args),
         "media_import" => return crate::media_library::media_import_tool(&ws_root, args),
+        // 册七 T7.6:.cfpkg 工程打包/解包(免开工作区;打包持锁在 io 层自持,
+        // 解包写全新目录拒绝覆盖——目录级写面,不产 Op 不改 IR)
+        "project_package" => return crate::pkg_tools::project_package_tool(&ws_root, args),
+        "project_unpackage" => return crate::pkg_tools::project_unpackage_tool(&ws_root, args),
         _ => {}
     }
 
+    // 册七 T7.5:AI 改动预演/批准应用——plan 面自管工作区:预演在副本工程上全链
+    // dry-run(不落盘不产真 Op),应用逐项重入本单表(causedBy 链关联 planId)。
+    match name {
+        "preview_plan" => return crate::ai_ops::preview_plan_tool(&ws_root, args, actor),
+        "apply_plan" => return crate::ai_ops::apply_plan_tool(root_str, args, actor),
+        _ => {}
+    }
+
+    // 常驻同步守护(M9-2):外部改动 ≤1s 可见;常驻缓存(T1.8)指纹一致即复用。
+    // 查询类只读零锁;写类 open_for_write + apply 内临时全程锁,合并/停写语义原样。
+    let readonly = is_readonly_tool(name);
+    crate::resident::with_resident(root_str, &ws_root, readonly, |ws| {
+        dispatch_on_ws(name, args, actor, root_str, &ws_root, ws)
+    })
+}
+
+/// 工作区面派发体(stdio/HTTP/脚本宿主与 preview_plan 副本预演共用):单一实现
+/// 纪律——预演不建第二套业务逻辑,只是在副本工程上重入本函数(T1.1 风格拆分自
+/// dispatch_with_actor 闭包,行为零变化)。
+pub(crate) fn dispatch_on_ws(
+    name: &str,
+    args: &Value,
+    actor: Actor,
+    root_str: &str,
+    ws_root: &Path,
+    ws: &mut cutforge_io::Workspace,
+) -> Value {
     let opts = ApplyOpts {
         request_id: args["requestId"].as_str().map(String::from),
         summary: args["summary"].as_str().map(String::from),
@@ -126,23 +161,22 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         ..Default::default()
     };
 
-    // 常驻同步守护(M9-2):外部改动 ≤1s 可见;常驻缓存(T1.8)指纹一致即复用。
-    // 查询类只读零锁;写类 open_for_write + apply 内临时全程锁,合并/停写语义原样。
-    let readonly = is_readonly_tool(name);
-    crate::resident::with_resident(root_str, &ws_root, readonly, |ws| match name {
+    // 常驻同步守护(M9-2)与锁纪律在外层 dispatch_with_actor(只读零锁/写全程锁);
+    // 本函数只承载工作区面上的工具分支。
+    match name {
         // ---------- 只读查询(E6-3:只读打开,不持排他锁) ----------
         "project_get" => match ws.engine().query(Query::ProjectView) {
             Answer::Project(v) => envelope(true, "OK", "工程视图", json!({"project": v, "rev": ws.rev()})),
             _ => unreachable!(),
         },
         "wordline_get" => read_truth(
-            &ws_root.join(paths::truth_rel_on_disk(&ws_root, "wordline.json").unwrap_or(paths::WORDLINE_REL)),
+            &ws_root.join(paths::truth_rel_on_disk(ws_root, "wordline.json").unwrap_or(paths::WORDLINE_REL)),
             "wordline",
         ),
         "cutlist_get" => {
             let applied = args["applied"].as_bool().unwrap_or(false);
             let name = if applied { "cutlist.applied.json" } else { "cutlist.json" };
-            let rel = paths::truth_rel_on_disk(&ws_root, name).unwrap_or(paths::CUTLIST_REL);
+            let rel = paths::truth_rel_on_disk(ws_root, name).unwrap_or(paths::CUTLIST_REL);
             read_truth(&ws_root.join(rel), "cutlist")
         }
         "notes_list" => {
@@ -162,6 +196,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             actor_kind: args["actor"].as_str().map(|s| match s {
                 "user" => ActorKind::User,
                 "script" => ActorKind::Script,
+                "plugin" => ActorKind::Plugin,
                 _ => ActorKind::Agent,
             }),
         }) {
@@ -202,7 +237,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 return envelope(false, "PRECONDITION_FAILED", &format!("track 不存在: {track_id}"), json!({}));
             }
             // 素材路径复用 /media 的 canonicalize 校验(不建并行实现;E3 风险面对策)
-            if let Err(msg) = resolve_within_root(&ws_root, src) {
+            if let Err(msg) = resolve_within_root(ws_root, src) {
                 return envelope(false, "PRECONDITION_FAILED", &format!("素材路径不合法({src}): {msg}"), json!({}));
             }
             let source_in = args["sourceInMs"].as_u64().unwrap_or(0);
@@ -456,7 +491,7 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             }
             // 音源路径与 clip_add 同一校验(不建并行实现)
             if let Some(src) = patch.src.as_deref()
-                && let Err(msg) = resolve_within_root(&ws_root, src) {
+                && let Err(msg) = resolve_within_root(ws_root, src) {
                     return envelope(false, "PRECONDITION_FAILED", &format!("bgm 路径不合法({src}): {msg}"), json!({}));
                 }
             finish_apply(ws.apply(Command::BgmSet { patch }, actor, opts))
@@ -620,6 +655,10 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 Err(e) => notes_op_error(e),
             }
         }
+        // 册七 T7.5:标注线程化(同一标注多轮追加;线程 id = 标注 id)
+        "note_reply" => crate::ai_ops::note_reply_tool(ws, args, &actor),
+        // 册七 T7.5:会话报告(改动摘要,Markdown+JSON 双形态)
+        "session_report" => crate::ai_ops::session_report_tool(ws, args),
         "cut_apply" => {
             let patch = args["patch"].as_object().cloned();
             let Some(patch) = patch else {
@@ -655,14 +694,14 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "compound_create" => crate::pro_ops::compound_create_tool(ws, args, &actor, opts),
         "compound_unbind" => crate::pro_ops::compound_unbind_tool(ws, args, &actor, opts),
         "multicam_cut" => crate::pro_ops::multicam_cut_tool(ws, args, &actor, opts),
-        "scene_detect" => crate::pro_ops::scene_detect_tool(ws, &ws_root, args, &actor, opts),
+        "scene_detect" => crate::pro_ops::scene_detect_tool(ws, ws_root, args, &actor, opts),
         // 互操作导出(册五 T5.5;只读工程 + 派生物落盘,与 subtitle_export 同类)
-        "otio_export" => crate::pro_ops::otio_export_tool(ws, &ws_root, args),
+        "otio_export" => crate::pro_ops::otio_export_tool(ws, ws_root, args),
 
         // ---------- 文本/字幕(册四 A4 T4.7;实现集中在 subtitle_ops) ----------
         "text_add" => subtitle_ops::text_add_tool(ws, args, &actor, opts),
-        "subtitle_import" => subtitle_ops::subtitle_import_tool(ws, &ws_root, args, &actor, opts),
-        "subtitle_export" => subtitle_ops::subtitle_export_tool(ws, &ws_root, args),
+        "subtitle_import" => subtitle_ops::subtitle_import_tool(ws, ws_root, args, &actor, opts),
+        "subtitle_export" => subtitle_ops::subtitle_export_tool(ws, ws_root, args),
         "subtitle_replace" => subtitle_ops::subtitle_replace_tool(ws, args, &actor, opts),
 
 
@@ -681,17 +720,17 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
                 // 册六 T6.2/ADR-0023 随包收编后的端到端缺省:project 路径(三态布局
                 // 感知)+ --name(契约 required)。显式 scriptArgs 仍整组透传(编排
                 // 纪律 = 参数接线,不实现阶段逻辑)。
-                script_args.push(json!(paths::project_path(&ws_root).to_string_lossy()));
+                script_args.push(json!(paths::project_path(ws_root).to_string_lossy()));
                 if let Some(n) = args["name"].as_str() {
                     script_args.push(json!("--name"));
                     script_args.push(json!(n));
                 }
             }
-            orchestrate(&ws_root, script, &script_args)
+            orchestrate(ws_root, script, &script_args)
         }
 
         other => envelope(false, "INTERNAL", &format!("工具已注册但未实现: {other}"), json!({})),
-    })
+    }
 }
 
 pub(crate) fn finish_apply(r: Result<cutforge_core::engine::OpReceipt, std::io::Error>) -> Value {

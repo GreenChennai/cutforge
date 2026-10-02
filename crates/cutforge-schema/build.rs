@@ -1,4 +1,4 @@
-//! 契约层 build 脚本:五份 schema 与两份生成物在编译期必须存在(ADR-0034)。
+//! 契约层 build 脚本:契约 schema 与生成物在编译期必须存在(ADR-0034)。
 //! 内容本身经 lib.rs 的 include_str! 嵌入;此处只做存在性闸与重编译触发。
 
 use std::path::PathBuf;
@@ -11,6 +11,7 @@ fn main() {
         "schemas/cutlist.schema.json",
         "schemas/notes.schema.json",
         "schemas/oplog.schema.json",
+        "schemas/plugin-manifest.schema.json",
         "schemas/constants.ratios.json",
         "schemas/mcp-tools.json",
     ];

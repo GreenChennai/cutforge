@@ -7,7 +7,7 @@
 > **拖拽过程零动画(直接跟手)**;同屏并发入场动画 ≤3(全部为 ≤240ms 一次性短动效,
 > 循环动画仅两处豁免:导出不确定进度条、断连横幅呼吸点);
 > `prefers-reduced-motion` 在 `css/motion.css` 一处总控全量降级(动画/过渡压到 0.01ms)。
-> 录屏存档(AC-3.2,record-captures.py 可重录):docs/design/recordings/ 共 40 条 webm(册三 19 条 960×600;册五 15 支/册六 6 支 720×450 低分辨率,单条 ≤2MB,合计 ≈7.9MB ≤ 8MB 红线);27 项逐行回链见下表「录屏」列,册五/册六回链见第八~十节;关键项覆盖:拖拽 ghost 跟手+吸附脉冲(02)、非法落点红态(03)、trim 时长气泡(04)、框选多选(07)、右键菜单(14)、模态缩放入场(13)、toast 撤销(15)、断连横幅滑入(18)、首启引导(01)、性能面板(19-perf-panel.webm)。
+> 录屏存档(AC-3.2,record-captures.py 可重录):docs/design/recordings/ 共 45 条 webm(册三 19 条 960×600;册五 15 支/册六 6 支/册七 5 支 720×450 低分辨率,单条 ≤2MB,合计 ≈7.77MB ≤ 8MB 红线);27 项逐行回链见下表「录屏」列,册五/册六/册七回链见第八~十一节;关键项覆盖:拖拽 ghost 跟手+吸附脉冲(02)、非法落点红态(03)、trim 时长气泡(04)、框选多选(07)、右键菜单(14)、模态缩放入场(13)、toast 撤销(15)、断连横幅滑入(18)、首启引导(01)、性能面板(19-perf-panel.webm)。
 
 ## 一、拖拽
 
@@ -137,3 +137,17 @@ tokens.css 之外的任何色值字面量;示波器 render_frame 不可用时降
 录制口径:同第九节(册六补录段 50-55 前缀,720×450;裁决按钮只在导出前自动门路径
 渲染——手动「检查」按钮无裁决面,54 走「导出成片」触发);录屏经 VP9 重编码压总量
 (时长逐支不变,单文件 ≤2MB)。
+
+## 十一、册七 A7 录屏(T7.3 脚本页签 / T7.5 批准流+线程报告 / T7.2 插件;F4 补录)
+
+| # | 演示 | 面板/工具 | 录屏 |
+|---|---|---|---|
+| R1 | 脚本页签运行(内置「批量变色」载入 → 运行 = preview_plan 副本预演 → 结构化逐步回执) | `panels/script.js` / preview_plan | [录屏:recordings/56-script-run.webm](recordings/56-script-run.webm) |
+| R2 | 计划批准流(以 plan 提交 → 差异面板预演卡 → 逐项批准/拒绝 → apply_plan 回执 + planId) | `panels/diff.js` 批准流 + `core/plan.js` / preview_plan + apply_plan | [录屏:recordings/57-plan-approve-flow.webm](recordings/57-plan-approve-flow.webm) |
+| R3 | 标注线程两轮(note_reply 不改结案态)+ session_report 人话 Markdown 渲染 | `panels/notes.js` 线程块/报告区 / note_reply + session_report | [录屏:recordings/58-note-thread-report.webm](recordings/58-note-thread-report.webm) |
+| R4 | 插件安装确认(选文件 → plugin_validate 校验卡+权限五面 → 写入注册表 → 首启确认对话框 → 运行) | `plugins/manager.js` + `manifest.js` / plugin_validate | [录屏:recordings/59-plugin-install-confirm.webm](recordings/59-plugin-install-confirm.webm) |
+| R5 | 贡献点生效(命令贡献点进时间线右键菜单并调用回执)+ 越权拦截(只读插件调写工具 GUARD_FAILED/FORBIDDEN toast) | `plugins/contributes.js` + `host.js` / 宿主权限裁决镜像 | [录屏:recordings/60-plugin-contribs-forbidden.webm](recordings/60-plugin-contribs-forbidden.webm) |
+
+录制口径:同第九/十节(册七补录段 56-60 前缀,720×450;录完即 VP9 CRF46 重编码压
+总量,时长逐支不变;旧档三支大文件 09-multicam/16-export-progress/13-dialog-zoom
+同 CRF46 重编码腾挪余量,目录合计 ≈7.77MB ≤ 8MB 红线)。

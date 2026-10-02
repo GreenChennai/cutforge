@@ -23,6 +23,7 @@ import { clearInOut, toggleMarker } from "./markers.js";
 import { fitTimeline } from "./view-ops.js";
 import { toast } from "./toast.js";
 import { clipKindOf, targetTrackForKind, PX_PER_MS } from "../core/model.js";
+import { pluginMenuItems } from "../plugins/contributes.js";
 
 let active = null;
 
@@ -163,6 +164,8 @@ export function openClipContextMenu(x, y) {
     row && isCompound
       ? { label: "复合片段说明(子片段概要)", fn: () => openCompoundCard(clipId), why: "投影 compound 概要 + 解包引导" }
       : null,
+    // 插件菜单贡献点(T7.2):启用插件的命令以「插件:」前缀入右键菜单
+    ...(pluginMenuItems().length ? [{ sep: true }, ...pluginMenuItems({ ctx: "clip", clipId })] : []),
     { sep: true },
     // 定格帧(T4.9):freezeMs = 片段末帧定格时长;0 = 取消(Some(0) 可写回,与 None=不改区分)
     row && row.freezeMs > 0
@@ -290,6 +293,8 @@ export function openTimelineContextMenu(x, y) {
     { label: "适应窗口", keys: keys("view.fit", "\\"), fn: () => fitTimeline() },
     { label: "新增视频轨", fn: () => addTrack("video") },
     { label: "新增音频轨", fn: () => addTrack("audio") },
+    // 插件菜单贡献点(T7.2):时间线空白右键同样呈现
+    ...(pluginMenuItems().length ? [{ sep: true }, ...pluginMenuItems({ ctx: "timeline" })] : []),
   ]);
 }
 

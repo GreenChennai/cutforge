@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """T1.1/AC-1.2 门禁:MCP 工具黄金响应库(golden 响应对拍;册一建 41,册二 A2 增
 render_frame 后 42,册四 A4 增六个时间线编辑工具后 48,册四 A4-BE3b 增文本/字幕/媒体
-八工具后 56,册五 A5 增专业编辑/互操作七工具后 68,册六 A6 增布局迁移/工程库四工具后 72、导出矩阵/素材库四工具后 76,册七 A7 增 .cfpkg 打包/解包两工具后 78,数量口径以 schemas/mcp-tools.json 为准)。
+八工具后 56,册五 A5 增专业编辑/互操作七工具后 68,册六 A6 增布局迁移/工程库四工具后 72、导出矩阵/素材库四工具后 76,册七 A7 增 .cfpkg 打包/解包两工具后 78、AI 协作面/插件校验五工具(preview_plan/apply_plan/note_reply/session_report/plugin_validate)后 83,数量口径以 schemas/mcp-tools.json 为准)。
 
     python tools/bench/tool_parity.py                  # 对比模式:重跑采集,与 golden 逐字段对拍
     python tools/bench/tool_parity.py --update-golden  # 采集模式:重建 tools/bench/golden/*.json
@@ -205,6 +205,11 @@ LOUDNESS_TOL: dict[str, float] = {
     "targetI": 1.0,     # 目标整合响度(loudnorm JSON 口径键名)
 }
 
+# 册七 A7:session_report 的会话耗时是墙钟差(首个/末个 Op 的时间戳),run 间必变
+# → probe_mode="session" 时 durationMs 键占位;markdown 里的「耗时 Nms」同占位
+# (时间窗两个 ISO 串已由 RE_ISO_TS 吸收,唯一漏网的是这段正文文本)。
+RE_MARKDOWN_ELAPSED = re.compile(r"耗时 \d+ms")
+
 
 def _grid(values: list, grid_ms: int) -> list[int] | None:
     """数值时间戳 → 网格就近取整 + 保序去重(采集与对比同规则)。
@@ -266,7 +271,7 @@ class Normalizer:
         # 长路径优先替换,避免前缀互相吞
         self.subs = sorted(subs, key=lambda kv: -len(kv[0]))
 
-    def _s(self, s: str, probe_mode: bool = False) -> str:
+    def _s(self, s: str, probe_mode: bool | str = False) -> str:
         # 0b) JSON-Lines 串(render 工具的 stdout 字段:多行进度事件拼接):
         #     逐行尽力解析——JSON 对象行递归归一(elapsedMs 等),非 JSON 行
         #     (RENDER_OK 等)走标量归一路径,按行重拼接
@@ -314,9 +319,11 @@ class Normalizer:
         s = RE_MEDIA_CACHE_FILE.sub(lambda m: f".cutforge/{m.group(1)}<MEDIA_CACHE>.{m.group(2)}", s)
         # 5) 回收站条目时间戳占位(册六 library delete 落点,run 间必变;目录结构保留)
         s = RE_TRASH_ENTRY.sub(".trash/<TRASH>-", s)
+        # 6) session_report 人话 Markdown 的会话耗时占位(册七;墙钟差,run 间必变)
+        s = RE_MARKDOWN_ELAPSED.sub("耗时 <ELAPSED>ms", s)
         return s
 
-    def __call__(self, v, probe_mode: bool = False):
+    def __call__(self, v, probe_mode: bool | str = False):
         if isinstance(v, dict):
             out = {}
             for k, val in v.items():
@@ -330,6 +337,8 @@ class Normalizer:
                     out[k] = "<TS>"  # 数值时间戳(工程库卡片 mtime)同占位口径
                 elif k in ELAPSED_KEYS:
                     out[k] = "<ELAPSED>"
+                elif k == "durationMs" and probe_mode == "session":
+                    out[k] = "<ELAPSED>"  # session_report 会话耗时(墙钟差,run 间必变)
                 elif k == "key" and isinstance(val, str) and RE_FRAME_KEY.fullmatch(val):
                     out[k] = "<FRAME_KEY>"  # render_frame 帧缓存键(工作区指纹入键,run 间必变)
                 elif k == "bytes" and probe_mode:
@@ -902,6 +911,42 @@ def build_sequence() -> list[tuple[str, dict, bool]]:
         # 的负例面由 protocol_conformance 的 dispatch 级闭环锁定)
         ("project_package", {"root": "{MIG}", "out": "{MIGPKG}"}, False),
         ("project_unpackage", {"root": "{MIGRESTORE}", "src": "{MIGPKG}"}, False),
+        # -- 阶段 I:册七 T7.5/T7.2(AI 协作面 + 插件校验;83 收口) --
+        # preview_plan 两项小 plan 一错一对:错项(不存在的片段)暴露逐项错误码,
+        # 对项给出字段级 before/after 预演;副本 dry-run 对真工程零落盘由
+        # e2e_ai_native 以 rev/oplog 文件级断言把关,golden 只锁协议形状
+        ("preview_plan", {"root": "{MAIN}", "plan": [
+            {"id": "p-bad", "tool": "clip_update",
+             "args": {"clipId": "V1-999", "patch": {"volume": 0.8}}}]}, False),
+        ("preview_plan", {"root": "{MAIN}", "plan": [
+            {"id": "p-vol", "tool": "clip_update",
+             "args": {"clipId": "V1-001", "patch": {"volume": 0.7},
+                      "summary": "对拍:预演微调音量"}}]}, False),
+        # apply_plan 批准面三态全谱:批准→落地 / 显式拒绝→rejected_by_caller /
+        # 未列→not_approved(缺省拒绝,越权绝不落地);rev 恰 +1 由 product_assert 锁定
+        ("apply_plan", {"root": "{MAIN}", "planId": "plan-parity-1", "plan": [
+            {"id": "p-vol", "tool": "clip_update",
+             "args": {"clipId": "V1-001", "patch": {"volume": 0.7},
+                      "summary": "对拍:批准项落地"}},
+            {"id": "p-rej", "tool": "clip_update",
+             "args": {"clipId": "V1-001", "patch": {"volume": 0.2}}},
+            {"id": "p-un", "tool": "clip_update",
+             "args": {"clipId": "V1-999", "patch": {"volume": 0.3}}}],
+            "approvals": {"approve": ["p-vol"], "reject": ["p-rej"]}}, False),
+        # note_reply 一轮(线程 id = 标注 id;不改 state 不碰 resolved_by)
+        ("note_reply", {"root": "{MAIN}", "noteId": "n-0001", "body": "追问:下一句也一并调?",
+                        "author": "user"}, False),
+        # session_report 全会话摘要(sinceRev 0;durationMs 墙钟差走 session 模式占位)
+        ("session_report", {"root": "{MAIN}", "sinceRev": 0}, "session"),
+        # plugin_validate 合法 + 非法各一(负例:坏 id/坏版本/未知形态/未知权限键)
+        ("plugin_validate", {"manifest": {
+            "id": "parity-plugin", "name": "对拍插件", "version": "1.0.0",
+            "form": "worker", "entry": "main.js", "description": "对拍夹具",
+            "permissions": {"read": True, "write": True},
+            "contributes": {"commands": [{"id": "cmd-1", "title": "命令甲"}]}}}, False),
+        ("plugin_validate", {"manifest": {
+            "id": "Bad", "version": "1.0", "form": "vm",
+            "entry": "p.py", "permissions": {"root": True}}}, False),
     ]
 
 
@@ -1030,6 +1075,30 @@ def product_assert(name: str, args: dict, resp: dict, ctx: dict) -> None:
             raise ParityError(f"FAIL: 解包必须还原 v3 契约位 project.json: {data}", 2)
         if data.get("media") != 0 or data.get("missing") != []:
             raise ParityError(f"FAIL: 空迁移体解包必须 media=0 且无缺素材: {data}", 2)
+    elif name == "preview_plan":
+        s = data.get("summary", {})
+        if s.get("total") != 1 or (s.get("ok", 0) + s.get("err", 0)) != 1:
+            raise ParityError(f"FAIL: 预演单项 plan 汇总必须自洽(ok+err=total): {data}", 2)
+        item = (data.get("items") or [{}])[0]
+        if "code" not in item or "revBefore" not in item or "revAfter" not in item:
+            raise ParityError(f"FAIL: 预演逐项回执缺 code/rev 面: {item}", 2)
+    elif name == "apply_plan":
+        if (data.get("applied"), data.get("rejected"), data.get("skipped")) != (1, 1, 1):
+            raise ParityError(
+                f"FAIL: apply_plan 批准面三态必须各恰一项(批准/拒绝/未列): {data}", 2)
+        if data.get("revTo", 0) - data.get("revFrom", 0) != 1:
+            raise ParityError(f"FAIL: 仅批准项落地(rev 必须恰 +1): {data}", 2)
+    elif name == "note_reply":
+        if data.get("replies") != 1:
+            raise ParityError(f"FAIL: 一轮回复后线程回复数必须为 1: {data}", 2)
+    elif name == "session_report":
+        if data.get("opCount", 0) <= 0 or "会话改动报告" not in data.get("markdown", ""):
+            raise ParityError("FAIL: 会话报告必须含 Op 计数与人话 Markdown", 2)
+        if data.get("revTo", 0) <= data.get("sinceRev", 0):
+            raise ParityError(f"FAIL: 会话报告 rev 窗口必须非空: {data}", 2)
+    elif name == "plugin_validate" and resp.get("ok"):
+        if data.get("valid") is not True or data.get("errors") != []:
+            raise ParityError(f"FAIL: 合法 manifest 校验必须 valid=true 零错误: {data}", 2)
 
 
 # ---------------- serve 生命周期 ----------------

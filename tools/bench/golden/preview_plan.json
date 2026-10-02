@@ -1,0 +1,118 @@
+{
+ "tool": "preview_plan",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "plan": [
+     {
+      "id": "p-bad",
+      "tool": "clip_update",
+      "args": {
+       "clipId": "V1-999",
+       "patch": {
+        "volume": 0.8
+       }
+      }
+     }
+    ]
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "dryRun": true,
+     "items": [
+      {
+       "changes": [],
+       "code": "INTERNAL",
+       "id": "p-bad",
+       "index": 0,
+       "message": "UnknownClip(\"V1-999\")",
+       "ok": false,
+       "opIds": null,
+       "revAfter": 44,
+       "revBefore": 44,
+       "tool": "clip_update"
+      }
+     ],
+     "revFrom": 44,
+     "revTo": 44,
+     "summary": {
+      "err": 1,
+      "ok": 0,
+      "total": 1
+     }
+    },
+    "message": "预演完成(副本 dry-run,真工程未动)",
+    "ns": "ok",
+    "ok": true
+   }
+  },
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "plan": [
+     {
+      "id": "p-vol",
+      "tool": "clip_update",
+      "args": {
+       "clipId": "V1-001",
+       "patch": {
+        "volume": 0.7
+       },
+       "summary": "对拍:预演微调音量"
+      }
+     }
+    ]
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "dryRun": true,
+     "items": [
+      {
+       "changes": [
+        {
+         "after": {
+          "bytes": 461,
+          "elided": true
+         },
+         "before": {
+          "bytes": 462,
+          "elided": true
+         },
+         "file": "project.json",
+         "kind": "set",
+         "opId": "op-44",
+         "path": "/tracks/0/clips/0",
+         "summary": "对拍:预演微调音量"
+        }
+       ],
+       "code": "OK",
+       "id": "p-vol",
+       "index": 0,
+       "message": "已应用",
+       "ok": true,
+       "opIds": [
+        "op-44"
+       ],
+       "revAfter": 45,
+       "revBefore": 44,
+       "tool": "clip_update"
+      }
+     ],
+     "revFrom": 44,
+     "revTo": 45,
+     "summary": {
+      "err": 0,
+      "ok": 1,
+      "total": 1
+     }
+    },
+    "message": "预演完成(副本 dry-run,真工程未动)",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

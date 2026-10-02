@@ -1,0 +1,20 @@
+{
+  "id": "demo-menu",
+  "name": "示例·片段信息菜单",
+  "version": "1.0.0",
+  "form": "worker",
+  "entry": "main.js",
+  "description": "菜单贡献点示例:时间线右键「插件:片段信息卡」,读取选中片段的投影信息(只读)。",
+  "permissions": {
+    "read": true,
+    "write": false,
+    "network": false,
+    "filesystem": [],
+    "exec": false
+  },
+  "contributes": {
+    "commands": [
+      { "id": "clip-info", "title": "片段信息卡" }
+    ]
+  }
+}

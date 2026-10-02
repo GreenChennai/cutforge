@@ -7,9 +7,28 @@ import { keyOverrides, setKeyOverrides } from "./prefs.js";
 /** 单条绑定:{ id, group, label, combo(默认), run }。combo="" 表示默认不绑。 */
 const defs = [];
 
-/** 注册一条绑定定义(keymap.js 装配期调用)。 */
+/** 注册一条绑定定义(keymap.js 装配期调用;插件贡献点运行期亦可)。
+ * run 持在 defs(注册表自持执行面;keymap.js reinstall 经 runOf 回查)。 */
 export function defineBinding(id, group, label, combo, run) {
-  defs.push({ id, group, label, combo, run });
+  const idx = defs.findIndex((d) => d.id === id);
+  const rec = { id, group, label, combo, run };
+  if (idx >= 0) defs[idx] = rec;
+  else defs.push(rec);
+  fireDefsChange();
+}
+
+/** 注销一批绑定(前缀匹配;插件卸载/禁用时摘贡献点)。 */
+export function undefineByPrefix(prefix) {
+  const before = defs.length;
+  for (let i = defs.length - 1; i >= 0; i -= 1) {
+    if (defs[i].id.startsWith(prefix)) defs.splice(i, 1);
+  }
+  if (defs.length !== before) fireDefsChange();
+}
+
+/** 执行面回查(keymap.js reinstall:静态 RUN 表外的动态绑定,如插件命令)。 */
+export function runOf(id) {
+  return defs.find((d) => d.id === id)?.run || null;
 }
 
 /** 全表导出(帮助面板/e2e 遍历):[{id, group, label, defaultCombo, combo, keys}]。 */
@@ -91,5 +110,10 @@ export function resetAll() {
 /* ---- 变更通知(keymap 重装调度;设置面板免 import keymap 防装配环)---- */
 /** @type {Set<() => void>} */
 const changeCbs = new Set();
+/** @type {Set<() => void>} */
+const defsCbs = new Set();
 export function onOverridesChange(cb) { changeCbs.add(cb); return () => changeCbs.delete(cb); }
+/** 绑定定义集变化(插件贡献点注册/注销)→ keymap 重装调度。 */
+export function onDefsChange(cb) { defsCbs.add(cb); return () => defsCbs.delete(cb); }
 function fireChange() { for (const cb of changeCbs) cb(); }
+function fireDefsChange() { for (const cb of defsCbs) cb(); }

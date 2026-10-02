@@ -1,0 +1,72 @@
+{
+ "tool": "session_report",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "sinceRev": 0
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "byActor": {
+      "script": 1,
+      "user": 45
+     },
+     "byFile": {
+      "cutlist.json": 1,
+      "notes.json": 5,
+      "project.json": 40
+     },
+     "byKind": {
+      "delete": 1,
+      "insert": 15,
+      "move": 3,
+      "redo": 1,
+      "set": 21,
+      "split": 4,
+      "undo": 1
+     },
+     "durationMs": "<ELAPSED>",
+     "endedAt": "<TS>",
+     "markdown": "## 会话改动报告(<REV> → <REV>)\n\n- 时间窗:<TS> → <TS>(耗时 <ELAPSED>ms)\n- 改动规模:46 个 Op;操作分布:delete×1、insert×15、move×3、redo×1、set×21、split×4、undo×1\n- 改动段:A1-001(1 Op)、T1-001(1 Op)、T1-002(1 Op)、T1-003(1 Op)、V1-001(7 Op)、V1-002(2 Op)、V1-003(3 Op)、V1-004(4 Op)、V1-005(1 Op)、V1-006(1 Op)、V2-001(1 Op)、V2-003(2 Op);涉及轨:A1、T1、V1、V2\n- 标注:结案 1 / 在办 0 / 否决 1 / 孤儿 0;线程回复 1 条;结案回执率 100%\n- 参与者:script×1、user×45\n",
+     "notes": {
+      "open": 0,
+      "orphan": 0,
+      "receiptRate": 1.0,
+      "rejected": 1,
+      "replies": 1,
+      "resolved": 1
+     },
+     "opCount": 46,
+     "revTo": 46,
+     "sinceRev": 0,
+     "startedAt": "<TS>",
+     "touchedClips": {
+      "A1-001": 1,
+      "T1-001": 1,
+      "T1-002": 1,
+      "T1-003": 1,
+      "V1-001": 7,
+      "V1-002": 2,
+      "V1-003": 3,
+      "V1-004": 4,
+      "V1-005": 1,
+      "V1-006": 1,
+      "V2-001": 1,
+      "V2-003": 2
+     },
+     "touchedTracks": {
+      "A1": 3,
+      "T1": 5,
+      "V1": 6,
+      "V2": 4
+     }
+    },
+    "message": "会话报告",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

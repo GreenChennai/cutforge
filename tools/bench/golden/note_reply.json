@@ -1,0 +1,24 @@
+{
+ "tool": "note_reply",
+ "calls": [
+  {
+   "args": {
+    "root": "<TMP>/proot",
+    "noteId": "n-0001",
+    "body": "追问:下一句也一并调?",
+    "author": "user"
+   },
+   "response": {
+    "code": "OK",
+    "data": {
+     "noteId": "n-0001",
+     "replies": 1,
+     "rev": "<REV>"
+    },
+    "message": "回复已追加",
+    "ns": "ok",
+    "ok": true
+   }
+  }
+ ]
+}

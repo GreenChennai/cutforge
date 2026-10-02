@@ -29,7 +29,7 @@ const READONLY = new Set([
  * /media(T4.1):缩略图 PNG / peaks JSON 等缓存产物的加载通道(后端同一端点,
  * 媒体元素 src 亦走它;壳侧仍经本文件唯一收口)。
  * /catalogs(册四 T4.5~T4.7):转场/特效/动效/花字目录(编译期嵌入,GET 下发)。 */
-const DATA_GET_WHITELIST = new Set(["/session", "/ui-fields", "/events", "/media", "/catalogs"]);
+const DATA_GET_WHITELIST = new Set(["/session", "/ui-fields", "/events", "/media", "/catalogs", "/api/v1/tools"]);
 
 const RETRY_MAX = 3;
 const RETRY_BASE_MS = 300;
@@ -211,4 +211,15 @@ let sessionRoot = "";
 export function setSessionRoot(root) { sessionRoot = root || ""; }
 export function rpcArgs(args = {}) {
   return { root: sessionRoot, ...args };
+}
+
+/**
+ * 工具清单(GET /api/v1/tools;册七 T7.2:插件宿主权限裁决镜像的分类真相源——
+ * 与 tools/list 同一注册表下发 name/kind)。失败返回 null(调用方诚实降级)。
+ * @returns {Promise<Array<{name:string,kind:string,description:string}>|null>}
+ */
+export async function toolsCatalog() {
+  const json = await dataGet("/api/v1/tools");
+  if (!json || !json.ok || !Array.isArray(json?.data?.tools)) return null;
+  return json.data.tools;
 }

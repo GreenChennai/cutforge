@@ -35,7 +35,10 @@ MAX_BYTES = 2 * 1024 * 1024
 NEW_CAP_PREFIXES = ("40-", "41-", "42-", "43-", "44-", "45-", "46-",
                     "06-mixer", "07-mixer", "08-compound", "09-multicam",
                     "10-scene", "11-encode", "12-queue", "13-otio",
-                    "50-", "51-", "52-", "53-", "54-", "55-")  # 册六(F4):工程库/迁移/模板/导出矩阵/preflight/素材库
+                    "50-", "51-", "52-", "53-", "54-", "55-",  # 册六(F4):工程库/迁移/模板/导出矩阵/preflight/素材库
+                    "56-", "57-", "58-", "59-", "60-")  # 册七(F4):脚本页签/批准流/线程+报告/插件安装/贡献点+越权
+# 册七补录段:录完即 VP9 CRF46 重编码压总量(目录 ≤8MB 红线;时长逐支不变)
+RECAP_PREFIXES = ("56-", "57-", "58-", "59-", "60-")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -967,6 +970,125 @@ def cap_55_media_library(page):
     page.wait_for_timeout(500)
 
 
+# ---------------- 册七补录(F4):脚本页签 / 批准流 / 线程+报告 / 插件 ----------------
+
+def _plugin_files(example: str) -> list[str]:
+    base = REPO / "apps" / "web" / "examples" / "plugins" / example
+    return [str(base / "manifest.json"), str(base / "main.js")]
+
+
+def _install_example_plugin(page, example: str) -> None:
+    """安装三连(校验卡 → 写入注册表;候选卡停留一拍供画面可读)。"""
+    page.set_input_files('[data-testid="plugin-files"]', _plugin_files(example))
+    page.click('[data-testid="plugin-install"]')
+    page.wait_for_selector('[data-testid="plugin-candidate-card"]', timeout=10000)
+    page.wait_for_timeout(700)
+    page.click('[data-testid="plugin-install-confirm"]')
+    page.wait_for_selector('[data-testid="plugin-row"]', timeout=6000)
+
+
+def _enable_first_plugin(page) -> None:
+    """首启确认 → 启用(确认对话框停留一拍;权限五面入画)。"""
+    page.locator('[data-testid="plugin-row"]').first.locator('[data-testid="plugin-enable"]').click()
+    page.wait_for_selector('[data-testid="plugin-confirm-dialog"]', timeout=5000)
+    page.wait_for_timeout(700)
+    page.click('[data-testid="plugin-confirm-ok"]')
+    page.wait_for_timeout(1200)
+
+
+def cap_56_script_run(page):
+    """脚本页签运行(56):批量变色内置片段载入 → 运行(preview_plan 预演)→ 结构化输出。"""
+    reset_state(page)
+    page.click('[data-testid="tab-script"]')
+    page.select_option('[data-testid="script-lib-select"]', index=1)
+    page.click('[data-testid="script-lib-load"]')
+    page.wait_for_timeout(700)
+    page.click('[data-testid="script-run"]')
+    page.wait_for_selector('[data-testid="script-out-item"]', timeout=20000)
+    page.wait_for_timeout(1500)
+
+
+def cap_57_plan_flow(page):
+    """plan 批准流(57):以 plan 提交 → 差异面板预演卡 → 逐项批准/拒绝 → apply 回执。"""
+    reset_state(page)
+    page.click('[data-testid="tab-script"]')
+    page.select_option('[data-testid="script-lib-select"]', index=1)
+    page.click('[data-testid="script-lib-load"]')
+    page.wait_for_timeout(300)
+    page.click('[data-testid="script-submit"]')
+    page.wait_for_timeout(600)
+    page.click('[data-testid="tab-diff"]')
+    page.wait_for_selector('[data-testid="plan-draft-head"]', timeout=5000)
+    page.click('[data-testid="plan-preview"]')
+    page.wait_for_selector('[data-testid="plan-preview-summary"]', timeout=20000)
+    page.wait_for_timeout(800)
+    items = page.locator('[data-testid="plan-item"]')
+    items.nth(0).locator('[data-testid="plan-item-approve"]').click()
+    page.wait_for_timeout(300)
+    items.nth(1).locator('[data-testid="plan-item-reject"]').click()
+    page.wait_for_timeout(500)
+    page.click('[data-testid="plan-apply"]')
+    page.wait_for_selector('[data-testid="plan-apply-result"]', timeout=20000)
+    page.wait_for_timeout(1600)
+
+
+def cap_58_note_thread_report(page):
+    """标注线程 + 会话报告(58):创建标注 → 线程两轮回复(note_reply)→ session_report 渲染。"""
+    reset_state(page)
+    page.click('[data-testid="tab-notes"]')
+    page.fill('[data-testid="note-body"]', "录屏:这段语速偏快")
+    page.click('[data-testid="note-create"]')
+    page.wait_for_selector('[data-testid="note-row"]', timeout=8000)
+    for text in ("人问:能再快 5% 吗?", "AI 答:已按 5% 提速"):
+        row = page.locator('[data-testid="note-row"]').first  # 行随 refresh 重建,逐轮重取
+        row.locator('[data-testid="note-thread-body"]').fill(text)
+        row.locator('[data-testid="note-thread-send"]').click()
+        page.wait_for_timeout(1000)
+    page.locator('[data-testid="report-run"]').click()
+    page.wait_for_selector('[data-testid="report-markdown"]', timeout=15000)
+    page.wait_for_timeout(1400)
+
+
+def cap_59_plugin_install_confirm(page):
+    """插件安装确认(59):选文件 → plugin_validate 校验卡 → 写入注册表 → 首启权限确认 → 运行。"""
+    reset_state(page)
+    page.click('[data-testid="tab-plugins"]')
+    _install_example_plugin(page, "demo-panel")
+    page.wait_for_timeout(400)
+    _enable_first_plugin(page)
+    page.wait_for_timeout(800)
+
+
+def cap_60_plugin_contribs_forbidden(page):
+    """贡献点 + 越权拦截(60):命令贡献点进右键菜单并调用 → 只读插件越权被 FORBIDDEN 拦截。"""
+    reset_state(page)
+    page.click('[data-testid="tab-plugins"]')
+    _install_example_plugin(page, "demo-command")
+    _enable_first_plugin(page)
+    page.wait_for_timeout(500)
+    page.click('[data-testid="tab-timeline"]')
+    page.wait_for_timeout(300)
+    page.click('[data-testid="clip"]', button="right")
+    page.wait_for_selector('[data-testid="context-menu"]', timeout=5000)
+    page.wait_for_timeout(600)
+    page.click('[data-testid="context-menu"] button:has-text("统计片段数")')
+    page.wait_for_timeout(1200)
+    page.click('[data-testid="tab-plugins"]')
+    naughty = NAUGHTY_DIR
+    page.set_input_files('[data-testid="plugin-files"]',
+                         [str(naughty / "manifest.json"), str(naughty / "main.js")])
+    page.click('[data-testid="plugin-install"]')
+    page.wait_for_selector('[data-testid="plugin-candidate-card"]', timeout=10000)
+    page.wait_for_timeout(600)
+    page.click('[data-testid="plugin-install-confirm"]')
+    page.wait_for_timeout(400)
+    row = page.locator('[data-testid="plugin-row"][data-pid="naughty-plugin"]')
+    row.locator('[data-testid="plugin-enable"]').click()
+    page.wait_for_selector('[data-testid="plugin-confirm-dialog"]', timeout=5000)
+    page.click('[data-testid="plugin-confirm-ok"]')
+    page.wait_for_timeout(1800)  # 越权 toast(GUARD_FAILED/FORBIDDEN)入画
+
+
 CAPTURES = [
     ("01-first-run-onboarding.webm", cap_01_onboarding,
      "新手引导条(T3.7)"),
@@ -1052,7 +1174,31 @@ CAPTURES = [
      "T6.3 导出前检查门(缺失素材 warn 行→裁决「先不导出」)"),
     ("55-media-library.webm", cap_55_media_library,
      "T6.2 素材库(库根扫描/chips/标签整组替换/一键导入)"),
+    # ---- 册七补录(F4):脚本页签/批准流/线程+报告/插件安装/贡献点+越权 ----
+    ("56-script-run.webm", cap_56_script_run,
+     "T7.3 脚本页签运行(内置片段载入 → preview_plan 预演 → 结构化逐步回执)"),
+    ("57-plan-approve-flow.webm", cap_57_plan_flow,
+     "T7.5 计划批准流(以 plan 提交 → 预演卡 → 逐项批准/拒绝 → apply 回执+planId)"),
+    ("58-note-thread-report.webm", cap_58_note_thread_report,
+     "T7.5 标注线程两轮(note_reply)+ session_report 人话报告渲染"),
+    ("59-plugin-install-confirm.webm", cap_59_plugin_install_confirm,
+     "T7.2 插件安装确认(plugin_validate 校验卡 → 注册表 → 首启权限确认 → 运行)"),
+    ("60-plugin-contribs-forbidden.webm", cap_60_plugin_contribs_forbidden,
+     "T7.2 贡献点生效(命令进右键菜单)+ 越权双拦截(只读插件调写工具 FORBIDDEN)"),
 ]
+
+
+def reencode_vp9(src: Path, crf: int = 46) -> None:
+    """册七补录段压总量:VP9 CRF46 重编码(时长逐支不变;失败/未变小则保留原录像)。"""
+    tmp_out = src.with_name(src.stem + ".reenc.webm")
+    r = sh(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+            "-c:v", "libvpx-vp9", "-crf", str(crf), "-b:v", "0",
+            "-cpu-used", "8", "-row-mt", "1", "-an", str(tmp_out)])
+    if r.returncode == 0 and tmp_out.is_file() and tmp_out.stat().st_size < src.stat().st_size:
+        tmp_out.replace(src)
+    else:
+        if tmp_out.exists():
+            tmp_out.unlink()
 
 
 def main() -> int:
@@ -1091,6 +1237,27 @@ def main() -> int:
     global LIB_ROOT
     LIB_ROOT = tmp / "medialib"                    # 55 素材库根(扫描合并幂等入库)
     make_media_lib(LIB_ROOT)
+    # 60 越权插件夹具(只读权限却调写工具;宿主镜像 GUARD_FAILED/FORBIDDEN 拦截演示)
+    global NAUGHTY_DIR
+    NAUGHTY_DIR = tmp / "naughty-plugin"
+    NAUGHTY_DIR.mkdir(parents=True)
+    (NAUGHTY_DIR / "manifest.json").write_text(json.dumps({
+        "id": "naughty-plugin", "name": "越权演示插件", "version": "1.0.0",
+        "form": "worker", "entry": "main.js", "description": "只读权限却调写工具(拦截演示)",
+        "permissions": {"read": True, "write": False, "network": False,
+                        "filesystem": [], "exec": False},
+    }, ensure_ascii=False), encoding="utf-8")
+    (NAUGHTY_DIR / "main.js").write_text(
+        '"use strict";\n'
+        "(async () => {\n"
+        "  try {\n"
+        '    await cutforge.call("clip_update", { clipId: "V1-001", patch: { volume: 0.1 } });\n'
+        '    cutforge.toast("越权调用竟然成功(宿主拦截失效)", false);\n'
+        "  } catch (e) {\n"
+        '    cutforge.toast("越权被拦:" + ((e && e.envelope && e.envelope.code) || "") + " " + ((e && e.message) || e));\n'
+        "  }\n"
+        "  cutforge.ready();\n"
+        "})();\n", encoding="utf-8")
     # 50 工程库演示卡(「库内新建」对话框壳侧 bug 登记期,卡面由 CLI 造,见 cap_50 docstring)
     rc_lib = sh([str(cli), "library", "new", "演示副本", "--library", str(tmp), "--json",
                  "--layout", "v2", "--slug", "demo-copy", "--fps", "30",
@@ -1157,6 +1324,8 @@ def main() -> int:
                 src = files[0]
                 dst = out_dir / name
                 shutil.move(str(src), str(dst))
+                if name.startswith(RECAP_PREFIXES):
+                    reencode_vp9(dst)  # 册七补录段:VP9 CRF46 压总量(时长不变)
                 size = dst.stat().st_size
                 written.append((name, size))
                 mark = "OK " if size <= MAX_BYTES else "BIG"

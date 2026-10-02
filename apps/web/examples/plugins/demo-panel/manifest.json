@@ -1,0 +1,20 @@
+{
+  "id": "demo-panel",
+  "name": "示例·工程统计面板",
+  "version": "1.0.0",
+  "form": "worker",
+  "entry": "main.js",
+  "description": "面板贡献点示例:专属页签内呈现时间线统计表(只读;插件每 5s 经宿主代理刷新,HTML 片段受控渲染)。",
+  "permissions": {
+    "read": true,
+    "write": false,
+    "network": false,
+    "filesystem": [],
+    "exec": false
+  },
+  "contributes": {
+    "panels": [
+      { "id": "stats", "title": "工程统计" }
+    ]
+  }
+}

@@ -615,7 +615,92 @@ impl Render for TimelineHost {
                     }
                 }),
             )
+            // 复制/粘贴(壳侧剪贴板;与 Ctrl+C/V 同逻辑)
+            .child(
+                Self::tool_button("tl-copy", "⧉ 复制", has_sel, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| app.copy_selected(cx));
+                        }
+                    }
+                }),
+            )
+            .child(
+                Self::tool_button("tl-paste", "📋 粘贴", true, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| app.paste_at_playhead(cx));
+                        }
+                    }
+                }),
+            )
+            // 全轨分割 / 关闭空隙(工程级剪辑)
+            .child(
+                Self::tool_button("tl-split-all", "卑 全分割", true, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| {
+                                app.submit(
+                                    "clip_split_all",
+                                    serde_json::json!({ "tMs": app.playhead_ms }),
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                }),
+            )
+            .child(
+                Self::tool_button("tl-gap", "⇤ 关空隙", true, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| app.close_gap_at_playhead(cx));
+                        }
+                    }
+                }),
+            )
             .child(div().flex_1())
+            // 轨道新增(从顶栏迁入;剪映 IA:轨道操作归时间线)
+            .child(
+                Self::tool_button("tl-add-v", "+ 视频轨", true, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| {
+                                app.submit("track_add", serde_json::json!({ "kind": "video" }), cx)
+                            });
+                        }
+                    }
+                }),
+            )
+            .child(
+                Self::tool_button("tl-add-a", "+ 音频轨", true, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| {
+                                app.submit("track_add", serde_json::json!({ "kind": "audio" }), cx)
+                            });
+                        }
+                    }
+                }),
+            )
+            .child(
+                Self::tool_button("tl-add-t", "+ 字幕轨", true, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| {
+                                app.submit("track_add", serde_json::json!({ "kind": "text" }), cx)
+                            });
+                        }
+                    }
+                }),
+            )
             .child(Self::zoom_button(
                 "tl-out",
                 "−",

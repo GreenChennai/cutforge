@@ -12,7 +12,7 @@ use sable::gpui::{
     ParentElement as _, Render, RenderImage, StatefulInteractiveElement as _, Styled as _,
     StyledImage as _, Window, div, hsla, img, px,
 };
-use sable::widgets::prelude::{SpacingTokens, v_flex};
+use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::FONT_SIZE_CAPTION;
 
@@ -32,6 +32,8 @@ pub struct LibraryPanel {
     /// 搜索框(壳侧文件名过滤,零语义)
     search: Option<Entity<InputState>>,
     query: String,
+    /// 分类过滤(None=全部;"video"/"audio"/"image")
+    kind_filter: Option<String>,
     /// 已取到的缩略图(path → 位图)
     thumbs: std::collections::HashMap<String, Arc<RenderImage>>,
     /// 待取缩略图的 path 队列(串行消费)
@@ -57,6 +59,7 @@ impl LibraryPanel {
             app: app.clone(),
             search: Some(search.clone()),
             query: String::new(),
+            kind_filter: None,
             thumbs: Default::default(),
             queue: Vec::new(),
             inflight: None,
@@ -174,13 +177,18 @@ impl Render for LibraryPanel {
             .filter_map(|c| c.get("src").and_then(serde_json::Value::as_str))
             .collect();
         let q = self.query.trim().to_lowercase();
+        let kind = self.kind_filter.clone();
         let media: Vec<_> = snapshot
             .media
             .iter()
-            .filter(|m| q.is_empty() || m.name.to_lowercase().contains(&q))
+            .filter(|m| {
+                (q.is_empty() || m.name.to_lowercase().contains(&q))
+                    && kind.as_deref().is_none_or(|k| m.kind == k)
+            })
             .cloned()
             .collect();
         let app_root = self.app.clone();
+        let panel_weak = cx.entity().downgrade();
 
         let mut grid = div()
             .flex()
@@ -300,6 +308,49 @@ impl Render for LibraryPanel {
                             .text_size(px(FONT_SIZE_CAPTION))
                             .text_color(colors.text_secondary)
                             .child(format!("素材 {} 项 · 双击插入到播放头", media.len())),
+                    )
+                    .child(
+                        // 分类 chips(剪映素材库分组入口;壳侧零语义过滤)
+                        h_flex().gap(px(2.0)).children(
+                            [
+                                ("全部", None),
+                                ("视频", Some("video")),
+                                ("音频", Some("audio")),
+                                ("图片", Some("image")),
+                            ]
+                            .iter()
+                            .map(|(label, k)| {
+                                let active = self.kind_filter == k.map(str::to_string);
+                                let kf = k.map(str::to_string);
+                                let panel_weak = panel_weak.clone();
+                                div()
+                                    .id(sable::gpui::ElementId::Name(
+                                        format!("kind-{label}").into(),
+                                    ))
+                                    .px(px(SpacingTokens::XS + 1.0))
+                                    .py(px(1.0))
+                                    .rounded_sm()
+                                    .text_size(px(FONT_SIZE_CAPTION))
+                                    .cursor_pointer()
+                                    .when(active, |s| {
+                                        s.bg(colors.accent).text_color(colors.surface_0)
+                                    })
+                                    .when(!active, |s| {
+                                        s.bg(colors.surface_2)
+                                            .text_color(colors.text_secondary)
+                                            .hover(|s| s.bg(colors.border_subtle))
+                                    })
+                                    .child(*label)
+                                    .on_click(move |_, _, cx: &mut App| {
+                                        if let Some(panel) = panel_weak.upgrade() {
+                                            panel.update(cx, |p, cx| {
+                                                p.kind_filter = kf.clone();
+                                                cx.notify();
+                                            });
+                                        }
+                                    })
+                            }),
+                        ),
                     )
                     .when_some(self.search.clone(), |c, search| {
                         c.child(

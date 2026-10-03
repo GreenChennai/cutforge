@@ -14,11 +14,10 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use sable::dock::{SablePanel, WorkspacePresets};
-use sable::gpui::prelude::FluentBuilder as _;
 use sable::gpui::{
-    App, AppContext as _, ClickEvent, Context, Entity, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ParentElement as _, Render, StatefulInteractiveElement as _,
+    Styled as _, Window, div, px,
 };
 use sable::gpui_component::dock::DockArea;
 use sable::widgets::prelude::{SpacingTokens, h_flex};
@@ -605,7 +604,7 @@ impl DesktopApp {
 
     /// 复制选中片段到壳侧剪贴板(内核 clip_copy 幂等,但壳只存 id 即可;
     /// 直接存 id:paste 用 clip_paste_at 需 trackId+startMs,不依赖内核剪贴板)。
-    fn copy_selected(&mut self, cx: &mut Context<Self>) {
+    pub fn copy_selected(&mut self, cx: &mut Context<Self>) {
         match self.selection.clone() {
             Some(clip) => {
                 self.clipboard = Some(clip);
@@ -620,7 +619,7 @@ impl DesktopApp {
     }
 
     /// 粘贴:剪贴板片段的源轨 + 播放头落点(clip_paste_at;同 kind 校验在内核)。
-    fn paste_at_playhead(&mut self, cx: &mut Context<Self>) {
+    pub fn paste_at_playhead(&mut self, cx: &mut Context<Self>) {
         let Some(clip_id) = self.clipboard.clone() else {
             self.status = "剪贴板为空".to_string();
             cx.notify();
@@ -646,7 +645,7 @@ impl DesktopApp {
     }
 
     /// 关闭播放头所在空隙(需片段 id 定位轨道;取选中片段的轨,否则首视频轨)。
-    fn close_gap_at_playhead(&mut self, cx: &mut Context<Self>) {
+    pub fn close_gap_at_playhead(&mut self, cx: &mut Context<Self>) {
         let track_id = self
             .selected_clip()
             .map(|c| {
@@ -703,113 +702,49 @@ impl DesktopApp {
     }
 }
 
-/// 工具栏:品牌 + 编辑组 + 片段组 + 轨道组(右留白给窗口拖拽区)。
+/// 顶栏(剪映 IA:工具栏只放工程级操作——品牌 | 居中工程名 | rev+导出;
+/// 编辑操作唯一入口 = 时间线工具行 + 快捷键,不再重复)。
 impl DesktopApp {
     fn toolbar(&self, colors: &ColorTokens, cx: &mut Context<Self>) -> sable::gpui::AnyElement {
-        let has_sel = self.selection.is_some();
         let weak = cx.entity().downgrade();
-        let tb = |id: &'static str, label: &'static str, enabled: bool| {
-            toolbar_button(id, label, enabled, colors)
-        };
         h_flex()
             .w_full()
-            .h(px(44.0))
+            .h(px(40.0))
             .px(px(SpacingTokens::SM))
-            .gap(px(SpacingTokens::XS))
             .items_center()
             .bg(colors.surface_1)
             .border_b_1()
             .border_color(colors.border_subtle)
             .child(
-                div()
-                    .px(px(SpacingTokens::XS + 2.0))
-                    .text_size(px(FONT_SIZE_HEADING))
-                    .text_color(colors.accent)
-                    .child("CutForge"),
-            )
-            .child(sep(colors))
-            .child(tb("tb-undo", "↶ 撤销", true).on_click(submit_handler(
-                weak.clone(),
-                "undo",
-                serde_json::json!({}),
-            )))
-            .child(tb("tb-redo", "↷ 重做", true).on_click(submit_handler(
-                weak.clone(),
-                "redo",
-                serde_json::json!({}),
-            )))
-            .child(sep(colors))
-            .child(
-                tb("tb-split", "✂ 分割", has_sel).on_click(act_handler(
-                    weak.clone(),
-                    |app| {
-                        (
-                            "clip_split",
-                            serde_json::json!({ "clipId": app.selection.clone(), "tMs": app.playhead_ms }),
-                        )
-                    },
-                )),
-            )
-            .child(
-                tb("tb-dup", "⧉ 副本", has_sel).on_click(act_handler(
-                    weak.clone(),
-                    |app| {
-                        (
-                            "clip_duplicate",
-                            serde_json::json!({ "clipId": app.selection.clone(), "startMs": app.playhead_ms }),
-                        )
-                    },
-                )),
-            )
-            .child(
-                tb("tb-del", "✕ 删除", has_sel).on_click(act_handler(
-                    weak.clone(),
-                    |app| {
-                        (
-                            "clip_delete",
-                            serde_json::json!({ "clipId": app.selection.clone() }),
-                        )
-                    },
-                )),
-            )
-            .child(sep(colors))
-            .child(
-                tb("tb-add-v", "+ 视频轨", true).on_click(add_track_handler(
-                    weak.clone(),
-                    "video",
-                )),
-            )
-            .child(
-                tb("tb-add-a", "+ 音频轨", true).on_click(add_track_handler(
-                    weak.clone(),
-                    "audio",
-                )),
-            )
-            .child(
-                tb("tb-add-t", "+ 字幕轨", true).on_click(add_track_handler(
-                    weak.clone(),
-                    "text",
-                )),
-            )
-            // 中段:居中工程名(剪映 H1;slug 缺省回落目录名)
-            .child(
                 h_flex()
-                    .flex_1()
-                    .justify_center()
-                    .overflow_hidden()
+                    .w(px(220.0))
+                    .flex_shrink_0()
+                    .gap(px(SpacingTokens::XS))
+                    .items_center()
                     .child(
                         div()
-                            .max_w(px(420.0))
+                            .px(px(SpacingTokens::XS + 2.0))
                             .text_size(px(FONT_SIZE_HEADING))
-                            .text_color(colors.text_primary)
-                            .child(self.project_title.clone())
-                            .truncate(),
+                            .text_color(colors.accent)
+                            .child("CutForge"),
                     ),
             )
-            // 右段:保存状态 + 导出主按钮(剪映 H2/H3)
+            // 中段:居中工程名(slug 优先,重投影刷新)
+            .child(
+                h_flex().flex_1().justify_center().overflow_hidden().child(
+                    div()
+                        .max_w(px(420.0))
+                        .text_size(px(FONT_SIZE_HEADING))
+                        .text_color(colors.text_primary)
+                        .child(self.project_title.clone())
+                        .truncate(),
+                ),
+            )
+            // 右段:保存状态 + 导出主按钮
             .child(
                 h_flex()
-                    .flex_1()
+                    .w(px(220.0))
+                    .flex_shrink_0()
                     .justify_end()
                     .gap(px(SpacingTokens::SM))
                     .items_center()
@@ -817,13 +752,16 @@ impl DesktopApp {
                         div()
                             .text_size(px(FONT_SIZE_CAPTION))
                             .text_color(colors.text_secondary)
-                            .child(format!("已保存 rev {}", self.shared.rev.load(Ordering::Relaxed))),
+                            .child(format!(
+                                "已保存 rev {}",
+                                self.shared.rev.load(Ordering::Relaxed)
+                            )),
                     )
                     .child(
                         div()
                             .id(sable::gpui::ElementId::Name("tb-export".into()))
                             .px(px(SpacingTokens::SM + 4.0))
-                            .py(px(5.0))
+                            .py(px(4.0))
                             .rounded(px(5.0))
                             .bg(colors.accent)
                             .text_size(px(FONT_SIZE_CAPTION + 1.0))
@@ -844,85 +782,5 @@ impl DesktopApp {
                     ),
             )
             .into_any_element()
-    }
-}
-
-/// 分隔线。
-fn sep(colors: &ColorTokens) -> impl IntoElement + use<> {
-    div()
-        .w(px(1.0))
-        .h(px(18.0))
-        .mx(px(SpacingTokens::XS))
-        .bg(colors.border_subtle)
-}
-
-/// 工具栏按钮基座(enabled=false 置灰;danger = 删除类 hover 红)。
-fn toolbar_button(
-    id: &'static str,
-    label: &'static str,
-    enabled: bool,
-    colors: &ColorTokens,
-) -> sable::gpui::Stateful<sable::gpui::Div> {
-    div()
-        .id(sable::gpui::ElementId::Name(id.into()))
-        .px(px(SpacingTokens::SM + 2.0))
-        .py(px(5.0))
-        .rounded(px(5.0))
-        .text_size(px(FONT_SIZE_CAPTION + 1.0))
-        .when(enabled, |s| {
-            s.bg(colors.surface_2)
-                .text_color(colors.text_primary)
-                .hover(|s| s.bg(colors.border_subtle))
-                .cursor_pointer()
-        })
-        .when(!enabled, |s| {
-            s.bg(colors.surface_1).text_color(colors.text_secondary)
-        })
-        .child(label)
-}
-
-/// 工具栏:静态工具提交(undo/redo)。
-fn submit_handler(
-    weak: sable::gpui::WeakEntity<DesktopApp>,
-    tool: &'static str,
-    params: serde_json::Value,
-) -> impl Fn(&ClickEvent, &mut Window, &mut App) + use<> {
-    move |_, _, cx: &mut App| {
-        if let Some(app) = weak.upgrade() {
-            app.update(cx, |app, cx| app.submit(tool, params.clone(), cx));
-        }
-    }
-}
-
-/// 工具栏点击处理器(Box 化:泛型闭包藏不进 `use<>` 返回位)。
-type ClickHandler = std::boxed::Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
-
-/// 工具栏:按当前应用状态现算工具+参数(选中类操作;泛型闭包藏不进
-/// `use<>`,落 Box<dyn Fn>)。
-fn act_handler(
-    weak: sable::gpui::WeakEntity<DesktopApp>,
-    f: impl Fn(&DesktopApp) -> (&'static str, serde_json::Value) + 'static,
-) -> ClickHandler {
-    std::boxed::Box::new(move |_, _, cx: &mut App| {
-        if let Some(app) = weak.upgrade() {
-            app.update(cx, |app, cx| {
-                let (tool, params) = f(app);
-                app.submit(tool, params, cx);
-            });
-        }
-    })
-}
-
-/// 工具栏:加轨。
-fn add_track_handler(
-    weak: sable::gpui::WeakEntity<DesktopApp>,
-    kind: &'static str,
-) -> impl Fn(&ClickEvent, &mut Window, &mut App) + use<> {
-    move |_, _, cx: &mut App| {
-        if let Some(app) = weak.upgrade() {
-            app.update(cx, |app, cx| {
-                app.submit("track_add", serde_json::json!({ "kind": kind }), cx);
-            });
-        }
     }
 }

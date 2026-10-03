@@ -31,16 +31,16 @@ mod grade_tools;
 mod library_tools;
 mod media_library;
 mod media_tools;
-mod plugin;
-mod pro_ops;
-mod subtitle_ops;
 mod orchestrate;
 mod pkg_tools;
+mod plugin;
+mod pro_ops;
 mod progress;
 mod registry;
-mod rpc;
 mod resident;
+mod rpc;
 mod session;
+mod subtitle_ops;
 mod tools_nolock;
 mod transport;
 mod workspace_svc;
@@ -49,11 +49,16 @@ mod workspace_svc;
 pub use dispatch::{dispatch, dispatch_with_actor, handle_rpc, handle_rpc_as};
 pub use plugin::{authorize, plugin_actor, validate_manifest};
 pub use progress::{build_render_extra, render_cutforge_sync, resolve_render_bin};
-pub use registry::{code_namespace, registry, tool_names, CODE_NS, CAPABILITY_MATRIX_JSON, CODES, MCP_TOOLS_JSON, UI_FIELDS_JSON};
+pub use registry::{
+    CAPABILITY_MATRIX_JSON, CODE_NS, CODES, MCP_TOOLS_JSON, UI_FIELDS_JSON, code_namespace,
+    registry, tool_names,
+};
 pub use session::new_token;
 pub use transport::http::serve_http;
 pub use transport::stdio::serve_stdio;
-pub use workspace_svc::{default_web_dir, pick_project_interactive, resolve_root_arg, serve_workspace};
+pub use workspace_svc::{
+    default_web_dir, pick_project_interactive, resolve_root_arg, serve_workspace,
+};
 
 // ---- crate 内部胶水:仅供 #[cfg(test)] 的 tests.rs 经 `use super::*` 取用 ----
 #[cfg(test)]

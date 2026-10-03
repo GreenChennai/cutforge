@@ -4,7 +4,7 @@
 
 use cutforge_core::engine::{Answer, Query};
 use cutforge_core::oplog::ActorKind;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -13,7 +13,11 @@ pub fn new_token() -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     std::process::id().hash(&mut h);
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos().hash(&mut h);
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .hash(&mut h);
     format!("{:016x}", h.finish())
 }
 
@@ -32,7 +36,8 @@ struct SessionJournal {
 }
 
 fn sessions() -> &'static std::sync::Mutex<std::collections::BTreeMap<PathBuf, SessionJournal>> {
-    static S: OnceLock<std::sync::Mutex<std::collections::BTreeMap<PathBuf, SessionJournal>>> = OnceLock::new();
+    static S: OnceLock<std::sync::Mutex<std::collections::BTreeMap<PathBuf, SessionJournal>>> =
+        OnceLock::new();
     S.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
 }
 
@@ -50,12 +55,15 @@ fn disk_rev(root: &Path) -> u64 {
 pub(crate) fn session_journal_begin(root: &Path) {
     if let Ok(mut m) = sessions().lock() {
         let rev = disk_rev(root);
-        m.insert(root.to_path_buf(), SessionJournal {
-            started_at: cutforge_core::timeutil::now_rfc3339(),
-            rev_from: rev,
-            rev_to: rev,
-            ops: Vec::new(),
-        });
+        m.insert(
+            root.to_path_buf(),
+            SessionJournal {
+                started_at: cutforge_core::timeutil::now_rfc3339(),
+                rev_from: rev,
+                rev_to: rev,
+                ops: Vec::new(),
+            },
+        );
     }
     let _ = write_session_summary(root);
 }
@@ -84,10 +92,11 @@ pub(crate) fn session_journal_note(root: &Path, rev_now: u64) {
         Err(_) => Vec::new(),
     };
     if let Ok(mut m) = sessions().lock()
-        && let Some(j) = m.get_mut(root) {
-            j.ops.extend(new_ops);
-            j.rev_to = rev_now;
-        }
+        && let Some(j) = m.get_mut(root)
+    {
+        j.ops.extend(new_ops);
+        j.rev_to = rev_now;
+    }
     let _ = write_session_summary(root);
 }
 

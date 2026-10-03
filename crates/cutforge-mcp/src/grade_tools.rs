@@ -16,7 +16,7 @@
 
 use crate::dispatch::resolve_within_root;
 use crate::registry::envelope;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 fn ff_bin() -> String {
@@ -29,13 +29,24 @@ fn ff_bin() -> String {
 }
 
 fn ffmpeg_available() -> bool {
-    std::process::Command::new(ff_bin()).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    std::process::Command::new(ff_bin())
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// f64 → 定点串(去尾零;跨平台 golden 稳定的格式化口径)。
 pub(crate) fn fmt_num(v: f64) -> String {
-    let s = format!("{v:.6}").trim_end_matches('0').trim_end_matches('.').to_string();
-    if s.is_empty() || s == "-0" { "0".into() } else { s }
+    let s = format!("{v:.6}")
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string();
+    if s.is_empty() || s == "-0" {
+        "0".into()
+    } else {
+        s
+    }
 }
 
 // ---------------- lut_import(T5.2) ----------------
@@ -45,21 +56,49 @@ pub(crate) fn fmt_num(v: f64) -> String {
 /// 返回登记信息:相对路径(lut 引用值)/标题/LUT_3D_SIZE/数据行数。
 pub fn lut_import_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str() else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(.cube 工程内相对路径)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(.cube 工程内相对路径)",
+            json!({}),
+        );
     };
     let abs = match resolve_within_root(root, src) {
         Ok(p) => p,
-        Err(msg) => return envelope(false, "PRECONDITION_FAILED", &format!("路径不合法({src}): {msg}"), json!({})),
+        Err(msg) => {
+            return envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("路径不合法({src}): {msg}"),
+                json!({}),
+            );
+        }
     };
-    if !abs.to_string_lossy().to_ascii_lowercase().ends_with(".cube") {
-        return envelope(false, "PRECONDITION_FAILED", "仅支持 .cube(3D LUT 主格式)", json!({}));
+    if !abs
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .ends_with(".cube")
+    {
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "仅支持 .cube(3D LUT 主格式)",
+            json!({}),
+        );
     }
     let Ok(text) = std::fs::read_to_string(&abs) else {
         return envelope(false, "NO_CONFIG", &format!("LUT 不可读: {src}"), json!({}));
     };
     let (title, size, rows) = match cutforge_render::grade::parse_cube(&text) {
         Ok(v) => v,
-        Err(e) => return envelope(false, "SCHEMA_INVALID", &format!(".cube 校验失败: {e}"), json!({})),
+        Err(e) => {
+            return envelope(
+                false,
+                "SCHEMA_INVALID",
+                &format!(".cube 校验失败: {e}"),
+                json!({}),
+            );
+        }
     };
     // 落库:消毒名(仅字母数字 -_ 与 CJK;重名覆盖 = 幂等导入)
     let stem = abs
@@ -76,17 +115,28 @@ pub fn lut_import_tool(root: &Path, args: &Value) -> Value {
         .collect();
     let dir = root.join(".cutforge/luts");
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        return envelope(false, "INTERNAL", &format!("LUT 库目录创建失败: {e}"), json!({}));
+        return envelope(
+            false,
+            "INTERNAL",
+            &format!("LUT 库目录创建失败: {e}"),
+            json!({}),
+        );
     }
     let mut rel = format!(".cutforge/luts/{safe}.cube");
     let mut target = root.join(&rel);
     // 重名覆盖防混:同名但内容不同 → 追加序号(内容寻址精神;内容相同幂等覆盖)
-    if target.is_file() && std::fs::read(&target).map(|b| b != text.as_bytes()).unwrap_or(true) {
+    if target.is_file()
+        && std::fs::read(&target)
+            .map(|b| b != text.as_bytes())
+            .unwrap_or(true)
+    {
         for n in 2..1000 {
             rel = format!(".cutforge/luts/{safe}-{n}.cube");
             target = root.join(&rel);
             if !target.is_file()
-                || std::fs::read(&target).map(|b| b == text.as_bytes()).unwrap_or(false)
+                || std::fs::read(&target)
+                    .map(|b| b == text.as_bytes())
+                    .unwrap_or(false)
             {
                 break;
             }
@@ -95,12 +145,17 @@ pub fn lut_import_tool(root: &Path, args: &Value) -> Value {
     if let Err(e) = cutforge_io::atomic::atomic_write(&target, text.as_bytes()) {
         return envelope(false, "INTERNAL", &format!("LUT 落库失败: {e}"), json!({}));
     }
-    envelope(true, "OK", "LUT 已导入", json!({
-        "lut": rel.replace('\\', "/"),
-        "title": title,
-        "size3d": size,
-        "rows": rows,
-    }))
+    envelope(
+        true,
+        "OK",
+        "LUT 已导入",
+        json!({
+            "lut": rel.replace('\\', "/"),
+            "title": title,
+            "size3d": size,
+            "rows": rows,
+        }),
+    )
 }
 
 // ---------------- scope_data(T5.2 示波器数据后端) ----------------
@@ -121,7 +176,9 @@ pub fn waveform_columns(px: &[u8], w: usize, h: usize, cols: usize) -> Vec<[f64;
             for x in x0..x1 {
                 for y in (0..h).step_by(2) {
                     let i = (y * w + x) * 3;
-                    let l = (px[i] as u32 * 299 + px[i + 1] as u32 * 587 + px[i + 2] as u32 * 114) as f64 / 1000.0;
+                    let l = (px[i] as u32 * 299 + px[i + 1] as u32 * 587 + px[i + 2] as u32 * 114)
+                        as f64
+                        / 1000.0;
                     mn = mn.min(l);
                     mx = mx.max(l);
                     sum += l;
@@ -175,20 +232,36 @@ pub fn rgb_histograms(px: &[u8], bins: usize) -> [Vec<u64>; 3] {
 /// 缓存:`.cutforge/scope-cache/<key>.json`(内容寻址 = 路径+mtime+size+参数)。
 pub fn scope_data_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str() else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(帧/视频工程内相对路径)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(帧/视频工程内相对路径)",
+            json!({}),
+        );
     };
     let at_ms = args["atMs"].as_u64().unwrap_or(0);
     let width = args["width"].as_u64().unwrap_or(256).clamp(64, 512) as u32;
     let cols = args["waveCols"].as_u64().unwrap_or(128).clamp(16, 512) as usize;
     let abs = match resolve_within_root(root, src) {
         Ok(p) => p,
-        Err(msg) => return envelope(false, "PRECONDITION_FAILED", &format!("路径不合法({src}): {msg}"), json!({})),
+        Err(msg) => {
+            return envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("路径不合法({src}): {msg}"),
+                json!({}),
+            );
+        }
     };
     let Some((mtime, size)) = cutforge_io::mediacache::source_stamp(&abs) else {
         return envelope(false, "NO_CONFIG", &format!("素材不可读: {src}"), json!({}));
     };
     let key = cutforge_io::mediacache::media_key(
-        "scope", src, mtime, size, &[&at_ms.to_string(), &width.to_string(), &cols.to_string()],
+        "scope",
+        src,
+        mtime,
+        size,
+        &[&at_ms.to_string(), &width.to_string(), &cols.to_string()],
     );
     let rel = format!(".cutforge/scope-cache/{key}.json");
     let out_path = root.join(&rel);
@@ -196,10 +269,20 @@ pub fn scope_data_tool(root: &Path, args: &Value) -> Value {
         && let Ok(text) = std::fs::read_to_string(&out_path)
         && let Ok(scope) = serde_json::from_str::<Value>(&text)
     {
-        return envelope(true, "OK", "示波器数据(缓存命中)", json!({"cached": true, "key": key, "scope": scope}));
+        return envelope(
+            true,
+            "OK",
+            "示波器数据(缓存命中)",
+            json!({"cached": true, "key": key, "scope": scope}),
+        );
     }
     if !ffmpeg_available() {
-        return envelope(false, "DEP_MISSING", "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)",
+            json!({}),
+        );
     }
     let height = if width >= 2 { width / 2 * 3 } else { width }; // 3:2 采样面(数据面,非显示面)
     let mut dec = std::process::Command::new(ff_bin());
@@ -208,23 +291,48 @@ pub fn scope_data_tool(root: &Path, args: &Value) -> Value {
         dec.args(["-ss", &format!("{:.3}", at_ms as f64 / 1000.0)]);
     }
     dec.args([
-        "-i", &abs.to_string_lossy(),
-        "-frames:v", "1",
-        "-vf", &format!("scale={width}:{height}"),
-        "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        "-i",
+        &abs.to_string_lossy(),
+        "-frames:v",
+        "1",
+        "-vf",
+        &format!("scale={width}:{height}"),
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-",
     ]);
     let Ok(dec) = dec.output() else {
         return envelope(false, "DEP_MISSING", "ffmpeg 启动失败", json!({}));
     };
     if !dec.status.success() {
-        return envelope(false, "DEP_MISSING",
-            &format!("像素解码失败: {}", String::from_utf8_lossy(&dec.stderr).chars().take(200).collect::<String>()), json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            &format!(
+                "像素解码失败: {}",
+                String::from_utf8_lossy(&dec.stderr)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            ),
+            json!({}),
+        );
     }
     let px = dec.stdout;
     let expect = width as usize * height as usize * 3;
     if px.len() < expect {
-        return envelope(false, "NO_CONFIG",
-            &format!("帧解码不完整({}/{} 字节;视频可能短于 atMs)", px.len(), expect), json!({}));
+        return envelope(
+            false,
+            "NO_CONFIG",
+            &format!(
+                "帧解码不完整({}/{} 字节;视频可能短于 atMs)",
+                px.len(),
+                expect
+            ),
+            json!({}),
+        );
     }
     let (w, h) = (width as usize, height as usize);
     let wave = waveform_columns(&px, w, h, cols);
@@ -238,8 +346,16 @@ pub fn scope_data_tool(root: &Path, args: &Value) -> Value {
         "histogram": {"bins": 64, "r": hist[0], "g": hist[1], "b": hist[2]},
     });
     let _ = std::fs::create_dir_all(root.join(".cutforge/scope-cache"));
-    let _ = cutforge_io::atomic::atomic_write(&out_path, serde_json::to_string(&doc).unwrap_or_default().as_bytes());
-    envelope(true, "OK", "示波器数据", json!({"cached": false, "key": key, "scope": doc}))
+    let _ = cutforge_io::atomic::atomic_write(
+        &out_path,
+        serde_json::to_string(&doc).unwrap_or_default().as_bytes(),
+    );
+    envelope(
+        true,
+        "OK",
+        "示波器数据",
+        json!({"cached": false, "key": key, "scope": doc}),
+    )
 }
 
 // ---------------- audio_loudness(T5.3 响度计) ----------------
@@ -249,31 +365,63 @@ pub fn scope_data_tool(root: &Path, args: &Value) -> Value {
 /// 可选 target 校验:deviation = |inputI - target|(AC-5.3 的 ≤1LU 判定依据)。
 pub fn audio_loudness_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str() else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(音频/成片工程内相对路径)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(音频/成片工程内相对路径)",
+            json!({}),
+        );
     };
     let target = args["target"].as_f64();
     let abs = match resolve_within_root(root, src) {
         Ok(p) => p,
-        Err(msg) => return envelope(false, "PRECONDITION_FAILED", &format!("路径不合法({src}): {msg}"), json!({})),
+        Err(msg) => {
+            return envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("路径不合法({src}): {msg}"),
+                json!({}),
+            );
+        }
     };
     if !ffmpeg_available() {
-        return envelope(false, "DEP_MISSING", "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)",
+            json!({}),
+        );
     }
     let ti = target.unwrap_or(-14.0);
     let out = std::process::Command::new(ff_bin())
         .args([
-            "-hide_banner", "-nostats",
-            "-i", &abs.to_string_lossy(),
-            "-filter_complex", &format!("loudnorm=I={}:TP=-1.0:print_format=json", fmt_num(ti)),
-            "-f", "null", "-",
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            &abs.to_string_lossy(),
+            "-filter_complex",
+            &format!("loudnorm=I={}:TP=-1.0:print_format=json", fmt_num(ti)),
+            "-f",
+            "null",
+            "-",
         ])
         .output();
     let Ok(out) = out else {
         return envelope(false, "DEP_MISSING", "ffmpeg 启动失败", json!({}));
     };
     if !out.status.success() {
-        return envelope(false, "DEP_MISSING",
-            &format!("响度测量失败: {}", String::from_utf8_lossy(&out.stderr).chars().take(200).collect::<String>()), json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            &format!(
+                "响度测量失败: {}",
+                String::from_utf8_lossy(&out.stderr)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            ),
+            json!({}),
+        );
     }
     let err = String::from_utf8_lossy(&out.stderr);
     let (Some(s), Some(e)) = (err.rfind('{'), err.rfind('}')) else {
@@ -316,9 +464,17 @@ pub fn encode_probe_tool(root: &Path, args: &Value) -> Value {
     let _ = root;
     let no_trial = args["trial"] == json!(false);
     if !ffmpeg_available() {
-        return envelope(false, "DEP_MISSING", "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)",
+            json!({}),
+        );
     }
-    let Ok(out) = std::process::Command::new(ff_bin()).args(["-hide_banner", "-encoders"]).output() else {
+    let Ok(out) = std::process::Command::new(ff_bin())
+        .args(["-hide_banner", "-encoders"])
+        .output()
+    else {
         return envelope(false, "DEP_MISSING", "ffmpeg 启动失败", json!({}));
     };
     let text = String::from_utf8_lossy(&out.stdout);
@@ -326,15 +482,24 @@ pub fn encode_probe_tool(root: &Path, args: &Value) -> Value {
     let mut encoders = serde_json::Map::new();
     for name in cutforge_render::encode::HW_CANDIDATES {
         let l = listed(name);
-        let usable = if !no_trial && l { cutforge_render::encode::hw_encoder_usable(name) } else { false };
+        let usable = if !no_trial && l {
+            cutforge_render::encode::hw_encoder_usable(name)
+        } else {
+            false
+        };
         encoders.insert(
             name.trim_start_matches("h264_").to_string(),
             json!({"listed": l, "usable": usable}),
         );
     }
-    envelope(true, "OK", "编码器探测", json!({
-        "encoders": Value::Object(encoders),
-        "autoDefault": "libx264",
-        "note": "auto/缺省 = libx264 确定性基线;hw = 优先硬件,试编失败优雅降级(AC-5.6)",
-    }))
+    envelope(
+        true,
+        "OK",
+        "编码器探测",
+        json!({
+            "encoders": Value::Object(encoders),
+            "autoDefault": "libx264",
+            "note": "auto/缺省 = libx264 确定性基线;hw = 优先硬件,试编失败优雅降级(AC-5.6)",
+        }),
+    )
 }

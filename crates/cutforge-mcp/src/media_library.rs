@@ -14,7 +14,7 @@
 //! (与工程库根 env CUTFORGE_PROJECTS 同风格)。
 
 use crate::registry::envelope;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// manifest 文件名(库根)。
@@ -69,7 +69,9 @@ fn scan_library(root: &Path) -> Result<(Value, Vec<String>), String> {
             if let (Some(r), Some(t)) = (e["ref"].as_str(), e["tags"].as_array()) {
                 old_tags.insert(
                     r.to_string(),
-                    t.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+                    t.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect(),
                 );
             }
         }
@@ -128,10 +130,10 @@ fn scan_library(root: &Path) -> Result<(Value, Vec<String>), String> {
     let doc = json!({"version": 1, "entries": entries});
     // 幂等写(内容变化才落盘,避免 mtime 抖动)
     let body = serde_json::to_string_pretty(&doc).unwrap_or_default();
-    let changed = std::fs::read_to_string(&manifest_path).map(|t| t != body).unwrap_or(true);
-    if changed
-        && let Err(e) = cutforge_io::atomic::atomic_write(&manifest_path, body.as_bytes())
-    {
+    let changed = std::fs::read_to_string(&manifest_path)
+        .map(|t| t != body)
+        .unwrap_or(true);
+    if changed && let Err(e) = cutforge_io::atomic::atomic_write(&manifest_path, body.as_bytes()) {
         warnings.push(format!("manifest 落盘失败: {e}"));
     }
     Ok((doc, warnings))
@@ -155,7 +157,9 @@ pub fn media_library_tool(root: &Path, args: &Value) -> Value {
                 .filter(|e| kind.is_none_or(|k| e["kind"].as_str() == Some(k)))
                 .filter(|e| {
                     tag.is_none_or(|t| {
-                        e["tags"].as_array().is_some_and(|ts| ts.iter().any(|v| v.as_str() == Some(t)))
+                        e["tags"]
+                            .as_array()
+                            .is_some_and(|ts| ts.iter().any(|v| v.as_str() == Some(t)))
                     })
                 })
                 .filter(|e| {
@@ -180,14 +184,28 @@ pub fn media_library_tool(root: &Path, args: &Value) -> Value {
         }
         "tag" => {
             let Some(entry_ref) = args["entry"].as_str().filter(|s| !s.is_empty()) else {
-                return envelope(false, "PRECONDITION_FAILED", "tag 需 entry(素材库相对引用)", json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    "tag 需 entry(素材库相对引用)",
+                    json!({}),
+                );
             };
             let tags: Vec<String> = args["tags"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             if !root.join(entry_ref).is_file() {
-                return envelope(false, "NO_CONFIG", &format!("素材不在位: {entry_ref}"), json!({}));
+                return envelope(
+                    false,
+                    "NO_CONFIG",
+                    &format!("素材不在位: {entry_ref}"),
+                    json!({}),
+                );
             }
             let (mut doc, warnings) = match scan_library(root) {
                 Ok(v) => v,
@@ -203,11 +221,22 @@ pub fn media_library_tool(root: &Path, args: &Value) -> Value {
                 }
             }
             if !hit {
-                return envelope(false, "PRECONDITION_FAILED", &format!("素材不在索引内(类型不受支持?): {entry_ref}"), json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    &format!("素材不在索引内(类型不受支持?): {entry_ref}"),
+                    json!({}),
+                );
             }
             let body = serde_json::to_string_pretty(&doc).unwrap_or_default();
-            if let Err(e) = cutforge_io::atomic::atomic_write(&root.join(MANIFEST), body.as_bytes()) {
-                return envelope(false, "INTERNAL", &format!("manifest 落盘失败: {e}"), json!({}));
+            if let Err(e) = cutforge_io::atomic::atomic_write(&root.join(MANIFEST), body.as_bytes())
+            {
+                return envelope(
+                    false,
+                    "INTERNAL",
+                    &format!("manifest 落盘失败: {e}"),
+                    json!({}),
+                );
             }
             let mut data = json!({"entry": entry_ref, "tags": tags, "manifest": MANIFEST});
             if !warnings.is_empty() {
@@ -215,8 +244,12 @@ pub fn media_library_tool(root: &Path, args: &Value) -> Value {
             }
             envelope(true, "OK", "标签已更新", data)
         }
-        other => envelope(false, "PRECONDITION_FAILED",
-            &format!("未知 action: {other}(允许 list/tag)"), json!({})),
+        other => envelope(
+            false,
+            "PRECONDITION_FAILED",
+            &format!("未知 action: {other}(允许 list/tag)"),
+            json!({}),
+        ),
     }
 }
 
@@ -225,10 +258,20 @@ pub fn media_library_tool(root: &Path, args: &Value) -> Value {
 /// 同名异内容追加序号;返回工程内相对路径(可直接喂 clip_add)。
 pub fn media_import_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str().filter(|s| !s.is_empty()) else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(绝对路径或素材库相对引用)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(绝对路径或素材库相对引用)",
+            json!({}),
+        );
     };
     if !cutforge_io::paths::has_project(root) {
-        return envelope(false, "NO_CONFIG", &format!("工程不存在: {}", root.display()), json!({}));
+        return envelope(
+            false,
+            "NO_CONFIG",
+            &format!("工程不存在: {}", root.display()),
+            json!({}),
+        );
     }
     // 源解析:绝对路径在位优先;否则素材库相对引用(libraryRoot 缺省根)
     let (source, from) = {
@@ -244,17 +287,30 @@ pub fn media_import_tool(root: &Path, args: &Value) -> Value {
             if cand.is_file() {
                 (cand, "library")
             } else {
-                return envelope(false, "PRECONDITION_FAILED",
-                    &format!("素材不可达(既非在位绝对路径,也非素材库引用): {src}"), json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    &format!("素材不可达(既非在位绝对路径,也非素材库引用): {src}"),
+                    json!({}),
+                );
             }
         }
     };
     let Some(ext) = source.extension().and_then(|x| x.to_str()) else {
-        return envelope(false, "PRECONDITION_FAILED", "素材无扩展名,类型不可判", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "素材无扩展名,类型不可判",
+            json!({}),
+        );
     };
     let Some(kind) = kind_of(ext) else {
-        return envelope(false, "PRECONDITION_FAILED",
-            &format!("不支持的素材类型: .{ext}(允许视频/音频/图片/lut/字幕)"), json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            &format!("不支持的素材类型: .{ext}(允许视频/音频/图片/lut/字幕)"),
+            json!({}),
+        );
     };
     // 落点(布局感知:册六 ADR-0021 三态)
     let dest_dir = match cutforge_io::paths::detect_layout(root) {
@@ -263,7 +319,12 @@ pub fn media_import_tool(root: &Path, args: &Value) -> Value {
         cutforge_io::LayoutKind::Legacy => root.join(cutforge_io::paths::LEGACY_MATERIALS),
     };
     if let Err(e) = std::fs::create_dir_all(&dest_dir) {
-        return envelope(false, "INTERNAL", &format!("素材目录创建失败: {e}"), json!({}));
+        return envelope(
+            false,
+            "INTERNAL",
+            &format!("素材目录创建失败: {e}"),
+            json!({}),
+        );
     }
     let file_name = source
         .file_name()
@@ -288,14 +349,20 @@ pub fn media_import_tool(root: &Path, args: &Value) -> Value {
             rel = rel_of(&cand);
             target = cand;
             if !target.is_file()
-                || std::fs::read(&target).map(|b| b == payload).unwrap_or(false)
+                || std::fs::read(&target)
+                    .map(|b| b == payload)
+                    .unwrap_or(false)
             {
                 break;
             }
         }
     }
     // 原子落盘:tmp + rename(目录级唯一落盘点纪律;大文件先 tmp 后原子换名)
-    let tmp = root.join(format!(".cutforge/import-tmp-{}-{}", std::process::id(), file_name));
+    let tmp = root.join(format!(
+        ".cutforge/import-tmp-{}-{}",
+        std::process::id(),
+        file_name
+    ));
     if let Some(dir) = tmp.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -308,7 +375,9 @@ pub fn media_import_tool(root: &Path, args: &Value) -> Value {
     }
     let bytes = payload.len() as u64;
     let duration = if matches!(kind, "video" | "audio") && cutforge_io::probe::ffprobe_available() {
-        cutforge_io::probe::probe(&target).ok().map(|i| i.duration_ms())
+        cutforge_io::probe::probe(&target)
+            .ok()
+            .map(|i| i.duration_ms())
     } else {
         None
     };
@@ -364,15 +433,27 @@ mod tests {
         assert_eq!(resp["data"]["total"], json!(2));
         assert!(lib.join(MANIFEST).is_file(), "manifest 必须落盘");
         // tag:bgm 打标;tag 过滤只回 bgm
-        let resp = media_library_tool(&lib, &json!({"root": root_s, "action": "tag", "entry": "bgm.mp3", "tags": ["calm", "loop"]}));
+        let resp = media_library_tool(
+            &lib,
+            &json!({"root": root_s, "action": "tag", "entry": "bgm.mp3", "tags": ["calm", "loop"]}),
+        );
         assert_eq!(resp["code"], json!("OK"), "{resp}");
         let resp = media_library_tool(&lib, &json!({"root": root_s, "tag": "calm"}));
         assert_eq!(resp["data"]["total"], json!(1));
         assert_eq!(resp["data"]["entries"][0]["ref"], json!("bgm.mp3"));
         // 重扫:标签持久(merge 语义)
         let resp = media_library_tool(&lib, &json!({"root": root_s}));
-        let bgm = resp["data"]["entries"].as_array().unwrap().iter().find(|e| e["ref"] == json!("bgm.mp3")).unwrap();
-        assert_eq!(bgm["tags"], json!(["calm", "loop"]), "重扫标签必须保留: {bgm}");
+        let bgm = resp["data"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["ref"] == json!("bgm.mp3"))
+            .unwrap();
+        assert_eq!(
+            bgm["tags"],
+            json!(["calm", "loop"]),
+            "重扫标签必须保留: {bgm}"
+        );
         // kind 过滤
         let resp = media_library_tool(&lib, &json!({"root": root_s, "kind": "audio"}));
         assert_eq!(resp["data"]["total"], json!(2));
@@ -395,30 +476,48 @@ mod tests {
         let lib_s = lib.to_string_lossy().to_string();
         let proj_s = proj.to_string_lossy().to_string();
         // 工程不存在(根下没有可识别布局的 project.json)→ NO_CONFIG
-        let resp = media_import_tool(&proj, &json!({"root": proj_s, "src": "take.mp4", "libraryRoot": lib_s}));
+        let resp = media_import_tool(
+            &proj,
+            &json!({"root": proj_s, "src": "take.mp4", "libraryRoot": lib_s}),
+        );
         assert_eq!(resp["code"], json!("NO_CONFIG"), "空根须拒: {resp}");
         std::fs::write(proj.join("project.json"), b"{}").unwrap(); // V3 标记文件(根 project.json)
         // 不支持类型
-        let resp = media_import_tool(&proj, &json!({"root": proj_s, "src": "bad.exe", "libraryRoot": lib_s}));
+        let resp = media_import_tool(
+            &proj,
+            &json!({"root": proj_s, "src": "bad.exe", "libraryRoot": lib_s}),
+        );
         assert_eq!(resp["code"], json!("PRECONDITION_FAILED"), "{resp}");
         // 拷入(v3 → media/)
-        let resp = media_import_tool(&proj, &json!({"root": proj_s, "src": "take.mp4", "libraryRoot": lib_s}));
+        let resp = media_import_tool(
+            &proj,
+            &json!({"root": proj_s, "src": "take.mp4", "libraryRoot": lib_s}),
+        );
         assert_eq!(resp["code"], json!("OK"), "{resp}");
         assert_eq!(resp["data"]["src"], json!("media/take.mp4"), "{resp}");
         assert_eq!(resp["data"]["kind"], json!("video"));
         assert_eq!(resp["data"]["importedFrom"], json!("library"));
         assert!(proj.join("media/take.mp4").is_file(), "必须真实落盘");
         // 同名同内容 = 幂等覆盖(不追加序号)
-        let resp = media_import_tool(&proj, &json!({"root": proj_s, "src": "take.mp4", "libraryRoot": lib_s}));
+        let resp = media_import_tool(
+            &proj,
+            &json!({"root": proj_s, "src": "take.mp4", "libraryRoot": lib_s}),
+        );
         assert_eq!(resp["data"]["src"], json!("media/take.mp4"));
         // 同名异内容 → 序号
         std::fs::write(lib.join("take.mp4"), b"different-bytes").unwrap();
-        let resp = media_import_tool(&proj, &json!({"root": proj_s, "src": "take.mp4", "libraryRoot": lib_s}));
+        let resp = media_import_tool(
+            &proj,
+            &json!({"root": proj_s, "src": "take.mp4", "libraryRoot": lib_s}),
+        );
         assert_eq!(resp["data"]["src"], json!("media/take-2.mp4"), "{resp}");
         assert!(proj.join("media/take-2.mp4").is_file());
         // 绝对路径源
         let abs = lib.join("take.mp4");
-        let resp = media_import_tool(&proj, &json!({"root": proj_s, "src": abs.to_string_lossy()}));
+        let resp = media_import_tool(
+            &proj,
+            &json!({"root": proj_s, "src": abs.to_string_lossy()}),
+        );
         assert_eq!(resp["data"]["importedFrom"], json!("path"));
         std::fs::remove_dir_all(&lib).ok();
         std::fs::remove_dir_all(&proj).ok();
@@ -432,10 +531,13 @@ mod tests {
         let proj = tmp_dir("imp-v2");
         std::fs::create_dir_all(proj.join("05_时间线工程")).unwrap();
         std::fs::write(proj.join("05_时间线工程/project.json"), b"{}").unwrap();
-        let resp = media_import_tool(&proj, &json!({
-            "root": proj.to_string_lossy(), "src": "s.wav",
-            "libraryRoot": lib.to_string_lossy()
-        }));
+        let resp = media_import_tool(
+            &proj,
+            &json!({
+                "root": proj.to_string_lossy(), "src": "s.wav",
+                "libraryRoot": lib.to_string_lossy()
+            }),
+        );
         assert_eq!(resp["code"], json!("OK"), "{resp}");
         assert_eq!(resp["data"]["src"], json!("01_原始素材/s.wav"), "{resp}");
         assert!(proj.join("01_原始素材/s.wav").is_file());

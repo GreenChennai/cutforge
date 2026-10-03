@@ -18,7 +18,7 @@
 
 use cutforge_io::paths;
 use cutforge_io::watcher::{EventKind, Watcher};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Write as _;
 use std::net::TcpStream;
@@ -70,7 +70,10 @@ pub(crate) struct EvHub {
 impl EvHub {
     fn new() -> Self {
         Self {
-            st: Mutex::new(EvState { seq: 0, log: VecDeque::new() }),
+            st: Mutex::new(EvState {
+                seq: 0,
+                log: VecDeque::new(),
+            }),
             cv: Condvar::new(),
             clients: AtomicUsize::new(0),
         }
@@ -101,9 +104,17 @@ impl EvHub {
         let mut g = self.st.lock().unwrap();
         loop {
             if g.seq > since {
-                let window_start = g.log.front().map(|e| e.seq).unwrap_or(g.seq.saturating_add(1));
+                let window_start = g
+                    .log
+                    .front()
+                    .map(|e| e.seq)
+                    .unwrap_or(g.seq.saturating_add(1));
                 if since.saturating_add(1) < window_start {
-                    return Some(vec![Ev { seq: g.seq, name: "resync", data: json!({"seq": g.seq}) }]);
+                    return Some(vec![Ev {
+                        seq: g.seq,
+                        name: "resync",
+                        data: json!({"seq": g.seq}),
+                    }]);
                 }
                 return Some(g.log.iter().filter(|e| e.seq > since).cloned().collect());
             }
@@ -159,7 +170,11 @@ pub(crate) fn publish_render(root: &Path, run_id: &str, state: &str) {
 /// 三态布局全认(册六 V3 扁平布局补齐——册七 SDK 冒烟实测暴露的缺口):
 /// V1 `05_ir/project.json` / V2 `05_时间线工程/project.json` / V3 `project.json`。
 fn classify(abs: &Path, root: &Path) -> Option<(&'static str, String)> {
-    let rel = abs.strip_prefix(root).ok()?.to_string_lossy().replace('\\', "/");
+    let rel = abs
+        .strip_prefix(root)
+        .ok()?
+        .to_string_lossy()
+        .replace('\\', "/");
     let name = if rel == paths::PROJECT_REL
         || rel == paths::LEGACY_PROJECT_REL
         || rel == paths::V3_PROJECT_REL
@@ -264,14 +279,35 @@ mod tests {
     fn classify_covers_dual_layout_and_ignores_noise() {
         let root = Path::new("/ws");
         let mk = |rel: &str| root.join(rel.replace('/', "\\"));
-        assert_eq!(classify(&mk(paths::PROJECT_REL), root).unwrap().0, "workspace.changed");
-        assert_eq!(classify(&mk(paths::LEGACY_PROJECT_REL), root).unwrap().0, "workspace.changed");
+        assert_eq!(
+            classify(&mk(paths::PROJECT_REL), root).unwrap().0,
+            "workspace.changed"
+        );
+        assert_eq!(
+            classify(&mk(paths::LEGACY_PROJECT_REL), root).unwrap().0,
+            "workspace.changed"
+        );
         // 册七补口:V3 扁平布局(SDK 冒烟实测暴露——v3 工程此前不发 workspace.changed)
-        assert_eq!(classify(&mk(paths::V3_PROJECT_REL), root).unwrap().0, "workspace.changed");
-        assert_eq!(classify(&mk(paths::NOTES_REL), root).unwrap().0, "notes.changed");
-        assert_eq!(classify(&mk(paths::CUTLIST_REL), root).unwrap().0, "cutlist.changed");
-        assert_eq!(classify(&mk(paths::LEGACY_CUTLIST_REL), root).unwrap().0, "cutlist.changed");
-        assert_eq!(classify(&mk(paths::V3_CUTLIST_REL), root).unwrap().0, "cutlist.changed");
+        assert_eq!(
+            classify(&mk(paths::V3_PROJECT_REL), root).unwrap().0,
+            "workspace.changed"
+        );
+        assert_eq!(
+            classify(&mk(paths::NOTES_REL), root).unwrap().0,
+            "notes.changed"
+        );
+        assert_eq!(
+            classify(&mk(paths::CUTLIST_REL), root).unwrap().0,
+            "cutlist.changed"
+        );
+        assert_eq!(
+            classify(&mk(paths::LEGACY_CUTLIST_REL), root).unwrap().0,
+            "cutlist.changed"
+        );
+        assert_eq!(
+            classify(&mk(paths::V3_CUTLIST_REL), root).unwrap().0,
+            "cutlist.changed"
+        );
         assert!(classify(&mk("01_原始素材/take1.mp4"), root).is_none());
         assert!(classify(&mk(".cutforge/bases/b1.json"), root).is_none());
     }
@@ -281,14 +317,24 @@ mod tests {
     fn hub_publish_wait_and_resync() {
         let hub = EvHub::new();
         assert_eq!(hub.current(), 0);
-        assert!(hub.wait_after(0, Duration::from_millis(10)).is_none(), "无事件应超时返回 None");
-        let s1 = hub.publish("workspace.changed", json!({"paths": ["05_时间线工程/project.json"]}));
+        assert!(
+            hub.wait_after(0, Duration::from_millis(10)).is_none(),
+            "无事件应超时返回 None"
+        );
+        let s1 = hub.publish(
+            "workspace.changed",
+            json!({"paths": ["05_时间线工程/project.json"]}),
+        );
         let s2 = hub.publish("notes.changed", json!({"paths": ["notes.json"]}));
         assert_eq!(s2, s1 + 1);
         let evs = hub.wait_after(0, Duration::from_millis(10)).unwrap();
         assert_eq!(evs.len(), 2);
         assert_eq!(evs[0].name, "workspace.changed");
-        assert_eq!(evs[0].data["event"], json!("workspace.changed"), "老字段 event 必须在 data 内");
+        assert_eq!(
+            evs[0].data["event"],
+            json!("workspace.changed"),
+            "老字段 event 必须在 data 内"
+        );
         assert_eq!(evs[0].data["seq"], json!(s1));
         let evs2 = hub.wait_after(s1, Duration::from_millis(10)).unwrap();
         assert_eq!(evs2.len(), 1, "since 起只补增量");

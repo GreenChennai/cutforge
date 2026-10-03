@@ -26,9 +26,9 @@
 //!   (stage_run 等)在 dispatch 更早处分岔,不进入本缓存,不阻塞。
 
 use crate::registry::envelope;
-use cutforge_io::fresh::{disk_fingerprint, DiskFingerprint};
 use cutforge_io::Workspace;
-use serde_json::{json, Value};
+use cutforge_io::fresh::{DiskFingerprint, disk_fingerprint};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -56,7 +56,11 @@ fn clipboards() -> &'static Mutex<BTreeMap<String, SessionClipboard>> {
 }
 
 /// 剪贴板覆盖式写入(clip_copy;root_key 与工作区缓存同键)。
-pub(crate) fn clipboard_set(root_key: &str, clips: Vec<cutforge_core::model::Clip>, kind: cutforge_core::model::TrackKind) {
+pub(crate) fn clipboard_set(
+    root_key: &str,
+    clips: Vec<cutforge_core::model::Clip>,
+    kind: cutforge_core::model::TrackKind,
+) {
     if let Ok(mut m) = clipboards().lock() {
         m.insert(root_key.to_string(), SessionClipboard { clips, kind });
     }
@@ -64,7 +68,10 @@ pub(crate) fn clipboard_set(root_key: &str, clips: Vec<cutforge_core::model::Cli
 
 /// 剪贴板只读视图(clip_paste_at 读取;None = 空板)。
 pub(crate) fn clipboard_get(root_key: &str) -> Option<SessionClipboard> {
-    clipboards().lock().ok().and_then(|m| m.get(root_key).cloned())
+    clipboards()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(root_key).cloned())
 }
 
 fn cache() -> &'static Mutex<BTreeMap<String, Resident>> {
@@ -99,7 +106,11 @@ pub fn with_resident(
         return match Workspace::open(root) {
             Ok(_) => envelope(false, "INTERNAL", "工程可打开但指纹不可读", json!({})),
             Err(e) => {
-                let code = if e.kind() == std::io::ErrorKind::NotFound { "NO_CONFIG" } else { "INTERNAL" };
+                let code = if e.kind() == std::io::ErrorKind::NotFound {
+                    "NO_CONFIG"
+                } else {
+                    "INTERNAL"
+                };
                 envelope(false, code, &e.to_string(), json!({}))
             }
         };
@@ -107,14 +118,22 @@ pub fn with_resident(
     let fresh_hit = matches!(cache.get(root_key), Some(r) if r.fp == fp);
     if !fresh_hit {
         // 指纹不一致或无缓存:重开(查询只读零锁;写入口锁内做迁移升级判定)
-        let ws = if readonly { Workspace::open(root) } else { Workspace::open_for_write(root) };
+        let ws = if readonly {
+            Workspace::open(root)
+        } else {
+            Workspace::open_for_write(root)
+        };
         match ws {
             Ok(ws) => {
                 cache.insert(root_key.to_string(), Resident { ws, fp });
             }
             Err(e) => {
                 cache.remove(root_key);
-                let code = if e.kind() == std::io::ErrorKind::NotFound { "NO_CONFIG" } else { "INTERNAL" };
+                let code = if e.kind() == std::io::ErrorKind::NotFound {
+                    "NO_CONFIG"
+                } else {
+                    "INTERNAL"
+                };
                 return envelope(false, code, &e.to_string(), json!({}));
             }
         }

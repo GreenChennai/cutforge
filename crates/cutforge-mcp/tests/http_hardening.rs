@@ -41,7 +41,11 @@ fn spawn_serve(tag: &str) -> (u16, PathBuf) {
     let root = std::env::temp_dir().join(format!("cf-harden-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("05_时间线工程")).unwrap();
-    std::fs::write(root.join("05_时间线工程").join("project.json"), br#"{"rev":1}"#).unwrap();
+    std::fs::write(
+        root.join("05_时间线工程").join("project.json"),
+        br#"{"rev":1}"#,
+    )
+    .unwrap();
     let web = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web");
     let port = free_port();
     {
@@ -56,10 +60,16 @@ fn spawn_serve(tag: &str) -> (u16, PathBuf) {
         if Instant::now() > deadline {
             panic!("serve 未就绪(15s):{tag}");
         }
-        if let Ok((code, _, _)) = http_roundtrip(port, "GET", "/session", &[("Authorization", &format!("Bearer {TOKEN}"))], None)
-            && code == 200 {
-                break;
-            }
+        if let Ok((code, _, _)) = http_roundtrip(
+            port,
+            "GET",
+            "/session",
+            &[("Authorization", &format!("Bearer {TOKEN}"))],
+            None,
+        ) && code == 200
+        {
+            break;
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
     (port, root)
@@ -95,9 +105,17 @@ fn http_roundtrip(
         }
         buf.extend_from_slice(&tmp[..n]);
     }
-    let head_end = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(buf.len());
+    let head_end = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
+        .unwrap_or(buf.len());
     let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
-    let code: u16 = head.split_whitespace().nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    let code: u16 = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
     Ok((code, head, buf[head_end..].to_vec()))
 }
 
@@ -120,9 +138,14 @@ fn hung_connection_does_not_block_others_and_is_reclaimed() {
     // 1) 隔离性:挂死连接压在服务上,其余请求必须照常应答(数据面 + RPC 写路径探测)
     let t0 = Instant::now();
     for i in 0..10 {
-        let (code, _, body) =
-            http_roundtrip(port, "GET", "/session", &[("Authorization", &format!("Bearer {TOKEN}"))], None)
-                .unwrap_or_else(|e| panic!("第 {i} 个并发请求失败: {e}"));
+        let (code, _, body) = http_roundtrip(
+            port,
+            "GET",
+            "/session",
+            &[("Authorization", &format!("Bearer {TOKEN}"))],
+            None,
+        )
+        .unwrap_or_else(|e| panic!("第 {i} 个并发请求失败: {e}"));
         assert_eq!(code, 200, "并发 /session 应 200,实得 {code}");
         assert!(body.windows(5).any(|w| w == b"token"), "/session 负载异常");
     }
@@ -135,13 +158,19 @@ fn hung_connection_does_not_block_others_and_is_reclaimed() {
         port,
         "POST",
         "/rpc",
-        &[("Authorization", &format!("Bearer {TOKEN}")), ("Content-Type", "application/json")],
+        &[
+            ("Authorization", &format!("Bearer {TOKEN}")),
+            ("Content-Type", "application/json"),
+        ],
         Some(&rpc_body),
     )
     .unwrap();
     assert_eq!(code, 200, "挂死连接存在时 /rpc 必须照常应答,实得 {code}");
     // JSON-RPC 信封在,text 内嵌 JSON 会被转义,断言信封字段而非内层 ok
-    assert!(String::from_utf8_lossy(&body).contains("\"result\""), "/rpc 负载异常");
+    assert!(
+        String::from_utf8_lossy(&body).contains("\"result\""),
+        "/rpc 负载异常"
+    );
     let elapsed = t0.elapsed();
     assert!(
         elapsed < Duration::from_secs(5),
@@ -158,8 +187,9 @@ fn hung_connection_does_not_block_others_and_is_reclaimed() {
                 reclaimed = true; // EOF:服务端优雅关闭
                 break;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset
-                || e.kind() == std::io::ErrorKind::ConnectionAborted =>
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ConnectionReset
+                    || e.kind() == std::io::ErrorKind::ConnectionAborted =>
             {
                 reclaimed = true; // RST:服务端直接丢弃
                 break;
@@ -171,8 +201,14 @@ fn hung_connection_does_not_block_others_and_is_reclaimed() {
     assert!(reclaimed, "挂死连接未在 {RECLAIM_DEADLINE:?} 内被回收");
 
     // 3) 回收后服务仍健康
-    let (code, _, _) =
-        http_roundtrip(port, "GET", "/session", &[("Authorization", &format!("Bearer {TOKEN}"))], None).unwrap();
+    let (code, _, _) = http_roundtrip(
+        port,
+        "GET",
+        "/session",
+        &[("Authorization", &format!("Bearer {TOKEN}"))],
+        None,
+    )
+    .unwrap();
     assert_eq!(code, 200, "回收后服务应仍健康");
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -192,15 +228,25 @@ fn oversized_body_rejected_with_413() {
     let t0 = Instant::now();
     let _ = s.read_to_end(&mut buf);
     let text = String::from_utf8_lossy(&buf);
-    assert!(text.starts_with("HTTP/1.1 413"), "超限请求应 413,实得:{:.80}", text.replace('\r', " "));
+    assert!(
+        text.starts_with("HTTP/1.1 413"),
+        "超限请求应 413,实得:{:.80}",
+        text.replace('\r', " ")
+    );
     assert!(
         t0.elapsed() < Duration::from_secs(5),
         "413 应在头读齐后立即返回,实耗 {:?}",
         t0.elapsed()
     );
     // 上限内的正常小请求不受影响
-    let (code, _, _) =
-        http_roundtrip(port, "GET", "/session", &[("Authorization", &format!("Bearer {TOKEN}"))], None).unwrap();
+    let (code, _, _) = http_roundtrip(
+        port,
+        "GET",
+        "/session",
+        &[("Authorization", &format!("Bearer {TOKEN}"))],
+        None,
+    )
+    .unwrap();
     assert_eq!(code, 200);
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -220,8 +266,9 @@ fn silent_connection_reclaimed_and_service_stays_healthy() {
                 reclaimed = true;
                 break;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset
-                || e.kind() == std::io::ErrorKind::ConnectionAborted =>
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ConnectionReset
+                    || e.kind() == std::io::ErrorKind::ConnectionAborted =>
             {
                 reclaimed = true;
                 break;
@@ -231,8 +278,14 @@ fn silent_connection_reclaimed_and_service_stays_healthy() {
     }
     assert!(reclaimed, "静默连接未在 {RECLAIM_DEADLINE:?} 内被回收");
     // 新连接立即可用
-    let (code, _, _) =
-        http_roundtrip(port, "GET", "/session", &[("Authorization", &format!("Bearer {TOKEN}"))], None).unwrap();
+    let (code, _, _) = http_roundtrip(
+        port,
+        "GET",
+        "/session",
+        &[("Authorization", &format!("Bearer {TOKEN}"))],
+        None,
+    )
+    .unwrap();
     assert_eq!(code, 200);
     let _ = std::fs::remove_dir_all(&ws);
 }
@@ -243,7 +296,14 @@ fn data_plane_without_token_is_401() {
     let (port, ws) = spawn_serve("auth");
     let (code, _, _) = http_roundtrip(port, "GET", "/session", &[], None).unwrap();
     assert_eq!(code, 401);
-    let (code, _, _) = http_roundtrip(port, "POST", "/rpc", &[("Content-Type", "application/json")], Some("{}")).unwrap();
+    let (code, _, _) = http_roundtrip(
+        port,
+        "POST",
+        "/rpc",
+        &[("Content-Type", "application/json")],
+        Some("{}"),
+    )
+    .unwrap();
     assert_eq!(code, 401);
     let _ = std::fs::remove_dir_all(&ws);
 }

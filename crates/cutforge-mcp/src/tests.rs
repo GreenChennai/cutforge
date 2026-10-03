@@ -16,7 +16,11 @@ fn capability_matrix_single_source() {
     // 册六 A6(T6.3/T6.2)增导出格式矩阵/导出预设/区域导出/导出预检/多画幅批量/
     // 素材库/剪映随包 + 重构图(诚实降级)/本地转写(明确不做)→ 51 项;
     // 册七 A7(T7.6)增 .cfpkg 打包/解包 → 52 项
-    assert_eq!(items.len(), 52, "册七 A7 后 52 项口径(51 + T7.6 cfpkg 一项)");
+    assert_eq!(
+        items.len(),
+        52,
+        "册七 A7 后 52 项口径(51 + T7.6 cfpkg 一项)"
+    );
     let mut achieved = 0;
     for it in items {
         let status = it["status"].as_str().unwrap();
@@ -26,21 +30,35 @@ fn capability_matrix_single_source() {
         );
         if status == "achieved" {
             achieved += 1;
-            assert!(it["evidence"].is_string() && !it["evidence"].as_str().unwrap().is_empty(),
-                "达成项必须有实码/夹具证据: {}", it["item"]);
+            assert!(
+                it["evidence"].is_string() && !it["evidence"].as_str().unwrap().is_empty(),
+                "达成项必须有实码/夹具证据: {}",
+                it["item"]
+            );
         }
         if status == "missing" || status == "partial" {
-            assert!(it["target"].is_string(), "未达成项必须写明 M11 目标: {}", it["item"]);
+            assert!(
+                it["target"].is_string(),
+                "未达成项必须写明 M11 目标: {}",
+                it["item"]
+            );
         }
     }
-    assert_eq!(achieved, 46, "M11+A4 19 项 + 册五 14 项 + T5.4/T5.5 五项 + 册六七项 + 册七 cfpkg 一项(HSL/HDR/重构图/转写登记降级为 missing;证据=parity C1-C4/G/A 夹具、interop 往返单测与 T6.3/T6.2 产物断言、cfpkg 容器往返单测)");
+    assert_eq!(
+        achieved, 46,
+        "M11+A4 19 项 + 册五 14 项 + T5.4/T5.5 五项 + 册六七项 + 册七 cfpkg 一项(HSL/HDR/重构图/转写登记降级为 missing;证据=parity C1-C4/G/A 夹具、interop 往返单测与 T6.3/T6.2 产物断言、cfpkg 容器往返单测)"
+    );
 }
 
 /// M8-5:python 启动器探测——本机/CI 至少一个可用,且返回的命令可执行。
 #[test]
 fn py_launcher_probe() {
     let py = py_launcher().expect("py -3/python3/python 至少一个必须可用");
-    let out = std::process::Command::new(&py[0]).args(&py[1..]).arg("-V").output().unwrap();
+    let out = std::process::Command::new(&py[0])
+        .args(&py[1..])
+        .arg("-V")
+        .output()
+        .unwrap();
     assert!(out.status.success());
 }
 
@@ -60,11 +78,21 @@ fn notes_error_codes_in_table() {
     let root = cutforge_io::tests_fixture("mcp-notes-codes").unwrap();
     let root_s = root.to_string_lossy().to_string();
     for (name, args) in [
-        ("notes_resolve", json!({"root": root_s, "noteId": "n-9999", "reply": "x", "opIds": ["op-1"]})),
-        ("notes_reject", json!({"root": root_s, "noteId": "n-9999", "reason": "x"})),
+        (
+            "notes_resolve",
+            json!({"root": root_s, "noteId": "n-9999", "reply": "x", "opIds": ["op-1"]}),
+        ),
+        (
+            "notes_reject",
+            json!({"root": root_s, "noteId": "n-9999", "reason": "x"}),
+        ),
     ] {
         let resp = dispatch(name, &args);
-        assert_eq!(resp["code"], json!("PRECONDITION_FAILED"), "{name} 缺标注必须 PRECONDITION_FAILED: {resp}");
+        assert_eq!(
+            resp["code"],
+            json!("PRECONDITION_FAILED"),
+            "{name} 缺标注必须 PRECONDITION_FAILED: {resp}"
+        );
         assert!(CODES.contains(&resp["code"].as_str().unwrap()));
     }
     cutforge_io::fsutil::cleanup(&root);
@@ -75,7 +103,14 @@ fn notes_error_codes_in_table() {
 fn orchestrate_tools_envelope_complete() {
     let root = cutforge_io::tests_fixture("mcp-orchestrate").unwrap();
     let root_s = root.to_string_lossy().to_string();
-    for name in ["stage_run", "stage_rebuild", "verify_run", "sync_check", "render", "export_jianying"] {
+    for name in [
+        "stage_run",
+        "stage_rebuild",
+        "verify_run",
+        "sync_check",
+        "render",
+        "export_jianying",
+    ] {
         let resp = dispatch(name, &json!({"root": root_s, "scriptArgs": ["--status"]}));
         for key in ["ok", "code", "message", "data"] {
             assert!(resp.get(key).is_some(), "{name} 缺协议字段 {key}");
@@ -96,25 +131,45 @@ fn clip_add_inserts_and_rejects_traversal() {
     let root_s = root.to_string_lossy().to_string();
 
     // 穿越路径 → PRECONDITION_FAILED,不触碰盘面
-    let rev0 = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
-    let bad = dispatch("clip_add", &json!({"root": root_s, "trackId": "V1", "src": "../逃逸.mp4", "startMs": 0}));
+    let rev0 = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"]
+        .as_u64()
+        .unwrap();
+    let bad = dispatch(
+        "clip_add",
+        &json!({"root": root_s, "trackId": "V1", "src": "../逃逸.mp4", "startMs": 0}),
+    );
     assert_eq!(bad["code"], json!("PRECONDITION_FAILED"), "{bad}");
     // track 不存在 → PRECONDITION_FAILED
-    let no_track = dispatch("clip_add", &json!({"root": root_s, "trackId": "V9", "src": "a.mp4", "startMs": 0}));
+    let no_track = dispatch(
+        "clip_add",
+        &json!({"root": root_s, "trackId": "V9", "src": "a.mp4", "startMs": 0}),
+    );
     assert_eq!(no_track["code"], json!("PRECONDITION_FAILED"), "{no_track}");
 
     // 显式时长:不依赖 ffprobe(CI 兜底路径);requestId 去重语义由引擎承接
     cutforge_io::fsutil::ensure(&root.join("01_原始素材")).unwrap();
     cutforge_io::atomic::atomic_write(&root.join("01_原始素材/take1.mp4"), b"x").unwrap();
-    let add = dispatch("clip_add", &json!({
-        "root": root_s, "trackId": "V1", "src": "01_原始素材/take1.mp4",
-        "startMs": 999_000, "durationMs": 1500, "volume": 0.5, "requestId": "add-1",
-    }));
+    let add = dispatch(
+        "clip_add",
+        &json!({
+            "root": root_s, "trackId": "V1", "src": "01_原始素材/take1.mp4",
+            "startMs": 999_000, "durationMs": 1500, "volume": 0.5, "requestId": "add-1",
+        }),
+    );
     assert_eq!(add["code"], json!("OK"), "clip_add 必须成功: {add}");
     assert!(add["data"]["rev"].as_u64().unwrap() > rev0, "rev 必须上涨");
     let after = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
-    let v1 = after["tracks"].as_array().unwrap().iter().find(|t| t["id"] == "V1").unwrap();
-    let clip = v1["clips"].as_array().unwrap().iter().find(|c| c["src"] == "01_原始素材/take1.mp4");
+    let v1 = after["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "V1")
+        .unwrap();
+    let clip = v1["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["src"] == "01_原始素材/take1.mp4");
     assert!(clip.is_some(), "盘面必须出现新 clip: {v1}");
     assert_eq!(clip.unwrap()["volume"], json!(0.5));
     cutforge_io::fsutil::cleanup(&root);
@@ -129,7 +184,10 @@ fn media_browse_lists_media_and_rejects_bad_dir() {
     cutforge_io::atomic::atomic_write(&root.join("01_原始素材/a.mp4"), b"x").unwrap();
     cutforge_io::atomic::atomic_write(&root.join("01_原始素材/notes.txt"), b"x").unwrap();
 
-    let resp = dispatch("media_browse", &json!({"root": root_s, "dir": "01_原始素材"}));
+    let resp = dispatch(
+        "media_browse",
+        &json!({"root": root_s, "dir": "01_原始素材"}),
+    );
     assert_eq!(resp["code"], json!("OK"), "{resp}");
     let files = resp["data"]["files"].as_array().unwrap();
     assert_eq!(files.len(), 1, "只列媒体扩展名,不列 .txt: {files:?}");
@@ -137,24 +195,56 @@ fn media_browse_lists_media_and_rejects_bad_dir() {
     assert_eq!(files[0]["kind"], json!("video"));
 
     let bad = dispatch("media_browse", &json!({"root": root_s, "dir": "../.."}));
-    assert_eq!(bad["code"], json!("PRECONDITION_FAILED"), "穿越目录必须拒绝: {bad}");
+    assert_eq!(
+        bad["code"],
+        json!("PRECONDITION_FAILED"),
+        "穿越目录必须拒绝: {bad}"
+    );
     cutforge_io::fsutil::cleanup(&root);
 }
 
 /// RT-1 前置口径:produces_rev_mutation 的分类面(查询/静态类不采集)。
 #[test]
 fn mutation_classification() {
-    for q in ["project_get", "timeline_get", "oplog_tail", "notes_list", "conflict_list",
-              "render_probe", "stage_status", "media_probe", "media_browse", "capability_matrix",
-              "render_run", "render_progress", "render_frame", "project_new",
-              "clip_copy"] {
+    for q in [
+        "project_get",
+        "timeline_get",
+        "oplog_tail",
+        "notes_list",
+        "conflict_list",
+        "render_probe",
+        "stage_status",
+        "media_probe",
+        "media_browse",
+        "capability_matrix",
+        "render_run",
+        "render_progress",
+        "render_frame",
+        "project_new",
+        "clip_copy",
+    ] {
         assert!(!produces_rev_mutation(q), "{q} 不应计入会话变更");
     }
-    for w in ["clip_update", "clip_add", "clip_delete", "clip_split", "clip_move",
-              "track_add", "undo", "redo", "cut_apply", "notes_add",
-              "transition_set", "motion_set", "bgm_set",
-              "clip_trim", "clip_split_all", "track_update", "clip_gap_delete",
-              "clip_paste_at"] {
+    for w in [
+        "clip_update",
+        "clip_add",
+        "clip_delete",
+        "clip_split",
+        "clip_move",
+        "track_add",
+        "undo",
+        "redo",
+        "cut_apply",
+        "notes_add",
+        "transition_set",
+        "motion_set",
+        "bgm_set",
+        "clip_trim",
+        "clip_split_all",
+        "track_update",
+        "clip_gap_delete",
+        "clip_paste_at",
+    ] {
         assert!(produces_rev_mutation(w), "{w} 应计入会话变更");
     }
 }
@@ -172,11 +262,17 @@ fn render_frame_param_guards() {
     let r = dispatch("render_frame", &json!({"root": root_s}));
     assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "缺 atMs: {r}");
     // 未知 format → PRECONDITION_FAILED
-    let r = dispatch("render_frame", &json!({"root": root_s, "atMs": 500, "format": "webp"}));
+    let r = dispatch(
+        "render_frame",
+        &json!({"root": root_s, "atMs": 500, "format": "webp"}),
+    );
     assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "未知 format: {r}");
     // 无工程 → NO_CONFIG
     let nowhere = cutforge_io::fsutil::temp_dir("mcp-frame-noproject");
-    let r = dispatch("render_frame", &json!({"root": nowhere.to_string_lossy(), "atMs": 500}));
+    let r = dispatch(
+        "render_frame",
+        &json!({"root": nowhere.to_string_lossy(), "atMs": 500}),
+    );
     assert_eq!(r["code"], json!("NO_CONFIG"), "无工程必须 NO_CONFIG: {r}");
     cutforge_io::fsutil::cleanup(&root);
     cutforge_io::fsutil::cleanup(&nowhere);
@@ -188,48 +284,83 @@ fn render_frame_param_guards() {
 fn transition_motion_bgm_tools_end_to_end() {
     let root = cutforge_io::tests_fixture("mcp-tmb-tools").unwrap();
     let root_s = root.to_string_lossy().to_string();
-    let rev0 = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+    let rev0 = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"]
+        .as_u64()
+        .unwrap();
 
     // 缺参 → PRECONDITION_FAILED(协议完整)
     for (name, args) in [
         ("transition_set", json!({"root": root_s})),
-        ("transition_set", json!({"root": root_s, "clipId": "V1-002"})),
+        (
+            "transition_set",
+            json!({"root": root_s, "clipId": "V1-002"}),
+        ),
         ("motion_set", json!({"root": root_s, "clipId": "V1-002"})),
         ("motion_set", json!({"root": root_s})),
         ("bgm_set", json!({"root": root_s})),
     ] {
         let resp = dispatch(name, &args);
-        assert_eq!(resp["code"], json!("PRECONDITION_FAILED"), "{name} 缺参: {resp}");
+        assert_eq!(
+            resp["code"],
+            json!("PRECONDITION_FAILED"),
+            "{name} 缺参: {resp}"
+        );
         assert!(CODES.contains(&resp["code"].as_str().unwrap()));
     }
 
     // transition_set:设置转场(枚举内值)→ rev 上涨 → 盘面可读回
-    let r = dispatch("transition_set", &json!({
-        "root": root_s, "clipId": "V1-002", "type": "slideleft", "durMs": 320, "reason": "topic",
-    }));
+    let r = dispatch(
+        "transition_set",
+        &json!({
+            "root": root_s, "clipId": "V1-002", "type": "slideleft", "durMs": 320, "reason": "topic",
+        }),
+    );
     assert_eq!(r["code"], json!("OK"), "{r}");
     assert!(r["data"]["rev"].as_u64().unwrap() > rev0, "rev 必须上涨");
     // 部分合并:再给 fx,既有 type/durMs/reason 保持
-    let r = dispatch("transition_set", &json!({
-        "root": root_s, "clipId": "V1-002", "type": "slideleft", "fx": "tr.demo",
-    }));
+    let r = dispatch(
+        "transition_set",
+        &json!({
+            "root": root_s, "clipId": "V1-002", "type": "slideleft", "fx": "tr.demo",
+        }),
+    );
     assert_eq!(r["code"], json!("OK"), "{r}");
     // 枚举外 type → schema 层拒(SCHEMA_INVALID)
-    let bad = dispatch("transition_set", &json!({"root": root_s, "clipId": "V1-002", "type": "爆闪"}));
+    let bad = dispatch(
+        "transition_set",
+        &json!({"root": root_s, "clipId": "V1-002", "type": "爆闪"}),
+    );
     assert_eq!(bad["code"], json!("SCHEMA_INVALID"), "{bad}");
 
     // motion_set:in+out 设置;缺 clipId 已在上面覆盖
-    let r = dispatch("motion_set", &json!({
-        "root": root_s, "clipId": "V1-002", "in": "zoomIn", "inMs": 280, "out": "fadeOut",
-    }));
+    let r = dispatch(
+        "motion_set",
+        &json!({
+            "root": root_s, "clipId": "V1-002", "in": "zoomIn", "inMs": 280, "out": "fadeOut",
+        }),
+    );
     assert_eq!(r["code"], json!("OK"), "{r}");
 
     // 盘面核对:transition 按字段合并(fx 加入,其余保持),motion 全量在位
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
-    let v1 = proj["tracks"].as_array().unwrap().iter().find(|t| t["id"] == "V1").unwrap();
-    let clip = v1["clips"].as_array().unwrap().iter().find(|c| c["id"] == "V1-002").unwrap();
+    let v1 = proj["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "V1")
+        .unwrap();
+    let clip = v1["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "V1-002")
+        .unwrap();
     assert_eq!(clip["transition"]["type"], json!("slideleft"));
-    assert_eq!(clip["transition"]["durMs"], json!(320.0), "先设的 durMs 不得被部分合并清掉");
+    assert_eq!(
+        clip["transition"]["durMs"],
+        json!(320.0),
+        "先设的 durMs 不得被部分合并清掉"
+    );
     assert_eq!(clip["transition"]["reason"], json!("topic"));
     assert_eq!(clip["transition"]["fx"], json!("tr.demo"));
     assert_eq!(clip["motion"]["in"], json!("zoomIn"));
@@ -242,11 +373,21 @@ fn transition_motion_bgm_tools_end_to_end() {
     assert_eq!(r["code"], json!("OK"), "{r}");
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
     assert_eq!(proj["bgm"]["gainDb"], json!(-12.0));
-    assert_eq!(proj["bgm"]["src"], json!("03_assets/bgm/loop1.mp3"), "未给出的 src 不得被清掉");
+    assert_eq!(
+        proj["bgm"]["src"],
+        json!("03_assets/bgm/loop1.mp3"),
+        "未给出的 src 不得被清掉"
+    );
     assert_eq!(proj["bgm"]["ducking"], json!(true));
     let bad_src = dispatch("bgm_set", &json!({"root": root_s, "src": "../逃逸.mp3"}));
-    assert_eq!(bad_src["code"], json!("PRECONDITION_FAILED"), "bgm 路径穿越必须拒绝: {bad_src}");
-    let rev_before_clear = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+    assert_eq!(
+        bad_src["code"],
+        json!("PRECONDITION_FAILED"),
+        "bgm 路径穿越必须拒绝: {bad_src}"
+    );
+    let rev_before_clear = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"]
+        .as_u64()
+        .unwrap();
     let r = dispatch("bgm_set", &json!({"root": root_s, "src": null}));
     assert_eq!(r["code"], json!("OK"), "src:null 必须清除 bgm: {r}");
     assert!(r["data"]["rev"].as_u64().unwrap() > rev_before_clear);
@@ -257,18 +398,39 @@ fn transition_motion_bgm_tools_end_to_end() {
     let r = dispatch("undo", &json!({"root": root_s}));
     assert_eq!(r["code"], json!("OK"), "{r}");
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
-    assert_eq!(proj["bgm"]["src"], json!("03_assets/bgm/loop1.mp3"), "撤销清除必须恢复 bgm");
-    assert_eq!(proj["bgm"]["gainDb"], json!(-12.0), "撤销只回退清除,不得连带回退合并");
+    assert_eq!(
+        proj["bgm"]["src"],
+        json!("03_assets/bgm/loop1.mp3"),
+        "撤销清除必须恢复 bgm"
+    );
+    assert_eq!(
+        proj["bgm"]["gainDb"],
+        json!(-12.0),
+        "撤销只回退清除,不得连带回退合并"
+    );
 
     // clip_update 嵌套 patch 同通道:patch.transition/patch.motion 对象与专用工具同一承接
-    let r = dispatch("clip_update", &json!({
-        "root": root_s, "clipId": "V1-001",
-        "patch": {"transition": {"type": "circleopen", "durMs": 450}, "motion": {"out": "slideOutRight", "outMs": 260}},
-    }));
+    let r = dispatch(
+        "clip_update",
+        &json!({
+            "root": root_s, "clipId": "V1-001",
+            "patch": {"transition": {"type": "circleopen", "durMs": 450}, "motion": {"out": "slideOutRight", "outMs": 260}},
+        }),
+    );
     assert_eq!(r["code"], json!("OK"), "{r}");
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
-    let v1 = proj["tracks"].as_array().unwrap().iter().find(|t| t["id"] == "V1").unwrap();
-    let first = v1["clips"].as_array().unwrap().iter().find(|c| c["id"] == "V1-001").unwrap();
+    let v1 = proj["tracks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == "V1")
+        .unwrap();
+    let first = v1["clips"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == "V1-001")
+        .unwrap();
     assert_eq!(first["transition"]["type"], json!("circleopen"));
     assert_eq!(first["transition"]["durMs"], json!(450.0));
     assert_eq!(first["motion"]["out"], json!("slideOutRight"));
@@ -284,45 +446,91 @@ fn transition_motion_bgm_tools_end_to_end() {
 fn clip_update_huazi_clear_semantics() {
     let root = cutforge_io::tests_fixture("mcp-huazi-clear").unwrap();
     let root_s = root.to_string_lossy().to_string();
-    let huazi_of = |p: serde_json::Value| p["tracks"].as_array().unwrap()
-        .iter().find(|t| t["id"] == "V1").unwrap()["clips"].as_array().unwrap()
-        .iter().find(|c| c["id"] == "V1-001").unwrap().get("huazi").cloned();
+    let huazi_of = |p: serde_json::Value| {
+        p["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "V1")
+            .unwrap()["clips"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "V1-001")
+            .unwrap()
+            .get("huazi")
+            .cloned()
+    };
 
     // 挂载(非空对象整替换)
-    let r = dispatch("clip_update", &json!({
-        "root": root_s, "clipId": "V1-001", "patch": {"huazi": {"template": "hz.pop"}},
-    }));
+    let r = dispatch(
+        "clip_update",
+        &json!({
+            "root": root_s, "clipId": "V1-001", "patch": {"huazi": {"template": "hz.pop"}},
+        }),
+    );
     assert_eq!(r["code"], json!("OK"), "{r}");
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
-    assert_eq!(huazi_of(proj).unwrap()["template"], json!("hz.pop"), "挂载必须落盘");
-    let rev_set = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+    assert_eq!(
+        huazi_of(proj).unwrap()["template"],
+        json!("hz.pop"),
+        "挂载必须落盘"
+    );
+    let rev_set = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"]
+        .as_u64()
+        .unwrap();
 
     // 显式 null 清除:单 Op、huazi 消失、undo 还原
-    let r = dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": null}}));
+    let r = dispatch(
+        "clip_update",
+        &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": null}}),
+    );
     assert_eq!(r["code"], json!("OK"), "{r}");
-    assert_eq!(r["data"]["opIds"].as_array().unwrap().len(), 1, "清除必须单 Op");
+    assert_eq!(
+        r["data"]["opIds"].as_array().unwrap().len(),
+        1,
+        "清除必须单 Op"
+    );
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
     assert_eq!(huazi_of(proj), None, "null 清除后 huazi 必须消失");
     dispatch("undo", &json!({"root": root_s}));
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
-    assert_eq!(huazi_of(proj).unwrap()["template"], json!("hz.pop"), "undo 必须还原花字挂载");
+    assert_eq!(
+        huazi_of(proj).unwrap()["template"],
+        json!("hz.pop"),
+        "undo 必须还原花字挂载"
+    );
 
     // 空对象 {} 清除(第二形态);再清除一次幂等(零变更仍 OK 回执)
-    dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": {}}}));
+    dispatch(
+        "clip_update",
+        &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": {}}}),
+    );
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
     assert_eq!(huazi_of(proj), None, "{{}} 清除后 huazi 必须消失");
-    let rev_cleared = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"].as_u64().unwrap();
+    let rev_cleared = dispatch("project_get", &json!({"root": root_s}))["data"]["rev"]
+        .as_u64()
+        .unwrap();
     assert!(rev_cleared > rev_set);
     // 字段缺席 = 不改(既有行为回归;同值幂等回执)
-    let r = dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"volume": 1.0}}));
+    let r = dispatch(
+        "clip_update",
+        &json!({"root": root_s, "clipId": "V1-001", "patch": {"volume": 1.0}}),
+    );
     assert_eq!(r["code"], json!("OK"), "{r}");
     let proj = dispatch("project_get", &json!({"root": root_s}))["data"]["project"].clone();
     assert_eq!(huazi_of(proj), None);
     // 非法类型拒绝
-    let r = dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": "hz.pop"}}));
+    let r = dispatch(
+        "clip_update",
+        &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": "hz.pop"}}),
+    );
     assert_eq!(r["code"], json!("SCHEMA_INVALID"), "{r}");
     // 非空对象缺 template 拒绝(空对象是清除哨兵,不是合法挂载)
-    let r = dispatch("clip_update", &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": {"params": {"x": 1}}}}));
+    let r = dispatch(
+        "clip_update",
+        &json!({"root": root_s, "clipId": "V1-001", "patch": {"huazi": {"params": {"x": 1}}}}),
+    );
     assert_eq!(r["code"], json!("SCHEMA_INVALID"), "{r}");
     cutforge_io::fsutil::cleanup(&root);
 }

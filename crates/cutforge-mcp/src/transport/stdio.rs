@@ -2,7 +2,7 @@
 //! stdio 主通道:逐行读 JSON-RPC,逐行写响应(T1.1 拆分自 lib.rs,纯移动)。
 
 use crate::dispatch::handle_rpc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::Write as _;
 
 /// stdio 主通道:逐行读 JSON-RPC,逐行写响应。
@@ -19,7 +19,8 @@ pub fn serve_stdio() -> i32 {
             Err(e) => json!({
                 "jsonrpc": "2.0", "id": null,
                 "error": {"code": -32700, "message": format!("parse error: {e}")}
-            }).to_string(),
+            })
+            .to_string(),
         };
         if !resp.is_empty() {
             let _ = writeln!(stdout, "{resp}");

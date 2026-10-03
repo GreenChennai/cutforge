@@ -34,13 +34,23 @@ fn e2e_ai_edit_visible() {
         _ => panic!("Timeline 查询失败"),
     }
     let elapsed = t0.elapsed();
-    assert!(elapsed.as_millis() <= 1000, "可见延迟须 ≤1s,实际 {elapsed:?}");
+    assert!(
+        elapsed.as_millis() <= 1000,
+        "可见延迟须 ≤1s,实际 {elapsed:?}"
+    );
 
     // 差异面板定位:OpLog 中该改动可定位到具体字段
-    match ws.engine().query(Query::OpLogTail { since_rev: None, actor_kind: None }) {
+    match ws.engine().query(Query::OpLogTail {
+        since_rev: None,
+        actor_kind: None,
+    }) {
         Answer::Ops(ops) => {
             let op = ops.last().unwrap();
-            assert!(op.target.path.starts_with("/tracks/"), "指针路径: {}", op.target.path);
+            assert!(
+                op.target.path.starts_with("/tracks/"),
+                "指针路径: {}",
+                op.target.path
+            );
             assert_eq!(op.after["durationMs"], json!(8000));
             assert_eq!(op.summary, "AI 演示改动");
         }

@@ -8,7 +8,7 @@ use crate::dispatch::handle_rpc;
 use crate::registry::tool_names;
 use crate::transport::events;
 use cutforge_core::oplog::Actor;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -74,7 +74,11 @@ enum Scan {
 /// 对当前缓冲做一次"是否完整请求"的判定(头界 + Content-Length 界)。
 fn scan(buf: &[u8]) -> Scan {
     let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
-        return if buf.len() > MAX_HEAD { Scan::TooLarge } else { Scan::Incomplete };
+        return if buf.len() > MAX_HEAD {
+            Scan::TooLarge
+        } else {
+            Scan::Incomplete
+        };
     };
     let head_end = pos + 4;
     if head_end > MAX_HEAD {
@@ -141,7 +145,12 @@ pub(crate) struct HttpResp {
 }
 
 pub(crate) fn resp_plain(status: &'static str, msg: &str) -> HttpResp {
-    HttpResp { status, ctype: "text/plain; charset=utf-8".into(), extra: String::new(), body: msg.as_bytes().to_vec() }
+    HttpResp {
+        status,
+        ctype: "text/plain; charset=utf-8".into(),
+        extra: String::new(),
+        body: msg.as_bytes().to_vec(),
+    }
 }
 
 /// 百分号解码(查询参数;encodeURIComponent 输出的 %XX 序列)。
@@ -150,14 +159,19 @@ pub(crate) fn pct_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len()
-            && let (Some(hi), Some(lo)) = ((b[i + 1] as char).to_digit(16), (b[i + 2] as char).to_digit(16)) {
-                out.push((hi * 16 + lo) as u8);
-                i += 3;
-            } else {
-                out.push(b[i]);
-                i += 1;
-            }
+        if b[i] == b'%'
+            && i + 2 < b.len()
+            && let (Some(hi), Some(lo)) = (
+                (b[i + 1] as char).to_digit(16),
+                (b[i + 2] as char).to_digit(16),
+            )
+        {
+            out.push((hi * 16 + lo) as u8);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
     }
     String::from_utf8_lossy(&out).into_owned()
 }
@@ -190,7 +204,9 @@ pub fn serve_http(port: u16, token: &str) -> i32 {
             return 4;
         }
     };
-    eprintln!("cutforge-mcp http on http://127.0.0.1:{port}/rpc (events: /events?root=..&since=N;SSE: Accept: text/event-stream)");
+    eprintln!(
+        "cutforge-mcp http on http://127.0.0.1:{port}/rpc (events: /events?root=..&since=N;SSE: Accept: text/event-stream)"
+    );
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let token = token.to_string();
@@ -225,7 +241,9 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
         return Ok(());
     }
     if is_events
-        && req.header("accept").is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"))
+        && req
+            .header("accept")
+            .is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"))
     {
         // SSE:root 仍走查询参数(辅通道无绑定工程);起点语义同工作区通道
         let query = api_query;
@@ -237,12 +255,22 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
             }
         });
         return match root_p {
-            Some(r) => events::serve_sse(&mut stream, Path::new(&r), query, req.header("last-event-id").as_deref()),
+            Some(r) => events::serve_sse(
+                &mut stream,
+                Path::new(&r),
+                query,
+                req.header("last-event-id").as_deref(),
+            ),
             None => {
                 // T1.7 三面同码:事件面错误也带 ns(加法字段;code 取值不变)
                 let body = json!({"ok": false, "code": "PRECONDITION_FAILED",
-                    "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": "缺 root"}).to_string();
-                let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": "缺 root"})
+                .to_string();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
                 Ok(())
             }
         };
@@ -256,7 +284,11 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
         // 册七 T7.1:/api/v1 版本化 REST 面(ADR-0025;辅通道无绑定工程,root 须由
         // 参数/查询串显式给出;actor=agent 与本通道 /rpc 同归因);状态码随 envelope
         let resp = crate::transport::rest::handle_api_v1(
-            api_path, api_query, first_line.starts_with("POST"), &req.body, None,
+            api_path,
+            api_query,
+            first_line.starts_with("POST"),
+            &req.body,
+            None,
             Actor::agent("cutforge-mcp"),
         );
         let body = String::from_utf8_lossy(&resp.body).into_owned();
@@ -264,7 +296,13 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
     } else if is_events {
         // 长轮询:/events?root=<工程目录>&since=<seq>;≤1s 内有新事件立即返回。
         // A1-R2:此降级路径兼容旧壳,册二完成后移除(SSE 为新壳唯一事件面)。
-        let query = first_line.split(' ').nth(1).unwrap_or("").split_once('?').map(|(_, q)| q).unwrap_or("");
+        let query = first_line
+            .split(' ')
+            .nth(1)
+            .unwrap_or("")
+            .split_once('?')
+            .map(|(_, q)| q)
+            .unwrap_or("");
         let mut root_p = String::new();
         let mut since: u64 = 0;
         for kv in query.split('&') {
@@ -276,19 +314,30 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
             }
         }
         if root_p.is_empty() {
-            ("200 OK", json!({"ok": false, "code": "PRECONDITION_FAILED",
-                "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": "缺 root"}).to_string())
+            (
+                "200 OK",
+                json!({"ok": false, "code": "PRECONDITION_FAILED",
+                "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": "缺 root"})
+                .to_string(),
+            )
         } else {
             let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(&root_p));
             let wait = Duration::from_millis(900);
             let body = match hub.wait_since(since, wait) {
-                Some(seq) => json!({"ok": true, "code": "OK", "event": "workspace.changed", "seq": seq}).to_string(),
-                None => json!({"ok": true, "code": "OK", "event": "none", "seq": hub.current()}).to_string(),
+                Some(seq) => {
+                    json!({"ok": true, "code": "OK", "event": "workspace.changed", "seq": seq})
+                        .to_string()
+                }
+                None => json!({"ok": true, "code": "OK", "event": "none", "seq": hub.current()})
+                    .to_string(),
             };
             ("200 OK", body)
         }
     } else {
-        ("200 OK", json!({"service": "cutforge-mcp", "tools": tool_names().len()}).to_string())
+        (
+            "200 OK",
+            json!({"service": "cutforge-mcp", "tools": tool_names().len()}).to_string(),
+        )
     };
     let _ = write!(
         stream,

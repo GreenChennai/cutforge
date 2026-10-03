@@ -33,7 +33,10 @@ fn main() {
             // 无 --root 时与 cli serve 同一交互列工程行为(单一实现:pick_project_interactive);
             // 非交互环境必须显式给目录。
             use std::io::IsTerminal as _;
-            let root = args.iter().position(|a| a == "--root").and_then(|i| args.get(i + 1));
+            let root = args
+                .iter()
+                .position(|a| a == "--root")
+                .and_then(|i| args.get(i + 1));
             let root = match root {
                 Some(r) => match cutforge_mcp::resolve_root_arg(r) {
                     // T6.4:`.cfproj` 工程描述 → 其 root(与 cli serve 单一实现)
@@ -45,25 +48,35 @@ fn main() {
                 },
                 None => {
                     if !std::io::stdin().is_terminal() {
-                        eprintln!("用法: serve [--root <工程目录|.cfproj>] [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录");
+                        eprintln!(
+                            "用法: serve [--root <工程目录|.cfproj>] [--port N] [--token T] [--web 目录] [--open];非交互环境必须给工程目录"
+                        );
                         std::process::exit(2);
                     }
                     match cutforge_mcp::pick_project_interactive() {
                         Some(p) => p,
                         None => {
-                            eprintln!("未找到候选工程(查找:CUTFORGE_PROJECTS 或当前目录下两层内的 05_ir/project.json);或先新建:cutforge-cli new <目录>");
+                            eprintln!(
+                                "未找到候选工程(查找:CUTFORGE_PROJECTS 或当前目录下两层内的 05_ir/project.json);或先新建:cutforge-cli new <目录>"
+                            );
                             std::process::exit(3);
                         }
                     }
                 }
             };
-            let port: u16 = args.iter().position(|a| a == "--port")
+            let port: u16 = args
+                .iter()
+                .position(|a| a == "--port")
                 .and_then(|i| args.get(i + 1).and_then(|v| v.parse().ok()))
                 .unwrap_or(8787);
-            let token = args.iter().position(|a| a == "--token")
+            let token = args
+                .iter()
+                .position(|a| a == "--token")
                 .and_then(|i| args.get(i + 1).cloned())
                 .unwrap_or_else(new_token);
-            let web = args.iter().position(|a| a == "--web")
+            let web = args
+                .iter()
+                .position(|a| a == "--web")
                 .and_then(|i| args.get(i + 1).map(std::path::PathBuf::from))
                 .unwrap_or_else(default_web_dir);
             let open = args.iter().any(|a| a == "--open");
@@ -83,11 +96,19 @@ fn main() {
             serve_http(port, &token)
         }
         "run-script" => {
-            let Some(root) = args.iter().position(|a| a == "--root").and_then(|i| args.get(i + 1)) else {
+            let Some(root) = args
+                .iter()
+                .position(|a| a == "--root")
+                .and_then(|i| args.get(i + 1))
+            else {
                 eprintln!("用法: run-script --root <工程> --file <script.json>");
                 std::process::exit(2);
             };
-            let Some(file) = args.iter().position(|a| a == "--file").and_then(|i| args.get(i + 1)) else {
+            let Some(file) = args
+                .iter()
+                .position(|a| a == "--file")
+                .and_then(|i| args.get(i + 1))
+            else {
                 eprintln!("用法: run-script --root <工程> --file <script.json>");
                 std::process::exit(2);
             };
@@ -115,13 +136,18 @@ fn main() {
                     if report.escapes() == 0 { 0 } else { 2 }
                 }
                 Err(e) => {
-                    println!("{}", json!({"ok": false, "code": "SCHEMA_INVALID", "message": e.to_string(), "data": {}}));
+                    println!(
+                        "{}",
+                        json!({"ok": false, "code": "SCHEMA_INVALID", "message": e.to_string(), "data": {}})
+                    );
                     2
                 }
             }
         }
         _ => {
-            eprintln!("用法: cutforge-mcp <inspect|serve [--root R --port N --token T --web D]|serve-stdio|serve-http --port N --token T|run-script --root R --file F>");
+            eprintln!(
+                "用法: cutforge-mcp <inspect|serve [--root R --port N --token T --web D]|serve-stdio|serve-http --port N --token T|run-script --root R --file F>"
+            );
             2
         }
     };

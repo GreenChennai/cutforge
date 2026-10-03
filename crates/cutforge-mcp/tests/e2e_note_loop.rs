@@ -23,7 +23,10 @@ fn e2e_note_loop() {
     // 2. AI 读标注列表
     let resp = cutforge_mcp::dispatch("notes_list", &json!({"root": root_s, "state": "open"}));
     assert_eq!(resp["ok"], json!(true));
-    assert!(resp["data"]["notes"].to_string().contains(&note_id), "AI 必须读到新标注");
+    assert!(
+        resp["data"]["notes"].to_string().contains(&note_id),
+        "AI 必须读到新标注"
+    );
 
     // 3. AI 执行改动(causedBy 指向标注)
     let resp = cutforge_mcp::dispatch(
@@ -43,7 +46,10 @@ fn e2e_note_loop() {
 
     // 5. 编辑器/列表视角:resolved 且 opIds 可回看
     let resp = cutforge_mcp::dispatch("notes_list", &json!({"root": root_s, "state": "resolved"}));
-    assert!(resp["data"]["notes"].to_string().contains(&op_id), "回执 opIds 必须可回看");
+    assert!(
+        resp["data"]["notes"].to_string().contains(&op_id),
+        "回执 opIds 必须可回看"
+    );
 
     // 6. 幂等:同 request_id 重复建标 → 不重复
     let before: usize = {

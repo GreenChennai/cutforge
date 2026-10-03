@@ -22,24 +22,55 @@ use crate::registry::{envelope, tool_def};
 use cutforge_core::notes::NoteAuthor;
 use cutforge_core::oplog::Actor;
 use cutforge_io::Workspace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 /// plan 面不参与的工具:静态面/免锁探测/渲染/编排/打包目录级写——它们不经
 /// 工作区命令通道(或副作用在工程外),预演语义不成立,逐项显式拒绝。
 const UNPLANNABLE: &[&str] = &[
-    "capability_matrix", "plugin_validate", "preview_plan", "apply_plan",
-    "session_report", "note_reply",
+    "capability_matrix",
+    "plugin_validate",
+    "preview_plan",
+    "apply_plan",
+    "session_report",
+    "note_reply",
     // 免开工作区(探测/目录级写/派生物)
-    "project_new", "media_probe", "media_browse", "render_probe", "stage_status",
-    "media_peaks", "media_thumbnail", "media_proxy", "audio_beats",
-    "lut_import", "scope_data", "audio_loudness", "encode_probe",
-    "multicam_sync", "otio_import", "migrate_layout", "library_manage",
-    "library_list", "library_recover", "export_preflight", "export_all_variants",
-    "media_library", "media_import", "project_package", "project_unpackage",
+    "project_new",
+    "media_probe",
+    "media_browse",
+    "render_probe",
+    "stage_status",
+    "media_peaks",
+    "media_thumbnail",
+    "media_proxy",
+    "audio_beats",
+    "lut_import",
+    "scope_data",
+    "audio_loudness",
+    "encode_probe",
+    "multicam_sync",
+    "otio_import",
+    "migrate_layout",
+    "library_manage",
+    "library_list",
+    "library_recover",
+    "export_preflight",
+    "export_all_variants",
+    "media_library",
+    "media_import",
+    "project_package",
+    "project_unpackage",
     // 渲染与编排(副作用在工程外:子进程/成片产物)
-    "render", "render_run", "render_progress", "render_frame", "render_queue",
-    "stage_run", "stage_rebuild", "verify_run", "sync_check", "export_jianying",
+    "render",
+    "render_run",
+    "render_progress",
+    "render_frame",
+    "render_queue",
+    "stage_run",
+    "stage_rebuild",
+    "verify_run",
+    "sync_check",
+    "export_jianying",
 ];
 
 /// 工具是否可进 plan(预演/应用同一准入面;未知工具自然不可)。
@@ -56,20 +87,40 @@ struct PlanItem {
 
 fn parse_plan(args: &Value) -> Result<Vec<PlanItem>, Value> {
     let Some(items) = args["plan"].as_array() else {
-        return Err(envelope(false, "PRECONDITION_FAILED", "缺 plan(非空数组,逐项 {tool, args})", json!({})));
+        return Err(envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 plan(非空数组,逐项 {tool, args})",
+            json!({}),
+        ));
     };
     if items.is_empty() {
-        return Err(envelope(false, "PRECONDITION_FAILED", "plan 为空(至少一项)", json!({})));
+        return Err(envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "plan 为空(至少一项)",
+            json!({}),
+        ));
     }
     let mut out = Vec::new();
     for (i, item) in items.iter().enumerate() {
         let Some(tool) = item["tool"].as_str() else {
-            return Err(envelope(false, "PRECONDITION_FAILED", &format!("plan[{i}] 缺 tool"), json!({})));
+            return Err(envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("plan[{i}] 缺 tool"),
+                json!({}),
+            ));
         };
         if !plannable_tool(tool) {
-            return Err(envelope(false, "PRECONDITION_FAILED",
-                &format!("plan[{i}] 工具 {tool} 不参与 plan 面(渲染/编排/免锁探测/静态面/plan 自身不可预演或批量应用)"),
-                json!({})));
+            return Err(envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!(
+                    "plan[{i}] 工具 {tool} 不参与 plan 面(渲染/编排/免锁探测/静态面/plan 自身不可预演或批量应用)"
+                ),
+                json!({}),
+            ));
         }
         out.push(PlanItem {
             index: i,
@@ -86,8 +137,11 @@ fn new_plan_id() -> String {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     std::process::id().hash(&mut h);
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default().as_nanos().hash(&mut h);
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .hash(&mut h);
     format!("plan-{:016x}", h.finish())
 }
 
@@ -104,23 +158,31 @@ fn slim(v: &Value) -> Value {
 
 /// 副本 OpLog 增量 → 逐项变更摘要(字段级 before/after 预估)。
 fn changes_since(scratch: &Path, since_rev: u64) -> (u64, Vec<Value>) {
-    let Ok(ws) = Workspace::open(scratch) else { return (since_rev, Vec::new()) };
+    let Ok(ws) = Workspace::open(scratch) else {
+        return (since_rev, Vec::new());
+    };
     let rev = ws.rev();
     let ops = match ws.engine().query(cutforge_core::engine::Query::OpLogTail {
-        since_rev: Some(since_rev), actor_kind: None,
+        since_rev: Some(since_rev),
+        actor_kind: None,
     }) {
         cutforge_core::engine::Answer::Ops(ops) => ops,
         _ => return (rev, Vec::new()),
     };
-    let rows = ops.iter().map(|op| json!({
-        "opId": op.op_id,
-        "file": op.target.file,
-        "path": op.target.path,
-        "kind": op.op_kind,
-        "summary": op.summary,
-        "before": slim(&op.before),
-        "after": slim(&op.after),
-    })).collect();
+    let rows = ops
+        .iter()
+        .map(|op| {
+            json!({
+                "opId": op.op_id,
+                "file": op.target.file,
+                "path": op.target.path,
+                "kind": op.op_kind,
+                "summary": op.summary,
+                "before": slim(&op.before),
+                "after": slim(&op.after),
+            })
+        })
+        .collect();
     (rev, rows)
 }
 
@@ -135,8 +197,18 @@ pub(crate) fn preview_plan_tool(root: &Path, args: &Value, actor: Actor) -> Valu
     // 副本工程(同卷邻位;调用方传 root 目录即工程根)
     let scratch = match cutforge_io::scratch::make_scratch_copy(root) {
         Ok(d) => d,
-        Err(e) => return envelope(false, if e.kind() == std::io::ErrorKind::NotFound { "NO_CONFIG" } else { "INTERNAL" },
-            &format!("预演副本构建失败: {e}"), json!({})),
+        Err(e) => {
+            return envelope(
+                false,
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    "NO_CONFIG"
+                } else {
+                    "INTERNAL"
+                },
+                &format!("预演副本构建失败: {e}"),
+                json!({}),
+            );
+        }
     };
     let scratch_s = scratch.to_string_lossy().to_string();
     let rev_from = Workspace::open(&scratch).map(|w| w.rev()).unwrap_or(0);
@@ -146,12 +218,18 @@ pub(crate) fn preview_plan_tool(root: &Path, args: &Value, actor: Actor) -> Valu
     for item in &plan {
         // 逐项重入单一派发表:root 改写为副本根,其余参数原样
         let mut a = item.args.clone();
-        if !a.is_object() { a = json!({}); }
+        if !a.is_object() {
+            a = json!({});
+        }
         a["root"] = json!(scratch_s);
         let env = crate::dispatch::dispatch_with_actor(&item.tool, &a, actor.clone());
         let (rev_after, changes) = changes_since(&scratch, cursor);
         let ok = env["ok"] == json!(true);
-        if ok { ok_n += 1; } else { err_n += 1; }
+        if ok {
+            ok_n += 1;
+        } else {
+            err_n += 1;
+        }
         items.push(json!({
             "index": item.index,
             "id": item.id,
@@ -168,14 +246,18 @@ pub(crate) fn preview_plan_tool(root: &Path, args: &Value, actor: Actor) -> Valu
     }
     cutforge_io::scratch::remove_scratch(&scratch);
     crate::resident::evict(&scratch_s);
-    envelope(true, "OK", "预演完成(副本 dry-run,真工程未动)",
+    envelope(
+        true,
+        "OK",
+        "预演完成(副本 dry-run,真工程未动)",
         json!({
             "dryRun": true,
             "revFrom": rev_from,
             "revTo": cursor,
             "items": items,
             "summary": {"total": plan.len(), "ok": ok_n, "err": err_n},
-        }))
+        }),
+    )
 }
 
 /// T7.5-2 apply_plan(写):仅执行被批准项(逐项原 Op 通道,actor 保持调用方,
@@ -188,20 +270,30 @@ pub(crate) fn apply_plan_tool(root_str: &str, args: &Value, actor: Actor) -> Val
     let ap = args.get("approvals").cloned().unwrap_or(Value::Null);
     if !ap.is_object() {
         // approvals 是契约 required 面:整体缺席按缺参拒(防调用方误以为"缺省=全批")
-        return envelope(false, "PRECONDITION_FAILED",
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
             "缺 approvals(批准面:{approveAll:true} 或 {approve:[…], reject:[…]};缺省=全不批,显式传入以表达意图)",
-            json!({}));
+            json!({}),
+        );
     }
     let approve_all = ap["approveAll"].as_bool().unwrap_or(false);
     let listed = |key: &str, item: &PlanItem| -> bool {
-        ap[key].as_array().is_some_and(|list| list.iter().any(|v| {
-            v.as_u64().is_some_and(|n| n == item.index as u64)
-                || v.as_str().is_some_and(|s| item.id.as_deref() == Some(s))
-        }))
+        ap[key].as_array().is_some_and(|list| {
+            list.iter().any(|v| {
+                v.as_u64().is_some_and(|n| n == item.index as u64)
+                    || v.as_str().is_some_and(|s| item.id.as_deref() == Some(s))
+            })
+        })
     };
-    let plan_id = args["planId"].as_str().map(String::from).unwrap_or_else(new_plan_id);
+    let plan_id = args["planId"]
+        .as_str()
+        .map(String::from)
+        .unwrap_or_else(new_plan_id);
     // 应用前真实 rev(应用后对账:回执 rev 必须单调推进)
-    let rev_from = Workspace::open(Path::new(root_str)).map(|w| w.rev()).unwrap_or(0);
+    let rev_from = Workspace::open(Path::new(root_str))
+        .map(|w| w.rev())
+        .unwrap_or(0);
     let mut items = Vec::new();
     let (mut applied, mut skipped, mut rejected) = (0usize, 0usize, 0usize);
     for item in &plan {
@@ -223,7 +315,9 @@ pub(crate) fn apply_plan_tool(root_str: &str, args: &Value, actor: Actor) -> Val
         }
         // 逐项原 Op 通道:root 强制真实工程根;causedBy 链关联 planId
         let mut a = item.args.clone();
-        if !a.is_object() { a = json!({}); }
+        if !a.is_object() {
+            a = json!({});
+        }
         a["root"] = json!(root_str);
         let mut caused = vec![plan_id.clone()];
         if let Some(list) = a["causedBy"].as_array() {
@@ -232,15 +326,22 @@ pub(crate) fn apply_plan_tool(root_str: &str, args: &Value, actor: Actor) -> Val
         a["causedBy"] = json!(caused);
         let env = crate::dispatch::dispatch_with_actor(&item.tool, &a, actor.clone());
         let ok = env["ok"] == json!(true);
-        if ok { applied += 1; }
+        if ok {
+            applied += 1;
+        }
         items.push(json!({
             "index": item.index, "id": item.id, "tool": item.tool,
             "ok": ok, "code": env["code"], "message": env["message"],
             "opIds": env["data"]["opIds"], "rev": env["data"]["rev"],
         }));
     }
-    let rev_to = Workspace::open(Path::new(root_str)).map(|w| w.rev()).unwrap_or(rev_from);
-    envelope(true, "OK", "apply_plan 完成(仅批准项落地;未批准项零写入)",
+    let rev_to = Workspace::open(Path::new(root_str))
+        .map(|w| w.rev())
+        .unwrap_or(rev_from);
+    envelope(
+        true,
+        "OK",
+        "apply_plan 完成(仅批准项落地;未批准项零写入)",
         json!({
             "planId": plan_id,
             "items": items,
@@ -249,7 +350,8 @@ pub(crate) fn apply_plan_tool(root_str: &str, args: &Value, actor: Actor) -> Val
             "rejected": rejected,
             "revFrom": rev_from,
             "revTo": rev_to,
-        }))
+        }),
+    )
 }
 
 /// T7.5-3 note_reply(写):同一标注多轮追加回复(线程 id = 标注 id);
@@ -258,11 +360,18 @@ pub(crate) fn note_reply_tool(ws: &mut Workspace, args: &Value, actor: &Actor) -
     let (Some(note_id), Some(body)) = (args["noteId"].as_str(), args["body"].as_str()) else {
         return envelope(false, "PRECONDITION_FAILED", "缺 noteId/body", json!({}));
     };
-    let author = if args["author"].as_str() == Some("agent") { NoteAuthor::Agent } else { NoteAuthor::User };
+    let author = if args["author"].as_str() == Some("agent") {
+        NoteAuthor::Agent
+    } else {
+        NoteAuthor::User
+    };
     match ws.notes_reply(note_id, author, body.into(), actor.clone()) {
-        Ok((id, replies)) => {
-            envelope(true, "OK", "回复已追加", json!({"noteId": id, "replies": replies, "rev": ws.rev()}))
-        }
+        Ok((id, replies)) => envelope(
+            true,
+            "OK",
+            "回复已追加",
+            json!({"noteId": id, "replies": replies, "rev": ws.rev()}),
+        ),
         Err(e) => notes_op_error(e),
     }
 }
@@ -281,9 +390,13 @@ fn extract_ids(summary: &str) -> (Vec<String>, Vec<String>) {
             continue;
         }
         match tok.split_once('-') {
-            Some((head, tail)) if !tail.is_empty()
-                && tail.chars().all(|c| c.is_ascii_digit())
-                && head.chars().any(|c| c.is_ascii_digit()) => clips.push(tok.to_string()),
+            Some((head, tail))
+                if !tail.is_empty()
+                    && tail.chars().all(|c| c.is_ascii_digit())
+                    && head.chars().any(|c| c.is_ascii_digit()) =>
+            {
+                clips.push(tok.to_string())
+            }
             None if tok.chars().skip(1).all(|c| c.is_ascii_digit()) => tracks.push(tok.to_string()),
             _ => {}
         }
@@ -300,7 +413,8 @@ fn bump(map: &mut std::collections::BTreeMap<String, usize>, k: String) {
 pub(crate) fn session_report_tool(ws: &mut Workspace, args: &Value) -> Value {
     let since = args["sinceRev"].as_u64().unwrap_or(0);
     let ops = match ws.engine().query(cutforge_core::engine::Query::OpLogTail {
-        since_rev: Some(since), actor_kind: None,
+        since_rev: Some(since),
+        actor_kind: None,
     }) {
         cutforge_core::engine::Answer::Ops(ops) => ops,
         _ => unreachable!(),
@@ -313,15 +427,20 @@ pub(crate) fn session_report_tool(ws: &mut Workspace, args: &Value) -> Value {
     let mut track_hits: std::collections::BTreeMap<String, usize> = Default::default();
     for op in &ops {
         // opKind 的 kebab-case 串(set/split/resolve-conflict…)与 actor kind 小写
-        let kind_str = serde_json::to_value(op.op_kind).ok()
+        let kind_str = serde_json::to_value(op.op_kind)
+            .ok()
             .and_then(|v| v.as_str().map(String::from))
             .unwrap_or_else(|| "unknown".into());
         bump(&mut by_kind, kind_str);
         bump(&mut by_actor, format!("{:?}", op.actor.kind).to_lowercase());
         bump(&mut by_file, op.target.file.clone());
         let (clips, tracks) = extract_ids(&op.summary);
-        for c in clips { bump(&mut clip_hits, c); }
-        for t in tracks { bump(&mut track_hits, t); }
+        for c in clips {
+            bump(&mut clip_hits, c);
+        }
+        for t in tracks {
+            bump(&mut track_hits, t);
+        }
     }
     // 标注面与回执率:结案标注中绑定 opIds 的比例(4.9 纪律的量化面)
     let notes = ws.notes();
@@ -341,7 +460,11 @@ pub(crate) fn session_report_tool(ws: &mut Workspace, args: &Value) -> Value {
         }
         n_replies += n.thread.as_ref().map(|t| t.len()).unwrap_or(0);
     }
-    let receipt_rate = if n_resolved > 0 { n_with_ops as f64 / n_resolved as f64 } else { 1.0 };
+    let receipt_rate = if n_resolved > 0 {
+        n_with_ops as f64 / n_resolved as f64
+    } else {
+        1.0
+    };
     let (started_at, ended_at, duration_ms) = match (ops.first(), ops.last()) {
         (Some(f), Some(l)) => (f.ts.clone(), l.ts.clone(), {
             let parse = |t: &str| t.parse::<chrono_like::Ts>().ok();
@@ -354,12 +477,19 @@ pub(crate) fn session_report_tool(ws: &mut Workspace, args: &Value) -> Value {
     };
     // 人话 Markdown(壳/CLI/AI 都可直接展示)
     let fmt_map = |m: &std::collections::BTreeMap<String, usize>| -> String {
-        m.iter().map(|(k, v)| format!("{k}×{v}")).collect::<Vec<_>>().join("、")
+        m.iter()
+            .map(|(k, v)| format!("{k}×{v}"))
+            .collect::<Vec<_>>()
+            .join("、")
     };
     let clips_desc = if clip_hits.is_empty() {
         "无片段改动".to_string()
     } else {
-        clip_hits.iter().map(|(k, v)| format!("{k}({v} Op)")).collect::<Vec<_>>().join("、")
+        clip_hits
+            .iter()
+            .map(|(k, v)| format!("{k}({v} Op)"))
+            .collect::<Vec<_>>()
+            .join("、")
     };
     let markdown = format!(
         "## 会话改动报告(rev-{since} → rev-{rev_to})\n\n\
@@ -370,30 +500,47 @@ pub(crate) fn session_report_tool(ws: &mut Workspace, args: &Value) -> Value {
          - 参与者:{}\n",
         duration_ms,
         ops.len(),
-        if by_kind.is_empty() { "无".to_string() } else { fmt_map(&by_kind) },
-        if track_hits.is_empty() { "无".to_string() } else { track_hits.keys().cloned().collect::<Vec<_>>().join("、") },
-        receipt_rate * 100.0,
-        if by_actor.is_empty() { "无".to_string() } else { fmt_map(&by_actor) },
-    );
-    envelope(true, "OK", "会话报告", json!({
-        "sinceRev": since,
-        "revTo": rev_to,
-        "opCount": ops.len(),
-        "startedAt": started_at,
-        "endedAt": ended_at,
-        "durationMs": duration_ms,
-        "byKind": by_kind,
-        "byActor": by_actor,
-        "byFile": by_file,
-        "touchedClips": clip_hits,
-        "touchedTracks": track_hits,
-        "notes": {
-            "open": n_open, "resolved": n_resolved, "rejected": n_rejected,
-            "orphan": n_orphan, "replies": n_replies,
-            "receiptRate": receipt_rate,
+        if by_kind.is_empty() {
+            "无".to_string()
+        } else {
+            fmt_map(&by_kind)
         },
-        "markdown": markdown,
-    }))
+        if track_hits.is_empty() {
+            "无".to_string()
+        } else {
+            track_hits.keys().cloned().collect::<Vec<_>>().join("、")
+        },
+        receipt_rate * 100.0,
+        if by_actor.is_empty() {
+            "无".to_string()
+        } else {
+            fmt_map(&by_actor)
+        },
+    );
+    envelope(
+        true,
+        "OK",
+        "会话报告",
+        json!({
+            "sinceRev": since,
+            "revTo": rev_to,
+            "opCount": ops.len(),
+            "startedAt": started_at,
+            "endedAt": ended_at,
+            "durationMs": duration_ms,
+            "byKind": by_kind,
+            "byActor": by_actor,
+            "byFile": by_file,
+            "touchedClips": clip_hits,
+            "touchedTracks": track_hits,
+            "notes": {
+                "open": n_open, "resolved": n_resolved, "rejected": n_rejected,
+                "orphan": n_orphan, "replies": n_replies,
+                "receiptRate": receipt_rate,
+            },
+            "markdown": markdown,
+        }),
+    )
 }
 
 // RFC3339 毫秒解析(耗时统计用;手写零依赖——timeutil 无公开解析器)
@@ -425,7 +572,9 @@ mod chrono_like {
             let ms: u64 = tp.next().unwrap_or("0").parse().map_err(|_| ())?;
             // 平滑纪元日数(y-m-d → days;误差对本工具的耗时统计无关紧要)
             let days = 367 * y - (7 * (y + (mo + 9) / 12)) / 4 + (275 * mo) / 9 + d - 719_556;
-            Ok(Ts { ms: ((days * 86_400 + h * 3_600 + mi * 60 + se) * 1_000) + ms })
+            Ok(Ts {
+                ms: ((days * 86_400 + h * 3_600 + mi * 60 + se) * 1_000) + ms,
+            })
         }
     }
 

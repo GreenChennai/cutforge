@@ -5,14 +5,16 @@
 //! canonicalize 穿越防护 + MIME 表 + ETag/304。gzip/br 压缩显式不做(本地回环传输,
 //! 收益趋零;若要做须先补 ADR,见 ADR-0009 被否决的替代小节口径)。
 
-use crate::transport::http::{mime_of, pct_decode, resp_plain, HttpResp};
+use crate::transport::http::{HttpResp, mime_of, pct_decode, resp_plain};
 use std::path::{Path, PathBuf};
 
 /// 静态面路径判定:旧四别名 + `/assets/` 前缀白名单(其余路径不进静态面;
 /// 数据面 /session /rpc /events /media 仍必须持 token,鉴权口径零变化)。
 pub(crate) fn is_static_path(path: &str) -> bool {
-    matches!(path, "/" | "/index.html" | "/app.js" | "/style.css" | "/assets")
-        || path.starts_with("/assets/")
+    matches!(
+        path,
+        "/" | "/index.html" | "/app.js" | "/style.css" | "/assets"
+    ) || path.starts_with("/assets/")
 }
 
 /// 静态响应:命中 → 200(带 ETag);If-None-Match 命中 → 304(空体);
@@ -23,7 +25,9 @@ pub(crate) fn static_resp(web: &Path, path: &str, if_none_match: Option<&str>) -
         "/" | "/index.html" => Some(web.join("index.html")),
         "/app.js" => Some(web.join("app.js")),
         "/style.css" => Some(web.join("style.css")),
-        p => p.strip_prefix("/assets/").and_then(|rel| assets_resolve(web, rel)),
+        p => p
+            .strip_prefix("/assets/")
+            .and_then(|rel| assets_resolve(web, rel)),
     };
     let Some(file) = file else {
         return resp_plain("404 Not Found", "not found");
@@ -119,7 +123,10 @@ mod tests {
         let d = std::env::temp_dir().join(format!(
             "cf-static-{tag}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
         ));
         std::fs::create_dir_all(d.join("js")).unwrap();
         std::fs::write(d.join("index.html"), b"<html>ok</html>").unwrap();
@@ -145,10 +152,17 @@ mod tests {
             "/assets/C:%5Cwindows/win.ini",
             "/assets/....//....//secrets.txt",
         ] {
-            assert_eq!(static_resp(&web, bad, None).status, "404 Not Found", "{bad} 必须拒绝");
+            assert_eq!(
+                static_resp(&web, bad, None).status,
+                "404 Not Found",
+                "{bad} 必须拒绝"
+            );
         }
         // 404 与空 rel
-        assert_eq!(static_resp(&web, "/assets/missing.js", None).status, "404 Not Found");
+        assert_eq!(
+            static_resp(&web, "/assets/missing.js", None).status,
+            "404 Not Found"
+        );
         assert_eq!(static_resp(&web, "/assets/", None).status, "404 Not Found");
         assert_eq!(static_resp(&web, "/assets", None).status, "404 Not Found");
         std::fs::remove_dir_all(&web).ok();
@@ -161,20 +175,34 @@ mod tests {
         for (p, f) in [("/", "index.html"), ("/app.js", "app.js")] {
             let r = static_resp(&web, p, None);
             assert_eq!(r.status, "200 OK");
-            assert_eq!(r.body, std::fs::read(web.join(f)).unwrap(), "{p} 内容必须与源文件一致");
+            assert_eq!(
+                r.body,
+                std::fs::read(web.join(f)).unwrap(),
+                "{p} 内容必须与源文件一致"
+            );
             assert!(r.extra.contains("ETag: "), "{p} 应带 ETag");
         }
         // ETag 命中 → 304 空体;未命中 → 200
         let etag = static_resp(&web, "/assets/js/x.js", None).extra;
-        let r304 = static_resp(&web, "/assets/js/x.js", Some(etag.trim().strip_prefix("ETag: ").unwrap()));
+        let r304 = static_resp(
+            &web,
+            "/assets/js/x.js",
+            Some(etag.trim().strip_prefix("ETag: ").unwrap()),
+        );
         assert_eq!(r304.status, "304 Not Modified");
         assert!(r304.body.is_empty());
-        assert_eq!(static_resp(&web, "/assets/js/x.js", Some("\"dead.beef\"")).status, "200 OK");
+        assert_eq!(
+            static_resp(&web, "/assets/js/x.js", Some("\"dead.beef\"")).status,
+            "200 OK"
+        );
         // MIME:js 带 charset,未知扩展回退 octet-stream(复用 /media 表)
         let js = static_resp(&web, "/assets/js/x.js", None);
         assert_eq!(js.ctype, "text/javascript; charset=utf-8");
         std::fs::write(web.join("js").join("blob.bin"), b"x").unwrap();
-        assert_eq!(static_resp(&web, "/assets/js/blob.bin", None).ctype, "application/octet-stream");
+        assert_eq!(
+            static_resp(&web, "/assets/js/blob.bin", None).ctype,
+            "application/octet-stream"
+        );
         std::fs::remove_dir_all(&web).ok();
     }
 }

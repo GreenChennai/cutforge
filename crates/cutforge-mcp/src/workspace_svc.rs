@@ -4,7 +4,9 @@
 
 use crate::dispatch::{handle_rpc_as, produces_rev_mutation, resolve_within_root};
 use crate::progress::resolve_render_bin;
-use crate::registry::{FX_CATALOG_JSON, HUAZI_CATALOG_JSON, TRANSITION_CATALOG_JSON, UI_FIELDS_JSON};
+use crate::registry::{
+    FX_CATALOG_JSON, HUAZI_CATALOG_JSON, TRANSITION_CATALOG_JSON, UI_FIELDS_JSON,
+};
 use crate::session::{session_journal_begin, session_journal_note, session_summary_path};
 use crate::tools_nolock::media_browse_payload;
 use crate::transport::events;
@@ -12,7 +14,7 @@ use crate::transport::http::{self, HttpResp, mime_of, pct_decode, resp_plain};
 use crate::transport::static_files;
 use cutforge_core::oplog::Actor;
 use cutforge_io::paths;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -21,9 +23,16 @@ fn serve_preflight(root: &Path, web_dir: &Path) -> Result<(), String> {
     eprintln!("── CutForge 编辑器启动自检 ──");
     // 目录契约 0.5:优先 05_时间线工程/project.json,0.4.x 旧布局 05_ir/ 兼容
     let project = paths::project_path(root);
-    eprintln!("{} 工程: {}", if project.is_file() { "✓" } else { "✗" }, project.display());
+    eprintln!(
+        "{} 工程: {}",
+        if project.is_file() { "✓" } else { "✗" },
+        project.display()
+    );
     if !root.is_dir() {
-        return Err(format!("工程目录不存在:{}(补救:检查 --root 拼写,或先用 CutFlow 建工程)", root.display()));
+        return Err(format!(
+            "工程目录不存在:{}(补救:检查 --root 拼写,或先用 CutFlow 建工程)",
+            root.display()
+        ));
     }
     if !project.is_file() {
         return Err(format!(
@@ -31,19 +40,49 @@ fn serve_preflight(root: &Path, web_dir: &Path) -> Result<(), String> {
             root.display()
         ));
     }
-    eprintln!("{} Web 资源: {}", if web_dir.join("index.html").is_file() { "✓" } else { "△" }, web_dir.display());
+    eprintln!(
+        "{} Web 资源: {}",
+        if web_dir.join("index.html").is_file() {
+            "✓"
+        } else {
+            "△"
+        },
+        web_dir.display()
+    );
     if !web_dir.join("index.html").is_file() {
         eprintln!("   △ 缺 index.html(补救:--web 指向 apps/web,或设 CUTFORGE_WEB)");
     }
-    for (name, key) in [("ffmpeg", "CUTFORGE_FFMPEG"), ("ffprobe", "CUTFORGE_FFPROBE")] {
+    for (name, key) in [
+        ("ffmpeg", "CUTFORGE_FFMPEG"),
+        ("ffprobe", "CUTFORGE_FFPROBE"),
+    ] {
         let via_env = std::env::var_os(key).is_some_and(|v| !v.is_empty());
         let on_path = bin_on_path(name);
-        eprintln!("{} {name}: {}", if via_env || on_path { "✓" } else { "△" },
-            if via_env { format!("env {key}") } else if on_path { "PATH".to_string() } else { "未找到(导出不可用;补救:安装或设 ".to_string() + key + ")" });
+        eprintln!(
+            "{} {name}: {}",
+            if via_env || on_path { "✓" } else { "△" },
+            if via_env {
+                format!("env {key}")
+            } else if on_path {
+                "PATH".to_string()
+            } else {
+                "未找到(导出不可用;补救:安装或设 ".to_string() + key + ")"
+            }
+        );
     }
-    eprintln!("{} cutforge-render: {}", if resolve_render_bin().is_some() { "✓" } else { "△" },
-        resolve_render_bin().map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "未找到(编辑器内导出不可用;补救:同目录放置/PATH/CUTFORGE_RENDER)".into()));
+    eprintln!(
+        "{} cutforge-render: {}",
+        if resolve_render_bin().is_some() {
+            "✓"
+        } else {
+            "△"
+        },
+        resolve_render_bin()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(
+                || "未找到(编辑器内导出不可用;补救:同目录放置/PATH/CUTFORGE_RENDER)".into()
+            )
+    );
     eprintln!("────────────────────────────");
     Ok(())
 }
@@ -59,7 +98,9 @@ fn bin_on_path(bin: &str) -> bool {
 /// E1-4:起服务后自动打开浏览器(失败仅提示,不影响服务)。
 fn open_in_browser(url: &str) {
     let res = if cfg!(target_os = "windows") {
-        std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn()
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(url).spawn()
     } else {
@@ -76,12 +117,13 @@ pub fn default_web_dir() -> PathBuf {
         return PathBuf::from(v);
     }
     if let Ok(exe) = std::env::current_exe()
-        && let Some(dir) = exe.parent() {
-            let cand = dir.join("web");
-            if cand.join("index.html").is_file() {
-                return cand;
-            }
+        && let Some(dir) = exe.parent()
+    {
+        let cand = dir.join("web");
+        if cand.join("index.html").is_file() {
+            return cand;
         }
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web")
 }
 
@@ -96,7 +138,10 @@ pub fn pick_project_interactive() -> Option<PathBuf> {
     let mut cands: Vec<PathBuf> = Vec::new();
     let mut stack = vec![base.clone()];
     while let Some(d) = stack.pop() {
-        let depth = d.strip_prefix(&base).map(|r| r.components().count()).unwrap_or(0);
+        let depth = d
+            .strip_prefix(&base)
+            .map(|r| r.components().count())
+            .unwrap_or(0);
         if depth > 2 {
             continue;
         }
@@ -106,13 +151,24 @@ pub fn pick_project_interactive() -> Option<PathBuf> {
         if let Ok(rd) = std::fs::read_dir(&d) {
             for e in rd.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                if e.path().is_dir() && !name.starts_with('.') && name != "target" && name != "node_modules" {
+                if e.path().is_dir()
+                    && !name.starts_with('.')
+                    && name != "target"
+                    && name != "node_modules"
+                {
                     stack.push(e.path());
                 }
             }
         }
     }
-    cands.sort_by_key(|p| std::cmp::Reverse(paths::project_path(p).metadata().and_then(|m| m.modified()).ok()));
+    cands.sort_by_key(|p| {
+        std::cmp::Reverse(
+            paths::project_path(p)
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok(),
+        )
+    });
     if cands.is_empty() {
         return None;
     }
@@ -132,7 +188,9 @@ pub fn pick_project_interactive() -> Option<PathBuf> {
 /// 「双击打开」落点);其余参数按工程目录原样。单一实现:cli serve 与 mcp serve 共用。
 pub fn resolve_root_arg(arg: &str) -> Result<PathBuf, String> {
     let p = PathBuf::from(arg);
-    let is_cfproj = p.extension().and_then(|e| e.to_str())
+    let is_cfproj = p
+        .extension()
+        .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("cfproj"));
     if is_cfproj {
         return cutforge_io::library::parse_cfproj(&p);
@@ -146,7 +204,13 @@ const PORT_WINDOW: u16 = 20;
 /// 工作区常驻服务(M10 本地服务化):静态托管 Web 编辑器 + /rpc + /events +
 /// /session 会话信息 + /media(E2)+ /media/browse 与 /ui-fields(E3/E4)。
 /// 随机 token 落盘 `.cutforge/session`(仅 127.0.0.1)。
-pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open_browser: bool) -> i32 {
+pub fn serve_workspace(
+    root: &Path,
+    port: u16,
+    token: &str,
+    web_dir: &Path,
+    open_browser: bool,
+) -> i32 {
     use std::sync::Arc;
     let _ = cutforge_io::watcher::ensure_sync_daemon(root);
     if let Err(e) = serve_preflight(root, web_dir) {
@@ -169,11 +233,16 @@ pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open
                 .and_then(|p| std::net::TcpListener::bind(("127.0.0.1", p)).ok());
             match alt {
                 Some(l) => {
-                    eprintln!("⚠ 端口 {port} 已被占用({bind_err}),已自动改用 {}(仅监听 127.0.0.1;排查占用:netstat -ano | findstr :{port})", l.local_addr().map(|a| a.port()).unwrap_or(0));
+                    eprintln!(
+                        "⚠ 端口 {port} 已被占用({bind_err}),已自动改用 {}(仅监听 127.0.0.1;排查占用:netstat -ano | findstr :{port})",
+                        l.local_addr().map(|a| a.port()).unwrap_or(0)
+                    );
                     l
                 }
                 None => {
-                    eprintln!("bind 失败:{bind_err}(端口 {port}..+{PORT_WINDOW} 全部被占用;补救:关闭占用它的旧服务窗口,netstat -ano | findstr :{port} 排查)");
+                    eprintln!(
+                        "bind 失败:{bind_err}(端口 {port}..+{PORT_WINDOW} 全部被占用;补救:关闭占用它的旧服务窗口,netstat -ano | findstr :{port} 排查)"
+                    );
                     return 4;
                 }
             }
@@ -193,7 +262,10 @@ pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open
     let dir = root.join(".cutforge");
     let _ = std::fs::create_dir_all(&dir);
     // 唯一落盘点纪律:session 记账也走 atomic.rs(check-write-paths 口径)
-    let _ = cutforge_io::atomic::atomic_write(&dir.join("session"), &serde_json::to_vec_pretty(&session).unwrap());
+    let _ = cutforge_io::atomic::atomic_write(
+        &dir.join("session"),
+        &serde_json::to_vec_pretty(&session).unwrap(),
+    );
     let session_str = session.to_string();
     let root_s = root.to_string_lossy().to_string();
     let web = Arc::new(web_dir.to_path_buf());
@@ -201,7 +273,10 @@ pub fn serve_workspace(root: &Path, port: u16, token: &str, web_dir: &Path, open
     session_journal_begin(root);
     eprintln!("── 首次运行/会话位置 ──");
     eprintln!("  会话: {}", dir.join("session").display());
-    eprintln!("  写锁: {}(首次写操作时自动创建/释放)", dir.join("lock").display());
+    eprintln!(
+        "  写锁: {}(首次写操作时自动创建/释放)",
+        dir.join("lock").display()
+    );
     eprintln!("  基线快照: {}", dir.join("bases").display());
     eprintln!("  本次变更摘要: {}", session_summary_path(root).display());
     eprintln!("────────────────────────");
@@ -249,7 +324,9 @@ fn media_response(root: &Path, path_param: Option<&str>, range: Option<&str>) ->
             match (a.trim().parse::<u64>().ok(), b.trim().parse::<u64>().ok()) {
                 (Some(s), Some(e)) if s <= e && e < total => (s, e, "206 Partial Content"),
                 (Some(s), None) if s < total => (s, total - 1, "206 Partial Content"),
-                (None, Some(n)) if n > 0 && n <= total => (total - n, total - 1, "206 Partial Content"),
+                (None, Some(n)) if n > 0 && n <= total => {
+                    (total - n, total - 1, "206 Partial Content")
+                }
                 _ => return resp_plain("416 Range Not Satisfiable", "Range 不合法"),
             }
         }
@@ -258,14 +335,22 @@ fn media_response(root: &Path, path_param: Option<&str>, range: Option<&str>) ->
     let mut body = Vec::new();
     if total > 0
         && file.seek(std::io::SeekFrom::Start(start)).is_ok()
-        && let Err(e) = file.take(end - start + 1).read_to_end(&mut body) {
-            return resp_plain("500 Internal Server Error", &format!("读取失败: {e}"));
-        }
+        && let Err(e) = file.take(end - start + 1).read_to_end(&mut body)
+    {
+        return resp_plain("500 Internal Server Error", &format!("读取失败: {e}"));
+    }
     let extra = match status {
-        "206 Partial Content" => format!("Accept-Ranges: bytes\r\nContent-Range: bytes {start}-{end}/{total}\r\n"),
+        "206 Partial Content" => {
+            format!("Accept-Ranges: bytes\r\nContent-Range: bytes {start}-{end}/{total}\r\n")
+        }
         _ => "Accept-Ranges: bytes\r\n".to_string(),
     };
-    HttpResp { status, ctype, extra, body }
+    HttpResp {
+        status,
+        ctype,
+        extra,
+        body,
+    }
 }
 
 fn handle_workspace_conn(
@@ -317,8 +402,17 @@ fn handle_workspace_conn(
     }
     // SSE(T1.6/AC-1.5):Accept 头点名 text/event-stream → 单向流式推送。
     // 旧壳 fetch 不带该头,自然落进下方长轮询分支,行为零变化(兼容红线)。
-    if is_events && req.header("accept").is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream")) {
-        return events::serve_sse(&mut stream, Path::new(root), query, req.header("last-event-id").as_deref());
+    if is_events
+        && req
+            .header("accept")
+            .is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"))
+    {
+        return events::serve_sse(
+            &mut stream,
+            Path::new(root),
+            query,
+            req.header("last-event-id").as_deref(),
+        );
     }
     let resp: HttpResp = if is_get_static {
         static_files::static_resp(web, path_only, req.header("if-none-match").as_deref())
@@ -333,27 +427,44 @@ fn handle_workspace_conn(
         media_response(Path::new(root), path_param.as_deref(), range.as_deref())
     } else if is_media_browse {
         // E3-3:素材浏览(与 media_browse 工具同一 payload 实现,不建并行)
-        let dir = query.split('&').find_map(|kv| {
-            let mut it = kv.split('=');
-            match (it.next(), it.next()) {
-                (Some("dir"), Some(v)) => Some(pct_decode(v)),
-                _ => None,
-            }
-        }).unwrap_or_default();
+        let dir = query
+            .split('&')
+            .find_map(|kv| {
+                let mut it = kv.split('=');
+                match (it.next(), it.next()) {
+                    (Some("dir"), Some(v)) => Some(pct_decode(v)),
+                    _ => None,
+                }
+            })
+            .unwrap_or_default();
         match media_browse_payload(Path::new(root), &dir) {
-            Ok(doc) => HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() },
+            Ok(doc) => HttpResp {
+                status: "200 OK",
+                ctype: "application/json".into(),
+                extra: String::new(),
+                body: doc.to_string().into_bytes(),
+            },
             Err(m) => HttpResp {
-                status: "400 Bad Request", ctype: "application/json".into(), extra: String::new(),
+                status: "400 Bad Request",
+                ctype: "application/json".into(),
+                extra: String::new(),
                 // T1.7 三面同码:此面错误也带 ns(加法字段;code 取值不变)
                 body: json!({"ok": false, "code": "PRECONDITION_FAILED",
-                    "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": m}).to_string().into_bytes(),
+                    "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": m})
+                .to_string()
+                .into_bytes(),
             },
         }
     } else if is_ui_fields {
         // E4-2 单一真相源下发:壳检查器分组由此渲染(壳不读文件系统,壳纯度)
         let doc: Value = serde_json::from_str(UI_FIELDS_JSON)
             .expect("schemas/ui-fields.json 必须合法(受 check-ui-fields 机械校验)");
-        HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() }
+        HttpResp {
+            status: "200 OK",
+            ctype: "application/json".into(),
+            extra: String::new(),
+            body: doc.to_string().into_bytes(),
+        }
     } else if is_catalogs {
         // 册四 T4.5/T4.6 目录下发:转场(58 实测)+ 特效/动效(渲染端 catalog 模块同源)
         let doc = json!({
@@ -364,11 +475,22 @@ fn handle_workspace_conn(
             "huazi": serde_json::from_str::<Value>(HUAZI_CATALOG_JSON)
                 .expect("schemas/huazi-catalog.json 必须合法"),
         });
-        HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: doc.to_string().into_bytes() }
+        HttpResp {
+            status: "200 OK",
+            ctype: "application/json".into(),
+            extra: String::new(),
+            body: doc.to_string().into_bytes(),
+        }
     } else if is_get_session {
-        HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: session_str.as_bytes().to_vec() }
+        HttpResp {
+            status: "200 OK",
+            ctype: "application/json".into(),
+            extra: String::new(),
+            body: session_str.as_bytes().to_vec(),
+        }
     } else if is_rpc {
-        let tool_name = serde_json::from_str::<Value>(body).ok()
+        let tool_name = serde_json::from_str::<Value>(body)
+            .ok()
             .and_then(|req| req["params"]["name"].as_str().map(String::from));
         let v = match serde_json::from_str::<Value>(body) {
             // 数据面 = 编辑器壳:user 归因(RT-1 摘要的过滤依据)
@@ -378,20 +500,33 @@ fn handle_workspace_conn(
         // RT-1:成功的写操作 → 增量更新 .cutforge/session-summary.json
         if tool_name.as_deref().is_some_and(produces_rev_mutation) {
             let parsed: Value = serde_json::from_str(&v).unwrap_or(Value::Null);
-            let env_text = parsed["result"]["content"][0]["text"].as_str().unwrap_or("");
+            let env_text = parsed["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap_or("");
             if let Ok(env) = serde_json::from_str::<Value>(env_text)
                 && env["ok"] == json!(true)
-                && let Some(rev) = env["data"]["rev"].as_u64() {
-                    session_journal_note(Path::new(root), rev);
-                }
+                && let Some(rev) = env["data"]["rev"].as_u64()
+            {
+                session_journal_note(Path::new(root), rev);
+            }
         }
-        HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: v.into_bytes() }
+        HttpResp {
+            status: "200 OK",
+            ctype: "application/json".into(),
+            extra: String::new(),
+            body: v.into_bytes(),
+        }
     } else if is_api_v1 {
         // 册七 T7.1:/api/v1 版本化 REST 面(ADR-0025)——POST /api/v1/tools/<tool>
         // 与 GET 别名全部转发既有 dispatch 单表(不做第二套业务逻辑);绑定根注入,
         // actor=editor 与 /rpc 数据面同归因(OpLog 如实归因)
         crate::transport::rest::handle_api_v1(
-            path_only, query, first_line.starts_with("POST"), body, Some(root), Actor::user("editor"),
+            path_only,
+            query,
+            first_line.starts_with("POST"),
+            body,
+            Some(root),
+            Actor::user("editor"),
         )
     } else if is_events {
         // 长轮询降级路径(A1-R2:兼容旧壳,册二完成后移除;负载老字段一个不少,
@@ -405,13 +540,26 @@ fn handle_workspace_conn(
         }
         let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(root));
         let v = match hub.wait_since(since, std::time::Duration::from_millis(900)) {
-            Some(seq) => json!({"ok": true, "code": "OK", "event": "workspace.changed", "seq": seq}),
+            Some(seq) => {
+                json!({"ok": true, "code": "OK", "event": "workspace.changed", "seq": seq})
+            }
             None => json!({"ok": true, "code": "OK", "event": "none", "seq": hub.current()}),
         };
-        HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(), body: v.to_string().into_bytes() }
+        HttpResp {
+            status: "200 OK",
+            ctype: "application/json".into(),
+            extra: String::new(),
+            body: v.to_string().into_bytes(),
+        }
     } else {
-        HttpResp { status: "200 OK", ctype: "application/json".into(), extra: String::new(),
-                   body: json!({"service": "cutforge-workspace"}).to_string().into_bytes() }
+        HttpResp {
+            status: "200 OK",
+            ctype: "application/json".into(),
+            extra: String::new(),
+            body: json!({"service": "cutforge-workspace"})
+                .to_string()
+                .into_bytes(),
+        }
     };
     let _ = write!(
         stream,

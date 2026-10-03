@@ -5,7 +5,7 @@
 //! 开发树 tools/jianying/;剪映导出已收编)→ CutFlow 仓库回退(一个版本期)。
 
 use crate::registry::envelope;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -14,10 +14,14 @@ pub(crate) fn py_launcher() -> Option<Vec<String>> {
     static CACHE: OnceLock<Option<Vec<String>>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
-                for cand in [["py", "-3"], ["python3", ""], ["python", ""]] {
-                    let args: Vec<&str> = cand[1..].iter().filter(|s| !s.is_empty()).copied().collect();
-                    let ok = std::process::Command::new(cand[0])
-                        .args(args)
+            for cand in [["py", "-3"], ["python3", ""], ["python", ""]] {
+                let args: Vec<&str> = cand[1..]
+                    .iter()
+                    .filter(|s| !s.is_empty())
+                    .copied()
+                    .collect();
+                let ok = std::process::Command::new(cand[0])
+                    .args(args)
                     .arg("-c")
                     .arg("print(1)")
                     .output()
@@ -25,7 +29,12 @@ pub(crate) fn py_launcher() -> Option<Vec<String>> {
                     .unwrap_or(false);
                 if ok {
                     // 过滤占位空串:空串若作为参数传回会给调用方埋雷(CI 实测 python3 "" -V 必败)
-                    return Some(cand.iter().filter(|s| !s.is_empty()).map(|s| s.to_string()).collect());
+                    return Some(
+                        cand.iter()
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string())
+                            .collect(),
+                    );
                 }
             }
             None
@@ -42,13 +51,17 @@ fn resolve_cutflow_dir(ws_root: &Path) -> Option<PathBuf> {
         }
     }
     let probe = |base: &Path| -> Option<PathBuf> {
-        base.ancestors().skip(1).take(4).map(|a| a.join("CutFlow"))
+        base.ancestors()
+            .skip(1)
+            .take(4)
+            .map(|a| a.join("CutFlow"))
             .find(|c| c.join("skills/cutflow/scripts").is_dir())
     };
     if let Ok(exe) = std::env::current_exe()
-        && let Some(p) = probe(&exe) {
-            return Some(p);
-        }
+        && let Some(p) = probe(&exe)
+    {
+        return Some(p);
+    }
     probe(ws_root)
 }
 
@@ -86,13 +99,15 @@ fn resolve_script(ws_root: &Path, script: &str) -> Option<(PathBuf, &'static str
             .find(|c| c.is_file())
     };
     if let Ok(cwd) = std::env::current_dir()
-        && let Some(p) = probe_bundled(&cwd) {
-            return Some((p, "bundled"));
-        }
+        && let Some(p) = probe_bundled(&cwd)
+    {
+        return Some((p, "bundled"));
+    }
     if let Ok(exe) = std::env::current_exe()
-        && let Some(p) = probe_bundled(&exe) {
-            return Some((p, "bundled"));
-        }
+        && let Some(p) = probe_bundled(&exe)
+    {
+        return Some((p, "bundled"));
+    }
     // 4. CutFlow 回退(一个版本期;独立机不依赖)
     if let Some(cutflow) = resolve_cutflow_dir(ws_root) {
         let cand = cutflow.join("skills/cutflow/scripts").join(script);
@@ -115,11 +130,20 @@ pub(crate) fn script_arg_to_string(v: &Value) -> Result<String, String> {
 
 pub(crate) fn orchestrate(ws_root: &Path, script: &str, script_args: &[Value]) -> Value {
     let Some((script_path, script_source)) = resolve_script(ws_root, script) else {
-        return envelope(false, "DEP_MISSING",
-            "脚本不可达(定位序:env CUTFLOW_REPO → 工程内 → 随包资产 <exe>/scripts/ 与 tools/jianying/ → CutFlow 仓库): 请安装随包脚本或设 CUTFLOW_REPO", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "脚本不可达(定位序:env CUTFLOW_REPO → 工程内 → 随包资产 <exe>/scripts/ 与 tools/jianying/ → CutFlow 仓库): 请安装随包脚本或设 CUTFLOW_REPO",
+            json!({}),
+        );
     };
     let Some(py) = py_launcher() else {
-        return envelope(false, "DEP_MISSING", "未找到可用的 Python(py -3/python3/python 均不可用)", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "未找到可用的 Python(py -3/python3/python 均不可用)",
+            json!({}),
+        );
     };
     // --json 白名单:仅契约声明支持该旗标的脚本(rs_verify);其余追加 --json 会被
     // argparse 以退出码 2 拒绝——这正是 M4 三个编排工具必崩的根因(P1-5)。
@@ -150,18 +174,44 @@ pub(crate) fn orchestrate(ws_root: &Path, script: &str, script_args: &[Value]) -
                 let json_start = text.find('{').unwrap_or(text.len());
                 match text[json_start..].parse::<Value>() {
                     Ok(v) => v,
-                    Err(_) => envelope(true, "OK", "编排完成",
-                        json!({"stdout": text.trim(), "scriptSource": script_source})),
+                    Err(_) => envelope(
+                        true,
+                        "OK",
+                        "编排完成",
+                        json!({"stdout": text.trim(), "scriptSource": script_source}),
+                    ),
                 }
             } else {
-                envelope(true, "OK", "编排完成",
-                    json!({"stdout": text.trim(), "scriptSource": script_source}))
+                envelope(
+                    true,
+                    "OK",
+                    "编排完成",
+                    json!({"stdout": text.trim(), "scriptSource": script_source}),
+                )
             }
         }
         Ok(o) => {
-            let code = if o.status.code() == Some(3) { "DEP_MISSING" } else { "INTERNAL" };
-            envelope(false, code, &String::from_utf8_lossy(&o.stderr).trim().chars().take(300).collect::<String>(), json!({}))
+            let code = if o.status.code() == Some(3) {
+                "DEP_MISSING"
+            } else {
+                "INTERNAL"
+            };
+            envelope(
+                false,
+                code,
+                &String::from_utf8_lossy(&o.stderr)
+                    .trim()
+                    .chars()
+                    .take(300)
+                    .collect::<String>(),
+                json!({}),
+            )
         }
-        Err(e) => envelope(false, "DEP_MISSING", &format!("{} 不可用: {e}", py.join(" ")), json!({})),
+        Err(e) => envelope(
+            false,
+            "DEP_MISSING",
+            &format!("{} 不可用: {e}", py.join(" ")),
+            json!({}),
+        ),
     }
 }

@@ -14,7 +14,7 @@ use crate::progress::{build_export_extra, render_progress, render_run_async};
 use crate::registry::envelope;
 use cutforge_core::model::Project;
 use cutforge_render::plan::RenderPlan;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -28,7 +28,8 @@ fn load_project(root: &Path) -> Result<Project, String> {
     if let Some(obj) = v.as_object_mut() {
         obj.remove("_meta");
     }
-    cutforge_core::model::migrate_from_value(&v).map_err(|errors| format!("SCHEMA_INVALID: {}", errors.join("; ")))
+    cutforge_core::model::migrate_from_value(&v)
+        .map_err(|errors| format!("SCHEMA_INVALID: {}", errors.join("; ")))
 }
 
 fn snap100(v: u64) -> u64 {
@@ -41,19 +42,31 @@ fn snap100(v: u64) -> u64 {
 fn sample_luma(abs: &Path, at_ms: u64) -> Result<f64, String> {
     let out = std::process::Command::new(ff_bin())
         .args([
-            "-v", "error",
-            "-ss", &format!("{:.3}", at_ms as f64 / 1000.0),
-            "-i", &abs.to_string_lossy(),
-            "-frames:v", "1",
-            "-vf", "scale=32:18",
-            "-f", "rawvideo", "-pix_fmt", "gray", "-",
+            "-v",
+            "error",
+            "-ss",
+            &format!("{:.3}", at_ms as f64 / 1000.0),
+            "-i",
+            &abs.to_string_lossy(),
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=32:18",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
         ])
         .output()
         .map_err(|e| format!("ffmpeg 启动失败: {e}"))?;
     if !out.status.success() || out.stdout.is_empty() {
         return Err(format!(
             "帧解码失败(atMs={at_ms}): {}",
-            String::from_utf8_lossy(&out.stderr).chars().take(120).collect::<String>()
+            String::from_utf8_lossy(&out.stderr)
+                .chars()
+                .take(120)
+                .collect::<String>()
         ));
     }
     let sum: u64 = out.stdout.iter().map(|&b| b as u64).sum();
@@ -74,19 +87,32 @@ fn seg_rms(abs: &Path, source_in_ms: u64, duration_ms: u64, speed: f64) -> Resul
     let read_s = duration_ms as f64 * speed / 1000.0;
     let out = std::process::Command::new(ff_bin())
         .args([
-            "-v", "error",
-            "-ss", &format!("{:.3}", source_in_ms as f64 / 1000.0),
-            "-t", &format!("{read_s:.3}"),
-            "-i", &abs.to_string_lossy(),
-            "-vn", "-ac", "1", "-ar", "8000",
-            "-f", "s16le", "-",
+            "-v",
+            "error",
+            "-ss",
+            &format!("{:.3}", source_in_ms as f64 / 1000.0),
+            "-t",
+            &format!("{read_s:.3}"),
+            "-i",
+            &abs.to_string_lossy(),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "8000",
+            "-f",
+            "s16le",
+            "-",
         ])
         .output()
         .map_err(|e| format!("ffmpeg 启动失败: {e}"))?;
     if !out.status.success() || out.stdout.len() < 2 {
         return Err(format!(
             "PCM 解码失败: {}",
-            String::from_utf8_lossy(&out.stderr).chars().take(120).collect::<String>()
+            String::from_utf8_lossy(&out.stderr)
+                .chars()
+                .take(120)
+                .collect::<String>()
         ));
     }
     let acc: f64 = out
@@ -126,7 +152,11 @@ pub fn export_preflight_tool(root: &Path, args: &Value) -> Value {
     let project = match load_project(root) {
         Ok(p) => p,
         Err(e) => {
-            let code = if e.starts_with("SCHEMA_INVALID") { "SCHEMA_INVALID" } else { "NO_CONFIG" };
+            let code = if e.starts_with("SCHEMA_INVALID") {
+                "SCHEMA_INVALID"
+            } else {
+                "NO_CONFIG"
+            };
             return envelope(false, code, &e, json!({}));
         }
     };
@@ -152,7 +182,11 @@ pub fn export_preflight_tool(root: &Path, args: &Value) -> Value {
     }
     for p in srcs {
         if !p.is_file() {
-            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+            let rel = p
+                .strip_prefix(root)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .replace('\\', "/");
             missing.push(rel);
         }
     }
@@ -170,10 +204,19 @@ pub fn export_preflight_tool(root: &Path, args: &Value) -> Value {
         let first = plan.video_clips.first().expect("非空已判");
         let last = plan.video_clips.last().expect("非空已判");
         let head_at = first.source_in_ms.unwrap_or(0);
-        let tail_used = cutforge_render::export::source_advance_ms(last, cutforge_render::plan::clip_play_ms(last));
-        let tail_at = last.source_in_ms.unwrap_or(0).saturating_add(tail_used).saturating_sub(50);
+        let tail_used = cutforge_render::export::source_advance_ms(
+            last,
+            cutforge_render::plan::clip_play_ms(last),
+        );
+        let tail_at = last
+            .source_in_ms
+            .unwrap_or(0)
+            .saturating_add(tail_used)
+            .saturating_sub(50);
         let luma = |clip_src: &Option<String>, at: u64| -> Result<i64, String> {
-            let Some(s) = clip_src else { return Err("片段无 src".into()) };
+            let Some(s) = clip_src else {
+                return Err("片段无 src".into());
+            };
             let abs = root.join(s);
             if !abs.is_file() {
                 return Err(format!("素材缺失: {s}"));
@@ -230,7 +273,10 @@ pub fn export_preflight_tool(root: &Path, args: &Value) -> Value {
         let mut quiet: Vec<(u64, u64)> = Vec::new();
         for (i, seg) in plan.audio_segs.iter().enumerate() {
             if i >= RMS_CAP {
-                warnings.push(format!("声轨事件超 {} 段,其余段不做逐段 RMS(轻探测口径);", RMS_CAP));
+                warnings.push(format!(
+                    "声轨事件超 {} 段,其余段不做逐段 RMS(轻探测口径);",
+                    RMS_CAP
+                ));
                 break;
             }
             if !seg.src.is_file() {
@@ -258,15 +304,22 @@ pub fn export_preflight_tool(root: &Path, args: &Value) -> Value {
                 .filter(|p| {
                     p.is_file()
                         && p.extension().is_some_and(|x| x == "mp4")
-                        && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("final_cutforge_"))
+                        && p.file_name()
+                            .is_some_and(|n| n.to_string_lossy().starts_with("final_cutforge_"))
                 })
                 .collect()
         })
         .unwrap_or_default();
     if let Some(newest) = finals.iter().max_by_key(|p| {
-        std::fs::metadata(p).and_then(|m| m.modified()).ok().map(|t| {
-            t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
-        }).unwrap_or(0)
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .map(|t| {
+                t.duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0)
     }) {
         if let Ok(rel) = newest.strip_prefix(root) {
             let mut largs = json!({"root": root.to_string_lossy(), "src": rel.to_string_lossy().replace('\\', "/")});
@@ -329,7 +382,10 @@ pub fn export_all_variants_tool(root: &Path, args: &Value) -> Value {
     match args["action"].as_str().unwrap_or("run") {
         "run" => {
             let ratios: Vec<String> = match args["ratios"].as_array() {
-                Some(a) if !a.is_empty() => a.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+                Some(a) if !a.is_empty() => a
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
                 _ => match load_project(root).ok().and_then(|p| p.outputs) {
                     Some(o) if !o.is_empty() => o
                         .iter()
@@ -345,8 +401,14 @@ pub fn export_all_variants_tool(root: &Path, args: &Value) -> Value {
             };
             for r in &ratios {
                 if cutforge_render::export::preset_canvas(r).is_none() {
-                    return envelope(false, "PRECONDITION_FAILED",
-                        &format!("未知画幅预设: {r}(允许 vertical|9x16|horizontal|16x9|square|1x1|3x4|4x5)"), json!({}));
+                    return envelope(
+                        false,
+                        "PRECONDITION_FAILED",
+                        &format!(
+                            "未知画幅预设: {r}(允许 vertical|9x16|horizontal|16x9|square|1x1|3x4|4x5)"
+                        ),
+                        json!({}),
+                    );
                 }
             }
             let ass = crate::progress::existing_rel(root, args["ass"].as_str()).map(String::from);
@@ -363,29 +425,49 @@ pub fn export_all_variants_tool(root: &Path, args: &Value) -> Value {
                 if resp["ok"] != json!(true) {
                     return resp;
                 }
-                let run_id = resp["data"]["runId"].as_str().unwrap_or_default().to_string();
+                let run_id = resp["data"]["runId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 children.push((run_id.clone(), r.clone()));
                 runs.push(json!({"ratio": r, "runId": run_id}));
             }
             let parent_id = new_parent_id();
             if let Ok(mut p) = parents().lock() {
-                p.insert(parent_id.clone(), ParentJob { root: root.to_path_buf(), children });
+                p.insert(
+                    parent_id.clone(),
+                    ParentJob {
+                        root: root.to_path_buf(),
+                        children,
+                    },
+                );
             }
-            envelope(true, "OK", "多画幅批量导出已入队", json!({
-                "parentRunId": parent_id,
-                "ratios": ratios,
-                "runs": runs,
-                "note": "逐变体走渲染队列(runId 独立);聚合状态用 action=status",
-            }))
+            envelope(
+                true,
+                "OK",
+                "多画幅批量导出已入队",
+                json!({
+                    "parentRunId": parent_id,
+                    "ratios": ratios,
+                    "runs": runs,
+                    "note": "逐变体走渲染队列(runId 独立);聚合状态用 action=status",
+                }),
+            )
         }
         "status" => {
             let Some(parent_id) = args["parentRunId"].as_str() else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 parentRunId", json!({}));
             };
             let Some(job) = parents().lock().ok().and_then(|p| {
-                p.get(parent_id).map(|j| (j.root.clone(), j.children.clone()))
+                p.get(parent_id)
+                    .map(|j| (j.root.clone(), j.children.clone()))
             }) else {
-                return envelope(false, "PRECONDITION_FAILED", &format!("未知 parentRunId: {parent_id}"), json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    &format!("未知 parentRunId: {parent_id}"),
+                    json!({}),
+                );
             };
             let (_root, children) = job;
             let mut runs: Vec<Value> = Vec::new();
@@ -407,19 +489,28 @@ pub fn export_all_variants_tool(root: &Path, args: &Value) -> Value {
             } else {
                 "running"
             };
-            envelope(true, "OK", "多画幅批量导出状态", json!({
-                "parentRunId": parent_id,
-                "runs": runs,
-                "aggregate": {
-                    "total": total, "ok": get("ok"), "fail": get("fail"),
-                    "running": get("running"), "queued": get("queued"),
-                    "paused": get("paused"), "canceled": get("canceled"),
-                },
-                "state": state,
-            }))
+            envelope(
+                true,
+                "OK",
+                "多画幅批量导出状态",
+                json!({
+                    "parentRunId": parent_id,
+                    "runs": runs,
+                    "aggregate": {
+                        "total": total, "ok": get("ok"), "fail": get("fail"),
+                        "running": get("running"), "queued": get("queued"),
+                        "paused": get("paused"), "canceled": get("canceled"),
+                    },
+                    "state": state,
+                }),
+            )
         }
-        other => envelope(false, "PRECONDITION_FAILED",
-            &format!("未知 action: {other}(允许 run/status)"), json!({})),
+        other => envelope(
+            false,
+            "PRECONDITION_FAILED",
+            &format!("未知 action: {other}(允许 run/status)"),
+            json!({}),
+        ),
     }
 }
 
@@ -432,7 +523,11 @@ mod tests {
     #[test]
     fn merge_ranges_snaps_and_merges() {
         assert_eq!(merge_ranges(vec![(0, 100), (150, 300)]), vec![(0, 300)]);
-        assert_eq!(merge_ranges(vec![(1050, 2000), (0, 999)]), vec![(0, 900), (1000, 2000)], "100ms 向下吸附");
+        assert_eq!(
+            merge_ranges(vec![(1050, 2000), (0, 999)]),
+            vec![(0, 900), (1000, 2000)],
+            "100ms 向下吸附"
+        );
         assert!(merge_ranges(vec![(500, 500)]).is_empty(), "零长剔除");
         let wide: Vec<(u64, u64)> = (0..40).map(|i| (i * 1000, i * 1000 + 500)).collect();
         assert_eq!(merge_ranges(wide).len(), 20, "上限 20 段");
@@ -493,11 +588,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cf-pf-var-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let resp = export_all_variants_tool(&dir, &json!({"root": dir.to_string_lossy(), "ratios": ["21x9"]}));
+        let resp = export_all_variants_tool(
+            &dir,
+            &json!({"root": dir.to_string_lossy(), "ratios": ["21x9"]}),
+        );
         assert_eq!(resp["code"], json!("PRECONDITION_FAILED"), "{resp}");
-        let resp2 = export_all_variants_tool(&dir, &json!({"root": dir.to_string_lossy(), "action": "status"}));
+        let resp2 = export_all_variants_tool(
+            &dir,
+            &json!({"root": dir.to_string_lossy(), "action": "status"}),
+        );
         assert_eq!(resp2["code"], json!("PRECONDITION_FAILED"), "{resp2}");
-        let resp3 = export_all_variants_tool(&dir, &json!({"root": dir.to_string_lossy(), "action": "status", "parentRunId": "p无"}));
+        let resp3 = export_all_variants_tool(
+            &dir,
+            &json!({"root": dir.to_string_lossy(), "action": "status", "parentRunId": "p无"}),
+        );
         assert_eq!(resp3["code"], json!("PRECONDITION_FAILED"), "{resp3}");
         std::fs::remove_dir_all(&dir).ok();
     }

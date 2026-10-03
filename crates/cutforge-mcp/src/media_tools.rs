@@ -16,7 +16,7 @@
 
 use crate::dispatch::resolve_within_root;
 use crate::registry::envelope;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 /// ffmpeg 定位(E5-2 同口径:env CUTFORGE_FFMPEG 优先,缺省按 PATH 名;
@@ -31,7 +31,11 @@ pub(crate) fn ff_bin() -> String {
 }
 
 pub(crate) fn ffmpeg_available() -> bool {
-    std::process::Command::new(ff_bin()).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    std::process::Command::new(ff_bin())
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// peaks 桶数档位(coarse/standard/fine)。
@@ -83,16 +87,32 @@ pub fn pcm_to_peaks(samples: &[i16], buckets: u32) -> Vec<(f32, f32)> {
 /// media_peaks 工具面:素材路径 + 分辨率档 → peaks 文件(缓存命中零 ffmpeg)。
 pub fn media_peaks_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str() else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(工程内相对路径)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(工程内相对路径)",
+            json!({}),
+        );
     };
     let level = args["level"].as_str().unwrap_or("standard");
     let Some(buckets) = peaks_buckets(level) else {
-        return envelope(false, "PRECONDITION_FAILED",
-            &format!("未知 level: {level}(允许 coarse|standard|fine)"), json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            &format!("未知 level: {level}(允许 coarse|standard|fine)"),
+            json!({}),
+        );
     };
     let abs = match resolve_within_root(root, src) {
         Ok(p) => p,
-        Err(msg) => return envelope(false, "PRECONDITION_FAILED", &format!("路径不合法({src}): {msg}"), json!({})),
+        Err(msg) => {
+            return envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("路径不合法({src}): {msg}"),
+                json!({}),
+            );
+        }
     };
     let Some((mtime, size)) = cutforge_io::mediacache::source_stamp(&abs) else {
         return envelope(false, "NO_CONFIG", &format!("素材不可读: {src}"), json!({}));
@@ -103,25 +123,58 @@ pub fn media_peaks_tool(root: &Path, args: &Value) -> Value {
         return peaks_hit(root, src, level, buckets, &rel, true);
     }
     if !ffmpeg_available() {
-        return envelope(false, "DEP_MISSING", "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)",
+            json!({}),
+        );
     }
     // 解单声道 8kHz s16le PCM 到内存(短素材口径;peaks 是预览数据,非归档)
     let dec = std::process::Command::new(ff_bin())
-        .args(["-v", "error", "-i", &abs.to_string_lossy(), "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "-"])
+        .args([
+            "-v",
+            "error",
+            "-i",
+            &abs.to_string_lossy(),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "8000",
+            "-f",
+            "s16le",
+            "-",
+        ])
         .output();
     let Ok(dec) = dec else {
         return envelope(false, "DEP_MISSING", "ffmpeg 启动失败", json!({}));
     };
     if !dec.status.success() {
-        return envelope(false, "DEP_MISSING",
-            &format!("PCM 解码失败: {}", String::from_utf8_lossy(&dec.stderr).chars().take(200).collect::<String>()), json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            &format!(
+                "PCM 解码失败: {}",
+                String::from_utf8_lossy(&dec.stderr)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            ),
+            json!({}),
+        );
     }
     let mut samples: Vec<i16> = Vec::with_capacity(dec.stdout.len() / 2);
     for chunk in dec.stdout.as_chunks::<2>().0 {
         samples.push(i16::from_le_bytes(*chunk));
     }
     if samples.is_empty() {
-        return envelope(false, "PRECONDITION_FAILED", &format!("素材无音频流: {src}"), json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            &format!("素材无音频流: {src}"),
+            json!({}),
+        );
     }
     let peaks = pcm_to_peaks(&samples, buckets);
     let doc = json!({
@@ -135,18 +188,32 @@ pub fn media_peaks_tool(root: &Path, args: &Value) -> Value {
         "max": peaks.iter().map(|p| p.1).collect::<Vec<_>>(),
     });
     if let Err(e) = cutforge_io::atomic::atomic_write(&out, doc.to_string().as_bytes()) {
-        return envelope(false, "INTERNAL", &format!("peaks 落盘失败: {e}"), json!({}));
+        return envelope(
+            false,
+            "INTERNAL",
+            &format!("peaks 落盘失败: {e}"),
+            json!({}),
+        );
     }
     peaks_hit(root, src, level, buckets, &rel, false)
 }
 
 fn peaks_hit(_root: &Path, src: &str, level: &str, buckets: u32, rel: &str, hit: bool) -> Value {
-    envelope(true, "OK", if hit { "peaks 缓存命中" } else { "peaks 已生成" }, json!({
-        "src": src, "level": level, "buckets": buckets,
-        "cached": hit, "file": rel,
-        "media": rel,
-        "hint": "波形绘制消费:GET /media?path=<file>;FE 拿 min/max 数组画多级分辨率波形",
-    }))
+    envelope(
+        true,
+        "OK",
+        if hit {
+            "peaks 缓存命中"
+        } else {
+            "peaks 已生成"
+        },
+        json!({
+            "src": src, "level": level, "buckets": buckets,
+            "cached": hit, "file": rel,
+            "media": rel,
+            "hint": "波形绘制消费:GET /media?path=<file>;FE 拿 min/max 数组画多级分辨率波形",
+        }),
+    )
 }
 
 // ---------------- 缩略图(T4.1-12) ----------------
@@ -154,12 +221,24 @@ fn peaks_hit(_root: &Path, src: &str, level: &str, buckets: u32, rel: &str, hit:
 /// media_thumbnail 工具面:素材路径(+atMs/width)→ PNG 缩略图(缓存命中零 ffmpeg)。
 pub fn media_thumbnail_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str() else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(工程内相对路径)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(工程内相对路径)",
+            json!({}),
+        );
     };
     let width = args["width"].as_u64().unwrap_or(320).clamp(64, 1280) as u32;
     let abs = match resolve_within_root(root, src) {
         Ok(p) => p,
-        Err(msg) => return envelope(false, "PRECONDITION_FAILED", &format!("路径不合法({src}): {msg}"), json!({})),
+        Err(msg) => {
+            return envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("路径不合法({src}): {msg}"),
+                json!({}),
+            );
+        }
     };
     let Some((mtime, size)) = cutforge_io::mediacache::source_stamp(&abs) else {
         return envelope(false, "NO_CONFIG", &format!("素材不可读: {src}"), json!({}));
@@ -182,35 +261,71 @@ pub fn media_thumbnail_tool(root: &Path, args: &Value) -> Value {
         return thumb_hit(src, at_ms, width, &rel, true);
     }
     if !ffmpeg_available() {
-        return envelope(false, "DEP_MISSING", "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)",
+            json!({}),
+        );
     }
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let r = std::process::Command::new(ff_bin())
         .args([
-            "-y", "-v", "error",
-            "-ss", &format!("{:.3}", at_ms as f64 / 1000.0),
-            "-i", &abs.to_string_lossy(),
-            "-frames:v", "1",
-            "-vf", &format!("scale={width}:-2"),
-            "-f", "image2",
+            "-y",
+            "-v",
+            "error",
+            "-ss",
+            &format!("{:.3}", at_ms as f64 / 1000.0),
+            "-i",
+            &abs.to_string_lossy(),
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale={width}:-2"),
+            "-f",
+            "image2",
             &out.to_string_lossy(),
         ])
         .output();
     match r {
         Ok(o) if o.status.success() && out.is_file() => thumb_hit(src, at_ms, width, &rel, false),
-        Ok(o) => envelope(false, "DEP_MISSING",
-            &format!("抽帧失败(素材无视频流或 atMs 越界): {}", String::from_utf8_lossy(&o.stderr).chars().take(200).collect::<String>()), json!({})),
-        Err(e) => envelope(false, "DEP_MISSING", &format!("ffmpeg 启动失败: {e}"), json!({})),
+        Ok(o) => envelope(
+            false,
+            "DEP_MISSING",
+            &format!(
+                "抽帧失败(素材无视频流或 atMs 越界): {}",
+                String::from_utf8_lossy(&o.stderr)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            ),
+            json!({}),
+        ),
+        Err(e) => envelope(
+            false,
+            "DEP_MISSING",
+            &format!("ffmpeg 启动失败: {e}"),
+            json!({}),
+        ),
     }
 }
 
 fn thumb_hit(src: &str, at_ms: u64, width: u32, rel: &str, hit: bool) -> Value {
-    envelope(true, "OK", if hit { "缩略图缓存命中" } else { "缩略图已生成" }, json!({
-        "src": src, "atMs": at_ms, "width": width,
-        "cached": hit, "file": rel, "media": rel, "format": "png",
-    }))
+    envelope(
+        true,
+        "OK",
+        if hit {
+            "缩略图缓存命中"
+        } else {
+            "缩略图已生成"
+        },
+        json!({
+            "src": src, "atMs": at_ms, "width": width,
+            "cached": hit, "file": rel, "media": rel, "format": "png",
+        }),
+    )
 }
 
 // ---------------- 代理工作流(T4.1-13) ----------------
@@ -219,12 +334,24 @@ fn thumb_hit(src: &str, at_ms: u64, width: u32, rel: &str, hit: bool) -> Value {
 /// 内容寻址 = 路径+mtime+size,改素材即 miss;渲染端 useProxy 消费同一目录)。
 pub fn media_proxy_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str() else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(工程内相对路径)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(工程内相对路径)",
+            json!({}),
+        );
     };
     let generate = args["generate"].as_bool().unwrap_or(true);
     let abs = match resolve_within_root(root, src) {
         Ok(p) => p,
-        Err(msg) => return envelope(false, "PRECONDITION_FAILED", &format!("路径不合法({src}): {msg}"), json!({})),
+        Err(msg) => {
+            return envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("路径不合法({src}): {msg}"),
+                json!({}),
+            );
+        }
     };
     let Some((mtime, size)) = cutforge_io::mediacache::source_stamp(&abs) else {
         return envelope(false, "NO_CONFIG", &format!("素材不可读: {src}"), json!({}));
@@ -235,16 +362,28 @@ pub fn media_proxy_tool(root: &Path, args: &Value) -> Value {
         return proxy_hit(src, &rel, "ready", true);
     }
     if !generate {
-        return envelope(true, "OK", "代理未生成", json!({
-            "src": src, "state": "missing", "file": rel, "cached": false,
-            "hint": "generate=true 生成;.cutforge/proxy/ 为渲染 useProxy 的消费目录",
-        }));
+        return envelope(
+            true,
+            "OK",
+            "代理未生成",
+            json!({
+                "src": src, "state": "missing", "file": rel, "cached": false,
+                "hint": "generate=true 生成;.cutforge/proxy/ 为渲染 useProxy 的消费目录",
+            }),
+        );
     }
     if !ffmpeg_available() {
-        return envelope(false, "DEP_MISSING", "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)",
+            json!({}),
+        );
     }
     // 半分辨率代理(偶数宽高;veryfast + crf 28 预览档;音轨重编 aac 保证可寻址时长)
-    let probe = cutforge_io::probe::ffprobe_available().then(|| cutforge_io::probe::probe(&abs).ok()).flatten();
+    let probe = cutforge_io::probe::ffprobe_available()
+        .then(|| cutforge_io::probe::probe(&abs).ok())
+        .flatten();
     let (w, h) = match probe.as_ref().and_then(|i| i.video_size()) {
         Some((w, h)) => ((w / 2).max(16) & !1, (h / 2).max(16) & !1),
         None => (0, 0), // 无视频流(纯音频)→ 不缩放,仅转码压缩
@@ -252,28 +391,59 @@ pub fn media_proxy_tool(root: &Path, args: &Value) -> Value {
     if let Some(dir) = out.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let scale = if w > 0 { format!("-vf,scale={w}:{h}") } else { String::new() };
+    let scale = if w > 0 {
+        format!("-vf,scale={w}:{h}")
+    } else {
+        String::new()
+    };
     let mut cmd = std::process::Command::new(ff_bin());
     cmd.args(["-y", "-v", "error", "-i", &abs.to_string_lossy()]);
     if w > 0 {
         cmd.args(["-vf", &format!("scale={w}:{h}")]);
     }
     let _ = scale;
-    cmd.args(["-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-c:a", "aac", "-b:a", "96k", "-pix_fmt", "yuv420p"]);
+    cmd.args([
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-c:a", "aac", "-b:a", "96k",
+        "-pix_fmt", "yuv420p",
+    ]);
     cmd.arg(&out);
     match cmd.output() {
         Ok(o) if o.status.success() && out.is_file() => proxy_hit(src, &rel, "ready", false),
-        Ok(o) => envelope(false, "DEP_MISSING",
-            &format!("代理生成失败: {}", String::from_utf8_lossy(&o.stderr).chars().take(200).collect::<String>()), json!({})),
-        Err(e) => envelope(false, "DEP_MISSING", &format!("ffmpeg 启动失败: {e}"), json!({})),
+        Ok(o) => envelope(
+            false,
+            "DEP_MISSING",
+            &format!(
+                "代理生成失败: {}",
+                String::from_utf8_lossy(&o.stderr)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            ),
+            json!({}),
+        ),
+        Err(e) => envelope(
+            false,
+            "DEP_MISSING",
+            &format!("ffmpeg 启动失败: {e}"),
+            json!({}),
+        ),
     }
 }
 
 fn proxy_hit(src: &str, rel: &str, state: &str, hit: bool) -> Value {
-    envelope(true, "OK", if hit { "代理已存在(缓存命中)" } else { "代理已生成" }, json!({
-        "src": src, "state": state, "file": rel, "media": rel,
-        "cached": hit, "scale": "1/2",
-    }))
+    envelope(
+        true,
+        "OK",
+        if hit {
+            "代理已存在(缓存命中)"
+        } else {
+            "代理已生成"
+        },
+        json!({
+            "src": src, "state": state, "file": rel, "media": rel,
+            "cached": hit, "scale": "1/2",
+        }),
+    )
 }
 
 // ---------------- 卡点检测(T4.8-10;启发式诚实标注) ----------------
@@ -382,7 +552,10 @@ pub fn beat_grid(onsets_ms: &[u64], bpm: f64, total_ms: u64) -> (Vec<u64>, f64) 
             beats.push(t.round() as u64);
             t += period;
         }
-        let hits = onsets_ms.iter().filter(|x| beats.iter().any(|b| (**x as i64 - *b as i64).abs() <= 60)).count();
+        let hits = onsets_ms
+            .iter()
+            .filter(|x| beats.iter().any(|b| (**x as i64 - *b as i64).abs() <= 60))
+            .count();
         let conf = hits as f64 / onsets_ms.len() as f64;
         if best.as_ref().is_none_or(|(bc, _)| conf > *bc) {
             best = Some((conf, beats));
@@ -398,25 +571,65 @@ pub fn beat_grid(onsets_ms: &[u64], bpm: f64, total_ms: u64) -> (Vec<u64>, f64) 
 /// engine=onset-energy,degraded=true(启发式诚实标注;检测质量不作硬验收)。
 pub fn audio_beats_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str() else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(工程内相对路径)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(工程内相对路径)",
+            json!({}),
+        );
     };
     let sensitivity = args["sensitivity"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0);
     let abs = match resolve_within_root(root, src) {
         Ok(p) => p,
-        Err(msg) => return envelope(false, "PRECONDITION_FAILED", &format!("路径不合法({src}): {msg}"), json!({})),
+        Err(msg) => {
+            return envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("路径不合法({src}): {msg}"),
+                json!({}),
+            );
+        }
     };
     if !cutforge_io::probe::ffprobe_available() && !ffmpeg_available() {
-        return envelope(false, "DEP_MISSING", "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)", json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)",
+            json!({}),
+        );
     }
     let dec = std::process::Command::new(ff_bin())
-        .args(["-v", "error", "-i", &abs.to_string_lossy(), "-vn", "-ac", "1", "-ar", &PCM_RATE.to_string(), "-f", "s16le", "-"])
+        .args([
+            "-v",
+            "error",
+            "-i",
+            &abs.to_string_lossy(),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            &PCM_RATE.to_string(),
+            "-f",
+            "s16le",
+            "-",
+        ])
         .output();
     let Ok(dec) = dec else {
         return envelope(false, "DEP_MISSING", "ffmpeg 启动失败", json!({}));
     };
     if !dec.status.success() {
-        return envelope(false, "DEP_MISSING",
-            &format!("PCM 解码失败: {}", String::from_utf8_lossy(&dec.stderr).chars().take(200).collect::<String>()), json!({}));
+        return envelope(
+            false,
+            "DEP_MISSING",
+            &format!(
+                "PCM 解码失败: {}",
+                String::from_utf8_lossy(&dec.stderr)
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            ),
+            json!({}),
+        );
     }
     let mut samples: Vec<i16> = Vec::with_capacity(dec.stdout.len() / 2);
     for chunk in dec.stdout.as_chunks::<2>().0 {
@@ -428,20 +641,25 @@ pub fn audio_beats_tool(root: &Path, args: &Value) -> Value {
     let onsets_ms: Vec<u64> = onsets.iter().map(|i| (*i as u64) * WINDOW_MS).collect();
     let bpm = estimate_bpm(&strength);
     let (beats, conf) = beat_grid(&onsets_ms, bpm, total_ms.max(1));
-    envelope(true, "OK", "节拍检测完成(启发式;置信度如实)", json!({
-        "src": src,
-        "engine": "onset-energy",
-        "degraded": true,
-        "sensitivity": sensitivity,
-        "bpm": bpm,
-        "beatCount": beats.len(),
-        "onsetCount": onsets_ms.len(),
-        "confidence": conf,
-        "durationMs": total_ms,
-        "beats": beats,
-        "onsets": onsets_ms,
-        "hint": "纯计算不落盘不产 Op;标记落盘与素材卡点吸附是 FE 活(检测质量为启发式口径,不作硬验收)",
-    }))
+    envelope(
+        true,
+        "OK",
+        "节拍检测完成(启发式;置信度如实)",
+        json!({
+            "src": src,
+            "engine": "onset-energy",
+            "degraded": true,
+            "sensitivity": sensitivity,
+            "bpm": bpm,
+            "beatCount": beats.len(),
+            "onsetCount": onsets_ms.len(),
+            "confidence": conf,
+            "durationMs": total_ms,
+            "beats": beats,
+            "onsets": onsets_ms,
+            "hint": "纯计算不落盘不产 Op;标记落盘与素材卡点吸附是 FE 活(检测质量为启发式口径,不作硬验收)",
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -547,7 +765,9 @@ mod tests {
             let start = PCM_RATE as usize / 2 * k;
             for i in 0..PCM_RATE as usize * 40 / 1000 {
                 if start + i < samples.len() {
-                    samples[start + i] = ((2.0 * std::f64::consts::PI * 1000.0 * i as f64 / PCM_RATE as f64).sin() * 15000.0) as i16;
+                    samples[start + i] =
+                        ((2.0 * std::f64::consts::PI * 1000.0 * i as f64 / PCM_RATE as f64).sin()
+                            * 15000.0) as i16;
                 }
             }
         }
@@ -556,7 +776,10 @@ mod tests {
         let onsets_ms: Vec<u64> = onsets.iter().map(|i| (*i as u64) * WINDOW_MS).collect();
         assert!(onsets_ms.len() >= 6, "8 个脉冲应检出多数: {onsets_ms:?}");
         let bpm = estimate_bpm(&strength);
-        assert!((bpm - 120.0).abs() <= 1.0, "500ms 周期 = 120 BPM,实得 {bpm}");
+        assert!(
+            (bpm - 120.0).abs() <= 1.0,
+            "500ms 周期 = 120 BPM,实得 {bpm}"
+        );
         let (beats, conf) = beat_grid(&onsets_ms, bpm, 4000);
         assert!(!beats.is_empty(), "网格非空");
         assert!(conf >= 0.5, "周期脉冲置信度应高: {conf}");
@@ -569,7 +792,9 @@ mod tests {
 
     #[test]
     fn onset_threshold_scales_with_sensitivity() {
-        let env: Vec<f32> = (0..100).map(|i| if i % 10 == 0 { 1.0 } else { 0.1 }).collect();
+        let env: Vec<f32> = (0..100)
+            .map(|i| if i % 10 == 0 { 1.0 } else { 0.1 })
+            .collect();
         let strength = onset_strength(&env);
         let loose = pick_onsets(&strength, 1.0);
         let strict = pick_onsets(&strength, 0.0);
@@ -579,8 +804,8 @@ mod tests {
 
     /// AC-4.5 实测面:三个媒体工具对真实 ffmpeg 产物落盘(缺失 ffmpeg 即失败,
     /// 与 render_matrix 同口径;产物魔数/结构断言)。
-    
-#[test]
+
+    #[test]
     fn media_tools_real_pipeline() {
         assert!(ffmpeg_available(), "ffmpeg 必须存在(媒体工具实测面)");
         let root = std::env::temp_dir().join(format!("cf-media-real-{}", std::process::id()));
@@ -592,15 +817,36 @@ mod tests {
             serde_json::to_string_pretty(&json!({
                 "version": 1, "schemaVersion": "2.0.0", "slug": "media", "fps": 30,
                 "canvas": {"width": 320, "height": 240}, "tracks": []
-            })).unwrap().as_bytes(),
-        ).unwrap();
-        let r = std::process::Command::new(ff_bin()).args([
-            "-y", "-v", "error",
-            "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=2",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
-            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-shortest",
-            "01_原始素材/clip.mp4",
-        ]).current_dir(&root).output().unwrap();
+            }))
+            .unwrap()
+            .as_bytes(),
+        )
+        .unwrap();
+        let r = std::process::Command::new(ff_bin())
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=320x240:rate=30:duration=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-c:a",
+                "aac",
+                "-shortest",
+                "01_原始素材/clip.mp4",
+            ])
+            .current_dir(&root)
+            .output()
+            .unwrap();
         assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
         let src = "01_原始素材/clip.mp4";
 
@@ -612,7 +858,11 @@ mod tests {
         let doc: Value = serde_json::from_slice(&std::fs::read(root.join(file)).unwrap()).unwrap();
         assert_eq!(doc["buckets"], json!(2000));
         assert_eq!(doc["min"].as_array().unwrap().len(), 2000);
-        let mx = doc["max"].as_array().unwrap().iter().fold(0.0f64, |a, v| a.max(v.as_f64().unwrap()));
+        let mx = doc["max"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .fold(0.0f64, |a, v| a.max(v.as_f64().unwrap()));
         assert!(mx > 0.1, "正弦峰应可见(AAC 域 8 桶采样,幅值有折损): {mx}");
         let r2 = media_peaks_tool(&root, &json!({"src": src, "level": "standard"}));
         assert_eq!(r2["data"]["cached"], json!(true), "二次调用必须缓存命中");
@@ -621,7 +871,11 @@ mod tests {
         let r3 = media_thumbnail_tool(&root, &json!({"src": src, "atMs": 500}));
         assert_eq!(r3["code"], json!("OK"), "{r3}");
         let bytes = std::fs::read(root.join(r3["data"]["file"].as_str().unwrap())).unwrap();
-        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "缩略图必须是合法 PNG(魔数)");
+        assert_eq!(
+            &bytes[..8],
+            b"\x89PNG\r\n\x1a\n",
+            "缩略图必须是合法 PNG(魔数)"
+        );
         let r4 = media_thumbnail_tool(&root, &json!({"src": src, "atMs": 500}));
         assert_eq!(r4["data"]["cached"], json!(true));
 
@@ -643,7 +897,8 @@ mod tests {
             for i in 0..PCM_RATE as usize * 40 / 1000 {
                 if start + i < pcm.len() {
                     pcm[start + i] =
-                        ((2.0 * std::f64::consts::PI * 1000.0 * i as f64 / PCM_RATE as f64).sin() * 15000.0) as i16;
+                        ((2.0 * std::f64::consts::PI * 1000.0 * i as f64 / PCM_RATE as f64).sin()
+                            * 15000.0) as i16;
                 }
             }
         }
@@ -651,19 +906,42 @@ mod tests {
         for s in &pcm {
             raw.extend_from_slice(&s.to_le_bytes());
         }
-        let mut child = std::process::Command::new(ff_bin()).args([
-            "-y", "-v", "error", "-f", "s16le", "-ar", "22050", "-ac", "1", "-i", "-",
-            "-c:a", "aac", "01_原始素材/clicks.m4a",
-        ]).current_dir(&root).stdin(std::process::Stdio::piped()).spawn().unwrap();
+        let mut child = std::process::Command::new(ff_bin())
+            .args([
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "s16le",
+                "-ar",
+                "22050",
+                "-ac",
+                "1",
+                "-i",
+                "-",
+                "-c:a",
+                "aac",
+                "01_原始素材/clicks.m4a",
+            ])
+            .current_dir(&root)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
         use std::io::Write as _;
         child.stdin.take().unwrap().write_all(&raw).unwrap();
         assert!(child.wait().unwrap().success(), "点击轨生成失败");
-        let rb = audio_beats_tool(&root, &json!({"src": "01_原始素材/clicks.m4a", "sensitivity": 0.6}));
+        let rb = audio_beats_tool(
+            &root,
+            &json!({"src": "01_原始素材/clicks.m4a", "sensitivity": 0.6}),
+        );
         assert_eq!(rb["code"], json!("OK"), "{rb}");
         assert_eq!(rb["data"]["engine"], json!("onset-energy"));
         assert_eq!(rb["data"]["degraded"], json!(true), "启发式诚实标注");
         let bpm = rb["data"]["bpm"].as_f64().unwrap();
-        assert!((bpm - 120.0).abs() <= 1.0, "500ms 周期 = 120 BPM,实得 {bpm}");
+        assert!(
+            (bpm - 120.0).abs() <= 1.0,
+            "500ms 周期 = 120 BPM,实得 {bpm}"
+        );
         assert!(rb["data"]["beatCount"].as_u64().unwrap() >= 6, "{rb}");
 
         std::fs::remove_dir_all(&root).ok();

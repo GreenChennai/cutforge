@@ -8,7 +8,8 @@ use crate::dispatch::dispatch_with_actor;
 /// E6-3/B14 查询类:只读打开不排他锁;名单外写操作仍走 open_exclusive 全程锁。
 /// (册五 T5.2 自 dispatch.rs 同域纯移动——行数红线 A1-3。)
 pub(crate) fn is_readonly_tool(name: &str) -> bool {
-    matches!(name,
+    matches!(
+        name,
         "project_get" | "wordline_get" | "cutlist_get" | "notes_list"
         | "oplog_tail" | "conflict_list" | "timeline_get"
         // 册四 T4.7:字幕导出只读工程(产物落 06_成片输出,不产 Op 不改 IR)
@@ -21,7 +22,8 @@ pub(crate) fn is_readonly_tool(name: &str) -> bool {
         | "export_preflight" | "media_library"
         // 册七 T7.5/T7.2:改动预演(副本 dry-run,真工程零写入)/ 会话报告(只读投影)/
         // 插件 manifest 校验(纯契约面)
-        | "preview_plan" | "session_report" | "plugin_validate")
+        | "preview_plan" | "session_report" | "plugin_validate"
+    )
 }
 
 /// RT-1:该工具成功返回 rev 即视为一次会话内变更(会话摘要的采集口径)。
@@ -29,7 +31,8 @@ pub(crate) fn is_readonly_tool(name: &str) -> bool {
 /// clip_copy(会话态剪贴板写入,不产 Op 不升 rev)。
 pub(crate) fn produces_rev_mutation(name: &str) -> bool {
     !(is_readonly_tool(name)
-        || matches!(name,
+        || matches!(
+            name,
             "capability_matrix" | "project_new" | "render" | "render_run" | "render_progress"
             | "render_frame" | "render_queue"
             | "media_probe" | "media_browse" | "render_probe" | "stage_status"
@@ -47,11 +50,12 @@ pub(crate) fn produces_rev_mutation(name: &str) -> bool {
             // 多画幅批量 = 渲染队列入队,不升 rev)
             | "export_preflight" | "export_all_variants" | "media_library" | "media_import"
             // 册七 T7.6:.cfpkg 打包/解包(目录级/容器级写面,不产 Op 不升 rev)
-            | "project_package" | "project_unpackage"))
+            | "project_package" | "project_unpackage"
+        ))
 }
 use crate::registry::registry;
 use cutforge_core::oplog::Actor;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ---------------- JSON-RPC 传输(两通道共用) ----------------
 
@@ -91,7 +95,7 @@ pub fn handle_rpc_as(req: &Value, actor: Actor) -> Option<Value> {
             return Some(json!({
                 "jsonrpc": "2.0", "id": id,
                 "error": {"code": -32601, "message": format!("method not found: {other}")}
-            }))
+            }));
         }
     };
     Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))

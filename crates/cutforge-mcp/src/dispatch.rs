@@ -2,20 +2,26 @@
 //! 单一派发表:所有通道(stdio/HTTP/脚本宿主)共用的工具分派、JSON-RPC 面、
 //! 参数解析与 5.4 错误映射(T1.1 拆分自 lib.rs,纯移动)。
 
-use crate::edit_ops;
-use crate::subtitle_ops;
 use crate::cutlist_ops::{apply_cut_merge_patch, notes_op_error, read_truth};
-use crate::library_tools::{library_list_tool, library_manage_tool, library_recover_tool, migrate_layout_tool};
+use crate::edit_ops;
+use crate::library_tools::{
+    library_list_tool, library_manage_tool, library_recover_tool, migrate_layout_tool,
+};
 use crate::orchestrate::orchestrate;
-use crate::progress::{existing_rel, render_cutforge_sync, render_frame_tool, render_progress, render_run_async};
+use crate::progress::{
+    existing_rel, render_cutforge_sync, render_frame_tool, render_progress, render_run_async,
+};
 use crate::registry::{capability_matrix, envelope, tool_def};
-use crate::tools_nolock::{media_browse_tool, media_probe_tool, project_new_tool, render_probe_tool, stage_status_tool};
+use crate::subtitle_ops;
+use crate::tools_nolock::{
+    media_browse_tool, media_probe_tool, project_new_tool, render_probe_tool, stage_status_tool,
+};
 use cutforge_core::anchor::{Anchor, AnchorKind};
 use cutforge_core::command::{BgmPatch, ClipPatch, Command, MotionPatch, TransitionPatch};
 use cutforge_core::engine::{Answer, ApplyOpts, Query};
 use cutforge_core::oplog::{Actor, ActorKind};
 use cutforge_io::paths;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 // ---------------- 派发 ----------------
@@ -31,10 +37,16 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     if tool_def(name).is_none() {
         return envelope(false, "INTERNAL", &format!("未知工具: {name}"), json!({}));
     }
-    if name == "capability_matrix" { // 静态查询,无需工程根
-        return envelope(true, "OK", "能力对等矩阵(实码口径,单一真相源)", json!({
-            "matrix": capability_matrix(),
-        }));
+    if name == "capability_matrix" {
+        // 静态查询,无需工程根
+        return envelope(
+            true,
+            "OK",
+            "能力对等矩阵(实码口径,单一真相源)",
+            json!({
+                "matrix": capability_matrix(),
+            }),
+        );
     }
     // 册七 T7.2:插件 manifest 校验(纯契约面,免工程根;权限模型见 docs/PLUGIN-SPEC.md)
     if name == "plugin_validate" {
@@ -52,7 +64,12 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     let use_proxy = args["useProxy"].as_bool().unwrap_or(false);
     let render_extra = crate::progress::build_render_extra(args, true);
     if name == "render" && args["backend"].as_str() == Some("cutforge") {
-        return render_cutforge_sync(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, &render_extra);
+        return render_cutforge_sync(
+            &ws_root,
+            existing_rel(&ws_root, args["ass"].as_str()),
+            use_proxy,
+            &render_extra,
+        );
     }
     if name == "render_run" {
         // 册六 T6.3:frame-png 出口 = 单帧管线复用(atMs = inMs;同步单帧,
@@ -66,7 +83,12 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
             }
             return render_frame_tool(&ws_root, &fargs);
         }
-        return render_run_async(&ws_root, existing_rel(&ws_root, args["ass"].as_str()), use_proxy, render_extra);
+        return render_run_async(
+            &ws_root,
+            existing_rel(&ws_root, args["ass"].as_str()),
+            use_proxy,
+            render_extra,
+        );
     }
     if name == "render_progress" {
         let Some(run_id) = args["runId"].as_str() else {
@@ -111,7 +133,9 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         "library_recover" => return library_recover_tool(&ws_root, args),
         // 册六 T6.3:导出前检查(轻探测)/ 多画幅批量(编排入队;均免开工作区)
         "export_preflight" => return crate::export_tools::export_preflight_tool(&ws_root, args),
-        "export_all_variants" => return crate::export_tools::export_all_variants_tool(&ws_root, args),
+        "export_all_variants" => {
+            return crate::export_tools::export_all_variants_tool(&ws_root, args);
+        }
         // 册六 T6.2:素材库 manifest(库根)+ 素材拷贝导入(工程;免开工作区,
         // 不产 Op 不改 IR,与 lut_import 同类写面)
         "media_library" => return crate::media_library::media_library_tool(&ws_root, args),
@@ -155,7 +179,11 @@ pub(crate) fn dispatch_on_ws(
         summary: args["summary"].as_str().map(String::from),
         caused_by: args["causedBy"]
             .as_array()
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         expect_rev: args["expectRev"].as_u64(),
         ..Default::default()
@@ -166,30 +194,48 @@ pub(crate) fn dispatch_on_ws(
     match name {
         // ---------- 只读查询(E6-3:只读打开,不持排他锁) ----------
         "project_get" => match ws.engine().query(Query::ProjectView) {
-            Answer::Project(v) => envelope(true, "OK", "工程视图", json!({"project": v, "rev": ws.rev()})),
+            Answer::Project(v) => envelope(
+                true,
+                "OK",
+                "工程视图",
+                json!({"project": v, "rev": ws.rev()}),
+            ),
             _ => unreachable!(),
         },
         "wordline_get" => read_truth(
-            &ws_root.join(paths::truth_rel_on_disk(ws_root, "wordline.json").unwrap_or(paths::WORDLINE_REL)),
+            &ws_root.join(
+                paths::truth_rel_on_disk(ws_root, "wordline.json").unwrap_or(paths::WORDLINE_REL),
+            ),
             "wordline",
         ),
         "cutlist_get" => {
             let applied = args["applied"].as_bool().unwrap_or(false);
-            let name = if applied { "cutlist.applied.json" } else { "cutlist.json" };
+            let name = if applied {
+                "cutlist.applied.json"
+            } else {
+                "cutlist.json"
+            };
             let rel = paths::truth_rel_on_disk(ws_root, name).unwrap_or(paths::CUTLIST_REL);
             read_truth(&ws_root.join(rel), "cutlist")
         }
         "notes_list" => {
-            let state = args["state"].as_str().and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
+            let state = args["state"]
+                .as_str()
+                .and_then(|s| serde_json::from_str(&format!("\"{s}\"")).ok());
             let author = args["author"].as_str().map(|s| match s {
                 "agent" => cutforge_core::notes::NoteAuthor::Agent,
                 _ => cutforge_core::notes::NoteAuthor::User,
             });
             let items = ws.notes().filter(state, author);
-            envelope(true, "OK", "标注清单", json!({
-                "notes": items, "total": ws.notes().notes().len(),
-                "orphans": ws.notes().orphans().len(),
-            }))
+            envelope(
+                true,
+                "OK",
+                "标注清单",
+                json!({
+                    "notes": items, "total": ws.notes().notes().len(),
+                    "orphans": ws.notes().orphans().len(),
+                }),
+            )
         }
         "oplog_tail" => match ws.engine().query(Query::OpLogTail {
             since_rev: args["sinceRev"].as_u64(),
@@ -203,7 +249,12 @@ pub(crate) fn dispatch_on_ws(
             Answer::Ops(ops) => {
                 let limit = args["limit"].as_u64().unwrap_or(50) as usize;
                 let slice: Vec<_> = ops.iter().rev().take(limit).rev().cloned().collect();
-                envelope(true, "OK", "OpLog tail", json!({"ops": slice, "count": ops.len(), "rev": ws.rev()}))
+                envelope(
+                    true,
+                    "OK",
+                    "OpLog tail",
+                    json!({"ops": slice, "count": ops.len(), "rev": ws.rev()}),
+                )
             }
             _ => unreachable!(),
         },
@@ -219,38 +270,71 @@ pub(crate) fn dispatch_on_ws(
         },
         "timeline_get" => {
             // E2-2:投影由服务端算好下放(endMs 等);壳零时间线语义(kf 采样同此)
-            envelope(true, "OK", "时间线投影", json!({
-                "clips": crate::edit_ops::timeline_projection(ws.project()),
-                "rev": ws.rev(),
-            }))
+            envelope(
+                true,
+                "OK",
+                "时间线投影",
+                json!({
+                    "clips": crate::edit_ops::timeline_projection(ws.project()),
+                    "rev": ws.rev(),
+                }),
+            )
         }
 
         // ---------- 写操作(全部经 Workspace 命令通道) ----------
         "clip_add" => {
             // E3-1/E3-2:走既有 Command::ClipInsert;durationMs 缺省由 probe 自动填。
             let (Some(track_id), Some(src), Some(start_ms)) = (
-                args["trackId"].as_str(), args["src"].as_str(), args["startMs"].as_u64(),
+                args["trackId"].as_str(),
+                args["src"].as_str(),
+                args["startMs"].as_u64(),
             ) else {
-                return envelope(false, "PRECONDITION_FAILED", "缺 trackId/src/startMs", json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    "缺 trackId/src/startMs",
+                    json!({}),
+                );
             };
             if ws.project().find_track(track_id).is_none() {
-                return envelope(false, "PRECONDITION_FAILED", &format!("track 不存在: {track_id}"), json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    &format!("track 不存在: {track_id}"),
+                    json!({}),
+                );
             }
             // 素材路径复用 /media 的 canonicalize 校验(不建并行实现;E3 风险面对策)
             if let Err(msg) = resolve_within_root(ws_root, src) {
-                return envelope(false, "PRECONDITION_FAILED", &format!("素材路径不合法({src}): {msg}"), json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    &format!("素材路径不合法({src}): {msg}"),
+                    json!({}),
+                );
             }
             let source_in = args["sourceInMs"].as_u64().unwrap_or(0);
             let duration_ms = match args["durationMs"].as_u64() {
                 Some(d) => d,
                 None => {
                     if !cutforge_io::probe::ffprobe_available() {
-                        return envelope(false, "DEP_MISSING",
-                            "durationMs 缺省且 ffprobe 不可用:显式给 durationMs,或安装 ffprobe / 设 CUTFORGE_FFPROBE", json!({}));
+                        return envelope(
+                            false,
+                            "DEP_MISSING",
+                            "durationMs 缺省且 ffprobe 不可用:显式给 durationMs,或安装 ffprobe / 设 CUTFORGE_FFPROBE",
+                            json!({}),
+                        );
                     }
                     match cutforge_io::probe::probe(&ws_root.join(src)) {
                         Ok(info) => (info.duration_ms().saturating_sub(source_in)).max(1),
-                        Err(e) => return envelope(false, "DEP_MISSING", &format!("媒体时长探测失败: {e}"), json!({})),
+                        Err(e) => {
+                            return envelope(
+                                false,
+                                "DEP_MISSING",
+                                &format!("媒体时长探测失败: {e}"),
+                                json!({}),
+                            );
+                        }
                     }
                 }
             };
@@ -267,7 +351,15 @@ pub(crate) fn dispatch_on_ws(
                 Err(e) => return envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
             };
             let request_id = args["requestId"].as_str().map(String::from);
-            finish_apply(ws.apply(Command::ClipInsert { to_track: track_id.into(), clip, request_id }, actor, opts))
+            finish_apply(ws.apply(
+                Command::ClipInsert {
+                    to_track: track_id.into(),
+                    clip,
+                    request_id,
+                },
+                actor,
+                opts,
+            ))
         }
         "clip_update" => {
             let Some(clip_id) = args["clipId"].as_str() else {
@@ -301,17 +393,22 @@ pub(crate) fn dispatch_on_ws(
                     if v.as_object().is_some_and(|o| o.is_empty()) {
                         (None, true)
                     } else {
-                        match serde_json::from_value::<cutforge_core::text_style::Huazi>(v.clone()) {
+                        match serde_json::from_value::<cutforge_core::text_style::Huazi>(v.clone())
+                        {
                             Ok(h) => (Some(h), false),
                             Err(e) => {
-                                return envelope(false, "SCHEMA_INVALID",
-                                    &format!("patch.huazi 非法: {e}"), json!({}))
+                                return envelope(
+                                    false,
+                                    "SCHEMA_INVALID",
+                                    &format!("patch.huazi 非法: {e}"),
+                                    json!({}),
+                                );
                             }
                         }
                     }
                 }
                 Some(_) => {
-                    return envelope(false, "SCHEMA_INVALID", "patch.huazi 必须是对象", json!({}))
+                    return envelope(false, "SCHEMA_INVALID", "patch.huazi 必须是对象", json!({}));
                 }
             };
             let patch = ClipPatch {
@@ -332,20 +429,25 @@ pub(crate) fn dispatch_on_ws(
                 text: p["text"].as_str().map(String::from),
                 freeze_ms: p["freezeMs"].as_u64(),
                 // 嵌套子 patch:对象缺席/显式 null 均为"不改";给出则按字段合并
-                transition: p.get("transition").filter(|t| t.is_object()).map(|t| TransitionPatch {
-                    type_: t["type"].as_str().map(String::from),
-                    dur_ms: t["durMs"].as_f64(),
-                    reason: t["reason"].as_str().map(String::from),
-                    fx: t["fx"].as_str().map(String::from),
+                transition: p.get("transition").filter(|t| t.is_object()).map(|t| {
+                    TransitionPatch {
+                        type_: t["type"].as_str().map(String::from),
+                        dur_ms: t["durMs"].as_f64(),
+                        reason: t["reason"].as_str().map(String::from),
+                        fx: t["fx"].as_str().map(String::from),
+                    }
                 }),
-                motion: p.get("motion").filter(|t| t.is_object()).map(|t| MotionPatch {
-                    in_: t["in"].as_str().map(String::from),
-                    in_ms: t["inMs"].as_f64(),
-                    out: t["out"].as_str().map(String::from),
-                    out_ms: t["outMs"].as_f64(),
-                    in_fx: t["inFx"].as_str().map(String::from),
-                    out_fx: t["outFx"].as_str().map(String::from),
-                }),
+                motion: p
+                    .get("motion")
+                    .filter(|t| t.is_object())
+                    .map(|t| MotionPatch {
+                        in_: t["in"].as_str().map(String::from),
+                        in_ms: t["inMs"].as_f64(),
+                        out: t["out"].as_str().map(String::from),
+                        out_ms: t["outMs"].as_f64(),
+                        in_fx: t["inFx"].as_str().map(String::from),
+                        out_fx: t["outFx"].as_str().map(String::from),
+                    }),
                 // 片段特效(册四 T4.6):整对象替换(combo 上限 3 由 schema 层界)
                 fx: p.get("fx").filter(|t| t.is_object()).and_then(|f| {
                     serde_json::from_value::<cutforge_core::model::FxSpec>(f.clone())
@@ -358,11 +460,22 @@ pub(crate) fn dispatch_on_ws(
                     Some(v) if v.is_array() => match serde_json::from_value(v.clone()) {
                         Ok(kf) => Some(kf),
                         Err(e) => {
-                            return envelope(false, "SCHEMA_INVALID",
-                                &format!("patch.keyframes 非法: {e}"), json!({}))
+                            return envelope(
+                                false,
+                                "SCHEMA_INVALID",
+                                &format!("patch.keyframes 非法: {e}"),
+                                json!({}),
+                            );
                         }
                     },
-                    _ => return envelope(false, "SCHEMA_INVALID", "patch.keyframes 必须是数组", json!({})),
+                    _ => {
+                        return envelope(
+                            false,
+                            "SCHEMA_INVALID",
+                            "patch.keyframes 必须是数组",
+                            json!({}),
+                        );
+                    }
                 },
                 // 片段调色(册五 T5.2):整对象替换;null/{} = 清除(同 huazi 模式)
                 grade: match p.get("grade") {
@@ -374,36 +487,63 @@ pub(crate) fn dispatch_on_ws(
                             match serde_json::from_value::<cutforge_core::model::Grade>(v.clone()) {
                                 Ok(g) => Some(g),
                                 Err(e) => {
-                                    return envelope(false, "SCHEMA_INVALID",
-                                        &format!("patch.grade 非法: {e}"), json!({}))
+                                    return envelope(
+                                        false,
+                                        "SCHEMA_INVALID",
+                                        &format!("patch.grade 非法: {e}"),
+                                        json!({}),
+                                    );
                                 }
                             }
                         }
                     }
                     Some(_) => {
-                        return envelope(false, "SCHEMA_INVALID", "patch.grade 必须是对象", json!({}))
+                        return envelope(
+                            false,
+                            "SCHEMA_INVALID",
+                            "patch.grade 必须是对象",
+                            json!({}),
+                        );
                     }
                 },
                 grade_clear: matches!(p.get("grade"), Some(Value::Null))
-                    || p.get("grade").and_then(|v| v.as_object()).is_some_and(|o| o.is_empty()),
+                    || p.get("grade")
+                        .and_then(|v| v.as_object())
+                        .is_some_and(|o| o.is_empty()),
                 // 复合片段(T5.4):整对象替换;缺席不改;显式 null 拒绝(摘除走 unbind)
                 compound: match p.get("compound") {
                     Some(Value::Null) => {
-                        return envelope(false, "SCHEMA_INVALID",
-                            "patch.compound = null 拒绝(摘除走 compound_unbind)", json!({}))
+                        return envelope(
+                            false,
+                            "SCHEMA_INVALID",
+                            "patch.compound = null 拒绝(摘除走 compound_unbind)",
+                            json!({}),
+                        );
                     }
                     None => None,
                     Some(v) if v.is_object() => {
-                        match serde_json::from_value::<cutforge_core::model::CompoundSpec>(v.clone()) {
+                        match serde_json::from_value::<cutforge_core::model::CompoundSpec>(
+                            v.clone(),
+                        ) {
                             Ok(c) => Some(c),
                             Err(e) => {
-                                return envelope(false, "SCHEMA_INVALID",
-                                    &format!("patch.compound 非法: {e}(摘除走 compound_unbind)"), json!({}))
+                                return envelope(
+                                    false,
+                                    "SCHEMA_INVALID",
+                                    &format!("patch.compound 非法: {e}(摘除走 compound_unbind)"),
+                                    json!({}),
+                                );
                             }
                         }
                     }
-                    _ => return envelope(false, "SCHEMA_INVALID",
-                        "patch.compound 必须是对象(摘除走 compound_unbind)", json!({})),
+                    _ => {
+                        return envelope(
+                            false,
+                            "SCHEMA_INVALID",
+                            "patch.compound 必须是对象(摘除走 compound_unbind)",
+                            json!({}),
+                        );
+                    }
                 },
                 // 文本样式(册四 T4.7):整对象替换;静默丢弃是幻觉面,非法显式拒绝。
                 text_style: match p.get("textStyle") {
@@ -411,18 +551,35 @@ pub(crate) fn dispatch_on_ws(
                     Some(v) if v.is_object() => match serde_json::from_value(v.clone()) {
                         Ok(ts) => Some(ts),
                         Err(e) => {
-                            return envelope(false, "SCHEMA_INVALID", &format!("patch.textStyle 非法: {e}"), json!({}))
+                            return envelope(
+                                false,
+                                "SCHEMA_INVALID",
+                                &format!("patch.textStyle 非法: {e}"),
+                                json!({}),
+                            );
                         }
                     },
                     Some(_) => {
-                        return envelope(false, "SCHEMA_INVALID", "patch.textStyle 必须是对象", json!({}))
+                        return envelope(
+                            false,
+                            "SCHEMA_INVALID",
+                            "patch.textStyle 必须是对象",
+                            json!({}),
+                        );
                     }
                 },
                 // 花字语义已在上方 (huazi, huazi_clear) 解出:null/{} = 清除,非空对象 = 整替换
                 huazi,
                 huazi_clear,
             };
-            finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+            finish_apply(ws.apply(
+                Command::ClipUpdate {
+                    clip_id: clip_id.into(),
+                    patch,
+                },
+                actor,
+                opts,
+            ))
         }
         "transition_set" => {
             // 设置片段转场(clip.transition):type 必给(durMs/fx/reason 可选,按字段合并);
@@ -433,8 +590,12 @@ pub(crate) fn dispatch_on_ws(
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
             let Some(t) = args["type"].as_str() else {
-                return envelope(false, "PRECONDITION_FAILED",
-                    "缺 type(基础枚举 fade/wipeleft/wipeup/slideleft/circleopen/cut/none;全量 58 项目录走 fx=tr.<id>,GET /catalogs)", json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    "缺 type(基础枚举 fade/wipeleft/wipeup/slideleft/circleopen/cut/none;全量 58 项目录走 fx=tr.<id>,GET /catalogs)",
+                    json!({}),
+                );
             };
             let patch = ClipPatch {
                 transition: Some(TransitionPatch {
@@ -445,7 +606,14 @@ pub(crate) fn dispatch_on_ws(
                 }),
                 ..Default::default()
             };
-            finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+            finish_apply(ws.apply(
+                Command::ClipUpdate {
+                    clip_id: clip_id.into(),
+                    patch,
+                },
+                actor,
+                opts,
+            ))
         }
         "motion_set" => {
             // 设置片段入场/出场动效(clip.motion):至少给 in/inMs/out/outMs/inFx/outFx 之一,
@@ -463,10 +631,25 @@ pub(crate) fn dispatch_on_ws(
                 out_fx: args["outFx"].as_str().map(String::from),
             };
             if motion.is_empty() {
-                return envelope(false, "PRECONDITION_FAILED", "motion_set 至少给 in/inMs/out/outMs/inFx/outFx 之一", json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    "motion_set 至少给 in/inMs/out/outMs/inFx/outFx 之一",
+                    json!({}),
+                );
             }
-            let patch = ClipPatch { motion: Some(motion), ..Default::default() };
-            finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+            let patch = ClipPatch {
+                motion: Some(motion),
+                ..Default::default()
+            };
+            finish_apply(ws.apply(
+                Command::ClipUpdate {
+                    clip_id: clip_id.into(),
+                    patch,
+                },
+                actor,
+                opts,
+            ))
         }
         "bgm_set" => {
             // 工程级背景乐(doc.bgm;不经 ClipPatch):src 为字符串=设置/合并;
@@ -486,54 +669,108 @@ pub(crate) fn dispatch_on_ws(
                 duck_release_ms: args["duckReleaseMs"].as_f64(),
             };
             if patch.is_empty() {
-                return envelope(false, "PRECONDITION_FAILED",
-                    "bgm_set 至少给 src/gainDb/ducking/loop/duck* 之一(清除背景乐用 src:null)", json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    "bgm_set 至少给 src/gainDb/ducking/loop/duck* 之一(清除背景乐用 src:null)",
+                    json!({}),
+                );
             }
             // 音源路径与 clip_add 同一校验(不建并行实现)
             if let Some(src) = patch.src.as_deref()
-                && let Err(msg) = resolve_within_root(ws_root, src) {
-                    return envelope(false, "PRECONDITION_FAILED", &format!("bgm 路径不合法({src}): {msg}"), json!({}));
-                }
+                && let Err(msg) = resolve_within_root(ws_root, src)
+            {
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    &format!("bgm 路径不合法({src}): {msg}"),
+                    json!({}),
+                );
+            }
             finish_apply(ws.apply(Command::BgmSet { patch }, actor, opts))
         }
         "clip_split" => match args["clipId"].as_str().zip(args["tMs"].as_u64()) {
-            Some((clip_id, t_ms)) => finish_apply(ws.apply(Command::ClipSplit { clip_id: clip_id.into(), t_ms }, actor, opts)),
+            Some((clip_id, t_ms)) => finish_apply(ws.apply(
+                Command::ClipSplit {
+                    clip_id: clip_id.into(),
+                    t_ms,
+                },
+                actor,
+                opts,
+            )),
             None => envelope(false, "PRECONDITION_FAILED", "缺 clipId/tMs", json!({})),
         },
         "clip_delete" => match args["clipId"].as_str() {
-            Some(clip_id) => finish_apply(ws.apply(Command::ClipDelete { clip_id: clip_id.into() }, actor, opts)),
+            Some(clip_id) => finish_apply(ws.apply(
+                Command::ClipDelete {
+                    clip_id: clip_id.into(),
+                },
+                actor,
+                opts,
+            )),
             None => envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({})),
         },
         "clip_move" => {
-            let (Some(clip_id), Some(start_ms)) = (args["clipId"].as_str(), args["startMs"].as_u64()) else {
+            let (Some(clip_id), Some(start_ms)) =
+                (args["clipId"].as_str(), args["startMs"].as_u64())
+            else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId/startMs", json!({}));
             };
             finish_apply(ws.apply(
-                Command::ClipMove { clip_id: clip_id.into(), new_start_ms: start_ms, to_track: args["toTrack"].as_str().map(String::from) },
-                actor, opts,
+                Command::ClipMove {
+                    clip_id: clip_id.into(),
+                    new_start_ms: start_ms,
+                    to_track: args["toTrack"].as_str().map(String::from),
+                },
+                actor,
+                opts,
             ))
         }
         "clip_duplicate" => {
-            let (Some(clip_id), Some(start_ms)) = (args["clipId"].as_str(), args["startMs"].as_u64()) else {
+            let (Some(clip_id), Some(start_ms)) =
+                (args["clipId"].as_str(), args["startMs"].as_u64())
+            else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId/startMs", json!({}));
             };
             let src_track = ws.project().find_clip(clip_id).map(|(ti, _)| ti);
             let Some(src_ti) = src_track else {
-                return envelope(false, "PRECONDITION_FAILED", &format!("clip 不存在: {clip_id}"), json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    &format!("clip 不存在: {clip_id}"),
+                    json!({}),
+                );
             };
-            let to_track = args["toTrack"].as_str().map(String::from)
+            let to_track = args["toTrack"]
+                .as_str()
+                .map(String::from)
                 .unwrap_or_else(|| ws.project().tracks[src_ti].id.clone());
             let Some(ti) = ws.project().find_track(&to_track) else {
-                return envelope(false, "PRECONDITION_FAILED", &format!("track 不存在: {to_track}"), json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    &format!("track 不存在: {to_track}"),
+                    json!({}),
+                );
             };
-            let mut clip = ws.project().tracks[src_ti].clips[ws.project().find_clip(clip_id).unwrap().1].clone();
+            let mut clip = ws.project().tracks[src_ti].clips
+                [ws.project().find_clip(clip_id).unwrap().1]
+                .clone();
             if ws.project().tracks[ti].kind != ws.project().tracks[src_ti].kind {
                 return envelope(false, "GUARD_FAILED", "跨 kind 复制拒绝", json!({}));
             }
             clip.id = cutforge_core::model::Project::next_clip_id(&ws.project().tracks[ti]);
             clip.start_ms = start_ms;
             let request_id = args["requestId"].as_str().map(String::from);
-            finish_apply(ws.apply(Command::ClipInsert { to_track, clip, request_id }, actor, opts))
+            finish_apply(ws.apply(
+                Command::ClipInsert {
+                    to_track,
+                    clip,
+                    request_id,
+                },
+                actor,
+                opts,
+            ))
         }
         "track_add" => {
             let Some(kind) = args["kind"].as_str() else {
@@ -543,7 +780,14 @@ pub(crate) fn dispatch_on_ws(
                 "video" => cutforge_core::model::TrackKind::Video,
                 "audio" => cutforge_core::model::TrackKind::Audio,
                 "text" => cutforge_core::model::TrackKind::Text,
-                other => return envelope(false, "PRECONDITION_FAILED", &format!("未知 kind: {other}"), json!({})),
+                other => {
+                    return envelope(
+                        false,
+                        "PRECONDITION_FAILED",
+                        &format!("未知 kind: {other}"),
+                        json!({}),
+                    );
+                }
             };
             let request_id = args["requestId"].as_str().map(String::from);
             finish_apply(ws.apply(Command::TrackAdd { kind, request_id }, actor, opts))
@@ -553,7 +797,10 @@ pub(crate) fn dispatch_on_ws(
                 return envelope(false, "PRECONDITION_FAILED", "缺 clipId", json!({}));
             };
             let patch = if name == "subtitle_set" {
-                ClipPatch { text: args["text"].as_str().map(String::from), ..Default::default() }
+                ClipPatch {
+                    text: args["text"].as_str().map(String::from),
+                    ..Default::default()
+                }
             } else {
                 ClipPatch {
                     start_ms: args["startMs"].as_u64(),
@@ -561,14 +808,28 @@ pub(crate) fn dispatch_on_ws(
                     ..Default::default()
                 }
             };
-            finish_apply(ws.apply(Command::ClipUpdate { clip_id: clip_id.into(), patch }, actor, opts))
+            finish_apply(ws.apply(
+                Command::ClipUpdate {
+                    clip_id: clip_id.into(),
+                    patch,
+                },
+                actor,
+                opts,
+            ))
         }
         "overlay_add" => {
             let (Some(track_id), Some(src), Some(at_ms), Some(dur)) = (
-                args["trackId"].as_str(), args["element"]["src"].as_str(),
-                args["element"]["atMs"].as_u64(), args["element"]["durationMs"].as_u64(),
+                args["trackId"].as_str(),
+                args["element"]["src"].as_str(),
+                args["element"]["atMs"].as_u64(),
+                args["element"]["durationMs"].as_u64(),
             ) else {
-                return envelope(false, "PRECONDITION_FAILED", "缺 trackId/element.src/atMs/durationMs", json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    "缺 trackId/element.src/atMs/durationMs",
+                    json!({}),
+                );
             };
             let clip_id = next_clip_id_for(ws.project(), track_id);
             let clip_json = json!({
@@ -580,7 +841,15 @@ pub(crate) fn dispatch_on_ws(
                 Err(e) => return envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
             };
             let request_id = args["requestId"].as_str().map(String::from);
-            finish_apply(ws.apply(Command::ClipInsert { to_track: track_id.into(), clip, request_id }, actor, opts))
+            finish_apply(ws.apply(
+                Command::ClipInsert {
+                    to_track: track_id.into(),
+                    clip,
+                    request_id,
+                },
+                actor,
+                opts,
+            ))
         }
         "sfx_add" => {
             let (Some(t_ms), Some(src)) = (args["tMs"].as_u64(), args["src"].as_str()) else {
@@ -589,9 +858,17 @@ pub(crate) fn dispatch_on_ws(
             // 密度护栏:±15s 内已有 ≥2 个 sfx → GUARD_FAILED(计划书 5.2)
             let sfx_nearby = crate::edit_ops::count_sfx_near(ws.project(), t_ms, 15_000);
             if sfx_nearby >= 2 {
-                return envelope(false, "GUARD_FAILED", &format!("音效密度超限:{t_ms}ms ±15s 内已有 {sfx_nearby} 个"), json!({}));
+                return envelope(
+                    false,
+                    "GUARD_FAILED",
+                    &format!("音效密度超限:{t_ms}ms ±15s 内已有 {sfx_nearby} 个"),
+                    json!({}),
+                );
             }
-            let track_id = ws.project().tracks.iter()
+            let track_id = ws
+                .project()
+                .tracks
+                .iter()
                 .find(|t| t.kind == cutforge_core::model::TrackKind::Audio)
                 .map(|t| t.id.clone())
                 .unwrap_or_else(|| "A1".into());
@@ -605,13 +882,26 @@ pub(crate) fn dispatch_on_ws(
                 Err(e) => return envelope(false, "SCHEMA_INVALID", &e.to_string(), json!({})),
             };
             let request_id = args["requestId"].as_str().map(String::from);
-            finish_apply(ws.apply(Command::ClipInsert { to_track: track_id, clip, request_id }, actor, opts))
+            finish_apply(ws.apply(
+                Command::ClipInsert {
+                    to_track: track_id,
+                    clip,
+                    request_id,
+                },
+                actor,
+                opts,
+            ))
         }
         "notes_add" => {
-            let (Some(anchor_v), Some(body)) = (args["anchor"].as_object(), args["body"].as_str()) else {
+            let (Some(anchor_v), Some(body)) = (args["anchor"].as_object(), args["body"].as_str())
+            else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 anchor/body", json!({}));
             };
-            let kind = match anchor_v.get("kind").and_then(|v| v.as_str()).unwrap_or("clip") {
+            let kind = match anchor_v
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("clip")
+            {
                 "track" => AnchorKind::Track,
                 "time" => AnchorKind::Time,
                 "word" => AnchorKind::Word,
@@ -621,7 +911,10 @@ pub(crate) fn dispatch_on_ws(
             let anchor = Anchor {
                 kind,
                 // 注意:serde Map 的 Index 在键缺失时 panic,必须用 .get()(M10 e2e 实测)
-                ref_: anchor_v.get("ref").and_then(|v| v.as_str()).map(String::from),
+                ref_: anchor_v
+                    .get("ref")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
                 t_ms: anchor_v.get("tMs").and_then(|v| v.as_u64()).unwrap_or(0),
                 span: None,
             };
@@ -630,24 +923,52 @@ pub(crate) fn dispatch_on_ws(
             } else {
                 cutforge_core::notes::NoteAuthor::User
             };
-            let tags = args["tags"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
-            match ws.notes_add(anchor, body.into(), author, tags, actor, args["requestId"].as_str().map(String::from)) {
-                Ok(id) => envelope(true, "OK", "标注已创建", json!({"noteId": id, "rev": ws.rev()})),
+            let tags = args["tags"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            match ws.notes_add(
+                anchor,
+                body.into(),
+                author,
+                tags,
+                actor,
+                args["requestId"].as_str().map(String::from),
+            ) {
+                Ok(id) => envelope(
+                    true,
+                    "OK",
+                    "标注已创建",
+                    json!({"noteId": id, "rev": ws.rev()}),
+                ),
                 Err(e) => envelope(false, "INTERNAL", &e.to_string(), json!({})),
             }
         }
         "notes_resolve" => {
-            let (Some(note_id), Some(reply)) = (args["noteId"].as_str(), args["reply"].as_str()) else {
+            let (Some(note_id), Some(reply)) = (args["noteId"].as_str(), args["reply"].as_str())
+            else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 noteId/reply", json!({}));
             };
-            let op_ids = args["opIds"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            let op_ids = args["opIds"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
             match ws.notes_resolve(note_id, reply.into(), op_ids, actor) {
                 Ok(()) => envelope(true, "OK", "标注已结案", json!({"noteId": note_id})),
                 Err(e) => notes_op_error(e),
             }
         }
         "notes_reject" => {
-            let (Some(note_id), Some(reason)) = (args["noteId"].as_str(), args["reason"].as_str()) else {
+            let (Some(note_id), Some(reason)) = (args["noteId"].as_str(), args["reason"].as_str())
+            else {
                 return envelope(false, "PRECONDITION_FAILED", "缺 noteId/reason", json!({}));
             };
             match ws.notes_reject(note_id, reason.into(), actor) {
@@ -662,7 +983,12 @@ pub(crate) fn dispatch_on_ws(
         "cut_apply" => {
             let patch = args["patch"].as_object().cloned();
             let Some(patch) = patch else {
-                return envelope(false, "PRECONDITION_FAILED", "缺 patch(merge-patch 对象)", json!({}));
+                return envelope(
+                    false,
+                    "PRECONDITION_FAILED",
+                    "缺 patch(merge-patch 对象)",
+                    json!({}),
+                );
             };
             apply_cut_merge_patch(ws, &Value::Object(patch))
         }
@@ -704,9 +1030,9 @@ pub(crate) fn dispatch_on_ws(
         "subtitle_export" => subtitle_ops::subtitle_export_tool(ws, ws_root, args),
         "subtitle_replace" => subtitle_ops::subtitle_replace_tool(ws, args, &actor, opts),
 
-
         // ---------- 编排(封装 CutFlow 脚本,不重实现) ----------
-        "stage_run" | "stage_rebuild" | "verify_run" | "sync_check" | "render" | "export_jianying" => {
+        "stage_run" | "stage_rebuild" | "verify_run" | "sync_check" | "render"
+        | "export_jianying" => {
             let script = match name {
                 "stage_run" => "rs_run.py",
                 "stage_rebuild" => "rebuild.py",
@@ -729,13 +1055,23 @@ pub(crate) fn dispatch_on_ws(
             orchestrate(ws_root, script, &script_args)
         }
 
-        other => envelope(false, "INTERNAL", &format!("工具已注册但未实现: {other}"), json!({})),
+        other => envelope(
+            false,
+            "INTERNAL",
+            &format!("工具已注册但未实现: {other}"),
+            json!({}),
+        ),
     }
 }
 
 pub(crate) fn finish_apply(r: Result<cutforge_core::engine::OpReceipt, std::io::Error>) -> Value {
     match r {
-        Ok(rec) => envelope(true, "OK", "已应用", json!({"opIds": rec.op_ids, "rev": rec.rev, "idempotent": rec.idempotent})),
+        Ok(rec) => envelope(
+            true,
+            "OK",
+            "已应用",
+            json!({"opIds": rec.op_ids, "rev": rec.rev, "idempotent": rec.idempotent}),
+        ),
         Err(e) => reject_to_envelope(e.to_string()),
     }
 }

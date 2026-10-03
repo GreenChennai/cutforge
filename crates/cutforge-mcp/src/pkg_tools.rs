@@ -6,16 +6,19 @@
 
 use crate::registry::envelope;
 use cutforge_io::cfpkg::{self, PkgError};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 /// PkgError → 5.4 错误码(诚实映射:容器坏 = SCHEMA_INVALID,目标已存在 = CONFLICT,
 /// 工程缺 = NO_CONFIG,活进程持锁 = PRECONDITION_FAILED,意外 IO = INTERNAL)。
 fn pkg_error(e: PkgError) -> Value {
     match e {
-        PkgError::NotAProject(p) => {
-            envelope(false, "NO_CONFIG", &format!("不是可打开的工程: {}", p.display()), json!({}))
-        }
+        PkgError::NotAProject(p) => envelope(
+            false,
+            "NO_CONFIG",
+            &format!("不是可打开的工程: {}", p.display()),
+            json!({}),
+        ),
         PkgError::InvalidPkg(m) => envelope(false, "SCHEMA_INVALID", &m, json!({})),
         PkgError::Conflict(m) => envelope(false, "CONFLICT", &m, json!({})),
         PkgError::Locked(m) => envelope(false, "PRECONDITION_FAILED", &m, json!({})),
@@ -29,28 +32,36 @@ fn pkg_error(e: PkgError) -> Value {
 pub(crate) fn project_package_tool(root: &Path, args: &Value) -> Value {
     let include_media = args["includeMedia"].as_bool().unwrap_or(true);
     let include_exports = args["includeExports"].as_bool().unwrap_or(false);
-    let out = args["out"].as_str().filter(|s| !s.is_empty()).map(Path::new);
+    let out = args["out"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(Path::new);
     match cfpkg::pack(root, out, include_media, include_exports) {
         Ok(r) => {
             let total = r.counts.0 + r.counts.1 + r.counts.2 + r.counts.3 + 1; // + manifest
-            envelope(true, "OK", "工程已打包(.cfpkg)", json!({
-                "out": r.out.to_string_lossy(),
-                "format": cfpkg::FORMAT,
-                "formatVersion": cfpkg::FORMAT_VERSION,
-                "name": r.name,
-                "schemaVersion": r.schema_version,
-                "rev": r.rev,
-                "sourceLayout": r.source_layout,
-                "counts": {"project": r.counts.0, "oplog": r.counts.1,
-                           "media": r.counts.2, "exports": r.counts.3},
-                "files": total,
-                "missing": r.missing,
-                "note": if r.missing.is_empty() {
-                    "解包:project_unpackage(src=该文件,root=新工程目录);布局语义见 docs/PROJECT-FORMAT.md"
-                } else {
-                    "引用素材有缺失(见 missing);解包后工程可打开但缺素材段需重导"
-                },
-            }))
+            envelope(
+                true,
+                "OK",
+                "工程已打包(.cfpkg)",
+                json!({
+                    "out": r.out.to_string_lossy(),
+                    "format": cfpkg::FORMAT,
+                    "formatVersion": cfpkg::FORMAT_VERSION,
+                    "name": r.name,
+                    "schemaVersion": r.schema_version,
+                    "rev": r.rev,
+                    "sourceLayout": r.source_layout,
+                    "counts": {"project": r.counts.0, "oplog": r.counts.1,
+                               "media": r.counts.2, "exports": r.counts.3},
+                    "files": total,
+                    "missing": r.missing,
+                    "note": if r.missing.is_empty() {
+                        "解包:project_unpackage(src=该文件,root=新工程目录);布局语义见 docs/PROJECT-FORMAT.md"
+                    } else {
+                        "引用素材有缺失(见 missing);解包后工程可打开但缺素材段需重导"
+                    },
+                }),
+            )
         }
         Err(e) => pkg_error(e),
     }
@@ -61,23 +72,33 @@ pub(crate) fn project_package_tool(root: &Path, args: &Value) -> Value {
 /// src = 容器路径。清单校验(format/formatVersion/project 真相源)+ zip-slip 防线。
 pub(crate) fn project_unpackage_tool(root: &Path, args: &Value) -> Value {
     let Some(src) = args["src"].as_str().filter(|s| !s.is_empty()) else {
-        return envelope(false, "PRECONDITION_FAILED", "缺 src(.cfpkg 容器路径)", json!({}));
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 src(.cfpkg 容器路径)",
+            json!({}),
+        );
     };
     let src_path = Path::new(src);
     if !src_path.is_file() {
         return envelope(false, "NO_CONFIG", &format!("容器不存在: {src}"), json!({}));
     }
     match cfpkg::unpack(src_path, root) {
-        Ok(r) => envelope(true, "OK", "解包完成(v3 布局)", json!({
-            "dest": r.dest.to_string_lossy(),
-            "name": r.name,
-            "sourceLayout": r.source_layout,
-            "files": r.files,
-            "media": r.media,
-            "missing": r.missing,
-            "hint": format!("打开:cutforge-cli serve {} 或 cutforge-mcp serve --root {}",
-                r.dest.display(), r.dest.display()),
-        })),
+        Ok(r) => envelope(
+            true,
+            "OK",
+            "解包完成(v3 布局)",
+            json!({
+                "dest": r.dest.to_string_lossy(),
+                "name": r.name,
+                "sourceLayout": r.source_layout,
+                "files": r.files,
+                "media": r.media,
+                "missing": r.missing,
+                "hint": format!("打开:cutforge-cli serve {} 或 cutforge-mcp serve --root {}",
+                    r.dest.display(), r.dest.display()),
+            }),
+        ),
         Err(e) => pkg_error(e),
     }
 }

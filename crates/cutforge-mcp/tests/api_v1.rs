@@ -12,7 +12,7 @@
 //!      GET 工具入口 → 405;非法体 → 400 + SCHEMA_INVALID;
 //!   5. /rpc 兼容别名(ADR-0025):既有 POST /rpc 行为零变化。
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{Read as _, Write as _};
 use std::net::{TcpStream, UdpSocket};
 use std::path::PathBuf;
@@ -63,26 +63,44 @@ fn http_roundtrip(
         }
         buf.extend_from_slice(&tmp[..n]);
     }
-    let head_end = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4).unwrap_or(buf.len());
+    let head_end = buf
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
+        .unwrap_or(buf.len());
     let head = String::from_utf8_lossy(&buf[..head_end]).into_owned();
-    let code: u16 = head.split_whitespace().nth(1).and_then(|c| c.parse().ok()).unwrap_or(0);
+    let code: u16 = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|c| c.parse().ok())
+        .unwrap_or(0);
     Ok((code, head, buf[head_end..].to_vec()))
 }
 
 fn get(port: u16, path: &str) -> (u16, Value) {
     let (code, _, body) = http_roundtrip(
-        port, "GET", path,
-        &[("Authorization", &format!("Bearer {TOKEN}"))], None,
-    ).unwrap();
+        port,
+        "GET",
+        path,
+        &[("Authorization", &format!("Bearer {TOKEN}"))],
+        None,
+    )
+    .unwrap();
     (code, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
 fn post(port: u16, path: &str, body: &str) -> (u16, Value) {
     let (code, _, body) = http_roundtrip(
-        port, "POST", path,
-        &[("Authorization", &format!("Bearer {TOKEN}")), ("Content-Type", "application/json")],
+        port,
+        "POST",
+        path,
+        &[
+            ("Authorization", &format!("Bearer {TOKEN}")),
+            ("Content-Type", "application/json"),
+        ],
         Some(body),
-    ).unwrap();
+    )
+    .unwrap();
     (code, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
@@ -101,7 +119,11 @@ fn api_v1_rest_surface_end_to_end() {
     let project = "{\"version\":1,\"schemaVersion\":\"3.0.0\",\"slug\":\"api面\",\"fps\":30,\
         \"canvas\":{\"width\":320,\"height\":240},\"backends\":[\"ffmpeg\"],\
         \"tracks\":[{\"id\":\"V1\",\"kind\":\"video\",\"clips\":[]}]}";
-    std::fs::write(root.join("05_时间线工程").join("project.json"), project.as_bytes()).unwrap();
+    std::fs::write(
+        root.join("05_时间线工程").join("project.json"),
+        project.as_bytes(),
+    )
+    .unwrap();
     let web = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/web");
     let port = free_port();
     {
@@ -115,7 +137,13 @@ fn api_v1_rest_surface_end_to_end() {
         if Instant::now() > deadline {
             panic!("serve 未就绪(15s)");
         }
-        if let Ok((200, _, _)) = http_roundtrip(port, "GET", "/session", &[("Authorization", &format!("Bearer {TOKEN}"))], None) {
+        if let Ok((200, _, _)) = http_roundtrip(
+            port,
+            "GET",
+            "/session",
+            &[("Authorization", &format!("Bearer {TOKEN}"))],
+            None,
+        ) {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -136,15 +164,23 @@ fn api_v1_rest_surface_end_to_end() {
 
     // 写路径转发(单一 dispatch 单表证明):clip_add → rev 前进
     std::fs::write(root.join("media_b.mp4"), b"fake").unwrap();
-    let (code, env) = post(port, "/api/v1/tools/clip_add",
+    let (code, env) = post(
+        port,
+        "/api/v1/tools/clip_add",
         &json!({"trackId": "V1", "src": "media_b.mp4", "startMs": 0, "durationMs": 1500,
-                "requestId": "api-v1-add-1"}).to_string());
+                "requestId": "api-v1-add-1"})
+        .to_string(),
+    );
     assert_eq!(code, 200, "{env}");
     assert_eq!(env["code"], json!("OK"), "{env}");
     let rev1 = env["data"]["rev"].as_u64().unwrap();
     assert_eq!(rev1, rev0 + 1, "REST 写路径 = 同一 apply 通道(rev 前进)");
     let (_, env) = post(port, "/api/v1/tools/timeline_get", "{}");
-    assert_eq!(env["data"]["clips"].as_array().map(Vec::len), Some(1), "{env}");
+    assert_eq!(
+        env["data"]["clips"].as_array().map(Vec::len),
+        Some(1),
+        "{env}"
+    );
 
     // ---- 2) GET 别名:同参转发(查询串即参数) ----
     let (code, env) = get(port, "/api/v1/project");
@@ -160,11 +196,17 @@ fn api_v1_rest_surface_end_to_end() {
     assert_eq!(code, 200, "{env}");
     let (code, env) = get(port, "/api/v1/oplog?limit=1");
     assert_eq!(code, 200, "{env}");
-    assert!(env["data"]["ops"].as_array().unwrap().len() <= 1, "查询串参数透传: {env}");
+    assert!(
+        env["data"]["ops"].as_array().unwrap().len() <= 1,
+        "查询串参数透传: {env}"
+    );
     let (code, env) = get(port, "/api/v1/tools");
     assert_eq!(code, 200, "{env}");
     let n = env["data"]["tools"].as_array().unwrap().len();
-    assert_eq!(n, 83, "GET /api/v1/tools = 注册表全集(单一真相源;册七 A7 78→83): {n}");
+    assert_eq!(
+        n, 83,
+        "GET /api/v1/tools = 注册表全集(单一真相源;册七 A7 78→83): {n}"
+    );
 
     // ---- 3) 事件流别名:长轮询降级面老字段齐(SSE 同一实现) ----
     let (code, env) = get(port, "/api/v1/events");
@@ -174,14 +216,28 @@ fn api_v1_rest_surface_end_to_end() {
     }
 
     // ---- 4) 协议边角 ----
-    let (code, _, _) = http_roundtrip(port, "GET", "/api/v1/project", &[("Authorization", "Bearer 错token")], None).unwrap();
+    let (code, _, _) = http_roundtrip(
+        port,
+        "GET",
+        "/api/v1/project",
+        &[("Authorization", "Bearer 错token")],
+        None,
+    )
+    .unwrap();
     assert_eq!(code, 401, "数据面必须持 token");
     let (code, env) = post(port, "/api/v1/tools/无此工具", "{}");
     assert_eq!(code, 404, "{env}");
     assert_eq!(env["code"], json!("INTERNAL"), "未知工具与 /rpc 同语义");
     let (code, env) = get(port, "/api/v1/无此端点");
     assert_eq!(code, 404, "{env}");
-    let (code, _, _) = http_roundtrip(port, "GET", "/api/v1/tools/project_get", &[("Authorization", &format!("Bearer {TOKEN}"))], None).unwrap();
+    let (code, _, _) = http_roundtrip(
+        port,
+        "GET",
+        "/api/v1/tools/project_get",
+        &[("Authorization", &format!("Bearer {TOKEN}"))],
+        None,
+    )
+    .unwrap();
     assert_eq!(code, 405, "工具入口必须 POST");
     let (code, env) = post(port, "/api/v1/tools/project_get", "[1,2]");
     assert_eq!(code, 400, "{env}");
@@ -189,13 +245,25 @@ fn api_v1_rest_surface_end_to_end() {
 
     // ---- 5) /rpc 兼容别名(ADR-0025):行为零变化(壳显式带 root 的既有契约) ----
     let rpc_body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "project_get", "arguments": {"root": root.to_string_lossy()}}}).to_string();
-    let (code, _, body) = http_roundtrip(port, "POST", "/rpc",
-        &[("Authorization", &format!("Bearer {TOKEN}"))], Some(&rpc_body)).unwrap();
+        "params": {"name": "project_get", "arguments": {"root": root.to_string_lossy()}}})
+    .to_string();
+    let (code, _, body) = http_roundtrip(
+        port,
+        "POST",
+        "/rpc",
+        &[("Authorization", &format!("Bearer {TOKEN}"))],
+        Some(&rpc_body),
+    )
+    .unwrap();
     assert_eq!(code, 200);
     let rpc: Value = serde_json::from_slice(&body).unwrap();
-    let env: Value = serde_json::from_str(rpc["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
-    assert_eq!(env["data"]["project"]["slug"], json!("api面"), "/rpc 兼容面零漂移");
+    let env: Value =
+        serde_json::from_str(rpc["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        env["data"]["project"]["slug"],
+        json!("api面"),
+        "/rpc 兼容面零漂移"
+    );
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -209,7 +277,11 @@ fn api_v1_on_aux_channel_requires_explicit_root() {
     std::fs::create_dir_all(root.join("05_时间线工程")).unwrap();
     let project = "{\"version\":1,\"schemaVersion\":\"3.0.0\",\"slug\":\"辅通道\",\"fps\":30,\
         \"canvas\":{\"width\":320,\"height\":240},\"backends\":[\"ffmpeg\"],\"tracks\":[]}";
-    std::fs::write(root.join("05_时间线工程").join("project.json"), project.as_bytes()).unwrap();
+    std::fs::write(
+        root.join("05_时间线工程").join("project.json"),
+        project.as_bytes(),
+    )
+    .unwrap();
     let port = free_port();
     {
         std::thread::spawn(move || {
@@ -221,9 +293,16 @@ fn api_v1_on_aux_channel_requires_explicit_root() {
         if Instant::now() > deadline {
             panic!("辅通道 serve 未就绪(15s)");
         }
-        if matches!(http_roundtrip(port, "POST", "/rpc",
-            &[("Authorization", &format!("Bearer {TOKEN}"))],
-            Some(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)), Ok((200, _, _))) {
+        if matches!(
+            http_roundtrip(
+                port,
+                "POST",
+                "/rpc",
+                &[("Authorization", &format!("Bearer {TOKEN}"))],
+                Some(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#)
+            ),
+            Ok((200, _, _))
+        ) {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
@@ -238,7 +317,10 @@ fn api_v1_on_aux_channel_requires_explicit_root() {
     assert_eq!(code, 200, "{env}");
     assert_eq!(env["data"]["project"]["slug"], json!("辅通道"));
     // GET 别名经查询串给 root
-    let (code, env) = get(port, &format!("/api/v1/timeline?root={}", utf8_query(&root)));
+    let (code, env) = get(
+        port,
+        &format!("/api/v1/timeline?root={}", utf8_query(&root)),
+    );
     assert_eq!(code, 200, "{env}");
     assert_eq!(env["code"], json!("OK"));
     // 事件流别名:缺 root → 长轮询面报缺 root(envelope 协议齐)
@@ -250,9 +332,13 @@ fn api_v1_on_aux_channel_requires_explicit_root() {
 
 /// 路径查询串里的 Windows 绝对路径(盘符冒号 + 反斜杠)转正斜杠 + 百分号编码。
 fn utf8_query(p: &std::path::Path) -> String {
-    p.to_string_lossy().replace('\\', "/").chars().map(|c| match c {
-        'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '.' | '_' | '~' | '/' => c.to_string(),
-        ':' => "%3A".into(),
-        _ => format!("%{:02X}", c as u32),
-    }).collect()
+    p.to_string_lossy()
+        .replace('\\', "/")
+        .chars()
+        .map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '.' | '_' | '~' | '/' => c.to_string(),
+            ':' => "%3A".into(),
+            _ => format!("%{:02X}", c as u32),
+        })
+        .collect()
 }

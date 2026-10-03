@@ -20,13 +20,17 @@ pub struct Kernel {
 impl Kernel {
     /// 按启动参数拉起(或附着)内核。失败返回可展示的错误(壳仍开窗)。
     pub fn start(args: &Args) -> Result<Kernel, String> {
+        let root = args
+            .root
+            .clone()
+            .ok_or("内部错误:Kernel::start 要求 --root")?;
         if let Some(url) = &args.attach {
             // 附着模式:不持子进程;健康探测交给壳的连接泵
             return Ok(Kernel {
                 child: None,
                 port: args.port,
                 token: args.token.clone(),
-                root: args.root.clone(),
+                root,
             }
             .with_attach_note(url.clone()));
         }
@@ -38,7 +42,7 @@ impl Kernel {
             .args([
                 "serve".as_ref(),
                 "--root".as_ref(),
-                args.root.as_os_str(),
+                root.as_os_str(),
                 "--port".as_ref(),
                 args.port.to_string().as_ref(),
                 "--token".as_ref(),
@@ -54,7 +58,7 @@ impl Kernel {
         let rpc = Rpc::new(
             format!("http://127.0.0.1:{}", args.port),
             &args.token,
-            args.root.display().to_string(),
+            root.display().to_string(),
         );
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
@@ -78,7 +82,7 @@ impl Kernel {
             child: Some(child),
             port: args.port,
             token: args.token.clone(),
-            root: args.root.clone(),
+            root,
         })
     }
 
@@ -101,7 +105,7 @@ impl Drop for Kernel {
 }
 
 /// 定位 cutforge-cli:CUTFORGE_CLI 环境变量 → 仓内 target(release/debug)。
-fn find_cli() -> Option<PathBuf> {
+pub fn find_cli() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("CUTFORGE_CLI") {
         let p = PathBuf::from(p);
         if p.is_file() {

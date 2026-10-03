@@ -235,6 +235,10 @@ impl Render for PreviewPanel {
                 (a.playhead_ms, a.duration_ms, a.playing)
             })
             .unwrap_or((0, 0, false));
+        let fps = app
+            .as_ref()
+            .map(|a| a.read(cx).shared.snapshot().fps())
+            .unwrap_or(30.0);
         let frame_state = match (&self.image, self.rendering) {
             (Some(_), Some((t, _))) => format!("出帧中 {t}ms"),
             (Some(_), None) => "单帧精确".to_string(),
@@ -382,7 +386,7 @@ impl Render for PreviewPanel {
                     // 左:时间码(当前大字 / 总长小字)
                     .child(
                         h_flex()
-                            .w(px(150.0))
+                            .w(px(170.0))
                             .flex_shrink_0()
                             .gap(px(SpacingTokens::XS))
                             .items_baseline()
@@ -390,7 +394,7 @@ impl Render for PreviewPanel {
                                 div()
                                     .text_size(px(FONT_SIZE_HEADING + 2.0))
                                     .text_color(colors.text_primary)
-                                    .child(fmt_timecode(playhead)),
+                                    .child(fmt_frame_timecode(playhead, fps)),
                             )
                             .child(
                                 div()
@@ -443,6 +447,16 @@ impl Render for PreviewPanel {
                     ),
             )
     }
+}
+
+/// 帧级时间码 HH:MM:SS:FF(剪映 P1;fps 防御 ≤0 回落 30)。
+fn fmt_frame_timecode(ms: u64, fps: f64) -> String {
+    let fps = if fps <= 0.0 { 30.0 } else { fps };
+    let total_sec = ms / 1000;
+    let ff = ((ms % 1000) as f64 / 1000.0 * fps).floor() as u64;
+    let (h, rem) = (total_sec / 3600, total_sec % 3600);
+    let (m, sec) = (rem / 60, rem % 60);
+    format!("{h:02}:{m:02}:{sec:02}:{ff:02}")
 }
 
 /// 时间码 m:ss.t(与 sable fmt_timecode 同式;壳内独立避免 pub 依赖漂移)。

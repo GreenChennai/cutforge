@@ -52,6 +52,8 @@ pub struct DesktopApp {
     pub status: String,
     /// 状态栏工程目录展示
     pub project_dir: String,
+    /// 顶栏居中工程名(project.slug,重投影时刷新)
+    pub project_title: String,
     pub dock: Option<Entity<DockArea>>,
     pub focus: FocusHandle,
 }
@@ -99,6 +101,10 @@ impl DesktopApp {
                 duration_ms: 0,
                 status: format!("连接中…(工程 {root_dir})"),
                 project_dir,
+                project_title: std::path::Path::new(&root_dir)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| root_dir.clone()),
                 dock: None,
                 focus,
             }
@@ -111,7 +117,7 @@ impl DesktopApp {
             let rpc = app.rpc.clone();
             let library = SablePanel::create(
                 "媒体库",
-                LibraryPanel::new(shared.clone(), rpc.clone(), &this, cx).into(),
+                LibraryPanel::new(shared.clone(), rpc.clone(), &this, window, cx).into(),
                 cx,
             );
             let preview = SablePanel::create(
@@ -324,6 +330,18 @@ impl DesktopApp {
             let at = self.playhead_ms.min(self.duration_ms.saturating_sub(100));
             *self.shared.preview_request.lock().unwrap() = Some(at);
         }
+        self.project_title = snap
+            .project
+            .get("slug")
+            .and_then(serde_json::Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                std::path::Path::new(&self.project_dir)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| self.project_dir.clone())
+            });
         self.status = format!("就绪 · rev {}", snap.rev);
         cx.notify();
     }
@@ -606,13 +624,6 @@ impl DesktopApp {
                     .child("CutForge"),
             )
             .child(sep(colors))
-            .child(
-                div()
-                    .text_size(px(FONT_SIZE_CAPTION))
-                    .text_color(colors.text_secondary)
-                    .child(self.engine_label()),
-            )
-            .child(sep(colors))
             .child(tb("tb-undo", "↶ 撤销", true).on_click(submit_handler(
                 weak.clone(),
                 "undo",
@@ -676,13 +687,59 @@ impl DesktopApp {
                     "text",
                 )),
             )
-            .child(div().flex_1())
+            // 中段:居中工程名(剪映 H1;slug 缺省回落目录名)
+            .child(
+                h_flex()
+                    .flex_1()
+                    .justify_center()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .max_w(px(420.0))
+                            .text_size(px(FONT_SIZE_HEADING))
+                            .text_color(colors.text_primary)
+                            .child(self.project_title.clone())
+                            .truncate(),
+                    ),
+            )
+            // 右段:保存状态 + 导出主按钮(剪映 H2/H3)
+            .child(
+                h_flex()
+                    .flex_1()
+                    .justify_end()
+                    .gap(px(SpacingTokens::SM))
+                    .items_center()
+                    .child(
+                        div()
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(colors.text_secondary)
+                            .child(format!("已保存 rev {}", self.shared.rev.load(Ordering::Relaxed))),
+                    )
+                    .child(
+                        div()
+                            .id(sable::gpui::ElementId::Name("tb-export".into()))
+                            .px(px(SpacingTokens::SM + 4.0))
+                            .py(px(5.0))
+                            .rounded(px(5.0))
+                            .bg(colors.accent)
+                            .text_size(px(FONT_SIZE_CAPTION + 1.0))
+                            .text_color(colors.surface_0)
+                            .hover(|s| s.bg(colors.text_secondary))
+                            .cursor_pointer()
+                            .child("导出")
+                            .on_click({
+                                let weak = weak.clone();
+                                move |_, _, cx: &mut App| {
+                                    if let Some(app) = weak.upgrade() {
+                                        app.update(cx, |app, cx| {
+                                            app.submit("render", serde_json::json!({}), cx);
+                                        });
+                                    }
+                                }
+                            }),
+                    ),
+            )
             .into_any_element()
-    }
-
-    /// 引擎能力徽标:渲染依赖是否就位(状态一览,替代散落报错)。
-    fn engine_label(&self) -> String {
-        "视频编辑工作台".to_string()
     }
 }
 

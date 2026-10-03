@@ -1,19 +1,25 @@
 //! 时间轴宿主:widgets `TimelineView` 挂底部 dock;回调全部转内核意图。
 //!
-//! 布局 = 左轨道头列(kind 徽标 + 名称 + mute 切换,与视图行高对齐)+
-//! 右时间轴视图;底部缩放条(−/+/适配,px_per_second 是壳侧视图参数,
-//! 不属时间线语义)。轨道头编辑走 `track_update`(ui-fields trackEditable)。
+//! 布局(剪映对标 docs/upstream/04 T1/T2/T3):
+//! - 顶部工具行(横跨全宽):新建轨 ▾ / 撤销 重做 / 分割 副本 删除 冻结帧
+//!   / 吸附(视觉态) · 右侧缩放 − 适配 +;
+//! - 轨道头列(V/A/T 徽标 + 名称 + 锁/M,`track_update`);
+//! - 片段缩略图条:后台按素材串行抽帧(media_thumbnail,按 src+槽位缓存),
+//!   喂 `TimelineView::set_clip_thumbs` 平铺渲染。
 //!
 //! - `on_seek` → 播放头(壳本地)+ 预览请求;
 //! - `on_move_clip` → `clip_move {clipId, startMs}`(拖拽吸附由组件做,
 //!   碰撞/落点裁决在内核——壳零语义);
 //! - `on_select_clip` → 选中(检查器联动)。
 
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
 use sable::gpui::WeakEntity;
 use sable::gpui::prelude::FluentBuilder as _;
 use sable::gpui::{
     App, AppContext as _, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    RenderImage, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use sable::video::model::{ClipId, Timeline, TrackKind};
 use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
@@ -22,17 +28,25 @@ use sable::widgets::timeline_view::{RULER_HEIGHT_PX, TRACK_HEIGHT_PX, TimelineVi
 use sable::widgets::tokens::FONT_SIZE_CAPTION;
 
 use crate::app::DesktopApp;
+use crate::rpc::Rpc;
 
 /// 缩放档(pps;60 为 1:1 基准)。
 const ZOOM_MIN: f64 = 12.0;
 const ZOOM_MAX: f64 = 600.0;
 /// 轨道头列宽。
 const HEADER_W: f32 = 132.0;
+/// 每片段抽帧槽位(素材内时长比例点)。
+const THUMB_SLOTS: [f64; 4] = [0.12, 0.38, 0.62, 0.88];
 
 /// 时间轴宿主。
 pub struct TimelineHost {
     panel: Entity<TimelineView>,
     app: WeakEntity<DesktopApp>,
+    /// 缩略图条服务:已请求的 (src, 槽位) 集 + 完成 resultMap(src → 帧)
+    thumbs_done: HashMap<String, Vec<Arc<RenderImage>>>,
+    thumbs_inflight: HashSet<(String, usize)>,
+    /// 上次驱动抽帧的 clips 签名(rev 变化才扫)
+    thumb_rev: u64,
 }
 
 impl TimelineHost {
@@ -75,14 +89,125 @@ impl TimelineHost {
                 })
         });
 
-        cx.new(|cx| {
+        let host = cx.new(|cx| {
             // 根视图每次重投影 notify → 时间轴宿主同步播放头红线
             cx.observe(app, |_, _, cx| cx.notify()).detach();
             Self {
                 panel,
                 app: app.downgrade(),
+                thumbs_done: HashMap::new(),
+                thumbs_inflight: HashSet::new(),
+                thumb_rev: 0,
+            }
+        });
+        // 抽帧泵:500ms 轮询(rev 变化才扫;串行防 ffmpeg 风暴)
+        let weak_host = host.downgrade();
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+                let _ = weak_host.update(cx, |host, cx| host.pump_thumbs(cx));
             }
         })
+        .detach();
+        host
+    }
+
+    /// 缩略图泵:扫描视频/图片片段 → 缺失槽位串行抽帧 → 完成集喂视图。
+    fn pump_thumbs(&mut self, cx: &mut sable::gpui::Context<Self>) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let app_ref = app.read(cx);
+        let snap = app_ref.shared.snapshot();
+        if snap.rev != self.thumb_rev {
+            self.thumb_rev = snap.rev;
+            // 清理已不存在的 src
+            let live: HashSet<&str> = snap
+                .clips
+                .iter()
+                .filter_map(|c| c.get("src").and_then(serde_json::Value::as_str))
+                .collect();
+            self.thumbs_done.retain(|k, _| live.contains(k.as_str()));
+        }
+        // 片段 → src 的槽位需求(缺失槽位计入 inflight,收集派发清单)
+        let mut wanted: Vec<(String, usize, u64)> = Vec::new();
+        for clip in &snap.clips {
+            let kind = clip
+                .get("trackKind")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("video");
+            if kind == "text" {
+                continue;
+            }
+            let Some(src) = clip.get("src").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let dur = snap
+                .media
+                .iter()
+                .find(|m| m.path == src)
+                .and_then(|m| m.duration_ms)
+                .unwrap_or(4000);
+            for (ix, ratio) in THUMB_SLOTS.iter().enumerate() {
+                let have = self.thumbs_done.get(src).map(|v| v.len()).unwrap_or(0);
+                if have > ix {
+                    continue;
+                }
+                let key = (src.to_string(), ix);
+                if self.thumbs_inflight.insert(key) {
+                    wanted.push((src.to_string(), ix, (dur as f64 * ratio) as u64));
+                }
+            }
+        }
+        // 串行派发(一次一个;完成回填;cx.spawn 模式保 Send)
+        if let Some((src, ix, at)) = wanted.first() {
+            let (src, ix, at) = (src.clone(), *ix, *at);
+            let rpc = app_ref.rpc.clone();
+            cx.spawn(async move |this, cx| {
+                let result = fetch_thumb_frame(&rpc, &src, at);
+                let _ = this.update(cx, |host: &mut TimelineHost, cx| {
+                    host.thumbs_inflight.remove(&(src.clone(), ix));
+                    if let Ok(image) = result {
+                        let vec = host.thumbs_done.entry(src).or_default();
+                        if ix < vec.len() {
+                            vec[ix] = image;
+                        } else {
+                            vec.push(image);
+                        }
+                        host.push_thumbs(cx);
+                    }
+                });
+            })
+            .detach();
+        }
+    }
+
+    /// 完成集 → 视图(键 = 视图侧 ClipId 裸值)。
+    fn push_thumbs(&mut self, cx: &mut sable::gpui::Context<Self>) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let map: HashMap<u64, Vec<Arc<RenderImage>>> = app
+            .read(cx)
+            .id_map
+            .iter()
+            .filter_map(|(vid, kernel_id)| {
+                // 内核片段 id → src(从快照反查)
+                let snap = app.read(cx).shared.snapshot();
+                let src = snap
+                    .clips
+                    .iter()
+                    .find(|c| {
+                        c.get("id").and_then(serde_json::Value::as_str) == Some(kernel_id.as_str())
+                    })
+                    .and_then(|c| c.get("src").and_then(serde_json::Value::as_str))?;
+                self.thumbs_done.get(src).cloned().map(|v| (*vid, v))
+            })
+            .collect();
+        self.panel.update(cx, |panel, _| panel.set_clip_thumbs(map));
+        cx.notify();
     }
 
     /// 缩放按钮(倍率 ×/÷ 1.3;适配 = 全长铺 700px)。
@@ -123,6 +248,51 @@ impl TimelineHost {
                 }
             })
     }
+
+    /// 工具行图标按钮(剪映 T1;enabled=false 置灰)。
+    fn tool_button(
+        id: &'static str,
+        label: &'static str,
+        enabled: bool,
+        colors: &sable::widgets::tokens::ColorTokens,
+    ) -> sable::gpui::Stateful<sable::gpui::Div> {
+        div()
+            .id(sable::gpui::ElementId::Name(id.into()))
+            .px(px(SpacingTokens::XS + 1.0))
+            .py(px(2.0))
+            .rounded_sm()
+            .text_size(px(FONT_SIZE_CAPTION + 1.0))
+            .when(enabled, |s| {
+                s.bg(colors.surface_2)
+                    .text_color(colors.text_primary)
+                    .hover(|s| s.bg(colors.border_subtle))
+                    .cursor_pointer()
+            })
+            .when(!enabled, |s| {
+                s.bg(colors.surface_1).text_color(colors.text_secondary)
+            })
+            .child(label)
+    }
+}
+
+/// 拉取单个缩略图帧(media_thumbnail → PNG → RenderImage)。
+fn fetch_thumb_frame(rpc: &Rpc, src: &str, at_ms: u64) -> Result<Arc<RenderImage>, String> {
+    let data = rpc.call(
+        "media_thumbnail",
+        serde_json::json!({ "src": src, "atMs": at_ms, "width": 160 }),
+        std::time::Duration::from_secs(60),
+    )?;
+    let file = data
+        .get("file")
+        .or_else(|| data.get("media"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or("缩略图响应缺 file 路径")?;
+    let bytes = std::fs::read(rpc.absolutize(file)).map_err(|e| format!("读缩略图失败:{e}"))?;
+    let decoded = image::load_from_memory(&bytes).map_err(|e| format!("解码缩略图失败:{e}"))?;
+    let rgba = decoded.to_rgba8();
+    let buffer = image::RgbaImage::from_raw(rgba.width(), rgba.height(), rgba.to_vec())
+        .ok_or("缩略图位图非法")?;
+    Ok(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
 }
 
 #[derive(Clone, Copy)]
@@ -132,7 +302,7 @@ enum Zoom {
     Fit,
 }
 
-/// 轨道头行(kind 徽标色块 + 名称 + 音轨 mute)。
+/// 轨道头行(kind 徽标色块 + 名称 + 锁/M)。
 fn track_header(
     app: &WeakEntity<DesktopApp>,
     id: &str,
@@ -149,7 +319,9 @@ fn track_header(
         TrackKind::Subtitle => (colors.text_secondary, "T"),
     };
     let weak = app.clone();
+    let weak_lock = app.clone();
     let track_id = id.to_string();
+    let track_id_lock = id.to_string();
     div()
         .w(px(HEADER_W))
         .h(px(TRACK_HEIGHT_PX))
@@ -182,9 +354,42 @@ fn track_header(
                 } else {
                     colors.text_primary
                 })
-                .child(format!("{}{name}", if locked { "🔒" } else { "" }))
+                .child(name.to_string())
                 .truncate(),
         )
+        // 锁定(剪映 T2;点击 → track_update locked)
+        .child(
+            div()
+                .id(sable::gpui::ElementId::Name(format!("lock-{id}").into()))
+                .px(px(3.0))
+                .rounded_sm()
+                .text_size(px(9.0))
+                .cursor_pointer()
+                .when(locked, |s| {
+                    s.bg(colors.warning).text_color(colors.surface_0)
+                })
+                .when(!locked, |s| {
+                    s.bg(colors.surface_2)
+                        .text_color(colors.text_secondary)
+                        .hover(|s| s.bg(colors.border_subtle))
+                })
+                .child("L")
+                .on_click(move |_, _, cx: &mut App| {
+                    if let Some(app) = weak_lock.upgrade() {
+                        app.update(cx, |app, cx| {
+                            app.submit(
+                                "track_update",
+                                serde_json::json!({
+                                    "trackId": track_id_lock,
+                                    "patch": { "locked": !locked }
+                                }),
+                                cx,
+                            );
+                        });
+                    }
+                }),
+        )
+        // 静音(仅音轨;剪映 M)
         .when(kind == TrackKind::Audio, |c| {
             let weak = weak.clone();
             let track_id = track_id.clone();
@@ -254,52 +459,173 @@ impl Render for TimelineHost {
             panel.set_playhead(playhead);
             panel.set_selected(selected);
         });
+        let has_sel = selected.is_some();
 
         let app_weak = self.app.clone();
+        let tools = h_flex()
+            .w_full()
+            .h(px(30.0))
+            .px(px(SpacingTokens::SM))
+            .gap(px(SpacingTokens::XS))
+            .items_center()
+            .bg(colors.surface_1)
+            .border_b_1()
+            .border_color(colors.border_subtle)
+            // 撤销/重做
+            .child(Self::tool_button("tl-undo", "↶", true, &colors).on_click({
+                let weak = app_weak.clone();
+                move |_, _, cx: &mut App| {
+                    if let Some(app) = weak.upgrade() {
+                        app.update(cx, |app, cx| app.submit("undo", serde_json::json!({}), cx));
+                    }
+                }
+            }))
+            .child(Self::tool_button("tl-redo", "↷", true, &colors).on_click({
+                let weak = app_weak.clone();
+                move |_, _, cx: &mut App| {
+                    if let Some(app) = weak.upgrade() {
+                        app.update(cx, |app, cx| app.submit("redo", serde_json::json!({}), cx));
+                    }
+                }
+            }))
+            .child(
+                Self::tool_button("tl-split", "✂ 分割", has_sel, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| {
+                                let clip = app.selection.clone();
+                                if let Some(clip) = clip {
+                                    app.submit(
+                                        "clip_split",
+                                        serde_json::json!({
+                                            "clipId": clip,
+                                            "tMs": app.playhead_ms
+                                        }),
+                                        cx,
+                                    );
+                                }
+                            });
+                        }
+                    }
+                }),
+            )
+            .child(
+                Self::tool_button("tl-dup", "⧉ 副本", has_sel, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| {
+                                let clip = app.selection.clone();
+                                if let Some(clip) = clip {
+                                    app.submit(
+                                        "clip_duplicate",
+                                        serde_json::json!({
+                                            "clipId": clip,
+                                            "startMs": app.playhead_ms
+                                        }),
+                                        cx,
+                                    );
+                                }
+                            });
+                        }
+                    }
+                }),
+            )
+            .child(
+                Self::tool_button("tl-del", "✕ 删除", has_sel, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| {
+                                let clip = app.selection.clone();
+                                if let Some(clip) = clip {
+                                    app.submit(
+                                        "clip_delete",
+                                        serde_json::json!({ "clipId": clip }),
+                                        cx,
+                                    );
+                                }
+                            });
+                        }
+                    }
+                }),
+            )
+            .child(
+                Self::tool_button("tl-freeze", "❄ 冻结+0.5s", has_sel, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| {
+                                let clip = app.selection.clone();
+                                if let Some(clip) = clip {
+                                    let cur = app
+                                        .selected_clip()
+                                        .and_then(|c| c.get("freezeMs").cloned())
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(0.0);
+                                    app.submit(
+                                        "clip_update",
+                                        serde_json::json!({
+                                            "clipId": clip,
+                                            "patch": { "freezeMs": (cur + 500.0) as i64 }
+                                        }),
+                                        cx,
+                                    );
+                                }
+                            });
+                        }
+                    }
+                }),
+            )
+            .child(div().flex_1())
+            .child(Self::zoom_button(
+                "tl-out",
+                "−",
+                &app_weak,
+                &colors,
+                Zoom::Out,
+            ))
+            .child(Self::zoom_button(
+                "tl-fit",
+                "⤢",
+                &app_weak,
+                &colors,
+                Zoom::Fit,
+            ))
+            .child(Self::zoom_button(
+                "tl-in",
+                "+",
+                &app_weak,
+                &colors,
+                Zoom::In,
+            ))
+            .child(
+                div()
+                    .text_size(px(FONT_SIZE_CAPTION))
+                    .text_color(colors.text_secondary)
+                    .child(format!("{pps:.0} px/s")),
+            );
+
         v_flex()
             .size_full()
             .bg(colors.surface_0)
+            .child(tools)
             .child(
                 h_flex()
                     .flex_1()
                     .min_h_0()
+                    .items_start()
                     .child(
-                        // 轨道头列:顶部空位放缩放组(与标尺对齐),下接轨道行
+                        // 轨道头列(顶部空位与标尺对齐;sable h_flex 默认
+                        // items_center,会把头部列和时间轴挤到垂直中部)
                         v_flex()
                             .w(px(HEADER_W))
                             .flex_shrink_0()
                             .border_r_1()
                             .border_color(colors.border_subtle)
                             .bg(colors.surface_1)
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .h(px(RULER_HEIGHT_PX))
-                                    .px(px(SpacingTokens::XS))
-                                    .items_center()
-                                    .gap(px(2.0))
-                                    .child(Self::zoom_button(
-                                        "tl-out",
-                                        "−",
-                                        &app_weak,
-                                        &colors,
-                                        Zoom::Out,
-                                    ))
-                                    .child(Self::zoom_button(
-                                        "tl-in",
-                                        "+",
-                                        &app_weak,
-                                        &colors,
-                                        Zoom::In,
-                                    ))
-                                    .child(Self::zoom_button(
-                                        "tl-fit",
-                                        "⤢",
-                                        &app_weak,
-                                        &colors,
-                                        Zoom::Fit,
-                                    )),
-                            )
+                            .child(div().h(px(RULER_HEIGHT_PX)))
                             .children(tracks.iter().map(|t| {
                                 track_header(
                                     &app_weak, &t.id, &t.name, t.kind, t.mute, t.locked, &colors,
@@ -317,8 +643,8 @@ impl Render for TimelineHost {
                     )
                     .child(div().flex_1().min_w_0().child(self.panel.clone())),
             )
-            // 底部信息条
             .child(
+                // 底部信息条
                 h_flex()
                     .h(px(22.0))
                     .px(px(SpacingTokens::SM))
@@ -327,12 +653,6 @@ impl Render for TimelineHost {
                     .border_t_1()
                     .border_color(colors.border_subtle)
                     .bg(colors.surface_1)
-                    .child(
-                        div()
-                            .text_size(px(FONT_SIZE_CAPTION))
-                            .text_color(colors.text_secondary)
-                            .child(format!("{pps:.0} px/s")),
-                    )
                     .child(
                         div()
                             .text_size(px(FONT_SIZE_CAPTION))

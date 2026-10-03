@@ -247,10 +247,7 @@ pub fn project_timeline(snap: &Snapshot) -> (Timeline, HashMap<u64, String>) {
             let text = str_of(clip, "text");
             if text.is_empty() {
                 let src = str_of(clip, "src");
-                src.rsplit(['/', '\\'])
-                    .next()
-                    .unwrap_or(&src)
-                    .to_string()
+                src.rsplit(['/', '\\']).next().unwrap_or(&src).to_string()
             } else {
                 text.chars().take(16).collect::<String>()
             }

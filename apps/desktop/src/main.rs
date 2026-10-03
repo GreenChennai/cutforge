@@ -1,17 +1,19 @@
-//! CutForge 桌面壳(M5-4,C-FE1 骨架)。
+//! CutForge 桌面壳(剪映对标 docs/upstream/04;C-FE 骨架见 docs/upstream/03)。
 //!
 //! **壳铁律(docs/upstream/03 §1.1)**:真相在内核(`cutforge-cli serve`),
 //! 本壳只做「投影 + 意图提交」——时间线吸附/时长推导/重叠判定等语义一律
 //! 不落壳;编辑全部经 `/rpc` 工具(clip_update / clip_move / clip_trim …),
 //! 回流经 `GET /events` 长轮询(2s 上限)+ 本地 rev 对账。
 //!
-//! 启动形态:默认自拉内核子进程(serve --root --port --token,随壳退出);
-//! `--attach http://127.0.0.1:8787 --token T` 可接已运行的内核(与 Web 壳共存)。
+//! 启动形态:
+//! - `--root <工程目录>` → 编辑器(自拉内核子进程,随壳退出);
+//! - 无 root → **开始界面**(Home;选择工程后 spawn 自身 --root,docs/04 S1);
+//! - `--attach http://127.0.0.1:8787 --token T` 可接已运行的内核(与 Web 壳共存)。
 //!
-//! 运行:`cargo run -p cutforge-desktop -- --root <工程目录>`
-//!      (或 `start-desktop.cmd`;工程目录缺省交互列表见 kernel.rs)
+//! 运行:`cargo run -p cutforge-desktop -- --root <工程目录>`(或 start-desktop.cmd)
 
 mod app;
+mod home;
 mod kernel;
 mod panels;
 mod rpc;
@@ -23,8 +25,8 @@ use sable::gpui::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px,
 use sable::gpui_component::Root;
 
 pub struct Args {
-    /// 工程目录(内核 serve 的 --root)
-    pub root: PathBuf,
+    /// 工程目录(内核 serve 的 --root);None = 开始界面
+    pub root: Option<PathBuf>,
     pub port: u16,
     pub token: String,
     /// 已运行内核地址(给则不自拉子进程)
@@ -53,10 +55,6 @@ fn parse_args() -> Args {
             }
         }
     }
-    let root = root.unwrap_or_else(|| {
-        eprintln!("用法: cutforge-desktop --root <工程目录> [--port N] [--token T] [--attach URL] [--cli 路径]");
-        std::process::exit(2);
-    });
     Args {
         root,
         port,
@@ -68,6 +66,41 @@ fn parse_args() -> Args {
 
 fn main() {
     let args = parse_args();
+
+    // 无 --root → 开始界面(不拉内核;选工程后 spawn 自身 --root)
+    if args.root.is_none() {
+        sable::gpui::Application::new().run(move |cx: &mut App| {
+            sable::dock::init(cx);
+            sable::gpui_component::theme::Theme::change(
+                sable::gpui_component::ThemeMode::Dark,
+                None,
+                cx,
+            );
+            let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(sable::gpui::TitlebarOptions {
+                    title: Some("CutForge".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            cx.open_window(options, |window, cx| {
+                let shell = home::HomeApp::new(window, cx);
+                cx.new(|cx| Root::new(shell, window, cx))
+            })
+            .expect("开始界面开窗失败");
+            cx.activate(true);
+        });
+        return;
+    }
+
+    let root_dir = args
+        .root
+        .clone()
+        .expect("root 已分流,编辑器路径必有值")
+        .display()
+        .to_string();
 
     // 内核:自拉子进程(随壳退出)或附着已有实例
     let kernel = kernel::Kernel::start(&args);
@@ -92,6 +125,9 @@ fn main() {
             cx,
         );
 
+        // 剪映 H3:打开即记录最近工程(recent.json,与开始界面共用)
+        home::record_recent(&root_dir);
+
         let bounds = Bounds::centered(None, size(px(1560.), px(950.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -104,9 +140,9 @@ fn main() {
 
         let base = base.clone();
         let token = args.token.clone();
-        let root_dir = args.root.display().to_string();
+        let root_for_view = root_dir.clone();
         cx.open_window(options, move |window, cx| {
-            let shell = app::DesktopApp::new(base, token, root_dir, window, cx);
+            let shell = app::DesktopApp::new(base, token, root_for_view, window, cx);
             cx.new(|cx| Root::new(shell, window, cx))
         })
         .expect("桌面壳开窗失败:gpui 平台层初始化异常(显卡驱动/显示服务)");

@@ -12,9 +12,11 @@ use sable::gpui::{
     ParentElement as _, Render, RenderImage, StatefulInteractiveElement as _, Styled as _,
     StyledImage as _, Window, div, hsla, img, px,
 };
-use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
+use sable::widgets::prelude::{SpacingTokens, v_flex};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::FONT_SIZE_CAPTION;
+
+use sable::gpui_component::input::{Input, InputEvent, InputState};
 
 use crate::app::DesktopApp;
 use crate::rpc::Rpc;
@@ -27,6 +29,9 @@ pub struct LibraryPanel {
     shared: Arc<Shared>,
     rpc: Arc<Rpc>,
     app: Entity<DesktopApp>,
+    /// 搜索框(壳侧文件名过滤,零语义)
+    search: Option<Entity<InputState>>,
+    query: String,
     /// 已取到的缩略图(path → 位图)
     thumbs: std::collections::HashMap<String, Arc<RenderImage>>,
     /// 待取缩略图的 path 队列(串行消费)
@@ -42,16 +47,37 @@ impl LibraryPanel {
         shared: Arc<Shared>,
         rpc: Arc<Rpc>,
         app: &Entity<DesktopApp>,
+        window: &mut sable::gpui::Window,
         cx: &mut App,
     ) -> Entity<Self> {
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder("搜索文件名"));
         let panel = cx.new(|_| Self {
             shared,
             rpc,
             app: app.clone(),
+            search: Some(search.clone()),
+            query: String::new(),
             thumbs: Default::default(),
             queue: Vec::new(),
             inflight: None,
             queued_for: Vec::new(),
+        });
+        // 搜索变化 → 本地过滤(subscribe 挂在 panel 实体上下文)
+        let search_for_sub = search.clone();
+        let _ = search_for_sub;
+        panel.update(cx, |_, cx| {
+            cx.subscribe(
+                &search,
+                move |this: &mut LibraryPanel, _state, event, cx| {
+                    if let InputEvent::Change = event
+                        && let Some(editor) = this.search.clone()
+                    {
+                        this.query = editor.read(cx).value().to_string();
+                        cx.notify();
+                    }
+                },
+            )
+            .detach();
         });
         let weak = panel.downgrade();
         cx.spawn(async move |cx| {
@@ -141,7 +167,19 @@ fn kind_glyph(kind: &str) -> &'static str {
 impl Render for LibraryPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme(cx).colors;
-        let media = self.shared.snapshot().media;
+        let snapshot = self.shared.snapshot();
+        let added: HashSet<&str> = snapshot
+            .clips
+            .iter()
+            .filter_map(|c| c.get("src").and_then(serde_json::Value::as_str))
+            .collect();
+        let q = self.query.trim().to_lowercase();
+        let media: Vec<_> = snapshot
+            .media
+            .iter()
+            .filter(|m| q.is_empty() || m.name.to_lowercase().contains(&q))
+            .cloned()
+            .collect();
         let app_root = self.app.clone();
 
         let mut grid = div()
@@ -207,6 +245,21 @@ impl Render for LibraryPanel {
                                     .child(glyph)
                                     .into_any_element(),
                             })
+                            .when(added.contains(entry.path.as_str()), |c| {
+                                c.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(0.0))
+                                        .top(px(0.0))
+                                        .px(px(4.0))
+                                        .py(px(1.0))
+                                        .rounded_br_sm()
+                                        .bg(colors.success.opacity(0.9))
+                                        .text_size(px(9.0))
+                                        .text_color(colors.surface_0)
+                                        .child("已添加"),
+                                )
+                            })
                             .when(!duration.is_empty(), |c| {
                                 c.child(
                                     div()
@@ -237,15 +290,25 @@ impl Render for LibraryPanel {
         v_flex()
             .size_full()
             .child(
-                h_flex()
+                v_flex()
                     .px(px(SpacingTokens::SM))
-                    .py(px(SpacingTokens::XS))
+                    .pt(px(SpacingTokens::XS))
+                    .pb(px(SpacingTokens::XS))
+                    .gap(px(SpacingTokens::XS))
                     .child(
                         div()
                             .text_size(px(FONT_SIZE_CAPTION))
                             .text_color(colors.text_secondary)
                             .child(format!("素材 {} 项 · 双击插入到播放头", media.len())),
-                    ),
+                    )
+                    .when_some(self.search.clone(), |c, search| {
+                        c.child(
+                            div()
+                                .w_full()
+                                .text_size(px(FONT_SIZE_CAPTION))
+                                .child(Input::new(&search)),
+                        )
+                    }),
             )
             .child(
                 div()

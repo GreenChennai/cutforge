@@ -462,7 +462,10 @@ impl Render for InspectorPanel {
                     }
                     // 文本样式/花字只对文本片段有意义(text 为 null/缺失都跳过)
                     "textStyle" | "huazi"
-                        if clip.get("text").and_then(serde_json::Value::as_str).is_none() =>
+                        if clip
+                            .get("text")
+                            .and_then(serde_json::Value::as_str)
+                            .is_none() =>
                     {
                         continue;
                     }

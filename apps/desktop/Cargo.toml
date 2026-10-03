@@ -1,0 +1,21 @@
+[package]
+name = "cutforge-desktop"
+description = "CutForge 桌面壳(docs/upstream/03 C-FE):sable-dock 工作台 + /rpc 投影壳;真相在内核,壳零时间线语义"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+
+[[bin]]
+name = "cutforge-desktop"
+path = "src/main.rs"
+
+[dependencies]
+# 桌面壳底座(sable v4.0,full = dock+widgets+canvas+video)。
+# TODO(M5 发布前):path 部署切 git 依赖(`git = "https://github.com/GreenChennai/sable-ui"`,
+# rev 钉 v4.0.x);本地迭代用 sibling 路径(D:\Github\sable-ui)最快。
+sable = { path = "../../../sable-ui/crates/sable" }
+# /rpc + 数据面 GET 客户端(blocking;调用一律在 gpui 后台线程)
+ureq = { version = "2", features = ["json"] }
+serde_json = "1"
+# render_frame PNG → gpui RenderImage 裸帧(与 sable-canvas "png" 豁免同因)
+image = "0.25"

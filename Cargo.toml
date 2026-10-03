@@ -9,8 +9,9 @@ members = [
     "crates/cutforge-script",
     "crates/cutforge-wasm",
     "crates/cutforge-render",
+    "apps/desktop",
     # 后续加入:plugin-host / wasm(M5) / render(M6)
-    # M5 加入:apps/desktop(与上游 members 形状对齐)
+    # M5-4:apps/desktop 已落地(ADR-0039 恢复条件达成中,见 apps/desktop/README.md)
 ]
 
 [workspace.package]

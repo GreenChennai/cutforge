@@ -37,8 +37,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install ffmpeg (M8-3 渲染对拍夹具为硬门禁,不得跳过)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install ffmpeg + gpui Linux 系统库(apps/desktop 进 workspace 后的编译依赖,同 sable CI)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libwayland-dev libxkbcommon-dev libgbm-dev libfontconfig-dev
       - name: Build & test (auto-enables when crates land)
         if: hashFiles('crates/*/Cargo.toml') != ''
         env:

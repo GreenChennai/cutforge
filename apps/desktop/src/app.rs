@@ -183,11 +183,17 @@ fn max_seq_of(events: &serde_json::Value) -> Option<u64> {
 }
 
 fn load_once(rpc: &Rpc, shared: &Arc<Shared>) -> Result<(), String> {
-    let project = rpc.call(
+    let project_env = rpc.call(
         "project_get",
         serde_json::json!({}),
         Duration::from_secs(10),
     )?;
+    // project_get data 形状 = {project: <工程文档>, rev}(实测探针);
+    // 工程文档在内层 project 键,宽容兼容平铺形状
+    let project = project_env
+        .get("project")
+        .cloned()
+        .unwrap_or_else(|| project_env.clone());
     let timeline = rpc.call(
         "timeline_get",
         serde_json::json!({}),

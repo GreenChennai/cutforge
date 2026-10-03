@@ -81,6 +81,13 @@ fn main() {
 
     sable::gpui::Application::new().run(move |cx: &mut App| {
         sable::dock::init(cx);
+        // gpui-component 面板 chrome(DockArea/tab/滚动条)走它自己的主题全局,
+        // 默认跟系统(浅色)——桌面壳固定深色,与 sable tokens 深色一致
+        sable::gpui_component::theme::Theme::change(
+            sable::gpui_component::ThemeMode::Dark,
+            None,
+            cx,
+        );
 
         let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
         let options = WindowOptions {

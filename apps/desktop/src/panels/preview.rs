@@ -1,8 +1,12 @@
 //! 预览监视器:`render_frame` 单帧精确预览(内核 T2.4 工具,同步出帧,
 //! 帧缓存键含工作区指纹)。播放头变化/工程 rev 变化 → 请求槽位 → 后台
 //! 渲染 → PNG 解码 RGBA → gpui image 上屏(pixels/player_view 同款桥)。
-//! 底部传输控制条(⏮◀▶⏸▶⏭ + 时间码)回调 DesktopApp;取景为信箱式
-//! 等比缩放(canvas paint 阶段按帧宽高比算目的矩形)。
+//!
+//! 视觉/交互(NLE 惯例):
+//! - 取景区 = 纯黑画布 + 细边框,帧等比居中(canvas paint 阶段算目的矩形);
+//! - 传输条 = 左时间码(当前大字/总长小字)· 居中 ⏮◀▶/⏸▶⏭(播放态高亮)
+//!   · 右出帧状态徽标;
+//! - 进度条 = 传输条上方 4px 通栏,可点击/拖动 seek(hover 加高)。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +19,7 @@ use sable::gpui::{
 };
 use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
 use sable::widgets::theme::theme;
-use sable::widgets::tokens::FONT_SIZE_CAPTION;
+use sable::widgets::tokens::{FONT_SIZE_CAPTION, FONT_SIZE_HEADING};
 
 use crate::app::DesktopApp;
 use crate::rpc::{Rpc, render_timeout};
@@ -24,6 +28,8 @@ use crate::state::{PreviewFrame, Shared};
 /// 渲染卡死自愈上限(超过即放弃该帧;render_timeout 300s 是内核上限,
 /// 壳侧 60s 还没回包基本=挂了)。
 const RENDER_STUCK_SECS: u64 = 60;
+/// 传输按钮尺寸。
+const TP_BTN: f32 = 30.0;
 
 pub struct PreviewPanel {
     shared: Arc<Shared>,
@@ -34,6 +40,8 @@ pub struct PreviewPanel {
     rendering: Option<(u64, std::time::Instant)>,
     /// 渲染中被更新的请求(完成后立刻补一发出帧)
     pending: Option<u64>,
+    /// 进度条 track 区 bounds(prepaint 回写;点击 seek 换算基准)
+    progress_bounds: std::rc::Rc<std::cell::Cell<sable::gpui::Bounds<sable::gpui::Pixels>>>,
 }
 
 /// 一帧已解码的预览(时间点 + 原始宽高 + GPU 位图)。
@@ -58,6 +66,7 @@ impl PreviewPanel {
             image: None,
             rendering: None,
             pending: None,
+            progress_bounds: Default::default(),
         });
         let weak = panel.downgrade();
         cx.spawn(async move |cx| {
@@ -129,27 +138,27 @@ impl PreviewPanel {
         }
     }
 
+    /// 传输按钮(播放键放大居中;`primary` = accent 底)。
     fn transport_button(
         id: &'static str,
         glyph: &'static str,
+        primary: bool,
+        big: bool,
         colors: &sable::widgets::tokens::ColorTokens,
         app: &WeakEntity<DesktopApp>,
-    ) -> impl IntoElement + use<> {
+    ) -> sable::gpui::AnyElement {
         let weak = app.clone();
-        div()
+        let size = if big { TP_BTN + 6.0 } else { TP_BTN };
+        let font = if big { 13.0 } else { 11.0 };
+        let btn = div()
             .id(id)
-            .w(px(32.0))
-            .h(px(24.0))
+            .w(px(size))
+            .h(px(size))
             .flex()
             .items_center()
             .justify_center()
-            .rounded_sm()
-            .bg(colors.surface_2)
-            .text_size(px(11.0))
-            .text_color(colors.text_primary)
-            .hover(|s| s.bg(colors.border_subtle))
-            .cursor_pointer()
-            .child(glyph)
+            .rounded(px(5.0))
+            .text_size(px(font))
             .on_click(move |_, _, cx: &mut App| {
                 if let Some(app) = weak.upgrade() {
                     app.update(cx, |app, cx| match id {
@@ -168,8 +177,42 @@ impl PreviewPanel {
                         }
                     });
                 }
-            })
+            });
+        if primary {
+            btn.bg(colors.accent)
+                .text_color(colors.surface_0)
+                .hover(|s| s.bg(colors.text_secondary))
+                .cursor_pointer()
+                .child(glyph)
+                .into_any_element()
+        } else {
+            btn.bg(colors.surface_2)
+                .text_color(colors.text_primary)
+                .hover(|s| s.bg(colors.border_subtle))
+                .cursor_pointer()
+                .child(glyph)
+                .into_any_element()
+        }
     }
+}
+
+/// 进度条点击 → seek(窗口 x 坐标经 track bounds 换算比例;total=0 忽略)。
+fn seek_by_progress(
+    weak: &WeakEntity<DesktopApp>,
+    bounds_slot: &std::rc::Rc<std::cell::Cell<sable::gpui::Bounds<sable::gpui::Pixels>>>,
+    x: sable::gpui::Pixels,
+    cx: &mut App,
+) {
+    let Some(app) = weak.upgrade() else { return };
+    let total = app.read(cx).duration_ms;
+    let bounds = bounds_slot.get();
+    let width = f32::from(bounds.size.width);
+    if total == 0 || width <= 0.0 {
+        return;
+    }
+    let ratio = ((f32::from(x) - f32::from(bounds.origin.x)) / width).clamp(0.0, 1.0);
+    let ms = (ratio * total as f32) as u64;
+    app.update(cx, |app, cx| app.set_playhead(ms, cx));
 }
 
 /// 单帧时长(ms;fps 防御 ≤0)。
@@ -192,77 +235,211 @@ impl Render for PreviewPanel {
                 (a.playhead_ms, a.duration_ms, a.playing)
             })
             .unwrap_or((0, 0, false));
-        let caption = match (&self.image, self.rendering) {
-            (Some(shot), _) => format!(
-                "{} / {} · 单帧精确预览",
-                fmt_timecode(shot.t_ms),
-                fmt_timecode(total)
-            ),
+        let frame_state = match (&self.image, self.rendering) {
+            (Some(_), Some((t, _))) => format!("出帧中 {t}ms"),
+            (Some(_), None) => "单帧精确".to_string(),
             (None, Some((t, _))) => format!("出帧中… {}", fmt_timecode(t)),
-            (None, None) => "待出帧(移动播放头)".to_string(),
+            (None, None) => "待出帧".to_string(),
         };
         let image = self.image.clone();
         let weak = self.app.clone();
+        let progress = if total > 0 {
+            (playhead as f32 / total as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
 
         v_flex()
             .size_full()
             .bg(colors.surface_0)
-            // 取景区
+            // 拖动进度条:按住移动持续 seek(mouse_up 由 gpui click 链收尾)
+            .on_mouse_move({
+                let weak = weak.clone();
+                let bounds_slot = self.progress_bounds.clone();
+                move |ev: &sable::gpui::MouseMoveEvent, _, cx: &mut App| {
+                    if ev.pressed_button == Some(sable::gpui::MouseButton::Left) {
+                        seek_by_progress(&weak, &bounds_slot, ev.position.x, cx);
+                    }
+                }
+            })
+            // —— 取景区(纯黑画布 + 细边框)——
+            .child(
+                div().flex_1().min_h_0().p(px(SpacingTokens::SM)).child(
+                    div()
+                        .size_full()
+                        .bg(sable::gpui::black())
+                        .border_1()
+                        .border_color(colors.border_subtle)
+                        .rounded(px(4.0))
+                        .overflow_hidden()
+                        .items_center()
+                        .justify_center()
+                        .child(match image {
+                            Some(shot) => {
+                                frame_view(shot.image, Some(shot.dims)).into_any_element()
+                            }
+                            None => v_flex()
+                                .gap(px(SpacingTokens::XS))
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_size(px(22.0))
+                                        .text_color(colors.surface_2)
+                                        .child("▸"),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(FONT_SIZE_CAPTION))
+                                        .text_color(colors.text_secondary)
+                                        .child("移动播放头出帧"),
+                                )
+                                .into_any_element(),
+                        }),
+                ),
+            )
+            // —— 进度条(点击 seek;bounds 由 canvas prepaint 回写)——
             .child(
                 div()
-                    .flex_1()
-                    .min_h_0()
-                    .items_center()
-                    .justify_center()
-                    .bg(colors.surface_0)
-                    .child(match image {
-                        Some(shot) => frame_view(shot.image, Some(shot.dims)).into_any_element(),
-                        None => div()
-                            .text_size(px(FONT_SIZE_CAPTION))
-                            .text_color(colors.text_secondary)
-                            .child("(尚无预览帧)")
-                            .into_any_element(),
+                    .id("preview-progress")
+                    .w_full()
+                    .h(px(10.0))
+                    .px(px(SpacingTokens::SM))
+                    .cursor_pointer()
+                    .child(
+                        div()
+                            .relative()
+                            .w_full()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .child(
+                                canvas(
+                                    {
+                                        let bounds_slot = self.progress_bounds.clone();
+                                        move |bounds: sable::gpui::Bounds<sable::gpui::Pixels>,
+                                              _w: &mut Window,
+                                              _cx: &mut App| {
+                                            bounds_slot.set(bounds);
+                                        }
+                                    },
+                                    |_b: sable::gpui::Bounds<sable::gpui::Pixels>,
+                                     _s: (),
+                                     _w: &mut Window,
+                                     _cx: &mut App| {},
+                                )
+                                .size_full(),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .w_full()
+                                    .h(px(4.0))
+                                    .rounded_full()
+                                    .bg(colors.surface_2)
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .rounded_full()
+                                            .bg(colors.accent)
+                                            .w(sable::gpui::relative(progress)),
+                                    ),
+                            )
+                            .child(
+                                // 播放头小把手
+                                div()
+                                    .absolute()
+                                    .left(sable::gpui::relative(progress))
+                                    .top(px(1.0))
+                                    .w(px(8.0))
+                                    .h(px(8.0))
+                                    .rounded_full()
+                                    .bg(colors.text_primary)
+                                    .ml(px(-4.0)),
+                            ),
+                    )
+                    .on_click({
+                        let weak = weak.clone();
+                        let bounds_slot = self.progress_bounds.clone();
+                        move |ev: &sable::gpui::ClickEvent, _, cx: &mut App| {
+                            // 鼠标点击带 up 位置(键盘触发的 ClickEvent 无坐标,忽略)
+                            if let sable::gpui::ClickEvent::Mouse(m) = ev {
+                                seek_by_progress(&weak, &bounds_slot, m.up.position.x, cx);
+                            }
+                        }
                     }),
             )
-            // 传输控制条
+            // —— 传输控制条 ——
             .child(
                 h_flex()
                     .w_full()
-                    .h(px(36.0))
+                    .h(px(48.0))
                     .px(px(SpacingTokens::SM))
+                    .pb(px(SpacingTokens::SM))
                     .gap(px(SpacingTokens::XS))
                     .items_center()
-                    .border_t_1()
-                    .border_color(colors.border_subtle)
-                    .bg(colors.surface_1)
-                    .child(Self::transport_button("tp-home", "|◀", &colors, &weak))
-                    .child(Self::transport_button("tp-prev", "◀", &colors, &weak))
-                    .child(Self::transport_button(
-                        "tp-play",
-                        if playing { "❚❚" } else { "▶" },
-                        &colors,
-                        &weak,
-                    ))
-                    .child(Self::transport_button("tp-next", "▶", &colors, &weak))
-                    .child(Self::transport_button("tp-end", "▶|", &colors, &weak))
+                    .bg(colors.surface_0)
+                    // 左:时间码(当前大字 / 总长小字)
                     .child(
-                        div()
-                            .ml(px(SpacingTokens::SM))
-                            .text_size(px(FONT_SIZE_CAPTION + 1.0))
-                            .text_color(colors.text_primary)
-                            .child(format!(
-                                "{} / {}",
-                                fmt_timecode(playhead),
-                                fmt_timecode(total)
+                        h_flex()
+                            .w(px(150.0))
+                            .flex_shrink_0()
+                            .gap(px(SpacingTokens::XS))
+                            .items_baseline()
+                            .child(
+                                div()
+                                    .text_size(px(FONT_SIZE_HEADING + 2.0))
+                                    .text_color(colors.text_primary)
+                                    .child(fmt_timecode(playhead)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(FONT_SIZE_CAPTION))
+                                    .text_color(colors.text_secondary)
+                                    .child(format!("/ {}", fmt_timecode(total))),
+                            ),
+                    )
+                    // 中:传输按钮组
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .justify_center()
+                            .gap(px(SpacingTokens::SM))
+                            .child(Self::transport_button(
+                                "tp-home", "|◀", false, false, &colors, &weak,
+                            ))
+                            .child(Self::transport_button(
+                                "tp-prev", "◀", false, false, &colors, &weak,
+                            ))
+                            .child(Self::transport_button(
+                                "tp-play",
+                                if playing { "❚❚" } else { "▶" },
+                                true,
+                                true,
+                                &colors,
+                                &weak,
+                            ))
+                            .child(Self::transport_button(
+                                "tp-next", "▶", false, false, &colors, &weak,
+                            ))
+                            .child(Self::transport_button(
+                                "tp-end", "▶|", false, false, &colors, &weak,
                             )),
                     )
+                    // 右:出帧状态徽标
                     .child(
-                        div()
-                            .flex_1()
-                            .text_size(px(FONT_SIZE_CAPTION))
-                            .text_color(colors.text_secondary)
-                            .child(caption)
-                            .truncate(),
+                        h_flex().w(px(150.0)).flex_shrink_0().justify_end().child(
+                            div()
+                                .px(px(SpacingTokens::XS + 2.0))
+                                .py(px(2.0))
+                                .rounded_sm()
+                                .bg(colors.surface_1)
+                                .border_1()
+                                .border_color(colors.border_subtle)
+                                .text_size(px(FONT_SIZE_CAPTION))
+                                .text_color(colors.text_secondary)
+                                .child(frame_state),
+                        ),
                     ),
             )
     }
@@ -287,11 +464,11 @@ fn frame_view(image: Arc<RenderImage>, dims: Option<(u32, u32)>) -> impl IntoEle
                 if fw == 0 || fh == 0 || bounds.size.width <= px(0.0) {
                     return;
                 }
-                // 等比缩放 + 4% 留边
+                // 等比缩放铺满(取景区已留白,内部不再加边)
                 let scale = f32::min(
                     f32::from(bounds.size.width) / fw as f32,
                     f32::from(bounds.size.height) / fh as f32,
-                ) * 0.98;
+                );
                 let dw = fw as f32 * scale;
                 let dh = fh as f32 * scale;
                 let x = f32::from(bounds.origin.x) + (f32::from(bounds.size.width) - dw) / 2.0;

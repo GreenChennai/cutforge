@@ -240,7 +240,22 @@ pub fn project_timeline(snap: &Snapshot) -> (Timeline, HashMap<u64, String>) {
         };
         let start_ms = u64_of(clip, "startMs");
         let duration_ms = u64_of(clip, "durationMs");
-        let asset = AssetRef::new(str_of(clip, "src"), 0);
+        // 显示名:视频/音频 = 素材文件名;文本片段 = 字幕文本(去空,截 16 字)
+        // ——asset.path 在视图模型里只作展示名消费(TimelineView clip_label),
+        // 不回写、零语义。
+        let display = {
+            let text = str_of(clip, "text");
+            if text.is_empty() {
+                let src = str_of(clip, "src");
+                src.rsplit(['/', '\\'])
+                    .next()
+                    .unwrap_or(&src)
+                    .to_string()
+            } else {
+                text.chars().take(16).collect::<String>()
+            }
+        };
+        let asset = AssetRef::new(display, 0);
         // place_clip 铸造视图侧 id(ClipId 外部不可构造);行已按 startMs
         // 升序、内核保证同轨不重叠 → 插入即满足视图不变量
         if let Ok(id) = tl.place_clip(track_idx, asset, start_ms, duration_ms) {

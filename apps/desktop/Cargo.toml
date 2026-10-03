@@ -13,7 +13,7 @@ path = "src/main.rs"
 # 桌面壳底座(sable v4.0+,full = dock+widgets+canvas+video)。
 # git 依赖钉 rev(CI 可复现;升级窗口随 sable 发版推进 rev)。本地快速迭代可临时
 # 切 path(sibling 检出 D:\Github\sable-ui),提交前必须还原 git 形态。
-sable = { git = "https://github.com/GreenChennai/sable-ui.git", rev = "4ede823dc538b8c30da2cd15d01863753b12881a" }
+sable = { git = "https://github.com/GreenChennai/sable-ui.git", rev = "cb8867a19cdb0d725b920fddfab516b012c44519" }
 # /rpc + 数据面 GET 客户端(blocking;调用一律在 gpui 后台线程)
 ureq = { version = "2", features = ["json"] }
 serde_json = "1"

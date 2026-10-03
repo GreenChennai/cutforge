@@ -27,7 +27,7 @@ use crate::app::DesktopApp;
 const ZOOM_MIN: f64 = 12.0;
 const ZOOM_MAX: f64 = 600.0;
 /// 轨道头列宽。
-const HEADER_W: f32 = 108.0;
+const HEADER_W: f32 = 132.0;
 
 /// 时间轴宿主。
 pub struct TimelineHost {
@@ -264,60 +264,83 @@ impl Render for TimelineHost {
                     .flex_1()
                     .min_h_0()
                     .child(
-                        // 轨道头列(顶对齐标尺高)
+                        // 轨道头列:顶部空位放缩放组(与标尺对齐),下接轨道行
                         v_flex()
                             .w(px(HEADER_W))
                             .flex_shrink_0()
                             .border_r_1()
                             .border_color(colors.border_subtle)
                             .bg(colors.surface_1)
-                            .child(div().h(px(RULER_HEIGHT_PX)))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .h(px(RULER_HEIGHT_PX))
+                                    .px(px(SpacingTokens::XS))
+                                    .items_center()
+                                    .gap(px(2.0))
+                                    .child(Self::zoom_button(
+                                        "tl-out",
+                                        "−",
+                                        &app_weak,
+                                        &colors,
+                                        Zoom::Out,
+                                    ))
+                                    .child(Self::zoom_button(
+                                        "tl-in",
+                                        "+",
+                                        &app_weak,
+                                        &colors,
+                                        Zoom::In,
+                                    ))
+                                    .child(Self::zoom_button(
+                                        "tl-fit",
+                                        "⤢",
+                                        &app_weak,
+                                        &colors,
+                                        Zoom::Fit,
+                                    )),
+                            )
                             .children(tracks.iter().map(|t| {
                                 track_header(
                                     &app_weak, &t.id, &t.name, t.kind, t.mute, t.locked, &colors,
                                 )
-                            })),
+                            }))
+                            .when(tracks.is_empty(), |c| {
+                                c.child(
+                                    div()
+                                        .p(px(SpacingTokens::SM))
+                                        .text_size(px(FONT_SIZE_CAPTION))
+                                        .text_color(colors.text_secondary)
+                                        .child("工具栏 + 视频轨 开始"),
+                                )
+                            }),
                     )
                     .child(div().flex_1().min_w_0().child(self.panel.clone())),
             )
+            // 底部信息条
             .child(
-                // 缩放条
                 h_flex()
-                    .h(px(24.0))
+                    .h(px(22.0))
                     .px(px(SpacingTokens::SM))
-                    .gap(px(SpacingTokens::XS))
+                    .gap(px(SpacingTokens::SM))
                     .items_center()
                     .border_t_1()
                     .border_color(colors.border_subtle)
                     .bg(colors.surface_1)
-                    .child(Self::zoom_button(
-                        "tl-out",
-                        "−",
-                        &app_weak,
-                        &colors,
-                        Zoom::Out,
-                    ))
-                    .child(Self::zoom_button(
-                        "tl-in",
-                        "+",
-                        &app_weak,
-                        &colors,
-                        Zoom::In,
-                    ))
-                    .child(Self::zoom_button(
-                        "tl-fit",
-                        "适配",
-                        &app_weak,
-                        &colors,
-                        Zoom::Fit,
-                    ))
+                    .child(
+                        div()
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(colors.text_secondary)
+                            .child(format!("{pps:.0} px/s")),
+                    )
                     .child(
                         div()
                             .text_size(px(FONT_SIZE_CAPTION))
                             .text_color(colors.text_secondary)
                             .child(format!(
-                                "{pps:.0} px/s · 全长 {:.1}s",
-                                duration as f64 / 1000.0
+                                "全长 {:.1}s · {} 轨 · 点标尺/轨道空白跳播放头 · 拖动片段移动",
+                                duration as f64 / 1000.0,
+                                tracks.len()
                             )),
                     ),
             )

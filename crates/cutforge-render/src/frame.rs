@@ -16,7 +16,7 @@
 use crate::cache;
 use crate::plan::RenderPlan;
 use cutforge_core::model::{Clip, Project};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// 帧图格式(png 缺省 / jpeg)。
@@ -75,12 +75,22 @@ pub struct FrameOutcome {
 /// `-frames:v 1`。带 ASS 时先 setpts 把输入侧 seek 归零的 PTS 平移回时间线时刻,
 /// 再喂链式 subtitles 滤镜(ass_rels 相对缓存根,规避盘符冒号转义;与 exec_subtitle
 /// 同技巧;册四 T4.7 起支持外部 + 文本轨生成 ASS 串联,单条时参数与既有逐字一致)。
-pub fn frame_extract_args(base: &Path, at_ms: u64, fmt: FrameFormat, ass_rels: &[String], out: &Path) -> Vec<String> {
+pub fn frame_extract_args(
+    base: &Path,
+    at_ms: u64,
+    fmt: FrameFormat,
+    ass_rels: &[String],
+    out: &Path,
+) -> Vec<String> {
     let sec = at_ms as f64 / 1000.0;
     let mut args: Vec<String> = vec![
-        "-y".into(), "-v".into(), "error".into(),
-        "-ss".into(), format!("{sec:.3}"),
-        "-i".into(), base.to_string_lossy().into(),
+        "-y".into(),
+        "-v".into(),
+        "error".into(),
+        "-ss".into(),
+        format!("{sec:.3}"),
+        "-i".into(),
+        base.to_string_lossy().into(),
     ];
     let mut vf = String::new();
     if at_ms > 0 {
@@ -132,6 +142,92 @@ pub fn clip_content_len_ms(clip: &Clip, avail_ms: Option<u64>) -> u64 {
     ((t_in as f64 + pad).floor() as u64).min(clip.duration_ms)
 }
 
+/// 时间线 atMs → 合成域毫秒(单帧抽帧专用;与 compose 两路径 offset 口径同源)。
+///
+/// - `xfade`:与 [`crate::steps::compose_xfade_args`] 同口径——clip i 的合成起点
+///   = 前序名义时长累计(ADR-0023),段内偏移直加;
+/// - concat:与 concat 顺序拼接一致——clip i 合成起点 = 前序段实际时长累计
+///   (`seg_durs` = ffprobe 探测的段文件秒数;None 项回落名义时长);
+/// - atMs 不在任何片段区间(时间线空隙)→ `GapClamp::PreviousEnd`(定格前一
+///   片段末帧)/ `Start`(首帧);合成域钳末端 - 40ms 防 EOF 空产出。
+pub fn timeline_to_compose_ms(
+    clips: &[Clip],
+    xfade: bool,
+    at_ms: u64,
+    seg_durs: &[Option<f64>],
+) -> u64 {
+    const TAIL_GUARD_MS: u64 = 40;
+    if clips.is_empty() {
+        return 0;
+    }
+    // 找 at 所在片段(时间线区间 [start, start+dur));空隙取前段(无前段取首段)
+    let mut idx = 0usize;
+    let mut in_clip = false;
+    for (i, c) in clips.iter().enumerate() {
+        let s = c.start_ms;
+        let e = s + c.duration_ms;
+        if at_ms >= s && at_ms < e {
+            idx = i;
+            in_clip = true;
+            break;
+        }
+        if s > at_ms {
+            // 落在本段之前的空隙:钳前段末端
+            idx = i.saturating_sub(1);
+            break;
+        }
+        idx = i;
+    }
+    if !in_clip
+        && at_ms
+            >= clips
+                .last()
+                .map(|c| c.start_ms + c.duration_ms)
+                .unwrap_or(0)
+    {
+        idx = clips.len() - 1;
+    }
+    let seg_dur_ms = |i: usize| -> f64 {
+        match seg_durs.get(i).copied().flatten() {
+            Some(sec) => sec * 1000.0,
+            None => clips[i].duration_ms as f64,
+        }
+    };
+    // 合成起点累计
+    let base: f64 = clips[..idx]
+        .iter()
+        .enumerate()
+        .map(|(j, c)| {
+            if xfade {
+                c.duration_ms as f64
+            } else {
+                seg_dur_ms(j)
+            }
+        })
+        .sum();
+    let clip = &clips[idx];
+    let offset_in = if in_clip {
+        (at_ms.saturating_sub(clip.start_ms)) as f64
+    } else if at_ms < clips[0].start_ms {
+        // 头部(早于首段):首帧
+        0.0
+    } else {
+        // 空隙/尾部:定格本段末帧(段实际末端 - 保险)
+        (seg_dur_ms(idx) - TAIL_GUARD_MS as f64).max(0.0)
+    };
+    let t = base + offset_in;
+    let total: f64 = (0..clips.len())
+        .map(|j| {
+            if xfade {
+                clips[j].duration_ms as f64
+            } else {
+                seg_dur_ms(j)
+            }
+        })
+        .sum();
+    t.min((total - TAIL_GUARD_MS as f64).max(0.0)).max(0.0) as u64
+}
+
 /// 单帧渲染主入口(同步;命中缓存时零 ffmpeg,未命中复用段缓存后一次抽帧)。
 /// 错误串带 `NO_CONFIG:` / `PRECONDITION:` 前缀的,调用方(MCP 面)按 5.4 码映射。
 pub fn render_frame(
@@ -173,7 +269,14 @@ pub fn render_frame_opts(
         }
     };
     let canvas = (project.canvas.width, project.canvas.height);
-    let key = cache::frame_key_proxy(&fp.cache_key(), at_q, canvas, fmt.as_str(), combined.as_deref(), use_proxy);
+    let key = cache::frame_key_proxy(
+        &fp.cache_key(),
+        at_q,
+        canvas,
+        fmt.as_str(),
+        combined.as_deref(),
+        use_proxy,
+    );
     let cache_root = project_dir.join(cache::CACHE_ROOT);
     cache::ensure_dirs(&cache_root)?;
     let mut idx = cache::CacheIndex::load(&cache_root);
@@ -181,7 +284,12 @@ pub fn render_frame_opts(
 
     // 命中即返回(清单 load 时已 prune,条目在 = 文件在)
     if let Some(rel) = idx.touch("frame", &key, now) {
-        return Ok(FrameOutcome { output: cache_root.join(rel), at_ms: at_q, cached: true, key });
+        return Ok(FrameOutcome {
+            output: cache_root.join(rel),
+            at_ms: at_q,
+            cached: true,
+            key,
+        });
     }
 
     // 未命中:video 链(复用 RenderPlan 步骤函数与段缓存)→ 抽帧
@@ -189,9 +297,16 @@ pub fn render_frame_opts(
     if plan.video_clips.is_empty() {
         return Err("PRECONDITION: 时间线无视频片段,无帧可渲染".into());
     }
-    let video_end = plan.video_clips.iter().map(|c| c.start_ms + c.duration_ms).max().unwrap_or(0);
+    let video_end = plan
+        .video_clips
+        .iter()
+        .map(|c| c.start_ms + c.duration_ms)
+        .max()
+        .unwrap_or(0);
     if at_q >= video_end {
-        return Err(format!("PRECONDITION: atMs({at_q}) 超出视频时间线时长({video_end}ms)"));
+        return Err(format!(
+            "PRECONDITION: atMs({at_q}) 超出视频时间线时长({video_end}ms)"
+        ));
     }
     // 册四收口(候 BE 了断):越界口径按**真实内容末端**判定——曲线/常速变速折算后
     // 源不够读时,合成基片末端早于投影末端(start+duration),放行会让 ffmpeg 越过
@@ -207,7 +322,10 @@ pub fn render_frame_opts(
                 }
                 cutforge_io::probe::probe(&plan.project_dir.join(src))
                     .ok()
-                    .map(|info| info.duration_ms().saturating_sub(c.source_in_ms.unwrap_or(0)))
+                    .map(|info| {
+                        info.duration_ms()
+                            .saturating_sub(c.source_in_ms.unwrap_or(0))
+                    })
             });
             c.start_ms + clip_content_len_ms(c, avail)
         })
@@ -219,15 +337,35 @@ pub fn render_frame_opts(
         ));
     }
     let (_rep_seg, seg_files, seg_keys, _hits, _misses) = crate::exec_segment(&plan, &mut idx)?;
-    let (_rep_c, composed, compose_key, _cmds_c) = crate::exec_compose(&plan, &mut idx, &seg_files, &seg_keys)?;
-    let (_rep_o, overlaid, overlay_key, _cmds_o) = crate::exec_overlay(&plan, &mut idx, &composed, &compose_key)?;
+    let (_rep_c, composed, compose_key, _cmds_c) =
+        crate::exec_compose(&plan, &mut idx, &seg_files, &seg_keys)?;
+    let (_rep_o, overlaid, overlay_key, _cmds_o) =
+        crate::exec_overlay(&plan, &mut idx, &composed, &compose_key)?;
     // 册五 T5.4 调整层:单帧预览与成片同链(exec_adjust 空透传),预览无落差
-    let (_rep_a, base_video, _video_key, _cmds_a) = crate::exec_adjust(&plan, &mut idx, &overlaid, &overlay_key)?;
+    let (_rep_a, base_video, _video_key, _cmds_a) =
+        crate::exec_adjust(&plan, &mut idx, &overlaid, &overlay_key)?;
+
+    // 时间域映射:合成片(concat 拼接/xfade 名义累计)与时间线在**空隙/转场**
+    // 处不一致,直接 -ss atMs 会越过合成 EOF(实测 rc=0 无输出 → INTERNAL)。
+    // 段实际时长经 ffprobe 探测(失败回落名义,映射退化但不出错)。
+    let xfade_chain = crate::steps::is_xfade_chain(&plan.video_clips);
+    let seg_durs: Vec<Option<f64>> = seg_files
+        .iter()
+        .map(|f| crate::ffprobe_duration_sec(f).ok())
+        .collect();
+    let at_compose = timeline_to_compose_ms(&plan.video_clips, xfade_chain, at_q, &seg_durs);
 
     let rel = idx.record_with_ext(
         "frame",
         &key,
-        cache::frame_spec_proxy(&fp.cache_key(), at_q, canvas, fmt.as_str(), combined.as_deref(), use_proxy),
+        cache::frame_spec_proxy(
+            &fp.cache_key(),
+            at_q,
+            canvas,
+            fmt.as_str(),
+            combined.as_deref(),
+            use_proxy,
+        ),
         now,
         fmt.ext(),
     );
@@ -236,7 +374,8 @@ pub fn render_frame_opts(
     // 滤镜参数内路径必须正斜杠(Windows 反斜杠会被 filtergraph 转义规则吞掉)
     let write_ass = |tag: &str, payload: &[u8]| -> Result<String, String> {
         let rel = cache::tmp_rel(&format!("ass-{tag}-{key}.ass"));
-        cutforge_io::atomic::atomic_write(&cache_root.join(&rel), payload).map_err(|e| e.to_string())?;
+        cutforge_io::atomic::atomic_write(&cache_root.join(&rel), payload)
+            .map_err(|e| e.to_string())?;
         Ok(rel.to_string_lossy().replace('\\', "/"))
     };
     let mut ass_rels: Vec<String> = Vec::new();
@@ -246,7 +385,7 @@ pub fn render_frame_opts(
     if let Some(text) = &text_bytes {
         ass_rels.push(write_ass("text-frame", text)?);
     }
-    let args = frame_extract_args(&base_video, at_q, fmt, &ass_rels, &out);
+    let args = frame_extract_args(&base_video, at_compose, fmt, &ass_rels, &out);
     let r = crate::run_ff_in(&cache_root, "ffmpeg", &crate::strs(&args));
     for local in &ass_rels {
         let _ = cutforge_io::atomic::remove(&cache_root.join(local));
@@ -257,7 +396,12 @@ pub fn render_frame_opts(
     }
     idx.set_size("frame", &key, crate::file_size(&out));
     idx.save(&cache_root)?;
-    Ok(FrameOutcome { output: out, at_ms: at_q, cached: false, key })
+    Ok(FrameOutcome {
+        output: out,
+        at_ms: at_q,
+        cached: false,
+        key,
+    })
 }
 
 /// 单帧完成事件(stdout JSON 行;CLI 面唯一进度输出——单帧同步执行,一帧一报)。
@@ -298,6 +442,55 @@ mod tests {
         assert_eq!(FrameFormat::Jpeg.ext(), ".jpg");
     }
 
+    fn mk_clip(start: u64, dur: u64) -> Clip {
+        serde_json::from_value(serde_json::json!({
+            "id": format!("V1-{start:03}"), "src": "a.mp4",
+            "startMs": start, "durationMs": dur
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn timeline_to_compose_covers_gap_transition_and_tail() {
+        // 时间线:A(0-5000) 空隙(5000-12000) B(12000-20000)
+        let clips = [mk_clip(0, 5000), mk_clip(12_000, 8000)];
+        let segs = [Some(5.0), Some(8.0)];
+
+        // concat(无转场):B 起点 = 前段实际时长累计 5s;段内直加
+        assert_eq!(timeline_to_compose_ms(&clips, false, 0, &segs), 0);
+        assert_eq!(timeline_to_compose_ms(&clips, false, 4_999, &segs), 4_999);
+        // 空隙(6s)→ 定格前段末帧(5000-40)
+        assert_eq!(timeline_to_compose_ms(&clips, false, 6_000, &segs), 4_960);
+        // B 段:合成 5000 + (13000-12000)
+        assert_eq!(timeline_to_compose_ms(&clips, false, 13_000, &segs), 6_000);
+        // 越尾(25s)→ 钳合成末 8000+5000-40
+        assert_eq!(timeline_to_compose_ms(&clips, false, 25_000, &segs), 12_960);
+
+        // xfade(名义累计):B 合成起点 = A 名义 5000(与 offset 口径同源)
+        assert_eq!(timeline_to_compose_ms(&clips, true, 13_000, &segs), 6_000);
+        // 段时长探测缺失回落名义(与 segs 一致时不影响)
+        assert_eq!(
+            timeline_to_compose_ms(&clips, false, 13_000, &[None, None]),
+            6_000
+        );
+    }
+
+    #[test]
+    fn timeline_to_compose_single_clip_and_head() {
+        let clips = [mk_clip(2_000, 3_000)];
+        // 早于首段 → 0
+        assert_eq!(timeline_to_compose_ms(&clips, false, 0, &[Some(3.0)]), 0);
+        assert_eq!(
+            timeline_to_compose_ms(&clips, false, 3_500, &[Some(3.0)]),
+            1_500
+        );
+        // 越尾钳 3000-40
+        assert_eq!(
+            timeline_to_compose_ms(&clips, false, 9_999, &[Some(3.0)]),
+            2_960
+        );
+    }
+
     #[test]
     fn extract_args_seek_exact_and_burn_with_pts_restore() {
         let base = Path::new("/c/compose/x.mp4");
@@ -307,18 +500,41 @@ mod tests {
         let a0 = frame_extract_args(base, 0, FrameFormat::Png, &none, out);
         assert_eq!(
             a0,
-            ["-y", "-v", "error", "-ss", "0.000", "-i", "/c/compose/x.mp4",
-             "-frames:v", "1", "-f", "image2", "/c/frame/k.png"]
-                .iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            [
+                "-y",
+                "-v",
+                "error",
+                "-ss",
+                "0.000",
+                "-i",
+                "/c/compose/x.mp4",
+                "-frames:v",
+                "1",
+                "-f",
+                "image2",
+                "/c/frame/k.png"
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>(),
         );
         // at=1500:输入侧 -ss 1.5 + setpts 平移回时间线时刻
         let a1 = frame_extract_args(base, 1500, FrameFormat::Png, &none, out);
         assert_eq!(&a1[3..5], ["-ss", "1.500"]);
         assert_eq!(a1[8], "setpts=PTS+1.500/TB", "-vf 位于 -i 与输入路径之后");
         // ass:subtitles 追加在 setpts 之后(滤镜按序消费平移后的 PTS);jpeg 附带 -q:v 2
-        let a2 = frame_extract_args(base, 1500, FrameFormat::Jpeg, &["tmp/ass-frame-k.ass".into()], out);
+        let a2 = frame_extract_args(
+            base,
+            1500,
+            FrameFormat::Jpeg,
+            &["tmp/ass-frame-k.ass".into()],
+            out,
+        );
         assert_eq!(a2[8], "setpts=PTS+1.500/TB,subtitles=tmp/ass-frame-k.ass");
-        assert!(a2.windows(2).any(|w| w[0] == "-q:v" && w[1] == "2"), "jpeg 必须带质量档");
+        assert!(
+            a2.windows(2).any(|w| w[0] == "-q:v" && w[1] == "2"),
+            "jpeg 必须带质量档"
+        );
         // ass 且 at=0:只烧字幕,无 setpts
         let a3 = frame_extract_args(base, 0, FrameFormat::Png, &["tmp/a.ass".into()], out);
         assert_eq!(a3[8], "subtitles=tmp/a.ass");
@@ -344,7 +560,11 @@ mod tests {
     // ---- 真实渲染面(ffmpeg 缺失即失败,与 render_matrix 同口径) ----
 
     fn ffmpeg_ok() -> bool {
-        std::process::Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
     }
 
     /// 最小工程夹具:单轨单段 3s testsrc2 + 合法 project.json(05_时间线工程)。
@@ -353,11 +573,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("05_时间线工程")).unwrap();
         let ff = |args: &[&str]| {
-            let out = std::process::Command::new("ffmpeg").args(args).current_dir(&dir).output().unwrap();
-            assert!(out.status.success(), "ffmpeg 失败: {}", String::from_utf8_lossy(&out.stderr));
+            let out = std::process::Command::new("ffmpeg")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "ffmpeg 失败: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
-        ff(&["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=3",
-             "-c:v", "libx264", "-preset", "veryfast", "voice.mp4"]);
+        ff(&[
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x240:rate=30:duration=3",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "voice.mp4",
+        ]);
         cutforge_io::atomic::atomic_write(
             &dir.join("05_时间线工程/project.json"),
             serde_json::to_string_pretty(&json!({
@@ -382,7 +622,10 @@ mod tests {
 
     #[test]
     fn render_frame_real_png_then_cache_hit() {
-        assert!(ffmpeg_ok(), "ffmpeg 必须存在(与 render_matrix 同口径:缺失即失败)");
+        assert!(
+            ffmpeg_ok(),
+            "ffmpeg 必须存在(与 render_matrix 同口径:缺失即失败)"
+        );
         let dir = fixture("png");
         let project = load_project(&dir);
         let o1 = render_frame(&project, &dir, None, 1555, FrameFormat::Png).expect("首渲必成");
@@ -390,7 +633,11 @@ mod tests {
         assert!(!o1.cached);
         let bytes = std::fs::read(&o1.output).expect("产物必须存在");
         assert!(bytes.len() > 100, "PNG 不应为空壳");
-        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "产物必须是合法 PNG(魔数)");
+        assert_eq!(
+            &bytes[..8],
+            b"\x89PNG\r\n\x1a\n",
+            "产物必须是合法 PNG(魔数)"
+        );
         let o2 = render_frame(&project, &dir, None, 1555, FrameFormat::Png).expect("二渲必成");
         assert!(o2.cached, "同指纹同时间点必须命中 frame 缓存");
         assert_eq!(o1.output, o2.output);
@@ -400,7 +647,8 @@ mod tests {
         cutforge_io::atomic::atomic_write(
             &dir.join("05_时间线工程/project.json"),
             serde_json::to_string_pretty(&v).unwrap().as_bytes(),
-        ).unwrap();
+        )
+        .unwrap();
         let project2 = load_project(&dir);
         let o3 = render_frame(&project2, &dir, None, 1555, FrameFormat::Png).expect("改后重渲必成");
         assert!(!o3.cached, "改一笔即 miss,不得复用陈旧帧");
@@ -414,7 +662,10 @@ mod tests {
         let project = load_project(&dir);
         let o = render_frame(&project, &dir, None, 500, FrameFormat::Jpeg).expect("jpeg 渲必成");
         let bytes = std::fs::read(&o.output).unwrap();
-        assert!(bytes.starts_with(&[0xFF, 0xD8]), "产物必须是合法 JPEG(SOI 魔数)");
+        assert!(
+            bytes.starts_with(&[0xFF, 0xD8]),
+            "产物必须是合法 JPEG(SOI 魔数)"
+        );
         assert!(o.output.to_string_lossy().ends_with(".jpg"));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -433,8 +684,10 @@ mod tests {
             "[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
             "Dialogue: 0,0:00:00.50,0:00:02.50,Default,,0,0,0,,帧上字幕\n",
         ).as_bytes()).unwrap();
-        let with = render_frame(&project, &dir, Some(&ass), 1500, FrameFormat::Png).expect("带 ass 渲必成");
-        let without = render_frame(&project, &dir, None, 1500, FrameFormat::Png).expect("无 ass 渲必成");
+        let with = render_frame(&project, &dir, Some(&ass), 1500, FrameFormat::Png)
+            .expect("带 ass 渲必成");
+        let without =
+            render_frame(&project, &dir, None, 1500, FrameFormat::Png).expect("无 ass 渲必成");
         assert_ne!(with.key, without.key, "ASS 字节入键:带/不带必须不同键");
         let b_with = std::fs::read(&with.output).unwrap();
         let b_without = std::fs::read(&without.output).unwrap();
@@ -449,26 +702,30 @@ mod tests {
         // 用例 1:无视频片段(纯文本轨)→ PRECONDITION(不触 ffmpeg)
         let mut v: Value = serde_json::from_str(
             &std::fs::read_to_string(cutforge_io::paths::project_path(&dir)).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         v["tracks"] = json!([{"id": "T1", "kind": "text", "clips": [
             {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "x"}]}]);
         cutforge_io::atomic::atomic_write(
             &dir.join("05_时间线工程/project.json"),
             serde_json::to_string_pretty(&v).unwrap().as_bytes(),
-        ).unwrap();
+        )
+        .unwrap();
         let project = load_project(&dir);
         let err = render_frame(&project, &dir, None, 500, FrameFormat::Png).unwrap_err();
         assert!(err.starts_with("PRECONDITION:"), "{err}");
         // 用例 2:atMs 超出视频时间线 → PRECONDITION(守卫先于 ffmpeg,不触管线)
         let mut v2: Value = serde_json::from_str(
             &std::fs::read_to_string(cutforge_io::paths::project_path(&dir)).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         v2["tracks"] = json!([{"id": "V1", "kind": "video", "clips": [
             {"id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 3000, "role": "voice"}]}]);
         cutforge_io::atomic::atomic_write(
             &dir.join("05_时间线工程/project.json"),
             serde_json::to_string_pretty(&v2).unwrap().as_bytes(),
-        ).unwrap();
+        )
+        .unwrap();
         let project3 = load_project(&dir);
         let err2 = render_frame(&project3, &dir, None, 999_999, FrameFormat::Png).unwrap_err();
         assert!(err2.starts_with("PRECONDITION:"), "{err2}");
@@ -499,8 +756,10 @@ mod tests {
         assert_eq!(clip_content_len_ms(&c3, Some(2500)), 1750);
         // 定格组合:duration 3000 / freeze 1200 / 均速 1.5,源充足 → 定格补长计满 = 3000;
         // 源只剩 900 → t_in=600,pad=1800 → 2400(冻结克隆仍在,但真源只有 600ms 播放域)
-        let c4 = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 3000, "freezeMs": 1200,
-                           "speedCurve": [{"atMs": 0, "speed": 1.0}, {"atMs": 2000, "speed": 2.0}]}));
+        let c4 = mk(
+            json!({"id": "V1-001", "startMs": 0, "durationMs": 3000, "freezeMs": 1200,
+                           "speedCurve": [{"atMs": 0, "speed": 1.0}, {"atMs": 2000, "speed": 2.0}]}),
+        );
         assert_eq!(clip_content_len_ms(&c4, Some(100_000)), 3000);
         assert_eq!(clip_content_len_ms(&c4, Some(900)), 2400);
     }
@@ -510,13 +769,17 @@ mod tests {
     #[test]
     fn render_frame_curve_exhaustion_is_precondition_not_internal() {
         assert!(ffmpeg_ok(), "ffmpeg 必须存在(与 render_matrix 同口径)");
-        assert!(cutforge_io::probe::ffprobe_available(), "ffprobe 必须存在(内容末端折算依赖)");
+        assert!(
+            cutforge_io::probe::ffprobe_available(),
+            "ffprobe 必须存在(内容末端折算依赖)"
+        );
         let dir = fixture("exhaust");
         // 夹具源 3s;片段标称 3s + 曲线 [0:1.0, 3000:3.0](区间均值 2.0,需 6s 源)
         // → 源 3s 在播放域 1.5s 处耗尽 → 内容末端 = 1500ms < 标称末端 3000ms
         let v: Value = serde_json::from_str(
             &std::fs::read_to_string(cutforge_io::paths::project_path(&dir)).unwrap(),
-        ).unwrap();
+        )
+        .unwrap();
         let mut v2 = v.clone();
         v2["tracks"] = json!([{"id": "V1", "kind": "video", "clips": [
             {"id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 3000, "role": "voice",
@@ -524,14 +787,21 @@ mod tests {
         cutforge_io::atomic::atomic_write(
             &dir.join("05_时间线工程/project.json"),
             serde_json::to_string_pretty(&v2).unwrap().as_bytes(),
-        ).unwrap();
+        )
+        .unwrap();
         let project = load_project(&dir);
         // 内容末端内:正常出帧(守卫不得误伤)
         let ok = render_frame(&project, &dir, None, 500, FrameFormat::Png).expect("内容末端内必成");
-        assert_eq!(&std::fs::read(&ok.output).unwrap()[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(
+            &std::fs::read(&ok.output).unwrap()[..8],
+            b"\x89PNG\r\n\x1a\n"
+        );
         // 超内容末端(但在标称末端内)→ PRECONDITION,不再是 ffmpeg 空产出 INTERNAL
         let err = render_frame(&project, &dir, None, 2000, FrameFormat::Png).unwrap_err();
-        assert!(err.starts_with("PRECONDITION:"), "须 PRECONDITION 而非 {err}");
+        assert!(
+            err.starts_with("PRECONDITION:"),
+            "须 PRECONDITION 而非 {err}"
+        );
         assert!(err.contains("1500"), "报错须给出折算末端 1500ms: {err}");
         assert!(err.contains("3000"), "报错须同时给出标称末端: {err}");
         std::fs::remove_dir_all(&dir).ok();

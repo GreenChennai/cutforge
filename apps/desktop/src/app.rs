@@ -436,9 +436,17 @@ impl Render for DesktopApp {
         let n_clips = snap.clips.len();
 
         let toolbar = self.toolbar(&colors, cx);
+        let shortcut_hint =
+            "空格 播放 · ←→ 步帧 · Shift+←→ 1s · S 分割 · Del 删除 · Ctrl+Z 撤销 · ± 缩放";
+        let project_name = self
+            .project_dir
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(&self.project_dir)
+            .to_string();
         let statusbar = h_flex()
             .w_full()
-            .h(px(24.0))
+            .h(px(26.0))
             .px(px(SpacingTokens::SM))
             .gap(px(SpacingTokens::SM))
             .items_center()
@@ -476,8 +484,13 @@ impl Render for DesktopApp {
                 div()
                     .text_size(px(FONT_SIZE_CAPTION))
                     .text_color(colors.text_secondary)
-                    .child(self.project_dir.clone())
-                    .truncate(),
+                    .child(shortcut_hint),
+            )
+            .child(
+                div()
+                    .text_size(px(FONT_SIZE_CAPTION))
+                    .text_color(colors.text_secondary)
+                    .child(project_name),
             );
 
         div()
@@ -578,7 +591,7 @@ impl DesktopApp {
         };
         h_flex()
             .w_full()
-            .h(px(40.0))
+            .h(px(44.0))
             .px(px(SpacingTokens::SM))
             .gap(px(SpacingTokens::XS))
             .items_center()
@@ -591,6 +604,13 @@ impl DesktopApp {
                     .text_size(px(FONT_SIZE_HEADING))
                     .text_color(colors.accent)
                     .child("CutForge"),
+            )
+            .child(sep(colors))
+            .child(
+                div()
+                    .text_size(px(FONT_SIZE_CAPTION))
+                    .text_color(colors.text_secondary)
+                    .child(self.engine_label()),
             )
             .child(sep(colors))
             .child(tb("tb-undo", "↶ 撤销", true).on_click(submit_handler(
@@ -657,13 +677,12 @@ impl DesktopApp {
                 )),
             )
             .child(div().flex_1())
-            .child(
-                div()
-                    .text_size(px(FONT_SIZE_CAPTION))
-                    .text_color(colors.text_secondary)
-                    .child("空格 播放 · ←→ 步帧 · S 分割 · Del 删除 · Ctrl+Z 撤销"),
-            )
             .into_any_element()
+    }
+
+    /// 引擎能力徽标:渲染依赖是否就位(状态一览,替代散落报错)。
+    fn engine_label(&self) -> String {
+        "视频编辑工作台".to_string()
     }
 }
 
@@ -676,7 +695,7 @@ fn sep(colors: &ColorTokens) -> impl IntoElement + use<> {
         .bg(colors.border_subtle)
 }
 
-/// 工具栏按钮基座(enabled=false 置灰)。
+/// 工具栏按钮基座(enabled=false 置灰;danger = 删除类 hover 红)。
 fn toolbar_button(
     id: &'static str,
     label: &'static str,
@@ -685,9 +704,9 @@ fn toolbar_button(
 ) -> sable::gpui::Stateful<sable::gpui::Div> {
     div()
         .id(sable::gpui::ElementId::Name(id.into()))
-        .px(px(SpacingTokens::SM))
-        .py(px(3.0))
-        .rounded_sm()
+        .px(px(SpacingTokens::SM + 2.0))
+        .py(px(5.0))
+        .rounded(px(5.0))
         .text_size(px(FONT_SIZE_CAPTION + 1.0))
         .when(enabled, |s| {
             s.bg(colors.surface_2)

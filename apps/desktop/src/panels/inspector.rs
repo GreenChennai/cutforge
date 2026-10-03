@@ -165,6 +165,79 @@ impl InspectorPanel {
         entity
     }
 
+    /// 取或建嵌套对象数值字段(transition.durMs / motion.inMs 等):get 读
+    /// `clip[obj][val]` 缺省 `default`,set 读当前对象 merge 后整对象提交
+    /// (TransitionPatch/MotionPatch 按字段合并,壳零语义只搬运)。
+    #[allow(clippy::too_many_arguments)]
+    fn object_numeric_field(
+        &mut self,
+        key: &str,
+        obj_field: &'static str,
+        val_field: &'static str,
+        default: f64,
+        min: f64,
+        max: f64,
+        step: f64,
+        unit: &'static str,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> Entity<NumberField> {
+        if let Some(entity) = self.fields.get(key) {
+            return entity.clone();
+        }
+        let get_app = self.app.clone();
+        let set_app = self.app.clone();
+        let key_static: &'static str = Box::leak(key.to_string().into_boxed_str());
+        let binding = sable::widgets::binding::Binding::new(
+            move |cx: &App| {
+                get_app
+                    .upgrade()
+                    .and_then(|a| a.read(cx).selected_clip())
+                    .and_then(|clip| {
+                        clip.get(obj_field)
+                            .and_then(|o| o.get(val_field))
+                            .and_then(serde_json::Value::as_f64)
+                    })
+                    .unwrap_or(default)
+            },
+            move |value: f64, cx: &mut App| {
+                if let Some(app) = set_app.upgrade() {
+                    app.update(cx, |app, cx| {
+                        // 读当前对象,merge 单字段后整对象提交(patch 语义)
+                        let mut obj = app
+                            .selected_clip()
+                            .and_then(|clip| clip.get(obj_field).cloned())
+                            .and_then(|v| v.as_object().cloned())
+                            .unwrap_or_default();
+                        obj.insert(
+                            val_field.to_string(),
+                            serde_json::json!(value.round() as i64),
+                        );
+                        app.submit(
+                            "clip_update",
+                            serde_json::json!({
+                                "clipId": app.selection.clone(),
+                                "patch": { obj_field: serde_json::Value::Object(obj) }
+                            }),
+                            cx,
+                        );
+                    });
+                }
+            },
+        );
+        let entity = cx.new(|_| {
+            NumberField::new(binding)
+                .range(min, max)
+                .step(step)
+                .unit(unit)
+                .element_id(sable::gpui::ElementId::Name(
+                    format!("insp-{key_static}-{ix}").into(),
+                ))
+        });
+        self.fields.insert(key.to_string(), entity.clone());
+        entity
+    }
+
     /// 取或建文本编辑器(选片变化即重建并灌入当前文本)。
     fn text_field(
         &mut self,
@@ -387,19 +460,66 @@ impl Render for InspectorPanel {
                             ),
                         );
                     }
-                    // 文本样式/花字只对文本片段有意义
-                    "textStyle" | "huazi" if !clip.get("text").is_some() => {
+                    // 文本样式/花字只对文本片段有意义(text 为 null/缺失都跳过)
+                    "textStyle" | "huazi"
+                        if clip.get("text").and_then(serde_json::Value::as_str).is_none() =>
+                    {
                         continue;
                     }
                     // 转场:类型按钮 + 时长
                     "transition" => {
                         group_rows = group_rows
                             .child(transition_rows(&app, &clip, &snap, &clip_id, &colors));
+                        group_rows = group_rows.child(PropertyRow::new("时长").control(
+                            self.object_numeric_field(
+                                "transition.durMs",
+                                "transition",
+                                "durMs",
+                                500.0,
+                                100.0,
+                                5000.0,
+                                100.0,
+                                "ms",
+                                field_ix,
+                                cx,
+                            ),
+                        ));
+                        field_ix += 1;
                     }
                     // 动效:入/出场目录 + 时长
                     "motion" => {
                         group_rows =
                             group_rows.child(motion_rows(&app, &clip, &snap, &clip_id, &colors));
+                        group_rows = group_rows.child(PropertyRow::new("入场时长").control(
+                            self.object_numeric_field(
+                                "motion.inMs",
+                                "motion",
+                                "inMs",
+                                400.0,
+                                0.0,
+                                5000.0,
+                                100.0,
+                                "ms",
+                                field_ix,
+                                cx,
+                            ),
+                        ));
+                        field_ix += 1;
+                        group_rows = group_rows.child(PropertyRow::new("出场时长").control(
+                            self.object_numeric_field(
+                                "motion.outMs",
+                                "motion",
+                                "outMs",
+                                400.0,
+                                0.0,
+                                5000.0,
+                                100.0,
+                                "ms",
+                                field_ix,
+                                cx,
+                            ),
+                        ));
+                        field_ix += 1;
                     }
                     // 倒放开关
                     "reverse" => {

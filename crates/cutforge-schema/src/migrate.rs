@@ -3,7 +3,7 @@
 //! 册五 T5.1:目标版本随 IR v3 升为 3.0.0;v2 工程读兼容不经本函数(缺 keyframes
 //! 字段 = 无关键帧,schema enum 双版本接受,零迁移成本不强制改写)。
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 fn letter(kind: &str) -> char {
     match kind {
@@ -19,9 +19,12 @@ fn letter(kind: &str) -> char {
 /// "3.0.0";显式 "2.0.0" 保留不动(v2 读兼容口径,schema enum 双版本合法)。
 pub fn migrate_project_v1_to_v2(doc: &Value) -> Value {
     let mut obj: Map<String, Value> = doc.as_object().cloned().expect("project 文档必须是 object");
-    obj.entry("schemaVersion".to_string()).or_insert_with(|| json!("3.0.0"));
-    obj.entry("backends".to_string()).or_insert_with(|| json!(["ffmpeg"]));
-    obj.entry("notes".to_string()).or_insert_with(|| json!("notes.json"));
+    obj.entry("schemaVersion".to_string())
+        .or_insert_with(|| json!("3.0.0"));
+    obj.entry("backends".to_string())
+        .or_insert_with(|| json!(["ffmpeg"]));
+    obj.entry("notes".to_string())
+        .or_insert_with(|| json!("notes.json"));
 
     if let Some(Value::Array(tracks)) = obj.get_mut("tracks") {
         for (ti, track) in tracks.iter_mut().enumerate() {
@@ -39,7 +42,8 @@ pub fn migrate_project_v1_to_v2(doc: &Value) -> Value {
                 for (ci, clip) in clips.iter_mut().enumerate() {
                     let c = clip.as_object_mut().expect("clip 必须是 object");
                     let default_id = format!("{tid}-{:03}", ci + 1);
-                    c.entry("id".to_string()).or_insert_with(|| json!(default_id));
+                    c.entry("id".to_string())
+                        .or_insert_with(|| json!(default_id));
                 }
             }
         }

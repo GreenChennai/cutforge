@@ -40,7 +40,9 @@ fn py_validate(file: &std::path::Path, schema: &str, migrate: bool) -> i32 {
     if migrate {
         cmd.arg("--migrate");
     }
-    let st = cmd.output().expect("无法启动 python(双端对拍需要本机 python)");
+    let st = cmd
+        .output()
+        .expect("无法启动 python(双端对拍需要本机 python)");
     st.status.code().unwrap_or(4)
 }
 
@@ -57,12 +59,35 @@ fn py_migrate_canonical(file: &std::path::Path) -> String {
         .arg(file)
         .output()
         .expect("无法启动 python");
-    assert!(out.status.success(), "python 迁移失败: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "python 迁移失败: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 fn canonical(v: &Value) -> String {
-    serde_json::to_string(v).expect("序列化失败")
+    // 键序显式递归排序:serde_json 启用 preserve_order 时 Value 的 Map 是
+    // IndexMap(插入序直通),BTreeMap 缺省才有序——本测试断言"语义等价",
+    // 不得依赖 map 实现(sable/gpui 依赖树引入 preserve_order 后实测踩坑)
+    fn sorted(v: &Value) -> Value {
+        match v {
+            Value::Object(map) => {
+                let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                Value::Object(
+                    entries
+                        .into_iter()
+                        .map(|(k, val)| (k.clone(), sorted(val)))
+                        .collect(),
+                )
+            }
+            Value::Array(a) => Value::Array(a.iter().map(sorted).collect()),
+            other => other.clone(),
+        }
+    }
+    serde_json::to_string(&sorted(v)).expect("序列化失败")
 }
 
 fn read_json(p: &std::path::Path) -> Value {
@@ -80,12 +105,17 @@ fn dual_validation_equivalence() {
         ] {
             let f = dir.join(fname);
             let data = read_json(&f);
-            let target = if migrate { migrate_project(&data) } else { data.clone() };
+            let target = if migrate {
+                migrate_project(&data)
+            } else {
+                data.clone()
+            };
             let rust_ok = validate(schema, &target).is_empty();
             let py_code = py_validate(&f, schema, migrate);
             let py_ok = py_code == 0;
             assert_eq!(
-                rust_ok, py_ok,
+                rust_ok,
+                py_ok,
                 "双端结论不一致: {}/{} rust_ok={rust_ok} py_exit={py_code}",
                 dir.display(),
                 fname
@@ -143,13 +173,19 @@ fn canvas_range_boundary_dual_agreement() {
         let mut v = project.clone();
         v["canvas"] = serde_json::json!({"width": w, "height": h});
         let f = std::env::temp_dir().join(format!(
-            "cf-canvas-boundary-{}-{}-{}.json", w, h, std::process::id()
+            "cf-canvas-boundary-{}-{}-{}.json",
+            w,
+            h,
+            std::process::id()
         ));
         std::fs::write(&f, serde_json::to_string(&v).unwrap()).expect("写边界样本失败");
         let rust_ok = validate("project", &v).is_empty();
         let py_ok = py_validate(&f, "project", false) == 0;
         let _ = std::fs::remove_file(&f);
-        assert_eq!(rust_ok, expect_ok, "Rust 判定错: {w}x{h} 期望 ok={expect_ok}");
+        assert_eq!(
+            rust_ok, expect_ok,
+            "Rust 判定错: {w}x{h} 期望 ok={expect_ok}"
+        );
         assert_eq!(rust_ok, py_ok, "双端结论不一致: {w}x{h}");
     }
 }
@@ -162,9 +198,18 @@ fn migrate_idempotent() {
         let once = migrate_project(&data);
         let twice = migrate_project(&once);
         // 字节级一致(serde_json 默认 BTreeMap 键序,序列化确定)
-        assert_eq!(canonical(&once), canonical(&twice), "迁移不幂等: {}", dir.display());
+        assert_eq!(
+            canonical(&once),
+            canonical(&twice),
+            "迁移不幂等: {}",
+            dir.display()
+        );
         // v1 缺 v2 字段;迁移后必须过 v2 校验
-        assert!(validate("project", &once).is_empty(), "迁移后未过 v2 校验: {}", dir.display());
+        assert!(
+            validate("project", &once).is_empty(),
+            "迁移后未过 v2 校验: {}",
+            dir.display()
+        );
     }
 }
 
@@ -177,7 +222,8 @@ fn migrate_py_rust_semantic_eq() {
         let py_raw = py_migrate_canonical(&f);
         let py: Value = serde_json::from_str(&py_raw).expect("python 迁移输出非法");
         assert_eq!(
-            canonical(&rust), canonical(&py),
+            canonical(&rust),
+            canonical(&py),
             "双端迁移器输出不一致: {}",
             dir.display()
         );

@@ -14,12 +14,24 @@ pub mod migrate;
 /// 契约 schema(唯一手写契约的 Rust 侧嵌入;与 schemas/ 目录一一对应)。
 /// 册七 T7.2 起 +plugin-manifest(插件清单;五工程契约语义不动,加法维度)。
 pub const SCHEMA_SOURCES: &[(&str, &str)] = &[
-    ("project", include_str!("../../../schemas/project.schema.json")),
-    ("wordline", include_str!("../../../schemas/wordline.schema.json")),
-    ("cutlist", include_str!("../../../schemas/cutlist.schema.json")),
+    (
+        "project",
+        include_str!("../../../schemas/project.schema.json"),
+    ),
+    (
+        "wordline",
+        include_str!("../../../schemas/wordline.schema.json"),
+    ),
+    (
+        "cutlist",
+        include_str!("../../../schemas/cutlist.schema.json"),
+    ),
     ("notes", include_str!("../../../schemas/notes.schema.json")),
     ("oplog", include_str!("../../../schemas/oplog.schema.json")),
-    ("plugin-manifest", include_str!("../../../schemas/plugin-manifest.schema.json")),
+    (
+        "plugin-manifest",
+        include_str!("../../../schemas/plugin-manifest.schema.json"),
+    ),
 ];
 
 /// MCP 工具契约(G5-1 比对基准,M4 填充 schema)。
@@ -47,7 +59,9 @@ fn schemas() -> &'static std::collections::BTreeMap<String, serde_json::Value> {
 
 /// 校验指定 schema;返回错误列表(空 = 通过)。语义与 Python 生成校验器逐一对齐。
 pub fn validate(schema_name: &str, data: &serde_json::Value) -> Vec<String> {
-    let root = schemas().get(schema_name).unwrap_or_else(|| panic!("未知 schema: {schema_name}"));
+    let root = schemas()
+        .get(schema_name)
+        .unwrap_or_else(|| panic!("未知 schema: {schema_name}"));
     engine::validate_node(root, root, data, "$")
 }
 
@@ -74,13 +88,19 @@ mod tests {
             "form": "process", "entry": "plugin.py",
             "permissions": {"read": true, "write": true}
         });
-        assert!(validate("plugin-manifest", &good).is_empty(), "合法 manifest 必须过");
+        assert!(
+            validate("plugin-manifest", &good).is_empty(),
+            "合法 manifest 必须过"
+        );
         let bad = serde_json::json!({
             "id": "Demo", "name": "", "version": "1.0",
             "form": "vm", "permissions": {"read": true}
         });
         let errs = validate("plugin-manifest", &bad);
-        assert!(errs.len() >= 4, "id/name/version/form 四处必须点名:{errs:?}");
+        assert!(
+            errs.len() >= 4,
+            "id/name/version/form 四处必须点名:{errs:?}"
+        );
     }
 
     #[test]

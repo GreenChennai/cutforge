@@ -18,7 +18,9 @@ fn resolve<'a>(schema: &'a Value, root: &'a Value) -> &'a Value {
         assert!(r.starts_with("#/"), "不支持的外部引用: {r}");
         let mut node = root;
         for part in r[2..].split('/') {
-            node = node.get(part.replace("~1", "/").replace("~0", "~").as_str()).unwrap_or_else(|| panic!("悬垂 $ref: {r}"));
+            node = node
+                .get(part.replace("~1", "/").replace("~0", "~").as_str())
+                .unwrap_or_else(|| panic!("悬垂 $ref: {r}"));
         }
         cur = node;
     }
@@ -48,15 +50,17 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
     let schema = resolve(schema, root);
 
     if let Some(c) = schema.get("const")
-        && c != data {
-            errors.push(format!("{path}: const 期望 {c} 实际 {data}"));
-            return errors;
-        }
+        && c != data
+    {
+        errors.push(format!("{path}: const 期望 {c} 实际 {data}"));
+        return errors;
+    }
     if let Some(en) = schema.get("enum").and_then(Value::as_array)
-        && !en.contains(data) {
-            errors.push(format!("{path}: enum {en:?} 不含 {data}"));
-            return errors;
-        }
+        && !en.contains(data)
+    {
+        errors.push(format!("{path}: enum {en:?} 不含 {data}"));
+        return errors;
+    }
     if let Some(t) = schema.get("type") {
         let ok = match t {
             Value::String(s) => type_matches(&[s.as_str()], data),
@@ -72,35 +76,51 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
         }
     }
 
-    for (key, op) in [("minimum", std::cmp::Ordering::Less), ("maximum", std::cmp::Ordering::Greater)] {
+    for (key, op) in [
+        ("minimum", std::cmp::Ordering::Less),
+        ("maximum", std::cmp::Ordering::Greater),
+    ] {
         if let (Some(limit), Some(d)) = (schema.get(key).and_then(num_of), num_of(data))
-            && d.partial_cmp(&limit) == Some(op) {
-                errors.push(format!("{path}: {key} {limit} 实际 {d}"));
-            }
-    }
-    if let (Some(limit), Some(d)) = (schema.get("exclusiveMinimum").and_then(num_of), num_of(data))
-        && d <= limit {
-            errors.push(format!("{path}: exclusiveMinimum {limit} 实际 {d}"));
+            && d.partial_cmp(&limit) == Some(op)
+        {
+            errors.push(format!("{path}: {key} {limit} 实际 {d}"));
         }
+    }
+    if let (Some(limit), Some(d)) = (
+        schema.get("exclusiveMinimum").and_then(num_of),
+        num_of(data),
+    ) && d <= limit
+    {
+        errors.push(format!("{path}: exclusiveMinimum {limit} 实际 {d}"));
+    }
     // multipleOf(ADR-0015 画布偶数约束):d/m 须为整数;浮点余数用容差比较,
     // 与 Python 生成端(schema_gen.py 模板)逐语义对齐。
     if let (Some(m), Some(d)) = (schema.get("multipleOf").and_then(num_of), num_of(data))
-        && m > 0.0 {
-            let q = d / m;
-            if (q - q.round()).abs() > 1e-9 {
-                errors.push(format!("{path}: multipleOf {m} 实际 {d}"));
-            }
+        && m > 0.0
+    {
+        let q = d / m;
+        if (q - q.round()).abs() > 1e-9 {
+            errors.push(format!("{path}: multipleOf {m} 实际 {d}"));
         }
+    }
 
     if let Some(s) = data.as_str() {
         if let Some(min) = schema.get("minLength").and_then(Value::as_u64)
-            && (s.chars().count() as u64) < min {
-                errors.push(format!("{path}: minLength {min} 实际长度 {}", s.chars().count()));
-            }
+            && (s.chars().count() as u64) < min
+        {
+            errors.push(format!(
+                "{path}: minLength {min} 实际长度 {}",
+                s.chars().count()
+            ));
+        }
         if let Some(max) = schema.get("maxLength").and_then(Value::as_u64)
-            && (s.chars().count() as u64) > max {
-                errors.push(format!("{path}: maxLength {max} 实际长度 {}", s.chars().count()));
-            }
+            && (s.chars().count() as u64) > max
+        {
+            errors.push(format!(
+                "{path}: maxLength {max} 实际长度 {}",
+                s.chars().count()
+            ));
+        }
         if let Some(pat) = schema.get("pattern").and_then(Value::as_str) {
             let re = regex::Regex::new(pat).expect("schema pattern 必须合法");
             if !re.is_match(s) {
@@ -111,13 +131,15 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
 
     if let Some(arr) = data.as_array() {
         if let Some(min) = schema.get("minItems").and_then(Value::as_u64)
-            && (arr.len() as u64) < min {
-                errors.push(format!("{path}: minItems {min} 实际 {}", arr.len()));
-            }
+            && (arr.len() as u64) < min
+        {
+            errors.push(format!("{path}: minItems {min} 实际 {}", arr.len()));
+        }
         if let Some(max) = schema.get("maxItems").and_then(Value::as_u64)
-            && (arr.len() as u64) > max {
-                errors.push(format!("{path}: maxItems {max} 实际 {}", arr.len()));
-            }
+            && (arr.len() as u64) > max
+        {
+            errors.push(format!("{path}: maxItems {max} 实际 {}", arr.len()));
+        }
         if let Some(item) = schema.get("items").filter(|v| v.is_object()) {
             for (i, el) in arr.iter().enumerate() {
                 errors.extend(validate_node(item, root, el, &format!("{path}[{i}]")));
@@ -139,7 +161,9 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
                     Some(ps) => errors.extend(validate_node(ps, root, v, &format!("{path}.{k}"))),
                     None => {
                         if schema.get("additionalProperties") == Some(&Value::Bool(false)) {
-                            errors.push(format!("{path}: additionalProperties=false 拒绝多余键 '{k}'"));
+                            errors.push(format!(
+                                "{path}: additionalProperties=false 拒绝多余键 '{k}'"
+                            ));
                         }
                     }
                 }
@@ -150,49 +174,60 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
     // ---- 自定义跨字段断言(与 Python 引擎一致) ----
     if schema.get("x-removeRequiresGuardOk") == Some(&Value::Bool(true))
         && let Some(obj) = data.as_object()
-            && obj.get("action").and_then(Value::as_str) == Some("remove") {
-                let guard = obj.get("guard");
-                match guard.and_then(Value::as_object) {
-                    None => errors.push(format!("{path}: action=remove 但 guard 为空(guard_passed 视为未过)")),
-                    Some(g) if g.is_empty() => {
-                        errors.push(format!("{path}: action=remove 但 guard 为空(guard_passed 视为未过)"))
-                    }
-                    Some(g) => {
-                        let ok = g.get("okByReason").or_else(|| g.get("ok"));
-                        if ok != Some(&Value::Bool(true)) {
-                            errors.push(format!("{path}: action=remove 但 guard 判定 ok={ok:?}"));
-                        }
-                        if g.get("wordClipped") == Some(&Value::Bool(true)) {
-                            errors.push(format!("{path}: action=remove 但 wordClipped=true(任何 reason 下硬失败)"));
-                        }
-                    }
+        && obj.get("action").and_then(Value::as_str) == Some("remove")
+    {
+        let guard = obj.get("guard");
+        match guard.and_then(Value::as_object) {
+            None => errors.push(format!(
+                "{path}: action=remove 但 guard 为空(guard_passed 视为未过)"
+            )),
+            Some(g) if g.is_empty() => errors.push(format!(
+                "{path}: action=remove 但 guard 为空(guard_passed 视为未过)"
+            )),
+            Some(g) => {
+                let ok = g.get("okByReason").or_else(|| g.get("ok"));
+                if ok != Some(&Value::Bool(true)) {
+                    errors.push(format!("{path}: action=remove 但 guard 判定 ok={ok:?}"));
+                }
+                if g.get("wordClipped") == Some(&Value::Bool(true)) {
+                    errors.push(format!(
+                        "{path}: action=remove 但 wordClipped=true(任何 reason 下硬失败)"
+                    ));
                 }
             }
+        }
+    }
     if schema.get("x-keepCoversTimeline") == Some(&Value::Bool(true))
         && let Some(obj) = data.as_object()
-            && let (Some(keep), Some(total)) =
-                (obj.get("keep").and_then(Value::as_array), obj.get("srcTotalMs").and_then(Value::as_i64))
-            {
-                let mut cur: i64 = 0;
-                let mut ok = true;
-                for seg in keep {
-                    let pair = seg.as_array().map(|a| {
-                        (a.len() == 2, a.first().and_then(Value::as_i64), a.get(1).and_then(Value::as_i64))
-                    });
-                    match pair {
-                        Some((true, Some(a), Some(b))) if a >= cur && b >= a => cur = b,
-                        _ => {
-                            ok = false;
-                            break;
-                        }
-                    }
-                }
-                if !ok {
-                    errors.push(format!("{path}: keep 区间无序/重叠/非法"));
-                } else if cur != total {
-                    errors.push(format!("{path}: keep 覆盖到 {cur} ≠ srcTotalMs {total}"));
+        && let (Some(keep), Some(total)) = (
+            obj.get("keep").and_then(Value::as_array),
+            obj.get("srcTotalMs").and_then(Value::as_i64),
+        )
+    {
+        let mut cur: i64 = 0;
+        let mut ok = true;
+        for seg in keep {
+            let pair = seg.as_array().map(|a| {
+                (
+                    a.len() == 2,
+                    a.first().and_then(Value::as_i64),
+                    a.get(1).and_then(Value::as_i64),
+                )
+            });
+            match pair {
+                Some((true, Some(a), Some(b))) if a >= cur && b >= a => cur = b,
+                _ => {
+                    ok = false;
+                    break;
                 }
             }
+        }
+        if !ok {
+            errors.push(format!("{path}: keep 区间无序/重叠/非法"));
+        } else if cur != total {
+            errors.push(format!("{path}: keep 覆盖到 {cur} ≠ srcTotalMs {total}"));
+        }
+    }
     errors
 }
 

@@ -12,7 +12,9 @@ use serde_json::Value;
 /// 返回 Err = keep 不合法(无序/空段/未覆盖片尾,与 rs_cut 校验同文案语义)。
 pub fn finalize_cutlist_value(cl: &mut Value) -> Result<(), String> {
     let total = cl["srcTotalMs"].as_i64().ok_or("缺 srcTotalMs")?;
-    let Some(cuts) = cl["cuts"].as_array() else { return Err("缺 cuts".into()) };
+    let Some(cuts) = cl["cuts"].as_array() else {
+        return Err("缺 cuts".into());
+    };
     let mut removes: Vec<(i64, i64)> = cuts
         .iter()
         .filter(|c| c["action"].as_str() == Some("remove"))
@@ -67,15 +69,26 @@ mod tests {
     /// 与 CutFlow 真实实现逐例对拍(金样由 rs_cut.finalize_cutlist 生成)。
     #[test]
     fn parity_with_rs_cut_golden() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/keep_recompute_golden.json");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/keep_recompute_golden.json"
+        );
         let text = std::fs::read_to_string(path).expect("缺 keep_recompute_golden.json");
         let doc: Value = serde_json::from_str(&text).unwrap();
         for case in doc["cases"].as_array().unwrap() {
             let mut cl = case["input"].clone();
             finalize_cutlist_value(&mut cl)
                 .unwrap_or_else(|e| panic!("case {} 重算失败: {e}", case["name"]));
-            assert_eq!(cl["keep"], case["expectedKeep"], "case {} keep 不符", case["name"]);
-            assert_eq!(cl["removedMs"], case["expectedRemovedMs"], "case {} removedMs 不符", case["name"]);
+            assert_eq!(
+                cl["keep"], case["expectedKeep"],
+                "case {} keep 不符",
+                case["name"]
+            );
+            assert_eq!(
+                cl["removedMs"], case["expectedRemovedMs"],
+                "case {} removedMs 不符",
+                case["name"]
+            );
         }
     }
 

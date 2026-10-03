@@ -3,6 +3,7 @@
 pub mod inspector;
 pub mod library;
 pub mod preview;
+pub mod settings;
 pub mod timeline;
 
 use sable::gpui::{IntoElement, ParentElement as _, Styled as _, div, px};

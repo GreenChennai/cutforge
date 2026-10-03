@@ -46,6 +46,10 @@ pub struct DesktopApp {
     pub playhead_ms: u64,
     /// 播放中(壳侧推进播放头)
     pub playing: bool,
+    /// 吸附开关(拖拽/展示用;时间线工具行与设置页同源切换)
+    pub snap_enabled: bool,
+    /// 壳侧剪贴板(内核 clip id;clip_copy → Ctrl+V 经 clip_paste_at 落播放头)
+    pub clipboard: Option<String>,
     /// 上一帧时刻(播放推进累加)
     last_frame: Instant,
     pub duration_ms: u64,
@@ -97,6 +101,8 @@ impl DesktopApp {
                 selection: None,
                 playhead_ms: 0,
                 playing: false,
+                snap_enabled: true,
+                clipboard: None,
                 last_frame: Instant::now(),
                 duration_ms: 0,
                 status: format!("连接中…(工程 {root_dir})"),
@@ -126,6 +132,11 @@ impl DesktopApp {
                 cx,
             );
             let inspector = SablePanel::create("检查器", InspectorPanel::new(&this, cx).into(), cx);
+            let settings = SablePanel::create(
+                "设置",
+                crate::panels::settings::SettingsPanel::new(&this, cx).into(),
+                cx,
+            );
             let timeline_host = TimelineHost::new(&this, app.timeline.clone(), cx);
             let timeline_panel = SablePanel::create("时间轴", timeline_host.clone().into(), cx);
 
@@ -133,7 +144,7 @@ impl DesktopApp {
                 "cutforge-desktop",
                 vec![library],
                 preview,
-                vec![inspector],
+                vec![inspector, settings],
                 window,
                 cx,
             );
@@ -382,6 +393,13 @@ impl DesktopApp {
         cx.notify();
     }
 
+    /// 吸附开关切换(时间线工具行/设置页同源)。
+    pub fn toggle_snap(&mut self, cx: &mut Context<Self>) {
+        self.snap_enabled = !self.snap_enabled;
+        self.status = format!("吸附 {}", if self.snap_enabled { "开" } else { "关" });
+        cx.notify();
+    }
+
     /// 播放/暂停(到尾自动停;从 0 重播)。
     pub fn toggle_play(&mut self, cx: &mut Context<Self>) {
         if self.playing {
@@ -551,17 +569,103 @@ impl DesktopApp {
             (" ", false, false) => self.toggle_play(cx),
             ("left", false, _) => self.set_playhead(self.playhead_ms.saturating_sub(step), cx),
             ("right", false, _) => self.set_playhead(self.playhead_ms.saturating_add(step), cx),
+            ("up", false, false) | ("down", false, false) => {
+                // 上/下:相邻轨同名位置片段选择(简化:清选;多轨遍历候后)
+                self.selection = None;
+                self.status = "取消选中".to_string();
+                cx.notify();
+            }
             ("home", false, _) => self.set_playhead(0, cx),
             ("end", false, _) => self.set_playhead(self.duration_ms, cx),
             ("delete", false, _) | ("backspace", false, _) => self.delete_selected(cx),
             ("s", false, false) => self.split_selected(cx),
+            ("t", false, false) => {
+                // 全轨分割(剪映 Ctrl+B 同义;S=单片段,T=全轨)
+                self.submit(
+                    "clip_split_all",
+                    serde_json::json!({ "tMs": self.playhead_ms }),
+                    cx,
+                );
+            }
             ("d", false, false) => self.duplicate_selected(cx),
+            ("c", true, false) => self.copy_selected(cx),
+            ("x", true, false) => {
+                self.copy_selected(cx);
+                self.delete_selected(cx);
+            }
+            ("v", true, false) => self.paste_at_playhead(cx),
+            ("g", false, false) => self.close_gap_at_playhead(cx),
             ("z", true, false) => self.submit("undo", serde_json::json!({}), cx),
             ("z", true, true) | ("y", true, _) => self.submit("redo", serde_json::json!({}), cx),
             ("=", false, _) | ("+", false, _) => self.zoom(1.3, cx),
             ("-", false, _) => self.zoom(1.0 / 1.3, cx),
             _ => {}
         }
+    }
+
+    /// 复制选中片段到壳侧剪贴板(内核 clip_copy 幂等,但壳只存 id 即可;
+    /// 直接存 id:paste 用 clip_paste_at 需 trackId+startMs,不依赖内核剪贴板)。
+    fn copy_selected(&mut self, cx: &mut Context<Self>) {
+        match self.selection.clone() {
+            Some(clip) => {
+                self.clipboard = Some(clip);
+                self.status = "已复制".to_string();
+                cx.notify();
+            }
+            None => {
+                self.status = "未选中片段".to_string();
+                cx.notify();
+            }
+        }
+    }
+
+    /// 粘贴:剪贴板片段的源轨 + 播放头落点(clip_paste_at;同 kind 校验在内核)。
+    fn paste_at_playhead(&mut self, cx: &mut Context<Self>) {
+        let Some(clip_id) = self.clipboard.clone() else {
+            self.status = "剪贴板为空".to_string();
+            cx.notify();
+            return;
+        };
+        // 目标轨:剪贴板片段的源轨(从快照按 id 反查;查不到回落首视频轨)
+        let snap = self.shared.snapshot();
+        let track_id = snap
+            .clips
+            .iter()
+            .find(|c| c.get("id").and_then(serde_json::Value::as_str) == Some(clip_id.as_str()))
+            .and_then(|c| c.get("track").and_then(serde_json::Value::as_str))
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                snap.first_track_of(&[sable::video::model::TrackKind::Video])
+                    .unwrap_or_else(|| "V1".to_string())
+            });
+        self.submit(
+            "clip_paste_at",
+            serde_json::json!({ "trackId": track_id, "startMs": self.playhead_ms }),
+            cx,
+        );
+    }
+
+    /// 关闭播放头所在空隙(需片段 id 定位轨道;取选中片段的轨,否则首视频轨)。
+    fn close_gap_at_playhead(&mut self, cx: &mut Context<Self>) {
+        let track_id = self
+            .selected_clip()
+            .map(|c| {
+                c.get("track")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("V1")
+                    .to_string()
+            })
+            .unwrap_or_else(|| {
+                self.shared
+                    .snapshot()
+                    .first_track_of(&[sable::video::model::TrackKind::Video])
+                    .unwrap_or_else(|| "V1".to_string())
+            });
+        self.submit(
+            "clip_gap_delete",
+            serde_json::json!({ "trackId": track_id, "tMs": self.playhead_ms }),
+            cx,
+        );
     }
 
     fn zoom(&mut self, factor: f64, cx: &mut Context<Self>) {

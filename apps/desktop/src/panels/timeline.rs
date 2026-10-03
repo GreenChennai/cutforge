@@ -52,6 +52,8 @@ pub struct TimelineHost {
 impl TimelineHost {
     pub fn new(app: &Entity<DesktopApp>, timeline: Entity<Timeline>, cx: &mut App) -> Entity<Self> {
         let weak = app.downgrade();
+        // 拖拽乐观预览用(主实体 move 给 TimelineView)
+        let timeline_for_drag = timeline.clone();
         let panel = cx.new(|_| {
             TimelineView::new(timeline)
                 .on_seek({
@@ -62,7 +64,24 @@ impl TimelineHost {
                         }
                     }
                 })
+                // 拖拽中:本地乐观预览(改视图模型 start_ms,不提交后端——
+                // 逐 move 提交会引发 RPC+全量重拉,拖动一卡一卡的根因)
                 .on_move_clip({
+                    let timeline = timeline_for_drag;
+                    move |id: ClipId, to_ms: u64, cx: &mut App| {
+                        timeline.update(cx, |tl, _| {
+                            for track in &mut tl.tracks {
+                                for clip in &mut track.clips {
+                                    if clip.id == id {
+                                        clip.start_ms = to_ms;
+                                    }
+                                }
+                            }
+                        });
+                    }
+                })
+                // 松手:一次性提交内核(乐观预览的落地帧;rev 回流后重投影对齐)
+                .on_drop_clip({
                     let weak = weak.clone();
                     move |id: ClipId, to_ms: u64, cx: &mut App| {
                         if let Some(app) = weak.upgrade() {
@@ -455,9 +474,14 @@ impl Render for TimelineHost {
                 .find(|(_, v)| **v == kernel)
                 .map(|(vid, _)| *vid)
         });
+        let snap_on = app
+            .as_ref()
+            .map(|a| a.read(cx).snap_enabled)
+            .unwrap_or(true);
         self.panel.update(cx, |panel, _| {
             panel.set_playhead(playhead);
             panel.set_selected(selected);
+            panel.set_snap_enabled(snap_on);
         });
         let has_sel = selected.is_some();
 
@@ -488,6 +512,19 @@ impl Render for TimelineHost {
                     }
                 }
             }))
+            // 吸附开关(磁铁;active = accent 底)
+            .child(
+                Self::tool_button("tl-snap", "⚖ 吸附", true, &colors)
+                    .when(snap_on, |s| s.bg(sable::gpui::hsla(0.0, 0.0, 0.0, 0.0)))
+                    .on_click({
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| app.toggle_snap(cx));
+                            }
+                        }
+                    }),
+            )
             .child(
                 Self::tool_button("tl-split", "✂ 分割", has_sel, &colors).on_click({
                     let weak = app_weak.clone();

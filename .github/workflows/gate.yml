@@ -40,7 +40,7 @@ jobs:
       - name: Install ffmpeg + gpui Linux 系统库(apps/desktop 进 workspace 后的编译依赖,同 sable CI)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg libwayland-dev libxkbcommon-dev libgbm-dev libfontconfig-dev
+          sudo apt-get install -y -qq ffmpeg libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libgbm-dev libfontconfig-dev libxcb1-dev libx11-dev libudev-dev libasound2-dev pkg-config
       - name: Build & test (auto-enables when crates land)
         if: hashFiles('crates/*/Cargo.toml') != ''
         env:

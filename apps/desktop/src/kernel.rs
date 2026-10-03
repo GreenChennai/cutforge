@@ -49,7 +49,8 @@ impl Kernel {
             .spawn()
             .map_err(|e| format!("拉起 {} 失败:{e}", cli.display()))?;
 
-        // 健康等待:只读 project_get 直到 200(内核起服务通常 <2s)
+        // 健康等待:就绪探针只验证 HTTP 服务面(/ui-fields),不要求工程合法
+        // ——工程校验失败开窗后在状态栏展示,壳不为坏工程白等超时(内核起服务通常 <2s)
         let rpc = Rpc::new(
             format!("http://127.0.0.1:{}", args.port),
             &args.token,
@@ -57,20 +58,17 @@ impl Kernel {
         );
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            if rpc
-                .call("project_get", serde_json::json!({}), Duration::from_secs(2))
-                .is_ok()
-            {
+            if rpc.probe().is_ok() {
                 break;
             }
             if Instant::now() > deadline {
                 let _ = child.kill();
                 return Err("内核 30s 未就绪(查看 cutforge-cli serve 是否报错)".into());
             }
-            // 子进程提前退出 = 启动失败(工程不存在等)
+            // 子进程提前退出 = 启动失败(端口被占/可执行文件坏等)
             if let Ok(Some(_)) = child.try_wait() {
                 return Err(
-                    "内核进程提前退出(root 工程目录不存在?先用 cutforge-cli new 创建)".into(),
+                    "内核进程提前退出(端口被占用?可 --port 换口或 --attach 接已有实例)".into(),
                 );
             }
             std::thread::sleep(Duration::from_millis(300));

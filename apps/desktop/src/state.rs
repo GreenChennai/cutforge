@@ -21,12 +21,14 @@ pub struct Shared {
     /// 连接状态(健康探测/任意成功请求置真)
     pub connected: AtomicBool,
     pub inner: Mutex<Snapshot>,
-    /// 预览帧:<(tMs, PNG 路径 或 RGBA 字节)> 由渲染任务写入
-    pub preview: Mutex<Option<PreviewFrame>>,
-    /// 期望预览的播放头(壳请求,渲染任务消费后清零)
+    /// 预览渲染结果槽(后台任务写,UI 泵取;Err 亦占位防卡死)
+    pub preview_result: Mutex<Option<Result<PreviewFrame, String>>>,
+    /// 期望预览的播放头(壳请求,渲染泵消费)
     pub preview_request: Mutex<Option<u64>>,
     /// 最近一次网络错误(状态栏展示)
     pub last_error: Mutex<Option<String>>,
+    /// 后台重拉进行中(防重入;UI 泵守卫)
+    pub reloading: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -38,14 +40,70 @@ pub struct PreviewFrame {
     pub height: u32,
 }
 
+/// 轨道元数据(轨道头展示/插入路由用;来自 project.tracks 形状搬运)。
+#[derive(Clone)]
+pub struct TrackMeta {
+    pub id: String,
+    pub kind: TrackKind,
+    pub name: String,
+    pub mute: bool,
+    pub locked: bool,
+}
+
+/// 媒体库条目(media_browse `files` 形状搬运;.cutforge 缓存已滤除)。
+#[derive(Clone)]
+pub struct MediaEntry {
+    pub name: String,
+    /// 工程内相对路径(clip_add src / media_thumbnail src 直通)
+    pub path: String,
+    /// 内核给的 kind:video/audio/image
+    pub kind: String,
+    /// 文件大小(展示用;当前面板未展示,保留字段)
+    #[allow(dead_code)]
+    pub bytes: u64,
+    pub duration_ms: Option<u64>,
+}
+
 /// 一次完整投影的快照(后台线程整帧替换,UI 读时克隆)。
 #[derive(Clone, Default)]
 pub struct Snapshot {
     pub project: Value,
+    pub tracks: Vec<TrackMeta>,
     pub clips: Vec<Value>,
     pub ui_fields: Value,
-    pub media: Vec<Value>,
+    /// 转场/动效/花字目录(GET /catalogs;缺省 Null)
+    pub catalogs: Value,
+    pub media: Vec<MediaEntry>,
     pub rev: u64,
+}
+
+impl Snapshot {
+    /// 工程时长(clips endMs 最大值;ms)。
+    pub fn duration_ms(&self) -> u64 {
+        self.clips
+            .iter()
+            .filter_map(|c| c.get("endMs").and_then(Value::as_u64))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// 工程帧率(缺省 30)。
+    pub fn fps(&self) -> f64 {
+        let fps = self
+            .project
+            .get("fps")
+            .and_then(Value::as_f64)
+            .unwrap_or(30.0);
+        if fps <= 0.0 { 30.0 } else { fps }
+    }
+
+    /// 第一条匹配轨道类型的轨道 id(媒体插入路由;文本素材回落文本轨)。
+    pub fn first_track_of(&self, kinds: &[TrackKind]) -> Option<String> {
+        self.tracks
+            .iter()
+            .find(|t| kinds.contains(&t.kind) && !t.locked)
+            .map(|t| t.id.clone())
+    }
 }
 
 impl Shared {
@@ -60,6 +118,11 @@ impl Shared {
 
     pub fn snapshot(&self) -> Snapshot {
         self.inner.lock().unwrap().clone()
+    }
+
+    /// 快照数据 rev(轻量读,不克隆;重投影对账用)。
+    pub fn snapshot_rev(&self) -> u64 {
+        self.inner.lock().unwrap().rev
     }
 
     pub fn store_snapshot(&self, snap: Snapshot) {
@@ -91,6 +154,66 @@ fn track_kind(kind: &str) -> TrackKind {
     }
 }
 
+/// project.tracks → 轨道元数据(名称缺省回落轨道 id)。
+pub fn track_metas(project: &Value) -> Vec<TrackMeta> {
+    project
+        .get("tracks")
+        .and_then(Value::as_array)
+        .map(|tracks| {
+            tracks
+                .iter()
+                .map(|t| {
+                    let id = str_of(t, "id");
+                    let name = {
+                        let n = str_of(t, "name");
+                        if n.is_empty() { id.clone() } else { n }
+                    };
+                    TrackMeta {
+                        kind: track_kind(&str_of(t, "kind")),
+                        name,
+                        mute: t.get("mute").and_then(Value::as_bool).unwrap_or(false),
+                        locked: t.get("locked").and_then(Value::as_bool).unwrap_or(false),
+                        id,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// media_browse 响应 → 媒体条目;滤除 `.cutforge` 缓存与隐藏文件。
+pub fn media_entries(data: &Value) -> Vec<MediaEntry> {
+    data.get("files")
+        .and_then(Value::as_array)
+        .map(|files| {
+            files
+                .iter()
+                .filter_map(|f| {
+                    let path = str_of(f, "path");
+                    if path.is_empty() || path.starts_with(".cutforge") || path.starts_with('.') {
+                        return None;
+                    }
+                    let name = {
+                        let n = str_of(f, "name");
+                        if n.is_empty() {
+                            path.rsplit(['/', '\\']).next().unwrap_or(&path).to_string()
+                        } else {
+                            n
+                        }
+                    };
+                    Some(MediaEntry {
+                        name,
+                        kind: str_of(f, "kind"),
+                        bytes: u64_of(f, "bytes"),
+                        duration_ms: f.get("durationMs").and_then(Value::as_u64),
+                        path,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// 快照 → (Sable Timeline 视图, clip id 映射表)。
 ///
 /// 轨道清单来自 `project.tracks`(id/kind),片段来自 `timeline_get.clips`
@@ -101,20 +224,11 @@ pub fn project_timeline(snap: &Snapshot) -> (Timeline, HashMap<u64, String>) {
     tl.px_per_second = 60.0;
     let mut id_map = HashMap::new();
 
-    let track_kinds: Vec<(String, TrackKind)> = snap
-        .project
-        .get("tracks")
-        .and_then(Value::as_array)
-        .map(|tracks| {
-            tracks
-                .iter()
-                .map(|t| (str_of(t, "id"), track_kind(&str_of(t, "kind"))))
-                .collect()
-        })
-        .unwrap_or_default();
-    for (_, kind) in &track_kinds {
-        tl.add_track(*kind);
+    for track in &snap.tracks {
+        tl.add_track(track.kind);
     }
+    let track_kinds: Vec<(String, TrackKind)> =
+        snap.tracks.iter().map(|t| (t.id.clone(), t.kind)).collect();
 
     let mut rows: Vec<&Value> = snap.clips.iter().collect();
     rows.sort_by_key(|c| u64_of(c, "startMs"));

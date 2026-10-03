@@ -109,6 +109,24 @@ impl Rpc {
         let path = format!("/events?root={}&since={since}", percent_encode(&self.root));
         self.get(&path, Duration::from_secs(5))
     }
+
+    /// 就绪探针:只打静态数据面 `/ui-fields`,HTTP 200 即服务可用——
+    /// **不要求工程合法**(工程校验错误属于业务面,开窗后在状态栏展示,
+    /// 不能让壳为坏工程白等健康超时)。
+    pub fn probe(&self) -> Result<(), String> {
+        self.get("/ui-fields", Duration::from_secs(2)).map(|_| ())
+    }
+
+    /// 内核返回的文件路径补全为绝对路径(media_thumbnail 给工程内相对路径,
+    /// render_frame 给绝对路径;壳侧读文件前统一落绝对)。
+    pub fn absolutize(&self, path: &str) -> std::path::PathBuf {
+        let p = std::path::Path::new(path);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            std::path::Path::new(&self.root).join(p)
+        }
+    }
 }
 
 /// 最小百分号编码(路径安全集;不引 url 依赖)。

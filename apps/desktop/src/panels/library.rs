@@ -1,49 +1,140 @@
-//! 媒体库:media_browse 只读清单(缩略图/拖拽导入候 C-FE4;当前双击导入
-//! 语义在 Web 壳已有,桌面壳先立清单与信息面)。
+//! 媒体库:media_browse 清单(壳侧滤缓存目录)→ 缩略图卡片网格
+//! (media_thumbnail 抽帧,串行拉取防 ffmpeg 风暴),双击卡片 =
+//! clip_add 落到播放头(轨道按素材类型路由,首个同类未锁轨)。
 
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
+use sable::gpui::prelude::FluentBuilder as _;
 use sable::gpui::{
-    App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, Styled as _, Window, div, px,
+    App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ObjectFit,
+    ParentElement as _, Render, RenderImage, StatefulInteractiveElement as _, Styled as _,
+    StyledImage as _, Window, div, hsla, img, px,
 };
-use sable::widgets::prelude::{SpacingTokens, v_flex};
+use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::FONT_SIZE_CAPTION;
 
+use crate::app::DesktopApp;
 use crate::rpc::Rpc;
 use crate::state::Shared;
 
+/// 卡片缩略图区尺寸(px)。
+const THUMB_H: f32 = 74.0;
+
 pub struct LibraryPanel {
     shared: Arc<Shared>,
+    rpc: Arc<Rpc>,
+    app: Entity<DesktopApp>,
+    /// 已取到的缩略图(path → 位图)
+    thumbs: std::collections::HashMap<String, Arc<RenderImage>>,
+    /// 待取缩略图的 path 队列(串行消费)
+    queue: Vec<String>,
+    /// 在途请求的 path(完成前不再派新)
+    inflight: Option<String>,
+    /// 上次建队列时的 media path 集(变化才重建)
+    queued_for: Vec<String>,
 }
 
 impl LibraryPanel {
-    pub fn new(shared: Arc<Shared>, rpc: Arc<Rpc>, cx: &mut App) -> Entity<Self> {
-        // 一次性拉媒体清单(内核就绪后 1.5s;失败静默——面板留说明)
-        let rpc_for_media = rpc.clone();
-        let shared_for_media = shared.clone();
-        cx.background_executor()
-            .spawn(async move {
-                std::thread::sleep(std::time::Duration::from_millis(1500));
-                if let Ok(data) = rpc_for_media.call(
-                    "media_browse",
-                    serde_json::json!({}),
-                    std::time::Duration::from_secs(20),
-                ) {
-                    let entries = data
-                        .get("entries")
-                        .and_then(serde_json::Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    shared_for_media.inner.lock().unwrap().media = entries;
-                    shared_for_media
-                        .dirty
-                        .store(true, std::sync::atomic::Ordering::Relaxed);
+    pub fn new(
+        shared: Arc<Shared>,
+        rpc: Arc<Rpc>,
+        app: &Entity<DesktopApp>,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let panel = cx.new(|_| Self {
+            shared,
+            rpc,
+            app: app.clone(),
+            thumbs: Default::default(),
+            queue: Vec::new(),
+            inflight: None,
+            queued_for: Vec::new(),
+        });
+        let weak = panel.downgrade();
+        cx.spawn(async move |cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(400))
+                    .await;
+                let _ = weak.update(cx, |panel, cx| panel.pump(cx));
+            }
+        })
+        .detach();
+        panel
+    }
+
+    /// 泵:媒体清单变化 → 重建缩略图队列;空闲 → 派下一张(串行)。
+    fn pump(&mut self, cx: &mut Context<Self>) {
+        let media = self.shared.snapshot().media;
+        let paths: Vec<String> = media.iter().map(|m| m.path.clone()).collect();
+        if self.queued_for != paths {
+            self.queued_for = paths.clone();
+            let have: HashSet<&String> = self.thumbs.keys().collect();
+            self.queue = paths
+                .iter()
+                .filter(|p| !have.contains(p) && self.inflight.as_ref() != Some(*p))
+                .cloned()
+                .collect();
+        }
+        if self.inflight.is_some() {
+            return;
+        }
+        let Some(path) = self.queue.pop() else {
+            return;
+        };
+        self.inflight = Some(path.clone());
+        let rpc = self.rpc.clone();
+        cx.spawn(async move |this, cx| {
+            let result = fetch_thumbnail(&rpc, &path.clone());
+            let _ = this.update(cx, |panel, cx| {
+                panel.inflight = None;
+                if let Ok((path, image)) = result {
+                    panel.thumbs.insert(path, image);
+                    cx.notify();
                 }
-            })
-            .detach();
-        cx.new(|_| Self { shared })
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+}
+
+/// 拉取缩略图(media_thumbnail → PNG → RenderImage)。
+fn fetch_thumbnail(rpc: &Rpc, src: &str) -> Result<(String, Arc<RenderImage>), String> {
+    let data = rpc.call(
+        "media_thumbnail",
+        serde_json::json!({ "src": src, "width": 320 }),
+        Duration::from_secs(60),
+    )?;
+    let file = data
+        .get("file")
+        .or_else(|| data.get("media"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or("缩略图响应缺 file 路径")?;
+    // 内核给工程内相对路径,须挂工程根再读
+    let bytes = std::fs::read(rpc.absolutize(file)).map_err(|e| format!("读缩略图失败:{e}"))?;
+    let img = image::load_from_memory(&bytes).map_err(|e| format!("解码缩略图失败:{e}"))?;
+    let rgba = img.to_rgba8();
+    let image =
+        png_rgba_to_render_image(&rgba, rgba.width(), rgba.height()).ok_or("缩略图位图非法")?;
+    Ok((src.to_string(), image))
+}
+
+/// RGBA8 → RenderImage(与 preview 同式)。
+fn png_rgba_to_render_image(rgba: &[u8], width: u32, height: u32) -> Option<Arc<RenderImage>> {
+    let buffer = image::RgbaImage::from_raw(width, height, rgba.to_vec())?;
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
+}
+
+/// 素材类型 → 占位字形。
+fn kind_glyph(kind: &str) -> &'static str {
+    match kind {
+        "audio" => "♪",
+        "image" => "▣",
+        _ => "▶",
     }
 }
 
@@ -51,39 +142,125 @@ impl Render for LibraryPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme(cx).colors;
         let media = self.shared.snapshot().media;
-        let mut list = v_flex().gap(px(SpacingTokens::XS));
+        let app_root = self.app.clone();
+
+        let mut grid = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(SpacingTokens::SM))
+            .content_start();
         if media.is_empty() {
-            list = list.child(
+            grid = grid.child(
                 div()
                     .text_size(px(FONT_SIZE_CAPTION))
                     .text_color(colors.text_secondary)
-                    .child("素材清单为空或加载中(导入走 Web 壳/CLI,拖拽导入候 C-FE4)"),
+                    .child("工程目录无媒体文件(放入 03_assets/ 等目录后会自动列出)"),
             );
         }
-        for (i, entry) in media.iter().enumerate().take(200) {
-            let name = entry
-                .get("name")
-                .or_else(|| entry.get("path"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("(未知素材)")
-                .to_string();
-            list = list.child(
+        for entry in &media {
+            let thumb = self.thumbs.get(&entry.path).cloned();
+            let glyph = kind_glyph(&entry.kind);
+            let duration = entry
+                .duration_ms
+                .map(|d| {
+                    let s = d / 1000;
+                    format!("{:>2}:{:02}", s / 60, s % 60)
+                })
+                .unwrap_or_default();
+            let path = entry.path.clone();
+            let app_root = app_root.clone();
+            grid = grid.child(
                 div()
-                    .id(sable::gpui::ElementId::Name(format!("media-{i}").into()))
-                    .px(px(SpacingTokens::SM))
-                    .py(px(2.0))
+                    .id(sable::gpui::ElementId::Name(
+                        format!("media-{}", entry.path).into(),
+                    ))
+                    .w(px(132.0))
                     .rounded_sm()
-                    .text_size(px(FONT_SIZE_CAPTION))
-                    .text_color(colors.text_primary)
-                    .hover(|s| s.bg(colors.surface_2))
-                    .child(name)
-                    .truncate(),
+                    .overflow_hidden()
+                    .bg(colors.surface_1)
+                    .border_1()
+                    .border_color(colors.border_subtle)
+                    .cursor_pointer()
+                    .hover(|s| s.border_color(colors.accent))
+                    .on_click(move |ev, _, cx: &mut App| {
+                        // 双击 = 插入时间线(播放头处,同类首轨)
+                        if ev.click_count() >= 2 {
+                            let path = path.clone();
+                            app_root.update(cx, |app, cx| app.insert_media(&path, cx));
+                        }
+                    })
+                    .child(
+                        div()
+                            .relative()
+                            .h(px(THUMB_H))
+                            .w_full()
+                            .bg(colors.surface_0)
+                            .child(match thumb {
+                                Some(image) => thumb_view(image).into_any_element(),
+                                None => div()
+                                    .size_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(px(18.0))
+                                    .text_color(colors.text_secondary)
+                                    .child(glyph)
+                                    .into_any_element(),
+                            })
+                            .when(!duration.is_empty(), |c| {
+                                c.child(
+                                    div()
+                                        .absolute()
+                                        .right(px(2.0))
+                                        .bottom(px(2.0))
+                                        .px(px(3.0))
+                                        .rounded_sm()
+                                        .bg(hsla(0.0, 0.0, 0.0, 0.65))
+                                        .text_size(px(9.0))
+                                        .text_color(colors.text_primary)
+                                        .child(duration),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .px(px(SpacingTokens::XS))
+                            .py(px(2.0))
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(colors.text_primary)
+                            .child(entry.name.clone())
+                            .truncate(),
+                    ),
             );
         }
+
         v_flex()
             .size_full()
-            .p(px(SpacingTokens::SM))
-            .gap(px(SpacingTokens::XS))
-            .child(list)
+            .child(
+                h_flex()
+                    .px(px(SpacingTokens::SM))
+                    .py(px(SpacingTokens::XS))
+                    .child(
+                        div()
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(colors.text_secondary)
+                            .child(format!("素材 {} 项 · 双击插入到播放头", media.len())),
+                    ),
+            )
+            .child(
+                div()
+                    .id("library-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(SpacingTokens::SM))
+                    .pb(px(SpacingTokens::SM))
+                    .child(grid),
+            )
     }
+}
+
+/// 缩略图铺满卡片(img 元素 Cover 裁剪)。
+fn thumb_view(image: Arc<RenderImage>) -> impl IntoElement + use<> {
+    img(image).size_full().object_fit(ObjectFit::Cover)
 }

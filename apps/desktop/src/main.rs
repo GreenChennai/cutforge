@@ -80,20 +80,23 @@ fn main() {
     };
 
     sable::gpui::Application::new().run(move |cx: &mut App| {
+        // 两套主题全局各自初始化:sable tokens(widgets 面板自绘)+ gpui-component
+        // (DockArea/tab/输入框 chrome)。sable::dock::init 已含 gpui_component::init
+        // 与 sable theme::init,不能只调后者(丢 sable 主题即启动 panic)
         sable::dock::init(cx);
-        // gpui-component 面板 chrome(DockArea/tab/滚动条)走它自己的主题全局,
-        // 默认跟系统(浅色)——桌面壳固定深色,与 sable tokens 深色一致
+        // gpui-component 面板 chrome 默认跟系统(浅色)——桌面壳固定深色,
+        // 与 sable tokens 深色一致
         sable::gpui_component::theme::Theme::change(
             sable::gpui_component::ThemeMode::Dark,
             None,
             cx,
         );
 
-        let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
+        let bounds = Bounds::centered(None, size(px(1560.), px(950.)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(sable::gpui::TitlebarOptions {
-                title: Some("CutForge · 桌面壳(M5-4)".into()),
+                title: Some("CutForge".into()),
                 ..Default::default()
             }),
             ..Default::default()

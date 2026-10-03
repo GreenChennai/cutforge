@@ -156,7 +156,14 @@ pub fn validate_node(schema: &Value, root: &Value, data: &Value, path: &str) -> 
             }
         }
         if let Some(props) = schema.get("properties").and_then(Value::as_object) {
-            for (k, v) in obj {
+            // 数据键显式排序:serde_json 启用 preserve_order 时 Map 为 IndexMap
+            // (输入序直通),BTreeMap 缺省为排序序——错误列表顺序必须与 map
+            // 实现解耦(golden 对拍按索引比较;sable 依赖树引入 preserve_order
+            // 后 ubuntu CI 实测漂移)
+            let mut data_keys: Vec<&String> = obj.keys().collect();
+            data_keys.sort();
+            for k in data_keys {
+                let v = &obj[k];
                 match props.get(k) {
                     Some(ps) => errors.extend(validate_node(ps, root, v, &format!("{path}.{k}"))),
                     None => {

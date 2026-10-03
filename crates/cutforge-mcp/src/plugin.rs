@@ -56,10 +56,8 @@ pub fn validate_manifest(v: &Value) -> Vec<String> {
     };
     dup_check("commands");
     dup_check("panels");
-    // 确定性输出:workspace 引入 sable(git 依赖)后 serde_json 启用
-    // preserve_order,schema 校验器按 manifest 输入序遍历键,错误列表顺序
-    // 随输入漂移(golden 对拍实测)。排序让响应与 map 实现解耦。
-    errs.sort();
+    // 顺序确定性由 cutforge_schema::validate 的数据键排序保证(见 engine.rs),
+    // 此处不再排序——required 先于字段错误是 golden 的口径
     errs
 }
 

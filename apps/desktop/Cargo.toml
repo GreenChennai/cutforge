@@ -10,10 +10,10 @@ name = "cutforge-desktop"
 path = "src/main.rs"
 
 [dependencies]
-# 桌面壳底座(sable v4.0,full = dock+widgets+canvas+video)。
-# TODO(M5 发布前):path 部署切 git 依赖(`git = "https://github.com/GreenChennai/sable-ui"`,
-# rev 钉 v4.0.x);本地迭代用 sibling 路径(D:\Github\sable-ui)最快。
-sable = { path = "../../../sable-ui/crates/sable" }
+# 桌面壳底座(sable v4.0+,full = dock+widgets+canvas+video)。
+# git 依赖钉 rev(CI 可复现;升级窗口随 sable 发版推进 rev)。本地快速迭代可临时
+# 切 path(sibling 检出 D:\Github\sable-ui),提交前必须还原 git 形态。
+sable = { git = "https://github.com/GreenChennai/sable-ui.git", rev = "a3de29c2cac7e7b9041215bf994ce5132a2af12d" }
 # /rpc + 数据面 GET 客户端(blocking;调用一律在 gpui 后台线程)
 ureq = { version = "2", features = ["json"] }
 serde_json = "1"

@@ -39,15 +39,23 @@ pub fn onset_strength(env: &[f32]) -> Vec<f32> {
 pub fn pcm_lag(a: &[i16], b: &[i16], rate: u32, max_lag_ms: u64) -> (i64, f64) {
     const DECIM: usize = 8;
     let dec = |x: &[i16]| -> Vec<f64> {
-        let out: Vec<f64> = x.chunks(DECIM).map(|c| c.iter().map(|v| f64::from(*v)).sum::<f64>() / c.len() as f64).collect();
-        let mean = if out.is_empty() { 0.0 } else { out.iter().sum::<f64>() / out.len() as f64 };
+        let out: Vec<f64> = x
+            .chunks(DECIM)
+            .map(|c| c.iter().map(|v| f64::from(*v)).sum::<f64>() / c.len() as f64)
+            .collect();
+        let mean = if out.is_empty() {
+            0.0
+        } else {
+            out.iter().sum::<f64>() / out.len() as f64
+        };
         out.iter().map(|v| v - mean).collect()
     };
     let (a, b) = (dec(a), dec(b));
     let n = a.len().min(b.len());
     // 抽取后帧时长(ms)= DECIM / rate × 1000
     let frame_ms = DECIM as f64 * 1000.0 / rate as f64;
-    let max_lag = ((max_lag_ms as f64 / frame_ms).round() as i64).clamp(0, n.saturating_sub(1) as i64);
+    let max_lag =
+        ((max_lag_ms as f64 / frame_ms).round() as i64).clamp(0, n.saturating_sub(1) as i64);
     let min_overlap = (n as f64 * 0.6).ceil() as usize;
     if n < 16 || max_lag == 0 {
         return (0, 0.0);
@@ -58,7 +66,11 @@ pub fn pcm_lag(a: &[i16], b: &[i16], rate: u32, max_lag_ms: u64) -> (i64, f64) {
         if n - li < min_overlap {
             continue;
         }
-        let (x, y): (&[f64], &[f64]) = if lag >= 0 { (&a[..n - li], &b[li..]) } else { (&a[li..], &b[..n - li]) };
+        let (x, y): (&[f64], &[f64]) = if lag >= 0 {
+            (&a[..n - li], &b[li..])
+        } else {
+            (&a[li..], &b[..n - li])
+        };
         let mut dot = 0f64;
         let mut na = 0f64;
         let mut nb = 0f64;
@@ -90,7 +102,11 @@ pub fn frame_diffs(frames: &[u8], frame_len: usize) -> Vec<f32> {
         .map(|i| {
             let a = &frames[i * frame_len..(i + 1) * frame_len];
             let b = &frames[(i + 1) * frame_len..(i + 2) * frame_len];
-            let acc: u64 = a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs() as u64).sum();
+            let acc: u64 = a
+                .iter()
+                .zip(b)
+                .map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs() as u64)
+                .sum();
             (acc as f32 / frame_len as f32).min(255.0)
         })
         .collect()
@@ -126,8 +142,15 @@ pub fn pick_cuts(diffs: &[f32], sample_fps: f64, sensitivity: f64) -> Vec<(u64, 
                 continue;
             }
         }
-        let conf = if max > thr { ((d - thr) / (max - thr)).clamp(0.0, 1.0) } else { 0.0 };
-        picked.push((((i + 1) as f64 / sample_fps * 1000.0).round() as u64, ((conf * 100.0).round() / 100.0) as f64));
+        let conf = if max > thr {
+            ((d - thr) / (max - thr)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        picked.push((
+            ((i + 1) as f64 / sample_fps * 1000.0).round() as u64,
+            ((conf * 100.0).round() / 100.0) as f64,
+        ));
     }
     picked
 }
@@ -151,18 +174,28 @@ mod tests {
                         let ts = t - delay_ms as f64 / 1000.0;
                         ts >= *p && ts < p + 0.05
                     });
-                    if gated { (0.8 * (2.0 * std::f64::consts::PI * 880.0 * t).sin() * 12000.0) as i16 } else { 0 }
+                    if gated {
+                        (0.8 * (2.0 * std::f64::consts::PI * 880.0 * t).sin() * 12000.0) as i16
+                    } else {
+                        0
+                    }
                 })
                 .collect()
         };
         let a = mk(0);
         let b = mk(500);
         let (lag_ms, score) = pcm_lag(&a, &b, rate, 5000);
-        assert!((495..=505).contains(&lag_ms), "500ms 偏移必须恢复: {lag_ms}/{score}");
+        assert!(
+            (495..=505).contains(&lag_ms),
+            "500ms 偏移必须恢复: {lag_ms}/{score}"
+        );
         assert!(score > 0.5, "同源波形相似度必须高: {score}");
         let (lag0, _) = pcm_lag(&a, &a.clone(), rate, 5000);
         assert_eq!(lag0, 0);
-        assert_eq!(pcm_lag(&vec![0i16; 1000], &vec![0i16; 1000], rate, 100), (0, 0.0));
+        assert_eq!(
+            pcm_lag(&vec![0i16; 1000], &vec![0i16; 1000], rate, 100),
+            (0, 0.0)
+        );
         // 短音频 × 大窗:重叠守卫生效(不 panic、不假满分)
         let (l, s2) = pcm_lag(&a[..2000], &b[..2000], rate, 5000);
         let _ = (l, s2);
@@ -194,7 +227,10 @@ mod tests {
             grad.extend(std::iter::repeat_n((16 + i * 6).min(255) as u8, frame_len));
         }
         let d2 = frame_diffs(&grad, frame_len);
-        assert!(pick_cuts(&d2, 5.0, 0.5).is_empty(), "缓变序列不得误报: {d2:?}");
+        assert!(
+            pick_cuts(&d2, 5.0, 0.5).is_empty(),
+            "缓变序列不得误报: {d2:?}"
+        );
         // 确定性
         assert_eq!(pick_cuts(&diffs, 5.0, 0.5), pick_cuts(&diffs, 5.0, 0.5));
     }

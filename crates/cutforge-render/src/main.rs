@@ -12,11 +12,13 @@ use std::path::{Path, PathBuf};
 fn load_project_from_disk(root: &Path) -> Result<cutforge_core::model::Project, String> {
     let text = std::fs::read_to_string(cutforge_io::paths::project_path(root))
         .map_err(|e| format!("NO_CONFIG: {e}"))?;
-    let mut v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("SCHEMA_INVALID: {e}"))?;
+    let mut v: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("SCHEMA_INVALID: {e}"))?;
     if let Some(obj) = v.as_object_mut() {
         obj.remove("_meta");
     }
-    cutforge_core::model::migrate_from_value(&v).map_err(|errors| format!("SCHEMA_INVALID: {}", errors.join("; ")))
+    cutforge_core::model::migrate_from_value(&v)
+        .map_err(|errors| format!("SCHEMA_INVALID: {}", errors.join("; ")))
 }
 
 fn main() {
@@ -25,6 +27,9 @@ fn main() {
     let mut ass: Option<PathBuf> = None;
     // T2.4 单帧模式:--frame <atMs> [--format png|jpeg];给了 --frame 即走单帧管线
     let mut frame_ms: Option<u64> = None;
+    // I1-M2 zone 预渲模式:--zone-start/--zone-end(成对给出即走区间半分辨率预渲)
+    let mut zone_start: Option<u64> = None;
+    let mut zone_end: Option<u64> = None;
     let mut fmt = cutforge_render::FrameFormat::Png;
     let mut use_proxy = false;
     // 册五 T5.6 渲染选项(缺省 = 现行为零变化)
@@ -43,11 +48,15 @@ fn main() {
             "--root" => root = args.get(i + 1).map(PathBuf::from),
             "--ass" => ass = args.get(i + 1).map(PathBuf::from),
             "--frame" => frame_ms = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()),
+            // I1-M2 zone 预渲区间(毫秒;半分辨率 + fast 档,出口 preview-cache)
+            "--zone-start" => zone_start = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()),
+            "--zone-end" => zone_end = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()),
             "--format" => {
                 if let Some(v) = args.get(i + 1)
-                    && let Some(f) = cutforge_render::FrameFormat::parse(v) {
-                        fmt = f;
-                    }
+                    && let Some(f) = cutforge_render::FrameFormat::parse(v)
+                {
+                    fmt = f;
+                }
             }
             // 册四 T4.1 代理预览(显式 opt-in;缺失代理的片段回落原片)
             "--use-proxy" => use_proxy = true,
@@ -68,11 +77,24 @@ fn main() {
             }
             "--verbose-cmd" => opts.verbose_cmd = true,
             // 册六 T6.3 导出矩阵
-            "--export-format" => export_format = args.get(i + 1).and_then(|v| cutforge_render::export::ExportFormat::parse(v)),
+            "--export-format" => {
+                export_format = args
+                    .get(i + 1)
+                    .and_then(|v| cutforge_render::export::ExportFormat::parse(v))
+            }
             "--preset" => preset = args.get(i + 1).map(String::from),
-            "--quality-tier" => tier = args.get(i + 1).and_then(|v| v.trim_end_matches(['p', 'P']).parse::<u32>().ok()),
+            "--quality-tier" => {
+                tier = args
+                    .get(i + 1)
+                    .and_then(|v| v.trim_end_matches(['p', 'P']).parse::<u32>().ok())
+            }
             "--bitrate-tier" => bitrate_tier = args.get(i + 1).map(String::from),
-            "--in-ms" => in_ms = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0),
+            "--in-ms" => {
+                in_ms = args
+                    .get(i + 1)
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(0)
+            }
             "--out-ms" => out_ms = args.get(i + 1).and_then(|v| v.parse::<u64>().ok()),
             "--video-only" => video_only = true,
             _ => {}
@@ -90,9 +112,41 @@ fn main() {
         video_only = false;
     }
     let Some(root) = root else {
-        eprintln!("用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>] [--frame <atMs> [--format png|jpeg]] [--use-proxy] [--encoder auto|hw|sw] [--quality fast|balanced|quality] [--crf N] [--bitrate K] [--gop N] [--pix-fmt F] [--loudnorm-target I[:TP]] [--verbose-cmd] [--export-format mp4-h264|mp4-h265|mov|gif|m4a|mp3|png-seq|frame-png] [--preset vertical|horizontal|square|9x16|16x9|1x1|3x4|4x5] [--quality-tier 1080p|720p|480p] [--bitrate-tier high|medium|low] [--in-ms N] [--out-ms N] [--video-only]");
+        eprintln!(
+            "用法: cutforge-render --root <工程目录> [--ass <subtitles.ass>] [--frame <atMs> [--format png|jpeg]] [--zone-start <ms> --zone-end <ms>] [--use-proxy] [--encoder auto|hw|sw] [--quality fast|balanced|quality] [--crf N] [--bitrate K] [--gop N] [--pix-fmt F] [--loudnorm-target I[:TP]] [--verbose-cmd] [--export-format mp4-h264|mp4-h265|mov|gif|m4a|mp3|png-seq|frame-png] [--preset vertical|horizontal|square|9x16|16x9|1x1|3x4|4x5] [--quality-tier 1080p|720p|480p] [--bitrate-tier high|medium|low] [--in-ms N] [--out-ms N] [--video-only]"
+        );
         std::process::exit(3);
     };
+    match (zone_start, zone_end) {
+        (Some(_), None) | (None, Some(_)) => {
+            eprintln!("--zone-start/--zone-end 必须成对给出");
+            std::process::exit(3);
+        }
+        (None, None) => {}
+        (Some(zs), Some(zs_end)) => {
+            // zone 预渲模式(I1-M2):同步执行一个区间,完成事件一行 + ZONE_OK <路径>
+            match load_project_from_disk(&root).and_then(|p| {
+                cutforge_render::render_zone(
+                    &p,
+                    Path::new(&root),
+                    ass.as_deref(),
+                    zs,
+                    zs_end,
+                    &mut cutforge_render::write_progress,
+                )
+            }) {
+                Ok(outcome) => {
+                    cutforge_render::write_progress(cutforge_render::zone_done_event(&outcome));
+                    println!("ZONE_OK {}", outcome.output.display());
+                }
+                Err(e) => {
+                    eprintln!("ZONE_FAIL: {e}");
+                    std::process::exit(2);
+                }
+            }
+            return;
+        }
+    }
     let export_present = export_format.is_some()
         || preset.is_some()
         || tier.is_some()
@@ -103,7 +157,14 @@ fn main() {
     if let Some(at_ms) = frame_ms {
         // 单帧模式(T2.4):同步执行一帧,完成事件一行 + FRAME_OK <路径>
         match load_project_from_disk(&root).and_then(|p| {
-            cutforge_render::render_frame_opts(&p, Path::new(&root), ass.as_deref(), at_ms, fmt, use_proxy)
+            cutforge_render::render_frame_opts(
+                &p,
+                Path::new(&root),
+                ass.as_deref(),
+                at_ms,
+                fmt,
+                use_proxy,
+            )
         }) {
             Ok(outcome) => {
                 cutforge_render::write_progress(cutforge_render::frame_done_event(&outcome));
@@ -121,7 +182,11 @@ fn main() {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
-            std::process::exit(if e.starts_with("SCHEMA_INVALID") { 2 } else { 3 });
+            std::process::exit(if e.starts_with("SCHEMA_INVALID") {
+                2
+            } else {
+                3
+            });
         }
     };
     let outcome = if export_present {

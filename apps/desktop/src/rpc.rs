@@ -20,10 +20,11 @@ pub struct Rpc {
 }
 
 /// 渲染类工具(与 Web 壳 RENDER_CLASS 同清单;超时 300s)。
+/// preview_zone_render = I1-M2 zone 预渲,同步渲染工具,同属渲染类。
 fn is_render_class(tool: &str) -> bool {
     matches!(
         tool,
-        "render" | "render_run" | "export_jianying" | "render_frame"
+        "render" | "render_run" | "export_jianying" | "render_frame" | "preview_zone_render"
     )
 }
 

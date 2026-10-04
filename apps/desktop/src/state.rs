@@ -5,8 +5,8 @@
 //! 不做速度换算;时长合计由 Sable 侧 `duration_ms` 只作视图标尺,不回写。
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use sable::video::model::{AssetRef, Timeline, TrackKind};
 use serde_json::Value;
@@ -29,6 +29,50 @@ pub struct Shared {
     pub last_error: Mutex<Option<String>>,
     /// 后台重拉进行中(防重入;UI 泵守卫)
     pub reloading: AtomicBool,
+    /// 引擎解码帧(播放泵写,预览面板消费;seq 去重,I1-M1)
+    pub engine_frame: Mutex<Option<EngineFrame>>,
+    /// preview_zone_render 结果槽(后台任务写,引擎泵消费;I1-M2)
+    pub zone_result: Mutex<Option<Result<ZoneRendered, String>>>,
+    /// 截图完成消息(后台任务写,UI 泵转 toast;I1-M3)
+    pub screenshot_result: Mutex<Option<Result<String, String>>>,
+}
+
+/// 引擎解码出的一帧(工程时间域;rgba 为 RGBA8888 直通)。
+#[derive(Clone)]
+pub struct EngineFrame {
+    /// 全局递增序号(显示去重;新实例 = 新 gpui 纹理)
+    pub seq: u64,
+    /// 工程时间(播放头;ms)
+    pub t_ms: u64,
+    pub rgba: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl EngineFrame {
+    pub fn new(t_ms: u64, rgba: Arc<Vec<u8>>, width: u32, height: u32) -> Self {
+        static NEXT_SEQ: AtomicU64 = AtomicU64::new(1);
+        EngineFrame {
+            seq: NEXT_SEQ.fetch_add(1, Ordering::Relaxed),
+            t_ms,
+            rgba,
+            width,
+            height,
+        }
+    }
+}
+
+/// preview_zone_render 结果(M2;file 为工程内相对路径,壳负责挂 root)。
+#[derive(Clone)]
+pub struct ZoneRendered {
+    pub file: String,
+    /// 内核量化后的实际区间(100ms 网格;时间映射基准)
+    pub start_ms: u64,
+    pub end_ms: u64,
+    /// 内容寻址键(shell 据此写/查指纹 marker,playback::zone 新鲜度辅助)
+    pub key: String,
+    /// 发起请求时的快照 rev(rev 变化即作废)
+    pub rev: u64,
 }
 
 #[derive(Clone)]
@@ -104,6 +148,41 @@ impl Snapshot {
             .find(|t| kinds.contains(&t.kind) && !t.locked)
             .map(|t| t.id.clone())
     }
+
+    /// 播放头所在视频类片段(有 src 的非文本片段;I1 播放解析用)。
+    /// 多轨同点重叠时取轨道清单靠后者(内核渲染叠加在上者;形状读取,
+    /// 不做合成语义推导)。空窗/纯图片/文本片段 → None(走幻灯片路径)。
+    pub fn video_clip_at(&self, t_ms: u64) -> Option<Value> {
+        self.clips
+            .iter()
+            .rev()
+            .find(|c| {
+                let s = c.get("startMs").and_then(Value::as_u64).unwrap_or(0);
+                let e = c.get("endMs").and_then(Value::as_u64).unwrap_or(0);
+                t_ms >= s
+                    && t_ms < e
+                    && c.get("trackKind").and_then(Value::as_str) == Some("video")
+                    && c.get("src")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| !s.is_empty())
+            })
+            .cloned()
+    }
+}
+
+/// 片段恒速(speed 字段;缺省 1.0)。
+/// 已知局限:`speedCurve` 分段变速暂按 1.0 处理(引擎直解码无逐段映射),
+/// 变速曲线片段的预览节奏以导出为准。
+pub fn clip_speed(clip: &Value) -> f64 {
+    let curved = clip
+        .get("speedCurve")
+        .and_then(Value::as_array)
+        .is_some_and(|a| !a.is_empty());
+    if curved {
+        return 1.0;
+    }
+    let s = clip.get("speed").and_then(Value::as_f64).unwrap_or(1.0);
+    if s.is_finite() && s > 0.0 { s } else { 1.0 }
 }
 
 impl Shared {

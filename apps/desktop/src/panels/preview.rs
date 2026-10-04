@@ -1,21 +1,27 @@
-//! 预览监视器:`render_frame` 单帧精确预览(内核 T2.4 工具,同步出帧,
-//! 帧缓存键含工作区指纹)。播放头变化/工程 rev 变化 → 请求槽位 → 后台
-//! 渲染 → PNG 解码 RGBA → gpui image 上屏(pixels/player_view 同款桥)。
+//! 预览监视器:双通道出帧(I1,docs/tickets/I1-S2)——
+//! - **流畅(引擎)**:播放泵(16ms)写 `shared.engine_frame` → 本面板上屏;
+//! - **精确(幻灯片)**:`render_frame` 单帧精确预览(内核 T2.4 工具,同步出帧,
+//!   帧缓存键含工作区指纹)。播放头变化/工程 rev 变化 → 请求槽位 → 后台
+//!   渲染 → PNG 解码 RGBA → gpui image 上屏(pixels/player_view 同款桥)。
 //!
 //! 视觉/交互(NLE 惯例):
 //! - 取景区 = 纯黑画布 + 细边框,帧等比居中(canvas paint 阶段算目的矩形);
-//! - 传输条 = 左时间码(当前大字/总长小字)· 居中 ⏮◀▶/⏸▶⏭(播放态高亮)
-//!   · 右出帧状态徽标;
-//! - 进度条 = 传输条上方 4px 通栏,可点击/拖动 seek(hover 加高)。
+//! - 右下小按钮组(画质/截图/沉浸)+ zone「预览渲染中」角标(160ms 淡入 /
+//!   240ms 淡出,动效只出现在状态变化);
+//! - 传输条 = 左时间码(当前大字/总长小字)· 居中 ⏮◀▶/⏸▶⏭ + 循环/静音
+//!   (播放态高亮)· 右倍速挡 + 出帧状态徽标;
+//! - 进度条 = 传输条上方 4px 通栏,按下拖动(拖拽零动画直接映射),
+//!   **松手才 seek**(引擎 seek = 重启流,约百 ms)。
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use sable::gpui::WeakEntity;
+use sable::gpui::prelude::FluentBuilder as _;
 use sable::gpui::{
-    App, AppContext as _, Context, Corners, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, RenderImage, StatefulInteractiveElement as _, Styled as _, Window,
-    canvas, div, px,
+    Animation, AnimationExt as _, App, AppContext as _, Context, Corners, ElementId, Entity,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Render, RenderImage,
+    StatefulInteractiveElement as _, Styled as _, Window, canvas, div, px,
 };
 use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
 use sable::widgets::theme::theme;
@@ -40,8 +46,14 @@ pub struct PreviewPanel {
     rendering: Option<(u64, std::time::Instant)>,
     /// 渲染中被更新的请求(完成后立刻补一发出帧)
     pending: Option<u64>,
-    /// 进度条 track 区 bounds(prepaint 回写;点击 seek 换算基准)
+    /// 进度条 track 区 bounds(prepaint 回写;拖拽 seek 换算基准)
     progress_bounds: std::rc::Rc<std::cell::Cell<sable::gpui::Bounds<sable::gpui::Pixels>>>,
+    /// 已上屏引擎帧序号(去重;播放泵与 120ms 泵都会触发 pump)
+    last_engine_seq: Option<u64>,
+    /// zone 角标当前态(与 app.zone_loading 对账)
+    badge_shown: bool,
+    /// 角标动效代际(状态变化即 +1,换动画元素 id 重启淡入/淡出)
+    badge_epoch: usize,
 }
 
 /// 一帧已解码的预览(时间点 + 原始宽高 + GPU 位图)。
@@ -53,6 +65,15 @@ struct PreviewShot {
 }
 
 impl PreviewPanel {
+    /// 上屏一帧并**驱逐上一帧的图集纹理**:gpui 0.2.2 的 RetainAllImageCache
+    /// 只进不出,逐帧新建 RenderImage 不驱逐 = 每帧泄漏一个帧缓冲
+    /// (实测 30fps 下 ~90MB/s,75s 涨到 7GB)。保活当前帧 + 待驱逐的上一帧。
+    fn install_image(&mut self, cx: &mut Context<Self>, shot: PreviewShot) {
+        if let Some(prev) = self.image.take() {
+            cx.drop_image(prev.image, None);
+        }
+        self.image = Some(shot);
+    }
     pub fn new(
         shared: Arc<Shared>,
         rpc: Arc<Rpc>,
@@ -67,6 +88,9 @@ impl PreviewPanel {
             rendering: None,
             pending: None,
             progress_bounds: Default::default(),
+            last_engine_seq: None,
+            badge_shown: false,
+            badge_epoch: 0,
         });
         let weak = panel.downgrade();
         cx.spawn(async move |cx| {
@@ -81,60 +105,126 @@ impl PreviewPanel {
         panel
     }
 
-    /// 泵(120ms):完成帧搬运 + 请求分派(单飞 + pending 折叠)。
-    fn pump(&mut self, cx: &mut Context<Self>) {
-        // 渲染结果搬运(shared.preview_result 由后台任务写入)
-        if let Ok(mut guard) = self.shared.preview_result.lock()
-            && let Some(result) = guard.take()
+    /// 引擎路径在场(DesktopApp 判定;帧由播放泵供给)。
+    fn engine_active(&self, cx: &Context<Self>) -> bool {
+        self.app
+            .upgrade()
+            .is_some_and(|a| a.read(cx).engine_active())
+    }
+
+    /// 泵(120ms 独立循环入口;此刻 DesktopApp 不在更新中,可回读)。
+    pub(crate) fn pump(&mut self, cx: &mut Context<Self>) {
+        let engine_on = self.engine_active(cx);
+        let zone_loading = self
+            .app
+            .upgrade()
+            .is_some_and(|a| a.read(cx).zone_loading.is_some());
+        self.pump_once(cx, engine_on, zone_loading);
+    }
+
+    /// 引擎泵入口:宿主(DesktopApp)**正在更新中**调用——gpui 实体借用规则
+    /// 禁止此刻回读 DesktopApp(实测回读即 panic),状态由宿主算好传入。
+    pub(crate) fn pump_from_host(&mut self, cx: &mut Context<Self>, zone_loading: bool) {
+        self.pump_once(cx, true, zone_loading);
+    }
+
+    fn pump_once(&mut self, cx: &mut Context<Self>, engine_on: bool, zone_loading: bool) {
+        // 引擎帧优先:有新帧直接上屏(序号去重);锁作用域内先取 owned,
+        // 出作用域再安装(install_image 需可变借 self,与锁卫兵借用不相交)
+        let incoming = if let Ok(mut g) = self.shared.engine_frame.lock()
+            && let Some(f) = g.take()
+            && self.last_engine_seq != Some(f.seq)
         {
-            match result {
-                Ok(frame) => {
-                    if let Some(image) =
-                        png_rgba_to_render_image(&frame.rgba, frame.width, frame.height)
-                    {
-                        self.image = Some(PreviewShot {
+            self.last_engine_seq = Some(f.seq);
+            png_rgba_to_render_image(&f.rgba, f.width, f.height).map(|image| PreviewShot {
+                t_ms: f.t_ms,
+                dims: (f.width, f.height),
+                image,
+            })
+        } else {
+            None
+        };
+        if let Some(shot) = incoming {
+            self.install_image(cx, shot);
+            cx.notify();
+        }
+        // zone 角标状态变化 → 换代际重启淡入/淡出(动效只出现在状态变化)
+        if zone_loading != self.badge_shown {
+            self.badge_shown = zone_loading;
+            self.badge_epoch += 1;
+            cx.notify();
+        }
+        // 完成帧搬运(幻灯片路径;引擎在场时帧源是播放泵,跳过)
+        if !engine_on {
+            // 锁作用域只取走 result;install_image 需可变借 self,须出卫兵作用域
+            let result = if let Ok(mut guard) = self.shared.preview_result.lock() {
+                guard.take()
+            } else {
+                None
+            };
+            if let Some(result) = result {
+                let shot = match result {
+                    Ok(frame) => png_rgba_to_render_image(&frame.rgba, frame.width, frame.height)
+                        .map(|image| PreviewShot {
                             t_ms: frame.t_ms,
                             dims: (frame.width, frame.height),
                             image,
-                        });
+                        }),
+                    Err(e) => {
+                        self.shared.set_error(format!("render_frame 失败:{e}"));
+                        None
                     }
+                };
+                if let Some(shot) = shot {
+                    self.install_image(cx, shot);
                 }
-                Err(e) => self.shared.set_error(format!("render_frame 失败:{e}")),
-            }
-            self.rendering = None;
-            cx.notify();
-        }
-        // 卡死自愈
-        if let Some((_, started)) = self.rendering
-            && started.elapsed() > Duration::from_secs(RENDER_STUCK_SECS)
-        {
-            self.rendering = None;
-        }
-        // 请求分派
-        let want = self
-            .shared
-            .preview_request
-            .lock()
-            .ok()
-            .and_then(|mut r| r.take())
-            .or(self.pending);
-        if let Some(t_ms) = want {
-            let have = self.image.as_ref().map(|s| s.t_ms);
-            if self.rendering.is_none() && have != Some(t_ms) {
-                self.rendering = Some((t_ms, std::time::Instant::now()));
-                self.pending = None;
-                let rpc = self.rpc.clone();
-                let shared = self.shared.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let result = render_frame_at(&rpc, t_ms);
-                        *shared.preview_result.lock().unwrap() = Some(result);
-                    })
-                    .detach();
+                self.rendering = None;
                 cx.notify();
-            } else if self.rendering.map(|(t, _)| t) != Some(t_ms) {
+            }
+            // 卡死自愈
+            if let Some((_, started)) = self.rendering
+                && started.elapsed() > Duration::from_secs(RENDER_STUCK_SECS)
+            {
+                self.rendering = None;
+            }
+            // 请求分派
+            let want = self
+                .shared
+                .preview_request
+                .lock()
+                .ok()
+                .and_then(|mut r| r.take())
+                .or(self.pending);
+            if let Some(t_ms) = want {
+                let have = self.image.as_ref().map(|s| s.t_ms);
+                if self.rendering.is_none() && have != Some(t_ms) {
+                    self.rendering = Some((t_ms, std::time::Instant::now()));
+                    self.pending = None;
+                    let rpc = self.rpc.clone();
+                    let shared = self.shared.clone();
+                    cx.background_executor()
+                        .spawn(async move {
+                            let result = render_frame_at(&rpc, t_ms);
+                            *shared.preview_result.lock().unwrap() = Some(result);
+                        })
+                        .detach();
+                    cx.notify();
+                } else if self.rendering.map(|(t, _)| t) != Some(t_ms) {
+                    self.pending = Some(t_ms);
+                }
+            }
+        } else {
+            // 引擎在场:挂起的出帧请求保留意图,弃源后幻灯片接管补一帧
+            let want = self
+                .shared
+                .preview_request
+                .lock()
+                .ok()
+                .and_then(|mut r| r.take());
+            if let Some(t_ms) = want {
                 self.pending = Some(t_ms);
             }
+            self.rendering = None;
         }
     }
 
@@ -159,12 +249,14 @@ impl PreviewPanel {
             .justify_center()
             .rounded(px(5.0))
             .text_size(px(font))
-            .on_click(move |_, _, cx: &mut App| {
+            .on_click(move |_, window, cx: &mut App| {
                 if let Some(app) = weak.upgrade() {
                     app.update(cx, |app, cx| match id {
                         "tp-home" => app.set_playhead(0, cx),
                         "tp-end" => app.set_playhead(app.duration_ms, cx),
                         "tp-play" => app.toggle_play(cx),
+                        "tp-loop" => app.toggle_loop(cx),
+                        "tp-mute" => app.toggle_mute(window, cx),
                         "tp-prev" => {
                             let fps = app.shared.snapshot().fps();
                             let cur = app.playhead_ms;
@@ -196,23 +288,54 @@ impl PreviewPanel {
     }
 }
 
-/// 进度条点击 → seek(窗口 x 坐标经 track bounds 换算比例;total=0 忽略)。
-fn seek_by_progress(
+/// 预览右下小按钮(画质/截图/沉浸;状态变化即直切,无补间)。
+fn corner_btn(
+    id: &'static str,
+    label: String,
+    active: bool,
+    weak: &WeakEntity<DesktopApp>,
+    handle: impl Fn(&mut DesktopApp, &mut Context<DesktopApp>) + 'static,
+    colors: &sable::widgets::tokens::ColorTokens,
+) -> sable::gpui::AnyElement {
+    let weak = weak.clone();
+    div()
+        .id(ElementId::Name(id.into()))
+        .px(px(SpacingTokens::XS + 2.0))
+        .py(px(2.0))
+        .rounded(px(4.0))
+        .text_size(px(FONT_SIZE_CAPTION))
+        .cursor_pointer()
+        .when(active, |s| s.bg(colors.accent).text_color(colors.surface_0))
+        .when(!active, |s| {
+            s.bg(colors.surface_1)
+                .text_color(colors.text_secondary)
+                .hover(|s| s.bg(colors.border_subtle))
+        })
+        .child(label)
+        .on_click(move |_, _, cx: &mut App| {
+            if let Some(app) = weak.upgrade() {
+                app.update(cx, |app, cx| handle(app, cx));
+            }
+        })
+        .into_any_element()
+}
+
+/// 进度条窗口 x 坐标 → 工程时刻 ms(track bounds 换算比例;total=0 忽略)。
+fn progress_ms(
     weak: &WeakEntity<DesktopApp>,
     bounds_slot: &std::rc::Rc<std::cell::Cell<sable::gpui::Bounds<sable::gpui::Pixels>>>,
     x: sable::gpui::Pixels,
-    cx: &mut App,
-) {
-    let Some(app) = weak.upgrade() else { return };
+    cx: &App,
+) -> Option<u64> {
+    let app = weak.upgrade()?;
     let total = app.read(cx).duration_ms;
     let bounds = bounds_slot.get();
     let width = f32::from(bounds.size.width);
     if total == 0 || width <= 0.0 {
-        return;
+        return None;
     }
     let ratio = ((f32::from(x) - f32::from(bounds.origin.x)) / width).clamp(0.0, 1.0);
-    let ms = (ratio * total as f32) as u64;
-    app.update(cx, |app, cx| app.set_playhead(ms, cx));
+    Some((ratio * total as f32) as u64)
 }
 
 /// 单帧时长(ms;fps 防御 ≤0)。
@@ -239,11 +362,38 @@ impl Render for PreviewPanel {
             .as_ref()
             .map(|a| a.read(cx).shared.snapshot().fps())
             .unwrap_or(30.0);
-        let frame_state = match (&self.image, self.rendering) {
-            (Some(_), Some((t, _))) => format!("出帧中 {t}ms"),
-            (Some(_), None) => "单帧精确".to_string(),
-            (None, Some((t, _))) => format!("出帧中… {}", fmt_timecode(t)),
-            (None, None) => "待出帧".to_string(),
+        let engine_on = self.engine_active(cx);
+        let zone_loading = self.badge_shown;
+        let (quality_precise, speed_eff, muted_eff, loop_on, immersive) = app
+            .as_ref()
+            .map(|a| {
+                let a = a.read(cx);
+                (
+                    a.quality_precise,
+                    a.engine_speed_effective(),
+                    a.transport_params().1,
+                    a.loop_clip,
+                    a.immersive,
+                )
+            })
+            .unwrap_or((false, 1.0, false, false, false));
+        let frame_state = if zone_loading {
+            "预览渲染中…".to_string()
+        } else if engine_on {
+            format!("流畅 {}x", crate::app::fmt_speed(speed_eff))
+        } else {
+            match (&self.image, self.rendering) {
+                (Some(_), Some((t, _))) => format!("出帧中 {t}ms"),
+                (Some(_), None) => {
+                    if quality_precise {
+                        "单帧精确".to_string()
+                    } else {
+                        "幻灯片".to_string()
+                    }
+                }
+                (None, Some((t, _))) => format!("出帧中… {}", fmt_timecode(t)),
+                (None, None) => "待出帧".to_string(),
+            }
         };
         let image = self.image.clone();
         let weak = self.app.clone();
@@ -253,23 +403,101 @@ impl Render for PreviewPanel {
             0.0
         };
 
+        // —— 右下小按钮组(04 差距表 P2:画质/截图/沉浸)——
+        let corner_group = h_flex()
+            .gap(px(SpacingTokens::XS))
+            .child(corner_btn(
+                "pv-quality",
+                if quality_precise {
+                    "画质·精确".to_string()
+                } else {
+                    "画质·流畅".to_string()
+                },
+                false,
+                &weak,
+                |app, cx| app.toggle_quality(cx),
+                &colors,
+            ))
+            .child(corner_btn(
+                "pv-screenshot",
+                "截图".to_string(),
+                false,
+                &weak,
+                |app, cx| app.screenshot(cx),
+                &colors,
+            ))
+            .child(corner_btn(
+                "pv-immersive",
+                if immersive {
+                    "退出沉浸".to_string()
+                } else {
+                    "沉浸".to_string()
+                },
+                immersive,
+                &weak,
+                |app, cx| app.toggle_immersive(cx),
+                &colors,
+            ));
+
+        // —— zone 角标(状态变化驱动:160ms 淡入 / 240ms 淡出)——
+        let badge = (self.badge_epoch > 0).then(|| {
+            let shown = self.badge_shown;
+            let dur = if shown { 160 } else { 240 };
+            div()
+                .px(px(SpacingTokens::XS + 2.0))
+                .py(px(2.0))
+                .rounded_sm()
+                .bg(sable::gpui::black().opacity(0.72))
+                .border_1()
+                .border_color(colors.border_subtle)
+                .text_size(px(FONT_SIZE_CAPTION))
+                .text_color(colors.text_primary)
+                .child("预览渲染中…")
+                .with_animation(
+                    ElementId::named_usize("zone-badge", self.badge_epoch),
+                    Animation::new(Duration::from_millis(dur)),
+                    move |el, delta| el.opacity(if shown { delta } else { 1.0 - delta }),
+                )
+        });
+
         v_flex()
             .size_full()
             .bg(colors.surface_0)
-            // 拖动进度条:按住移动持续 seek(mouse_up 由 gpui click 链收尾)
+            // 松手在任何位置都收尾拖拽(capture 相不要求 hover;拖拽零动画)
+            .capture_any_mouse_up({
+                let weak = weak.clone();
+                move |_, _, cx: &mut App| {
+                    if let Some(app) = weak.upgrade()
+                        && app.read(cx).scrubbing()
+                    {
+                        let ms = app.read(cx).playhead_ms;
+                        app.update(cx, |app, cx| app.end_scrub(ms, cx));
+                    }
+                }
+            })
+            // 拖动进度条:按住移动只更新显示(松手才 seek)
             .on_mouse_move({
                 let weak = weak.clone();
                 let bounds_slot = self.progress_bounds.clone();
                 move |ev: &sable::gpui::MouseMoveEvent, _, cx: &mut App| {
-                    if ev.pressed_button == Some(sable::gpui::MouseButton::Left) {
-                        seek_by_progress(&weak, &bounds_slot, ev.position.x, cx);
+                    let Some(app) = weak.upgrade() else {
+                        return;
+                    };
+                    if !app.read(cx).scrubbing() {
+                        return;
+                    }
+                    if ev.pressed_button == Some(MouseButton::Left)
+                        && let Some(ms) = progress_ms(&weak, &bounds_slot, ev.position.x, cx)
+                    {
+                        app.update(cx, |app, cx| app.scrub_to(ms, cx));
                     }
                 }
             })
-            // —— 取景区(纯黑画布 + 细边框)——
+            // —— 取景区(纯黑画布 + 细边框;右下按钮组与角标浮层)——
             .child(
                 div().flex_1().min_h_0().p(px(SpacingTokens::SM)).child(
                     div()
+                        .relative()
                         .size_full()
                         .bg(sable::gpui::black())
                         .border_1()
@@ -298,10 +526,26 @@ impl Render for PreviewPanel {
                                         .child("移动播放头出帧"),
                                 )
                                 .into_any_element(),
-                        }),
+                        })
+                        // 角标(按钮组上方,右下)
+                        .children(badge.map(|b| {
+                            div()
+                                .absolute()
+                                .bottom(px(34.0))
+                                .right(px(SpacingTokens::SM))
+                                .child(b)
+                        }))
+                        // 右下小按钮组
+                        .child(
+                            div()
+                                .absolute()
+                                .bottom(px(SpacingTokens::XS))
+                                .right(px(SpacingTokens::SM))
+                                .child(corner_group),
+                        ),
                 ),
             )
-            // —— 进度条(点击 seek;bounds 由 canvas prepaint 回写)——
+            // —— 进度条(按下拖动直接映射,松手才 seek;bounds 由 canvas prepaint 回写)——
             .child(
                 div()
                     .id("preview-progress")
@@ -309,6 +553,20 @@ impl Render for PreviewPanel {
                     .h(px(10.0))
                     .px(px(SpacingTokens::SM))
                     .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, {
+                        let weak = weak.clone();
+                        let bounds_slot = self.progress_bounds.clone();
+                        move |ev: &sable::gpui::MouseDownEvent, _, cx: &mut App| {
+                            if let Some(ms) = progress_ms(&weak, &bounds_slot, ev.position.x, cx)
+                                && let Some(app) = weak.upgrade()
+                            {
+                                app.update(cx, |app, cx| {
+                                    app.begin_scrub(cx);
+                                    app.scrub_to(ms, cx);
+                                });
+                            }
+                        }
+                    })
                     .child(
                         div()
                             .relative()
@@ -361,17 +619,7 @@ impl Render for PreviewPanel {
                                     .bg(colors.text_primary)
                                     .ml(px(-4.0)),
                             ),
-                    )
-                    .on_click({
-                        let weak = weak.clone();
-                        let bounds_slot = self.progress_bounds.clone();
-                        move |ev: &sable::gpui::ClickEvent, _, cx: &mut App| {
-                            // 鼠标点击带 up 位置(键盘触发的 ClickEvent 无坐标,忽略)
-                            if let sable::gpui::ClickEvent::Mouse(m) = ev {
-                                seek_by_progress(&weak, &bounds_slot, m.up.position.x, cx);
-                            }
-                        }
-                    }),
+                    ),
             )
             // —— 传输控制条 ——
             .child(
@@ -403,7 +651,7 @@ impl Render for PreviewPanel {
                                     .child(format!("/ {}", fmt_timecode(total))),
                             ),
                     )
-                    // 中:传输按钮组
+                    // 中:传输按钮组(含循环/静音)
                     .child(
                         h_flex()
                             .flex_1()
@@ -428,22 +676,58 @@ impl Render for PreviewPanel {
                             ))
                             .child(Self::transport_button(
                                 "tp-end", "▶|", false, false, &colors, &weak,
+                            ))
+                            .child(Self::transport_button(
+                                "tp-loop", "↻", loop_on, false, &colors, &weak,
+                            ))
+                            .child(Self::transport_button(
+                                "tp-mute",
+                                if muted_eff { "🔇" } else { "🔊" },
+                                muted_eff,
+                                false,
+                                &colors,
+                                &weak,
                             )),
                     )
-                    // 右:出帧状态徽标
+                    // 右:倍速挡 + 出帧状态徽标
                     .child(
-                        h_flex().w(px(150.0)).flex_shrink_0().justify_end().child(
-                            div()
-                                .px(px(SpacingTokens::XS + 2.0))
-                                .py(px(2.0))
-                                .rounded_sm()
-                                .bg(colors.surface_1)
-                                .border_1()
-                                .border_color(colors.border_subtle)
-                                .text_size(px(FONT_SIZE_CAPTION))
-                                .text_color(colors.text_secondary)
-                                .child(frame_state),
-                        ),
+                        h_flex()
+                            .w(px(220.0))
+                            .flex_shrink_0()
+                            .justify_end()
+                            .gap(px(SpacingTokens::XS))
+                            .child(
+                                div()
+                                    .px(px(SpacingTokens::XS + 2.0))
+                                    .py(px(2.0))
+                                    .rounded_sm()
+                                    .bg(colors.surface_1)
+                                    .border_1()
+                                    .border_color(if (speed_eff - 1.0).abs() > 1e-3 {
+                                        colors.accent
+                                    } else {
+                                        colors.border_subtle
+                                    })
+                                    .text_size(px(FONT_SIZE_CAPTION))
+                                    .text_color(if (speed_eff - 1.0).abs() > 1e-3 {
+                                        colors.accent
+                                    } else {
+                                        colors.text_secondary
+                                    })
+                                    .child(format!("{}x", crate::app::fmt_speed(speed_eff))),
+                            )
+                            .child(
+                                div()
+                                    .px(px(SpacingTokens::XS + 2.0))
+                                    .py(px(2.0))
+                                    .rounded_sm()
+                                    .bg(colors.surface_1)
+                                    .border_1()
+                                    .border_color(colors.border_subtle)
+                                    .text_size(px(FONT_SIZE_CAPTION))
+                                    .text_color(colors.text_secondary)
+                                    .child(frame_state),
+                            ),
                     ),
             )
     }
@@ -517,8 +801,8 @@ fn render_frame_at(rpc: &Rpc, t_ms: u64) -> Result<PreviewFrame, String> {
     })
 }
 
-/// 宽容扫描响应:任意层级下以 .png 结尾的字符串值。
-fn find_png_path(value: &serde_json::Value) -> Option<String> {
+/// 宽容扫描响应:任意层级下以 .png 结尾的字符串值(截图按钮复用)。
+pub(crate) fn find_png_path(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::String(s) => s.ends_with(".png").then(|| s.clone()),
         serde_json::Value::Array(a) => a.iter().find_map(find_png_path),

@@ -1,6 +1,6 @@
 {
  "version": 2,
- "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。83 工具 = 21 查询 + 42 写 + 20 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats 后 48→56;册五 A5 新增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 后 56→61,A5-BE3 新增 compound_create/compound_unbind/multicam_cut/scene_detect/multicam_sync/otio_export/otio_import 后 61→68;册六 A6 T6.1 新增 migrate_layout/library_manage/library_recover(写)+ library_list(查询)后 68→72;T6.3/T6.2 新增 export_preflight/media_library(查询)+ media_import(写)+ export_all_variants(编排)后 72→76,render/render_run 同批扩导出预设参数面(format/preset/qualityTier/bitrateTier/inMs/outMs/videoOnly;新增 gif/纯音频/png 序列/frame-png 出口);册七 A7 T7.6 新增 project_package/project_unpackage(写)后 76→78;T7.5/T7.2 新增 preview_plan/session_report/plugin_validate(查询)+ apply_plan/note_reply(写)后 78→83,当前一律以本文件 tools 数组为准)",
+ "_doc": "MCP 工具契约(G5-1/M4-1 比对基准)。84 工具 = 21 查询 + 42 写 + 21 编排;stdio 与内嵌 HTTP 通道共用同一注册表(工具集差异恒为 0)。数量以本文件 tools 数组为准(B7 口径单一真相源;阶段二新增 clip_add/media_probe/media_browse/project_new 后 34→38;阶段三新增 transition_set/motion_set/bgm_set 后 38→41,transition/motion 同步经 ClipPatch 承接并移入 ui-fields editable;册二 A2 新增 render_frame 后 41→42;册四 A4 新增 clip_trim/clip_split_all/track_update/clip_gap_delete/clip_copy/clip_paste_at 后 42→48;册四 A4-BE3b 新增 text_add/subtitle_import/subtitle_replace/subtitle_export/media_peaks/media_thumbnail/media_proxy/audio_beats 后 48→56;册五 A5 新增 lut_import/scope_data/audio_loudness/encode_probe/render_queue 后 56→61,A5-BE3 新增 compound_create/compound_unbind/multicam_cut/scene_detect/multicam_sync/otio_export/otio_import 后 61→68;册六 A6 T6.1 新增 migrate_layout/library_manage/library_recover(写)+ library_list(查询)后 68→72;T6.3/T6.2 新增 export_preflight/media_library(查询)+ media_import(写)+ export_all_variants(编排)后 72→76,render/render_run 同批扩导出预设参数面(format/preset/qualityTier/bitrateTier/inMs/outMs/videoOnly;新增 gif/纯音频/png 序列/frame-png 出口);册七 A7 T7.6 新增 project_package/project_unpackage(写)后 76→78;T7.5/T7.2 新增 preview_plan/session_report/plugin_validate(查询)+ apply_plan/note_reply(写)后 78→83;I1 新增 preview_zone_render(时间线区间半分辨率预渲,编排)后 83→84,当前一律以本文件 tools 数组为准)",
  "channels": [
   "stdio",
   "embedded-http"
@@ -1821,6 +1821,43 @@
     "required": [
      "root",
      "atMs"
+    ]
+   },
+   "outputSchema": {
+    "$ref": "#/definitions/envelope"
+   }
+  },
+  {
+   "name": "preview_zone_render",
+   "kind": "orchestrate",
+   "idempotent": true,
+   "description": "时间线区间 [startMs,endMs) 半分辨率预渲(I1-M2,播放引擎 zone 模式的内核侧):复用 render 既有管线(时间窗=区域导出同一纯函数,分辨率在 plan 层减半,质量档固定 fast),产物落 .cutforge/preview-cache/<键>/zone.mp4(内容寻址=工作区指纹+量化区间+RENDERER_VERSION),命中直接返回不重渲;同步返回不持工程锁,渲染期间发 render.progress 事件;区间内无视频片段 PRECONDITION_FAILED;参数面不收编码参数(质量档进键,杜绝陈旧复用)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "root": {
+      "type": "string",
+      "description": "工程目录绝对路径"
+     },
+     "startMs": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "区间入点(毫秒;按 100ms 网格量化,响应回传量化后的实际区间)"
+     },
+     "endMs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "区间出点(毫秒;必须 > startMs;越出内容末端时按窗口裁剪,空窗口拒绝)"
+     },
+     "ass": {
+      "type": "string",
+      "description": "字幕 ass 相对路径(随 zone 烧录;缺省不烧。已登记口径:外部 ass 不随时间窗平移,与区域导出同口径;文本轨字幕随窗裁剪无此问题)"
+     }
+    },
+    "required": [
+     "root",
+     "startMs",
+     "endMs"
     ]
    },
    "outputSchema": {

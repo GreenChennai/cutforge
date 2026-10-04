@@ -16,6 +16,7 @@ mod app;
 mod home;
 mod kernel;
 mod panels;
+mod playback;
 mod rpc;
 mod state;
 
@@ -37,7 +38,9 @@ pub struct Args {
 
 fn parse_args() -> Args {
     let mut root = None;
-    let mut port = 8790u16;
+    // 0 = 内核用系统临时端口(缺省)。固定端口在多实例/孤儿内核(taskkill /F
+    // 不触发 Drop)场景必撞车,曾致多轮播放"冻结"假象——RPC 打到僵尸内核。
+    let mut port = 0u16;
     let mut token = "cutforge-desktop-local".to_string();
     let mut attach = None;
     let mut cli = None;
@@ -45,7 +48,7 @@ fn parse_args() -> Args {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--root" => root = args.next().map(PathBuf::from),
-            "--port" => port = args.next().and_then(|v| v.parse().ok()).unwrap_or(8790),
+            "--port" => port = args.next().and_then(|v| v.parse().ok()).unwrap_or(0),
             "--token" => token = args.next().unwrap_or_else(|| token.clone()),
             "--attach" => attach = args.next(),
             "--cli" => cli = args.next().map(PathBuf::from),

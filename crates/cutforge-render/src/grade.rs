@@ -55,7 +55,9 @@ const RANGE_SCALE: f64 = 0.6;
 /// grade 链(段内挂载;返回 (滤镜串, 降级警告)。None grade / 全空 = 空串,链零变化)。
 /// LUT 文件缺失 → 警告 + 跳过 lut3d(诚实降级,不炸整段)。
 pub fn grade_chain(clip: &Clip, project_dir: &Path) -> (String, Vec<String>) {
-    let Some(grade) = &clip.grade else { return (String::new(), Vec::new()) };
+    let Some(grade) = &clip.grade else {
+        return (String::new(), Vec::new());
+    };
     let mut warns: Vec<String> = Vec::new();
     let mut filters: Vec<String> = Vec::new();
 
@@ -66,14 +68,23 @@ pub fn grade_chain(clip: &Clip, project_dir: &Path) -> (String, Vec<String>) {
     let h = grade.highlights.unwrap_or(0.0) / 100.0 * RANGE_SCALE;
     let lift = grade.lift.unwrap_or([0.0, 0.0, 0.0]);
     let cb = [
-        ("rs", t + lift[0] + s), ("rm", t), ("rh", t + h),
-        ("gs", g + lift[1] + s), ("gm", g), ("gh", g + h),
-        ("bs", -t + lift[2] + s), ("bm", -t), ("bh", -t + h),
+        ("rs", t + lift[0] + s),
+        ("rm", t),
+        ("rh", t + h),
+        ("gs", g + lift[1] + s),
+        ("gm", g),
+        ("gh", g + h),
+        ("bs", -t + lift[2] + s),
+        ("bm", -t),
+        ("bh", -t + h),
     ];
     let cb_active = cb.iter().any(|(_, v)| v.abs() > 1e-6);
     if cb_active {
-        let body: Vec<String> =
-            cb.iter().filter(|(_, v)| v.abs() > 1e-6).map(|(k, v)| format!("{k}={}", g4(*v))).collect();
+        let body: Vec<String> = cb
+            .iter()
+            .filter(|(_, v)| v.abs() > 1e-6)
+            .map(|(k, v)| format!("{k}={}", g4(*v)))
+            .collect();
         filters.push(format!("colorbalance={}", body.join(":")));
     }
 
@@ -139,7 +150,9 @@ pub fn grade_chain(clip: &Clip, project_dir: &Path) -> (String, Vec<String>) {
 
     // ---- HSL 限定器:登记降级(不产滤镜,模块注释见定档理由) ----
     if grade.hsl.is_some() {
-        warns.push("grade.hsl HSL 限定器本期登记不渲染(ffmpeg 简单滤镜不达选色,降级 WARN 留痕);".into());
+        warns.push(
+            "grade.hsl HSL 限定器本期登记不渲染(ffmpeg 简单滤镜不达选色,降级 WARN 留痕);".into(),
+        );
     }
 
     (filters.join(","), warns)
@@ -167,8 +180,10 @@ fn curves_filter(c: &GradeCurves) -> Option<String> {
         if (sorted[sorted.len() - 1][0] - 1.0).abs() > 1e-6 {
             sorted.push([1.0, 1.0]);
         }
-        let expr: Vec<String> =
-            sorted.iter().map(|p| format!("{}/{}", g4(p[0]), g4(p[1]))).collect();
+        let expr: Vec<String> = sorted
+            .iter()
+            .map(|p| format!("{}/{}", g4(p[0]), g4(p[1])))
+            .collect();
         parts.push(format!("{slot}='{}'", expr.join(" ")));
     }
     if parts.is_empty() {
@@ -218,8 +233,10 @@ pub fn parse_cube(text: &str) -> Result<(Option<String>, u32, usize), String> {
             size = Some(n);
             continue;
         }
-        if upper.starts_with("DOMAIN_MIN") || upper.starts_with("DOMAIN_MAX")
-            || upper.starts_with("LUT_1D_INPUT_RANGE") || upper.starts_with("LUT_3D_INPUT_RANGE")
+        if upper.starts_with("DOMAIN_MIN")
+            || upper.starts_with("DOMAIN_MAX")
+            || upper.starts_with("LUT_1D_INPUT_RANGE")
+            || upper.starts_with("LUT_3D_INPUT_RANGE")
         {
             continue; // 域声明合法但本链不消费(lut3d 自行解释)
         }
@@ -254,7 +271,10 @@ pub fn lut_content_hash(clip: &Clip, project_dir: &Path) -> Option<String> {
     }
     let abs: PathBuf = project_dir.join(lut);
     let bytes = std::fs::read(abs).ok()?;
-    Some(format!("{:016x}", crate::cache::hash_text(&format!("lut:{lut}:{}", bytes.len()))))
+    Some(format!(
+        "{:016x}",
+        crate::cache::hash_text(&format!("lut:{lut}:{}", bytes.len()))
+    ))
 }
 
 #[cfg(test)]
@@ -313,7 +333,10 @@ mod tests {
         assert!(chain.contains("contrast=0.2"), "{chain}");
         assert!(chain.contains("saturation=0.5"), "{chain}");
         assert!(chain.contains("gamma_r=1.2"), "{chain}");
-        assert!(chain.contains("colorchannelmixer=rr=1.3:gg=1:bb=0.8"), "{chain}");
+        assert!(
+            chain.contains("colorchannelmixer=rr=1.3:gg=1:bb=0.8"),
+            "{chain}"
+        );
         assert!(chain.contains("curves=master='0/0 0.5/0.8 1/1'"), "{chain}");
         assert!(chain.starts_with("colorbalance="), "{chain}");
         assert!(chain.contains("lut3d=file="), "{chain}");
@@ -371,7 +394,9 @@ mod tests {
             let v = r as f64 / (n * n * n) as f64;
             rows.push_str(&format!("{v:.6} {v:.6} {v:.6}\n"));
         }
-        let good = format!("TITLE \"测试 LUT\"\nLUT_3D_SIZE {n}\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n{rows}");
+        let good = format!(
+            "TITLE \"测试 LUT\"\nLUT_3D_SIZE {n}\nDOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n{rows}"
+        );
         let (title, size, cnt) = parse_cube(&good).unwrap();
         assert_eq!((title.as_deref(), size, cnt), (Some("测试 LUT"), 2, 8));
         // 注释行与空行被忽略(头部齐全时)

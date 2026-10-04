@@ -21,6 +21,16 @@
 
 ### 新增
 
+- **I1 播放引擎批次(docs/upstream/05 十轮总纲第一轮,硬骨头 B1/B4 部分)**:
+  **内核 `preview_zone_render`**——时间线区间半分辨率预渲(fast 档进键,内容寻址
+  `.cutforge/preview-cache/`,首渲/命中双路径实测;84 工具 = 21 查询+42 写+21 编排);
+  **hidden 轨道渲染尊重性实测钉死**(04 文档缺口④,像素级双通道测试)。
+  **桌面壳 `playback/` 模块**(UI 无关、27 测试)——ffmpeg 直解码 RGBA 管道 + 24 帧
+  环形缓冲(condvar 背压,慢消费零丢头)/音频主时钟(cpal,WASAPI 不可用自动回落
+  墙钟)/停流看门狗/Drop 收尸;接线 DesktopApp(16ms 播放泵、zone→直解码→幻灯片
+  三级降级不白屏、播放中编辑 300ms 防抖重同步)+ M3 播放 UI(JKL 倍速/循环/静音/
+  画质切换含代理/截图落 `screenshots/`/沉浸预览);工单与验收记录
+  [docs/tickets/](docs/tickets/)。
 - **册七(A7)AI 原生与开放生态**:**Editor API 版本化(T7.1)**——`/api/v1` REST 面
   (POST `tools/<tool>` 单表转发 + 7 GET 别名 + SSE 事件流 + 5.4 状态码映射;旧 `/rpc`
   保留为别名,ADR-0025 URL 版本);OpenAPI 3.1 由工具注册表生成(`docs/api/openapi.json`,
@@ -272,6 +282,35 @@
 
 ### 修复
 
+- **compose xfade 链丢段与源窗越素材双缺陷(I1 回炉根治)**:① xfade 链判定收紧为
+  「每个边界时间线相接且有效转场>0」——旧判定对 duration=0 边界仍产 xfade,ffmpeg
+  会直接丢弃第二输入(实测合成片 13.0s 截断、后段整段消失,单帧抽帧越 EOF 报
+  INTERNAL);不满足整链退化 concat 硬切并 WARN 留痕,空隙不再静默折叠。② 源窗超
+  素材长度在执行器层(`exec_segment`,整片/单帧/zone/复合四出口共用)钳到素材实长,
+  缺额 tpad 末帧定格补满,空素材/0 字节返回可读 PRECONDITION 而非 INTERNAL;钳制写进
+  有效片段克隆使 seg/compose/mix 缓存键自动分叉,素材补长后零陈旧复用。③ 单帧内容
+  长度口径统一:源耗尽尾段定格计满,只拦「整窗无源」。RENDERER_VERSION 10.0→11.0
+  (行为变更升版,旧缓存整体失效);parity_matrix/parity_text_audio/render_matrix
+  全绿,新增 9 项回归测试(含 cf-demo 形态:空隙+部分转场三段全出帧)。
+- **mix 步纯视频时间线 `[N:a]` 零匹配炸图(I1 回炉根治)**:音频滤镜图对无音轨素材
+  仍拼 `[N:a]` → 流说明符匹配零流,整片/zone/区域导出三出口对纯视频工程必炸
+  (1080p 验收工程实测暴露;cf-demo 素材一直带音轨故未暴露)。修复:probe 透传
+  has_audio,有音轨才实输入;无音轨段 anullsrc 静音占位(amix 输入数恒=段数,时间
+  域贡献保留);BGM 无音轨按无 BGM 处理;acrossfade 链回落 anullsrc 垫位。新增
+  纯视频三出口 + 有/无声混排能量断言等 6 项测试;既有 parity 全绿零回归。
+- **桌面壳播放链路四缺陷(I1 实测收口)**:①帧消费门控用 pos 差值且每次弹帧重置
+  基准,16ms 泵 × 33ms 帧距实际 48ms/帧 = 20.8fps 天花板(实测 17fps)——改**累计
+  帧序号对账**,30fps 内容实测 29.3~30.4fps;②内核子进程固定 8790 端口,taskkill /F
+  强杀壳不触发 Drop,孤儿内核占口,新实例 RPC 打到僵尸内核(实测清出 6 个)——
+  缺省改系统临时端口(`--port` 显式指定仍尊重);③play_log 只写 stderr,GUI 形态
+  不可见——缺省落系统临时目录 `cutforge-play.log`(CUTFORGE_PLAY_LOG 可覆盖);
+  ④**RenderImage 逐帧泄漏**:gpui 0.2.2 RetainAllImageCache 只进不出,预览每帧新建
+  RenderImage 不驱逐 = 每帧漏一个帧缓冲(实测 30fps 下 ~90MB/s,75s 工作集 7GB)——
+  预览面板 install_image 统一走 `App::drop_image` 驱逐上一帧,复验 75s 工作集平坦
+  106MB。播放引擎另改 preview 分辨率解码(短边 ≤540,帧内存 8.3MB→2.0MB,分配率
+  250MB/s→60MB/s;DecodedFrame 尺寸反映实际输出,精确画面仍走 render_frame)。
+  最终 1080p 验收:75s 连续 28.8~30.4fps、内存平坦、zone→直解码→幻灯片三级降级
+  全链路实测(音画漂移项因 RDP 会话无声卡无法实测,留真机)。
 - **Windows 字幕烧录必炸的真实 bug(册二顺带修复)**:烧录滤镜参数内的路径反斜杠会被
   ffmpeg filtergraph 转义规则吞掉,导致 Windows 上字幕烧录路径必然失败;滤镜参数内路径
   统一正斜杠(`crates/cutforge-render/src/frame.rs`),并新增「烧录前后帧字节必不同」

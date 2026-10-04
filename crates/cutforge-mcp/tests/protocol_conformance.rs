@@ -91,6 +91,17 @@ fn protocol_conformance() {
         ("bgm_set", json!({"root": root_s})),
         // T2.4:render_frame 缺 atMs 同样 PRECONDITION_FAILED(缺 root 由统一探针覆盖)
         ("render_frame", json!({"root": root_s})),
+        // I1-M2:区间预渲缺参/非法区间同样 PRECONDITION_FAILED
+        ("preview_zone_render", json!({"root": root_s})),
+        ("preview_zone_render", json!({"root": root_s, "startMs": 0})),
+        (
+            "preview_zone_render",
+            json!({"root": root_s, "startMs": 2000, "endMs": 2000}),
+        ),
+        (
+            "preview_zone_render",
+            json!({"root": root_s, "startMs": 3000, "endMs": 1000}),
+        ),
         // 册四 A4 T4.2 时间线编辑全工具缺参/非法参数面
         ("clip_trim", json!({"root": root_s})),
         (
@@ -209,12 +220,13 @@ fn protocol_conformance() {
     //  export_all_variants(编排)→ 76;册七 A7 T7.6 增 project_package/
     //  project_unpackage(写,.cfpkg 打包/解包)→ 78;T7.5/T7.2 增
     //  preview_plan/session_report/plugin_validate(查询)+ apply_plan/note_reply
-    //  (写,AI 协作面与插件面)→ 83)
+    //  (写,AI 协作面与插件面)→ 83;I1 增 preview_zone_render(区间半分辨率
+    //  预渲,编排)→ 84)
     let names = cutforge_mcp::tool_names();
     assert_eq!(
         names.len(),
-        83,
-        "B7 口径:工具数以 schemas/mcp-tools.json 为准(册七 A7 增 AI 协作面三查询两写 + 插件校验一查询)"
+        84,
+        "B7 口径:工具数以 schemas/mcp-tools.json 为准(I1 增 preview_zone_render 区间预渲)"
     );
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
@@ -225,7 +237,7 @@ fn protocol_conformance() {
             t["name"]
         );
     }
-    // kind 口径:21 查询 + 42 写 + 20 编排(与 _doc 同句;册七 A7 78→83)
+    // kind 口径:21 查询 + 42 写 + 21 编排(与 _doc 同句;I1 83→84)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds
@@ -234,7 +246,7 @@ fn protocol_conformance() {
     }
     assert_eq!(kinds.get("query"), Some(&21), "查询 21:{kinds:?}");
     assert_eq!(kinds.get("write"), Some(&42), "写 42:{kinds:?}");
-    assert_eq!(kinds.get("orchestrate"), Some(&20), "编排 20:{kinds:?}");
+    assert_eq!(kinds.get("orchestrate"), Some(&21), "编排 21:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
     // 实现分支,不得出现"已注册但未实现"。统一以缺 root 空参探针:所有工具(capability_matrix

@@ -25,7 +25,11 @@ pub fn srt_time_parse(s: &str) -> Option<u64> {
         Some((a, b)) => (a, b),
         None => s.split_once('.')?,
     };
-    let msm = if msm.len() == 3 { msm } else { msm.split('.').nth(1)? };
+    let msm = if msm.len() == 3 {
+        msm
+    } else {
+        msm.split('.').nth(1)?
+    };
     let parts: Vec<&str> = hms.split(':').collect();
     if parts.len() != 3 {
         return None;
@@ -39,7 +43,13 @@ pub fn srt_time_parse(s: &str) -> Option<u64> {
 
 /// ms → SRT 时间戳 `HH:MM:SS,mmm`(确定性与溢出安全)。
 pub fn srt_time_format(ms: u64) -> String {
-    format!("{:02}:{:02}:{:02},{:03}", ms / 3_600_000, ms % 3_600_000 / 60_000, ms % 60_000 / 1000, ms % 1000)
+    format!(
+        "{:02}:{:02}:{:02},{:03}",
+        ms / 3_600_000,
+        ms % 3_600_000 / 60_000,
+        ms % 60_000 / 1000,
+        ms % 1000
+    )
 }
 
 /// SRT 解析:块间空行分隔;序号行可选;时间行 `-->`;正文多行(保留换行)。
@@ -52,10 +62,16 @@ pub fn srt_parse(input: &str) -> Option<Vec<SubLine>> {
             continue;
         }
         // 时间行定位(序号行可选):第一处含 "-->" 的行
-        let Some(ti) = lines.iter().position(|l| l.contains("-->")) else { continue };
+        let Some(ti) = lines.iter().position(|l| l.contains("-->")) else {
+            continue;
+        };
         let mut seg = lines[ti].split("-->");
-        let (Some(a), Some(b)) = (seg.next(), seg.next()) else { continue };
-        let (Some(at), Some(end)) = (srt_time_parse(a), srt_time_parse(b)) else { continue };
+        let (Some(a), Some(b)) = (seg.next(), seg.next()) else {
+            continue;
+        };
+        let (Some(at), Some(end)) = (srt_time_parse(a), srt_time_parse(b)) else {
+            continue;
+        };
         if end <= at {
             continue;
         }
@@ -63,7 +79,11 @@ pub fn srt_parse(input: &str) -> Option<Vec<SubLine>> {
         if text.trim().is_empty() {
             continue;
         }
-        out.push(SubLine { at_ms: at, duration_ms: end - at, text });
+        out.push(SubLine {
+            at_ms: at,
+            duration_ms: end - at,
+            text,
+        });
     }
     if out.is_empty() { None } else { Some(out) }
 }
@@ -89,7 +109,11 @@ pub fn srt_export_clips(clips: &[ExportClip]) -> String {
     sorted.sort_by_key(|c| (c.at_ms, c.id.clone()));
     let lines: Vec<SubLine> = sorted
         .iter()
-        .map(|c| SubLine { at_ms: c.at_ms, duration_ms: c.duration_ms, text: c.text.clone() })
+        .map(|c| SubLine {
+            at_ms: c.at_ms,
+            duration_ms: c.duration_ms,
+            text: c.text.clone(),
+        })
         .collect();
     srt_format(&lines)
 }
@@ -107,7 +131,9 @@ pub fn ass_time_parse(s: &str) -> Option<u64> {
     if cs.len() != 2 {
         return None;
     }
-    Some(h * 3_600_000 + m * 60_000 + sec.parse::<u64>().ok()? * 1000 + cs.parse::<u64>().ok()? * 10)
+    Some(
+        h * 3_600_000 + m * 60_000 + sec.parse::<u64>().ok()? * 1000 + cs.parse::<u64>().ok()? * 10,
+    )
 }
 
 /// ASS Dialogue 文本 → 纯文本:剥 {...} override 标签,\N/\n → 换行。
@@ -122,7 +148,10 @@ pub fn ass_text_plain(body: &str) -> String {
             _ => {}
         }
     }
-    out.replace("\\N", "\n").replace("\\n", "\n").trim_matches('\n').to_string()
+    out.replace("\\N", "\n")
+        .replace("\\n", "\n")
+        .trim_matches('\n')
+        .to_string()
 }
 
 /// ASS 导入:取 Dialogue 行(时窗 + 纯文本);时窗非法/正文空的行跳过;
@@ -130,7 +159,9 @@ pub fn ass_text_plain(body: &str) -> String {
 pub fn ass_parse(input: &str) -> Option<Vec<SubLine>> {
     let mut out: Vec<SubLine> = Vec::new();
     for line in input.lines() {
-        let Some(rest) = line.strip_prefix("Dialogue:") else { continue };
+        let Some(rest) = line.strip_prefix("Dialogue:") else {
+            continue;
+        };
         let fields: Vec<&str> = rest.splitn(10, ',').collect();
         if fields.len() < 10 {
             continue;
@@ -145,7 +176,11 @@ pub fn ass_parse(input: &str) -> Option<Vec<SubLine>> {
         if text.trim().is_empty() {
             continue;
         }
-        out.push(SubLine { at_ms: at, duration_ms: end - at, text });
+        out.push(SubLine {
+            at_ms: at,
+            duration_ms: end - at,
+            text,
+        });
     }
     if out.is_empty() { None } else { Some(out) }
 }
@@ -176,7 +211,11 @@ pub fn ass_export(clips: &[ExportClip], canvas_w: u32, canvas_h: u32) -> String 
             "Dialogue: 0,{},{},CF_{id},,0,0,0,,{}\n",
             crate::textass::ass_time(c.at_ms),
             crate::textass::ass_time(c.at_ms + c.duration_ms),
-            c.text.replace('\r', "").replace('\n', "\\N").replace('{', "｛").replace('}', "｝"),
+            c.text
+                .replace('\r', "")
+                .replace('\n', "\\N")
+                .replace('{', "｛")
+                .replace('}', "｝"),
         ));
     }
     format!(
@@ -193,9 +232,13 @@ pub fn parse_auto(input: &str) -> Option<Vec<SubLine>> {
         return vtt_parse(input);
     }
     if input.contains("-->") {
-        srt_parse(input).or_else(|| vtt_parse(input)).or_else(|| ass_parse(input))
+        srt_parse(input)
+            .or_else(|| vtt_parse(input))
+            .or_else(|| ass_parse(input))
     } else {
-        ass_parse(input).or_else(|| srt_parse(input)).or_else(|| vtt_parse(input))
+        ass_parse(input)
+            .or_else(|| srt_parse(input))
+            .or_else(|| vtt_parse(input))
     }
 }
 
@@ -222,7 +265,13 @@ pub fn vtt_time_parse(s: &str) -> Option<u64> {
 
 /// ms → VTT 时间戳 `HH:MM:SS.mmm`(点分隔;确定性与溢出安全)。
 pub fn vtt_time_format(ms: u64) -> String {
-    format!("{:02}:{:02}:{:02}.{:03}", ms / 3_600_000, ms % 3_600_000 / 60_000, ms % 60_000 / 1000, ms % 1000)
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        ms / 3_600_000,
+        ms % 3_600_000 / 60_000,
+        ms % 60_000 / 1000,
+        ms % 1000
+    )
 }
 
 /// VTT 解析:首行 WEBVTT 头(必需);NOTE/STYLE/REGION 块跳过;cue 正文多行保留。
@@ -247,12 +296,22 @@ pub fn vtt_parse(input: &str) -> Option<Vec<SubLine>> {
             continue;
         }
         // 时间行定位(cue id 行可选):第一处含 "-->" 的行
-        let Some(ti) = lines.iter().position(|l| l.contains("-->")) else { continue };
+        let Some(ti) = lines.iter().position(|l| l.contains("-->")) else {
+            continue;
+        };
         let mut seg = lines[ti].split("-->");
-        let (Some(a), Some(b)) = (seg.next(), seg.next()) else { continue };
+        let (Some(a), Some(b)) = (seg.next(), seg.next()) else {
+            continue;
+        };
         // cue settings(终点时间后的空白+token)剥除
-        let b_time: String = b.trim().chars().take_while(|c| !c.is_whitespace()).collect();
-        let (Some(at), Some(end)) = (vtt_time_parse(a), vtt_time_parse(&b_time)) else { continue };
+        let b_time: String = b
+            .trim()
+            .chars()
+            .take_while(|c| !c.is_whitespace())
+            .collect();
+        let (Some(at), Some(end)) = (vtt_time_parse(a), vtt_time_parse(&b_time)) else {
+            continue;
+        };
         if end <= at {
             continue;
         }
@@ -260,7 +319,11 @@ pub fn vtt_parse(input: &str) -> Option<Vec<SubLine>> {
         if text.trim().is_empty() {
             continue;
         }
-        out.push(SubLine { at_ms: at, duration_ms: end - at, text });
+        out.push(SubLine {
+            at_ms: at,
+            duration_ms: end - at,
+            text,
+        });
     }
     if out.is_empty() { None } else { Some(out) }
 }
@@ -285,7 +348,11 @@ pub fn vtt_export_clips(clips: &[ExportClip]) -> String {
     sorted.sort_by_key(|c| (c.at_ms, c.id.clone()));
     let lines: Vec<SubLine> = sorted
         .iter()
-        .map(|c| SubLine { at_ms: c.at_ms, duration_ms: c.duration_ms, text: c.text.clone() })
+        .map(|c| SubLine {
+            at_ms: c.at_ms,
+            duration_ms: c.duration_ms,
+            text: c.text.clone(),
+        })
         .collect();
     vtt_format(&lines)
 }
@@ -314,7 +381,14 @@ mod tests {
     fn srt_roundtrip_zero_loss() {
         let lines = srt_parse(CANONICAL_SRT).expect("夹具必须可解析");
         assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], SubLine { at_ms: 500, duration_ms: 2000, text: "你好世界".into() });
+        assert_eq!(
+            lines[0],
+            SubLine {
+                at_ms: 500,
+                duration_ms: 2000,
+                text: "你好世界".into()
+            }
+        );
         assert_eq!(lines[1].text, "第二行字幕\n跨行文本", "多行保留");
         assert_eq!(lines[2].text, "带标点,字幕。");
         let back = srt_format(&lines);
@@ -342,7 +416,15 @@ mod tests {
         let ass = "[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name\nStyle: Default,Arial,60\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.50,0:00:02.50,Default,,0,0,0,,帧上{\\bord8}字幕\nDialogue: 0,0:00:03.00,0:00:04.00,Default,,0,0,0,,两\\N行\n";
         let lines = ass_parse(ass).unwrap();
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], SubLine { at_ms: 500, duration_ms: 2000, text: "帧上字幕".into() }, "override 标签剥除");
+        assert_eq!(
+            lines[0],
+            SubLine {
+                at_ms: 500,
+                duration_ms: 2000,
+                text: "帧上字幕".into()
+            },
+            "override 标签剥除"
+        );
         assert_eq!(lines[1].text, "两\n行", "\\N 转换行");
         assert!(ass_parse("无 Dialogue").is_none());
     }
@@ -355,31 +437,56 @@ mod tests {
         let clips: Vec<ExportClip> = lines
             .iter()
             .enumerate()
-            .map(|(i, l)| ExportClip { id: format!("T1-{i:03}"), at_ms: l.at_ms, duration_ms: l.duration_ms, text: l.text.clone() })
+            .map(|(i, l)| ExportClip {
+                id: format!("T1-{i:03}"),
+                at_ms: l.at_ms,
+                duration_ms: l.duration_ms,
+                text: l.text.clone(),
+            })
             .collect();
         let exported = ass_export(&clips, 1080, 1920);
         let back = ass_parse(&exported).unwrap();
         assert_eq!(back, lines, "ASS 语义往返零丢失");
-        assert!(exported.contains("Dialogue: 0,0:00:00.50,0:00:02.50,CF_T1-000,,0,0,0,,你好世界"), "{exported}");
+        assert!(
+            exported.contains("Dialogue: 0,0:00:00.50,0:00:02.50,CF_T1-000,,0,0,0,,你好世界"),
+            "{exported}"
+        );
     }
 
     /// SRT 导出确定性 + 按时序重排 + 空轨导出空串(调用方对空轨报 PRECONDITION)。
     #[test]
     fn srt_export_deterministic_and_sorted() {
         let clips = vec![
-            ExportClip { id: "T1-002".into(), at_ms: 3000, duration_ms: 1000, text: "后".into() },
-            ExportClip { id: "T1-001".into(), at_ms: 500, duration_ms: 2000, text: "前".into() },
+            ExportClip {
+                id: "T1-002".into(),
+                at_ms: 3000,
+                duration_ms: 1000,
+                text: "后".into(),
+            },
+            ExportClip {
+                id: "T1-001".into(),
+                at_ms: 500,
+                duration_ms: 2000,
+                text: "前".into(),
+            },
         ];
         let a = srt_export_clips(&clips);
         let b = srt_export_clips(&clips);
         assert_eq!(a, b, "同输入同产物(确定性)");
-        assert!(a.starts_with("1\n00:00:00,500 --> 00:00:02,500\n前"), "导出按 atMs 升序: {a}");
+        assert!(
+            a.starts_with("1\n00:00:00,500 --> 00:00:02,500\n前"),
+            "导出按 atMs 升序: {a}"
+        );
         assert_eq!(srt_export_clips(&[]), "");
     }
 
     #[test]
     fn parse_auto_detects_format() {
-        assert_eq!(parse_auto(CANONICAL_SRT), srt_parse(CANONICAL_SRT), "含 --> 识别为 SRT");
+        assert_eq!(
+            parse_auto(CANONICAL_SRT),
+            srt_parse(CANONICAL_SRT),
+            "含 --> 识别为 SRT"
+        );
         let ass = "Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,甲\n";
         assert_eq!(parse_auto(ass), ass_parse(ass), "无 --> 识别为 ASS");
         assert!(parse_auto("两者皆非").is_none());
@@ -404,10 +511,21 @@ mod tests {
     fn vtt_roundtrip_zero_loss() {
         let lines = vtt_parse(CANONICAL_VTT).expect("夹具必须可解析");
         assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0], SubLine { at_ms: 500, duration_ms: 2000, text: "你好世界".into() });
+        assert_eq!(
+            lines[0],
+            SubLine {
+                at_ms: 500,
+                duration_ms: 2000,
+                text: "你好世界".into()
+            }
+        );
         assert_eq!(lines[1].text, "第二行字幕\n跨行文本", "多行保留");
         assert_eq!(vtt_format(&lines), CANONICAL_VTT, "byte 级往返零丢失");
-        assert_eq!(vtt_parse(&vtt_format(&lines)).unwrap(), lines, "再解析语义相等");
+        assert_eq!(
+            vtt_parse(&vtt_format(&lines)).unwrap(),
+            lines,
+            "再解析语义相等"
+        );
         // 容错:cue id 行 / cue settings / NOTE 块 / 零合法块
         let loose = "WEBVTT\n\nNOTE 这是一个注释块\n跨行注释\n\ncue-1\n00:00:01.000 --> 00:00:02.000 position:50%\n带设置\n\n00:00:03.000 --> 00:00:02.000\n倒置跳过\n\n";
         let lines = vtt_parse(loose).unwrap();
@@ -418,21 +536,41 @@ mod tests {
         // 与 SRT 的格式差异锁:VTT 用点,SRT 用逗号(同毫秒内容互相转换等值)
         let srt_lines = srt_parse(CANONICAL_SRT).unwrap();
         let as_vtt = vtt_format(&srt_lines);
-        assert!(as_vtt.starts_with("WEBVTT\n\n00:00:00.500 -->"), "VTT 头 + 点分隔: {as_vtt}");
-        assert_eq!(vtt_parse(&as_vtt).unwrap(), srt_lines, "SRT 内容经 VTT 格式化后解析等值");
+        assert!(
+            as_vtt.starts_with("WEBVTT\n\n00:00:00.500 -->"),
+            "VTT 头 + 点分隔: {as_vtt}"
+        );
+        assert_eq!(
+            vtt_parse(&as_vtt).unwrap(),
+            srt_lines,
+            "SRT 内容经 VTT 格式化后解析等值"
+        );
     }
 
     /// VTT 导出确定性 + 按时序重排;parse_auto 识别 WEBVTT 头优先。
     #[test]
     fn vtt_export_deterministic_and_auto_detected() {
         let clips = vec![
-            ExportClip { id: "T1-002".into(), at_ms: 3000, duration_ms: 1000, text: "后".into() },
-            ExportClip { id: "T1-001".into(), at_ms: 500, duration_ms: 2000, text: "前".into() },
+            ExportClip {
+                id: "T1-002".into(),
+                at_ms: 3000,
+                duration_ms: 1000,
+                text: "后".into(),
+            },
+            ExportClip {
+                id: "T1-001".into(),
+                at_ms: 500,
+                duration_ms: 2000,
+                text: "前".into(),
+            },
         ];
         let a = vtt_export_clips(&clips);
         let b = vtt_export_clips(&clips);
         assert_eq!(a, b, "同输入同产物(确定性)");
-        assert!(a.starts_with("WEBVTT\n\n00:00:00.500 --> 00:00:02.500\n前"), "{a}");
+        assert!(
+            a.starts_with("WEBVTT\n\n00:00:00.500 --> 00:00:02.500\n前"),
+            "{a}"
+        );
         assert_eq!(parse_auto(&a), vtt_parse(&a), "WEBVTT 头识别优先");
     }
 }

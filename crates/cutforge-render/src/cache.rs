@@ -14,7 +14,7 @@
 //!
 //! 最终成片(06_成片输出)不缓存:输出路径与格式保持不变。
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// 渲染缓存根(相对工程目录)。
@@ -90,7 +90,11 @@ impl CacheIndex {
                 let entries = v
                     .get("entries")
                     .and_then(|e| e.as_array())
-                    .map(|a| a.iter().filter_map(CacheEntry::from_json).collect::<Vec<_>>())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(CacheEntry::from_json)
+                            .collect::<Vec<_>>()
+                    })
                     .unwrap_or_default();
                 let mut idx = CacheIndex { entries };
                 idx.prune_missing(root);
@@ -110,12 +114,17 @@ impl CacheIndex {
     }
 
     pub fn find(&self, layer: &str, key: &str) -> Option<&CacheEntry> {
-        self.entries.iter().find(|e| e.layer == layer && e.key == key)
+        self.entries
+            .iter()
+            .find(|e| e.layer == layer && e.key == key)
     }
 
     /// 命中:刷新 LRU 时间与命中数,返回相对缓存根的文件路径。
     pub fn touch(&mut self, layer: &str, key: &str, now: u64) -> Option<PathBuf> {
-        let e = self.entries.iter_mut().find(|e| e.layer == layer && e.key == key)?;
+        let e = self
+            .entries
+            .iter_mut()
+            .find(|e| e.layer == layer && e.key == key)?;
         e.hits += 1;
         e.last_used_at = now;
         Some(PathBuf::from(&e.file))
@@ -129,7 +138,14 @@ impl CacheIndex {
 
     /// 同 [`CacheIndex::record`],扩展名显式给定(frame 层单帧格式 png/jpeg 共用一层,
     /// 扩展名不随 layer 固定;其余层不受影响)。
-    pub fn record_with_ext(&mut self, layer: &str, key: &str, input: Value, now: u64, ext: &str) -> PathBuf {
+    pub fn record_with_ext(
+        &mut self,
+        layer: &str,
+        key: &str,
+        input: Value,
+        now: u64,
+        ext: &str,
+    ) -> PathBuf {
         let rel = Path::new(layer).join(format!("{key}{ext}"));
         self.entries.retain(|e| !(e.layer == layer && e.key == key));
         self.entries.push(CacheEntry {
@@ -147,7 +163,11 @@ impl CacheIndex {
 
     /// 回填实际文件大小(ffmpeg/拷贝落盘后、清单保存前调用)。
     pub fn set_size(&mut self, layer: &str, key: &str, size: u64) {
-        if let Some(e) = self.entries.iter_mut().find(|e| e.layer == layer && e.key == key) {
+        if let Some(e) = self
+            .entries
+            .iter_mut()
+            .find(|e| e.layer == layer && e.key == key)
+        {
             e.size = size;
         }
     }
@@ -221,7 +241,13 @@ pub fn seg_spec(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> Value {
 /// seg 键(带画幅调试后缀;哈希已保证唯一)。
 pub fn seg_key(plan: &RenderPlan, clip: &Clip, tail_ms: f64) -> String {
     let spec = seg_spec(plan, clip, tail_ms);
-    format!("{}-{}x{}f{}", key_hex(&spec), plan.canvas_w, plan.canvas_h, plan.fps)
+    format!(
+        "{}-{}x{}f{}",
+        key_hex(&spec),
+        plan.canvas_w,
+        plan.canvas_h,
+        plan.fps
+    )
 }
 
 /// compose 输入 spec:seg 键序列(传递性覆盖 clip 内容/画幅/转场)。
@@ -314,12 +340,25 @@ pub fn sub_key(video_key: &str, mix_key: &str, ass_bytes: Option<&[u8]>) -> Stri
 /// 代理帧与原片帧不共享条目)。与管线层(键=渲染输入)不同,帧键直接以
 /// **工程盘面指纹**为输入:预览语义是"当前工程这一刻的样子",任何盘面变化
 /// (哪怕不影响画面的 oplog 追加)都宁可重渲一帧,绝不给陈旧帧。
-pub fn frame_spec(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>) -> Value {
+pub fn frame_spec(
+    fp_key: &str,
+    at_ms: u64,
+    canvas: (u32, u32),
+    fmt: &str,
+    ass_bytes: Option<&[u8]>,
+) -> Value {
     frame_spec_proxy(fp_key, at_ms, canvas, fmt, ass_bytes, false)
 }
 
 /// 同 [`frame_spec`],代理开关显式给定(册四 T4.1)。
-pub fn frame_spec_proxy(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>, use_proxy: bool) -> Value {
+pub fn frame_spec_proxy(
+    fp_key: &str,
+    at_ms: u64,
+    canvas: (u32, u32),
+    fmt: &str,
+    ass_bytes: Option<&[u8]>,
+    use_proxy: bool,
+) -> Value {
     json!({
         "v": crate::RENDERER_VERSION,
         "fp": fp_key,
@@ -331,12 +370,27 @@ pub fn frame_spec_proxy(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str,
     })
 }
 
-pub fn frame_key(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>) -> String {
+pub fn frame_key(
+    fp_key: &str,
+    at_ms: u64,
+    canvas: (u32, u32),
+    fmt: &str,
+    ass_bytes: Option<&[u8]>,
+) -> String {
     key_hex(&frame_spec(fp_key, at_ms, canvas, fmt, ass_bytes))
 }
 
-pub fn frame_key_proxy(fp_key: &str, at_ms: u64, canvas: (u32, u32), fmt: &str, ass_bytes: Option<&[u8]>, use_proxy: bool) -> String {
-    key_hex(&frame_spec_proxy(fp_key, at_ms, canvas, fmt, ass_bytes, use_proxy))
+pub fn frame_key_proxy(
+    fp_key: &str,
+    at_ms: u64,
+    canvas: (u32, u32),
+    fmt: &str,
+    ass_bytes: Option<&[u8]>,
+    use_proxy: bool,
+) -> String {
+    key_hex(&frame_spec_proxy(
+        fp_key, at_ms, canvas, fmt, ass_bytes, use_proxy,
+    ))
 }
 
 /// tmp 文件相对路径(内容寻址命名,避免并发互踩)。
@@ -377,12 +431,17 @@ fn walk_files(root: &Path) -> Vec<(PathBuf, u64)> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.file_name().is_some_and(|n| n.to_string_lossy() != INDEX_FILE) {
+            } else if p
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy() != INDEX_FILE)
+            {
                 let size = e.metadata().map(|m| m.len()).unwrap_or(0);
                 out.push((p, size));
             }
@@ -485,7 +544,12 @@ pub fn cache_gc(root: &Path, capacity_bytes: u64, now: u64) -> Result<GcReport, 
     }
     idx.entries.retain(|e| root.join(&e.file).is_file());
     idx.save(root)?;
-    Ok(GcReport { removed, freed_bytes: freed, remaining_bytes: total, capacity_bytes })
+    Ok(GcReport {
+        removed,
+        freed_bytes: freed,
+        remaining_bytes: total,
+        capacity_bytes,
+    })
 }
 
 #[cfg(test)]
@@ -508,7 +572,14 @@ mod tests {
     }
 
     /// 写一个 size 字节的假缓存文件并登记(测试用;不走 ffmpeg)。
-    fn put(root: &Path, idx: &mut CacheIndex, layer: &str, key: &str, size: usize, used: u64) -> PathBuf {
+    fn put(
+        root: &Path,
+        idx: &mut CacheIndex,
+        layer: &str,
+        key: &str,
+        size: usize,
+        used: u64,
+    ) -> PathBuf {
         let rel = idx.record(layer, key, serde_json::json!({"k": key}), used);
         let full = root.join(&rel);
         let data = vec![0u8; size];
@@ -521,7 +592,11 @@ mod tests {
     fn key_changes_when_any_input_changes() {
         let v = |x: u64| json!({"v": "cutforge-render-4.0", "clip": x});
         assert_eq!(key_hex(&v(1)), key_hex(&v(1)), "同输入同键(确定性)");
-        assert_ne!(key_hex(&v(1)), key_hex(&v(2)), "输入变 → 键变(零陈旧复用的根基)");
+        assert_ne!(
+            key_hex(&v(1)),
+            key_hex(&v(2)),
+            "输入变 → 键变(零陈旧复用的根基)"
+        );
     }
 
     /// 册四 A4 T4.4/T4.9 验证:seg 键对 clip JSON 全量哈希——新字段(曲线/倒放/
@@ -579,38 +654,74 @@ mod tests {
             let (plan, clip) = mk(kfs);
             seg_key(&plan, &clip, 0.0)
         };
-        let base = key_of(r#", "keyframes":[
+        let base = key_of(
+            r#", "keyframes":[
             {"property":"position.x","timeMs":0,"value":0.5},
-            {"property":"position.x","timeMs":1000,"value":0.7,"interp":"linear"}]"#);
+            {"property":"position.x","timeMs":1000,"value":0.7,"interp":"linear"}]"#,
+        );
         // property 变
-        assert_ne!(base, key_of(r#", "keyframes":[
+        assert_ne!(
+            base,
+            key_of(
+                r#", "keyframes":[
             {"property":"position.y","timeMs":0,"value":0.5},
-            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "property 变必换键");
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#
+            ),
+            "property 变必换键"
+        );
         // timeMs 变
-        assert_ne!(base, key_of(r#", "keyframes":[
+        assert_ne!(
+            base,
+            key_of(
+                r#", "keyframes":[
             {"property":"position.x","timeMs":100,"value":0.5},
-            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "timeMs 变必换键");
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#
+            ),
+            "timeMs 变必换键"
+        );
         // value 变
-        assert_ne!(base, key_of(r#", "keyframes":[
+        assert_ne!(
+            base,
+            key_of(
+                r#", "keyframes":[
             {"property":"position.x","timeMs":0,"value":0.6},
-            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "value 变必换键");
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#
+            ),
+            "value 变必换键"
+        );
         // interp 变
-        assert_ne!(base, key_of(r#", "keyframes":[
+        assert_ne!(
+            base,
+            key_of(
+                r#", "keyframes":[
             {"property":"position.x","timeMs":0,"value":0.5,"interp":"hold"},
-            {"property":"position.x","timeMs":1000,"value":0.7}]"#), "interp 变必换键");
+            {"property":"position.x","timeMs":1000,"value":0.7}]"#
+            ),
+            "interp 变必换键"
+        );
         // bezier 控制柄变
         assert_ne!(
-            key_of(r#", "keyframes":[
+            key_of(
+                r#", "keyframes":[
                 {"property":"position.x","timeMs":0,"value":0.5,"interp":"bezier","bezier":[0.3,0,0.7,1]},
-                {"property":"position.x","timeMs":1000,"value":0.7}]"#),
-            key_of(r#", "keyframes":[
+                {"property":"position.x","timeMs":1000,"value":0.7}]"#
+            ),
+            key_of(
+                r#", "keyframes":[
                 {"property":"position.x","timeMs":0,"value":0.5,"interp":"bezier","bezier":[0.1,0,0.9,1]},
-                {"property":"position.x","timeMs":1000,"value":0.7}]"#),
+                {"property":"position.x","timeMs":1000,"value":0.7}]"#
+            ),
             "bezier 控制柄变必换键"
         );
         // 增删一条
-        assert_ne!(base, key_of(r#", "keyframes":[
-            {"property":"position.x","timeMs":0,"value":0.5}]"#), "删一条必换键");
+        assert_ne!(
+            base,
+            key_of(
+                r#", "keyframes":[
+            {"property":"position.x","timeMs":0,"value":0.5}]"#
+            ),
+            "删一条必换键"
+        );
         // 无关键帧与空差异照常(无 keyframes 字段的 clip 键与 v2 时点同形语义)
         assert_ne!(base, key_of(""), "有关键帧 vs 无关键帧必不同键");
     }
@@ -629,8 +740,10 @@ mod tests {
             RenderPlan::build(&p, Path::new("/w"), None)
         };
         assert_ne!(
-            mix_key(&mk(r#", "keyframes":[{"property":"volume","timeMs":0,"value":1.0},
-                {"property":"volume","timeMs":1000,"value":0.0}]"#)),
+            mix_key(&mk(
+                r#", "keyframes":[{"property":"volume","timeMs":0,"value":1.0},
+                {"property":"volume","timeMs":1000,"value":0.0}]"#
+            )),
             mix_key(&mk("")),
             "volume 关键帧必须改变 mix 键"
         );
@@ -661,12 +774,36 @@ mod tests {
         let base = ("fp-aaa", 1500u64, (1080u32, 1920u32), "png");
         let k = frame_key(base.0, base.1, base.2, base.3, None);
         // 指纹 / 时间点 / 画幅 / 格式任一变化 → 键变
-        assert_ne!(k, frame_key("fp-bbb", base.1, base.2, base.3, None), "指纹入键");
-        assert_ne!(k, frame_key(base.0, 1600, base.2, base.3, None), "atMs 入键(量化后)");
-        assert_ne!(k, frame_key(base.0, base.1, (1920, 1080), base.3, None), "画幅入键");
-        assert_ne!(k, frame_key(base.0, base.1, base.2, "jpeg", None), "格式入键");
-        assert_ne!(k, frame_key(base.0, base.1, base.2, base.3, Some(b"[Script]")), "ASS 入键");
-        assert_eq!(k, frame_key(base.0, base.1, base.2, base.3, None), "同输入同键(确定性)");
+        assert_ne!(
+            k,
+            frame_key("fp-bbb", base.1, base.2, base.3, None),
+            "指纹入键"
+        );
+        assert_ne!(
+            k,
+            frame_key(base.0, 1600, base.2, base.3, None),
+            "atMs 入键(量化后)"
+        );
+        assert_ne!(
+            k,
+            frame_key(base.0, base.1, (1920, 1080), base.3, None),
+            "画幅入键"
+        );
+        assert_ne!(
+            k,
+            frame_key(base.0, base.1, base.2, "jpeg", None),
+            "格式入键"
+        );
+        assert_ne!(
+            k,
+            frame_key(base.0, base.1, base.2, base.3, Some(b"[Script]")),
+            "ASS 入键"
+        );
+        assert_eq!(
+            k,
+            frame_key(base.0, base.1, base.2, base.3, None),
+            "同输入同键(确定性)"
+        );
     }
 
     #[test]
@@ -674,7 +811,10 @@ mod tests {
         let mut idx = CacheIndex::default();
         let rel = idx.record_with_ext("frame", "k1", json!(1), 10, ".jpg");
         assert!(rel.starts_with("frame/") && rel.to_string_lossy().ends_with("k1.jpg"));
-        assert!(idx.touch("frame", "k1", 20).is_some(), "frame 层与其他层同机制命中");
+        assert!(
+            idx.touch("frame", "k1", 20).is_some(),
+            "frame 层与其他层同机制命中"
+        );
     }
 
     #[test]
@@ -698,7 +838,10 @@ mod tests {
         let loaded = CacheIndex::load(&root.0);
         assert_eq!(loaded.entries.len(), 1);
         let e = &loaded.entries[0];
-        assert_eq!((e.layer.as_str(), e.key.as_str(), e.size), ("mix", "abc", 42));
+        assert_eq!(
+            (e.layer.as_str(), e.key.as_str(), e.size),
+            ("mix", "abc", 42)
+        );
         assert_eq!(loaded.total_bytes(), 42);
     }
 
@@ -706,8 +849,15 @@ mod tests {
     fn index_load_missing_or_corrupt_is_empty() {
         let root = TempRoot::new("corrupt");
         cutforge_io::atomic::atomic_write(&root.0.join(INDEX_FILE), b"{not json").unwrap();
-        assert!(CacheIndex::load(&root.0).entries.is_empty(), "损坏清单不得误报命中");
-        assert!(CacheIndex::load(&TempRoot::new("missing").0).entries.is_empty());
+        assert!(
+            CacheIndex::load(&root.0).entries.is_empty(),
+            "损坏清单不得误报命中"
+        );
+        assert!(
+            CacheIndex::load(&TempRoot::new("missing").0)
+                .entries
+                .is_empty()
+        );
     }
 
     #[test]
@@ -761,8 +911,14 @@ mod tests {
         cutforge_io::atomic::atomic_write(&tmp.join("concat-x.txt"), &junk).unwrap();
         let future = now_secs() + ORPHAN_TTL_SECS + 10;
         let report = cache_gc(&root.0, DEFAULT_CAPACITY_BYTES, future).unwrap();
-        assert!(!root.0.join("composed.mp4").exists(), "超龄孤儿必须被 gc 清理");
-        assert!(!tmp.join("concat-x.txt").exists(), "tmp 超龄件必须被 gc 清理");
+        assert!(
+            !root.0.join("composed.mp4").exists(),
+            "超龄孤儿必须被 gc 清理"
+        );
+        assert!(
+            !tmp.join("concat-x.txt").exists(),
+            "tmp 超龄件必须被 gc 清理"
+        );
         assert_eq!(report.capacity_bytes, DEFAULT_CAPACITY_BYTES);
         // 清单内条目容量充足 → 保留
         assert!(CacheIndex::load(&root.0).find("seg", "tracked").is_some());
@@ -787,7 +943,11 @@ mod tests {
         assert_eq!((seg.entries, seg.bytes), (2, 30));
         let mix = r.layers.iter().find(|l| l.layer == "mix").unwrap();
         assert_eq!((mix.entries, mix.bytes), (1, 30));
-        assert_eq!((r.orphan_files, r.orphan_bytes), (1, 5), "旧版遗留应记为孤儿");
+        assert_eq!(
+            (r.orphan_files, r.orphan_bytes),
+            (1, 5),
+            "旧版遗留应记为孤儿"
+        );
         assert_eq!(r.total_indexed_bytes, 60);
     }
 }

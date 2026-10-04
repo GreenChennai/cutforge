@@ -19,3 +19,6 @@ ureq = { version = "2", features = ["json"] }
 serde_json = "1"
 # render_frame PNG → gpui RenderImage 裸帧(与 sable-canvas "png" 豁免同因)
 image = "0.25"
+# 播放引擎音频输出(I1 M1,docs/tickets/I1-S1):f32 立体声 48k → 默认设备;
+# 默认 features(Windows 走 WASAPI),cpal 类型全部封在 playback/audio.rs 内
+cpal = "0.18"

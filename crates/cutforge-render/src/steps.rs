@@ -69,9 +69,21 @@ pub fn probe_paths(plan: &RenderPlan) -> Vec<PathBuf> {
 
 // ---------------- 步 3 compose(xfade 链 / concat 退化) ----------------
 
-/// 有出向转场 → xfade 链;否则退化 concat(-c copy,零重编码)。
+/// xfade 链启用判定(I1 修收紧):链内**每个**边界都必须「时间线相接(前段
+/// 末端 = 后段起点)+ 有效转场 > 0」。ADR-0023 的尾帧/offset 对齐口径只在全
+/// 转场链自洽(seg_i 的尾帧恰被边界 i+1 的 xfade 消费,[x_k] 实际长度 = 名义
+/// 累计);存在 d=0 边界时该边界生成 duration=0 的 xfade,ffmpeg 直接丢弃第二
+/// 输入(cf-demo 实测:三段工程合成片只有前两段,第三段整体消失,抽帧越过
+/// 合成 EOF → 空产出 INTERNAL)。不满足即整链退化 concat(-c copy 零重编码;
+/// 空隙折叠为前段末帧定格,与 timeline_to_compose_ms 的 seg_durs 口径同源;
+/// 已声明转场被降级硬切,由 compose 步 WARN 留痕)。
 pub fn is_xfade_chain(video_clips: &[Clip]) -> bool {
-    video_clips.iter().enumerate().any(|(i, c)| i > 0 && transition_out_ms(c).is_some())
+    video_clips.len() > 1
+        && (1..video_clips.len()).all(|i| {
+            crate::catalog::effective_transition_ms(video_clips, i) > 0.0
+                && video_clips[i - 1].start_ms + video_clips[i - 1].duration_ms
+                    == video_clips[i].start_ms
+        })
 }
 
 /// xfade 链命令行:offset_k = **前序名义时长累计**(ADR-0023:尾帧只进转场重叠
@@ -107,9 +119,17 @@ pub fn compose_xfade_args(
         cur_label = out_label;
     }
     let last_label = format!("[x{}]", video_clips.len() - 1);
-    args.extend(["-filter_complex".into(), filters.join(";"), "-map".into(), last_label]);
     args.extend([
-        "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
+        "-filter_complex".into(),
+        filters.join(";"),
+        "-map".into(),
+        last_label,
+    ]);
+    args.extend([
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "veryfast".into(),
         composed_out.to_string_lossy().into(),
     ]);
     (args, warns)
@@ -119,7 +139,10 @@ pub fn compose_xfade_args(
 pub fn concat_list_content(seg_files: &[PathBuf]) -> String {
     let mut list = String::new();
     for f in seg_files {
-        list.push_str(&format!("file '{}'\n", f.to_string_lossy().replace('\\', "/")));
+        list.push_str(&format!(
+            "file '{}'\n",
+            f.to_string_lossy().replace('\\', "/")
+        ));
     }
     list
 }
@@ -127,9 +150,18 @@ pub fn concat_list_content(seg_files: &[PathBuf]) -> String {
 /// concat 合成命令行(-c copy 不重编码)。
 pub fn compose_concat_args(concat_list: &Path, composed_out: &Path) -> Vec<String> {
     [
-        "-y", "-v", "error", "-f", "concat", "-safe", "0",
-        "-i", &concat_list.to_string_lossy(),
-        "-c", "copy", &composed_out.to_string_lossy(),
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        &concat_list.to_string_lossy(),
+        "-c",
+        "copy",
+        &composed_out.to_string_lossy(),
     ]
     .iter()
     .map(|s| s.to_string())
@@ -139,9 +171,18 @@ pub fn compose_concat_args(concat_list: &Path, composed_out: &Path) -> Vec<Strin
 // ---------------- 步 4 overlay ----------------
 
 /// overlay 合成命令行:绝对像素 + opacity(colorchannelmixer)+ 时间窗 enable。
-pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_out: &Path) -> Vec<String> {
-    let mut args: Vec<String> =
-        vec!["-y".into(), "-v".into(), "error".into(), "-i".into(), composed_in.to_string_lossy().into()];
+pub fn overlay_args(
+    overlay_segs: &[OverlaySeg],
+    composed_in: &Path,
+    overlaid_out: &Path,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "-y".into(),
+        "-v".into(),
+        "error".into(),
+        "-i".into(),
+        composed_in.to_string_lossy().into(),
+    ];
     for ov in overlay_segs {
         args.extend(["-i".into(), ov.src.to_string_lossy().into()]);
     }
@@ -152,7 +193,10 @@ pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_ou
         let chain = if (ov.spec.opacity - 1.0).abs() < f64::EPSILON {
             scale_chain
         } else {
-            format!("{scale_chain},format=rgba,colorchannelmixer=aa={:.4}", ov.spec.opacity)
+            format!(
+                "{scale_chain},format=rgba,colorchannelmixer=aa={:.4}",
+                ov.spec.opacity
+            )
         };
         // 层输入 = i+1(基片恒输入 0,叠加源从 1 起;A5-BE3 修复:旧实现 [i:v]
         // 把基片自身缩放叠加——红底红 logo 不可见的潜伏缺陷,compound 夹具 lime 检出)
@@ -167,8 +211,14 @@ pub fn overlay_args(overlay_segs: &[OverlaySeg], composed_in: &Path, overlaid_ou
         cur = format!("[o{i}]");
     }
     args.extend([
-        "-filter_complex".into(), filters.join(";"), "-map".into(), cur,
-        "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
+        "-filter_complex".into(),
+        filters.join(";"),
+        "-map".into(),
+        cur,
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "veryfast".into(),
         overlaid_out.to_string_lossy().into(),
     ]);
     args
@@ -188,8 +238,13 @@ pub fn adjust_args(
     h: u32,
     fps: u32,
 ) -> Vec<String> {
-    let mut args: Vec<String> =
-        vec!["-y".into(), "-v".into(), "error".into(), "-i".into(), base_video.to_string_lossy().into()];
+    let mut args: Vec<String> = vec![
+        "-y".into(),
+        "-v".into(),
+        "error".into(),
+        "-i".into(),
+        base_video.to_string_lossy().into(),
+    ];
     let mut filters: Vec<String> = Vec::new();
     let mut cur = "[0:v]".to_string();
     let mut n = 0usize;
@@ -213,7 +268,9 @@ pub fn adjust_args(
         let win_in = format!("[w{n}in]");
         let win_out = format!("[w{n}]");
         let merged_out = format!("[a{n}]");
-        filters.push(format!("{cur}trim=start={s:.3}:end={e:.3},setpts=PTS-STARTPTS{win_in}"));
+        filters.push(format!(
+            "{cur}trim=start={s:.3}:end={e:.3},setpts=PTS-STARTPTS{win_in}"
+        ));
         filters.push(format!("{win_in}{chain}{win_out}"));
         filters.push(format!(
             "{cur}{win_out}overlay=enable='between(t,{s:.3},{e:.3})'{merged_out}"
@@ -223,12 +280,22 @@ pub fn adjust_args(
     }
     if filters.is_empty() {
         // 全部片段无链:透传拷贝(不产滤镜图)
-        args.extend(["-c".into(), "copy".into(), adjusted_out.to_string_lossy().into()]);
+        args.extend([
+            "-c".into(),
+            "copy".into(),
+            adjusted_out.to_string_lossy().into(),
+        ]);
         return args;
     }
     args.extend([
-        "-filter_complex".into(), filters.join(";"), "-map".into(), cur,
-        "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
+        "-filter_complex".into(),
+        filters.join(";"),
+        "-map".into(),
+        cur,
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "veryfast".into(),
         adjusted_out.to_string_lossy().into(),
     ]);
     args
@@ -241,33 +308,76 @@ pub fn adjust_args(
 /// 册五 T5.3:有轨道处理声明(plan.track_proc 非空)时按轨组建流,per-track
 /// EQ/动态链在组建流 amix 之后、进总线之前插入;无声明 = 既有图零变化。
 pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
+    // 全音轨可用 = 既有行为(包装仅供既有调用面/单测兼容)
+    let all = vec![true; plan.audio_segs.len()];
+    mix_pass_a_args_with(plan, mixed_raw_out, &all, true)
+}
+
+/// 同 [`mix_pass_a_args`],逐事件素材的音轨可用性显式给定(I1 渲染缺口修):
+/// `segs_has` 与 audio_segs 同序。素材纯视频(无音频流)的段不开 `-i`——
+/// `[N:a]` 对其匹配零个流,整图 Invalid argument(纯视频时间线是最常见形态)——
+/// 改用 anullsrc 静音占位(adelay 落点与段长照旧):占位的混音贡献 = 恒等静音,
+/// 且时间域贡献必须保留(amix duration=longest 需要占位流撑住段落在时间线上的
+/// 位置,剔除会让成片音轨短于视频轨)。amix 输入数恒 = 段数。BGM 素材无音轨 →
+/// 按无 BGM 处理(静音背景乐 = 无)。全部段无音轨 → 图照常(全占位 = 等价静音)。
+pub fn mix_pass_a_args_with(
+    plan: &RenderPlan,
+    mixed_raw_out: &Path,
+    segs_has: &[bool],
+    bgm_has: bool,
+) -> Vec<String> {
     if crate::across::chain_active(plan) {
-        return crate::across::mix_pass_a_chain_args(plan, mixed_raw_out);
+        return crate::across::mix_pass_a_chain_args_with(plan, mixed_raw_out, segs_has, bgm_has);
     }
+    let live_bgm = plan.bgm.as_ref().filter(|_| bgm_has);
     let audio_segs = &plan.audio_segs;
     let total_ms = plan.total_ms;
     let mut args: Vec<String> = vec!["-y".into(), "-v".into(), "error".into()];
     let mut filters: Vec<String> = Vec::new();
-    if audio_segs.is_empty() && plan.bgm.is_none() {
-        args.extend(["-f".into(), "lavfi".into(), "-i".into(), "anullsrc=r=48000:cl=stereo".into()]);
+    if audio_segs.is_empty() && live_bgm.is_none() {
+        args.extend([
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            "anullsrc=r=48000:cl=stereo".into(),
+        ]);
     }
     let mut input_idx = 0usize;
     let mut event_refs: Vec<String> = Vec::new();
-    for seg in audio_segs {
+    for (i, seg) in audio_segs.iter().enumerate() {
         let read_ms = (seg.duration_ms as f64 * seg.speed).ceil();
-        args.extend([
-            "-ss".into(), format!("{}", seg.source_in_ms as f64 / 1000.0),
-            "-t".into(), format!("{}", read_ms / 1000.0),
-            "-i".into(), seg.src.to_string_lossy().into(),
-        ]);
-        let chain_body = crate::across::event_body(seg);
-        filters.push(format!("[{input_idx}:a]{chain_body},adelay={}:all=1[a{input_idx}]", seg.start_ms));
-        event_refs.push(format!("[a{input_idx}]"));
-        input_idx += 1;
+        if segs_has.get(i).copied().unwrap_or(true) {
+            // 素材有音轨:实输入(-ss/-t 读源),[N:a] 链(N = 实输入序)
+            args.extend([
+                "-ss".into(),
+                format!("{}", seg.source_in_ms as f64 / 1000.0),
+                "-t".into(),
+                format!("{}", read_ms / 1000.0),
+                "-i".into(),
+                seg.src.to_string_lossy().into(),
+            ]);
+            let chain_body = crate::across::event_body(seg);
+            filters.push(format!(
+                "[{input_idx}:a]{chain_body},adelay={}:all=1[a{input_idx}]",
+                seg.start_ms
+            ));
+            event_refs.push(format!("[a{input_idx}]"));
+            input_idx += 1;
+        } else {
+            // 素材纯视频(无音频流):静音占位(不开 -i,anullsrc 源滤镜),
+            // adelay 落点与段长照旧——时间域贡献必须保留(剔除会让 amix 变短,
+            // 成片音轨短于视频轨);EQ/组流按同一 refs 平行数组消费,零特判
+            filters.push(format!(
+                "anullsrc=r=48000:cl=stereo,atrim=0:{:.6},aformat=sample_rates=48000:channel_layouts=stereo,adelay={}:all=1[as{i}]",
+                seg.duration_ms as f64 / 1000.0,
+                seg.start_ms
+            ));
+            event_refs.push(format!("[as{i}]"));
+        }
     }
     if !audio_segs.is_empty() {
         if plan.track_proc.is_empty() {
-            // 既有路径:逐事件标签直接进总线 amix(参数逐字一致)
+            // 既有路径:逐事件标签直接进总线 amix(全可用时参数逐字一致)
             filters.push(format!(
                 "{}amix=inputs={}:duration=longest:normalize=0[bus]",
                 event_refs.join(""),
@@ -275,11 +385,9 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
             ));
         } else {
             // 轨道组建流(册五 T5.3):有处理声明的轨 amix 建流 → per-track 链 → 单标签
-            let (group_parts, labels) = crate::across::grouped_bus_labels(
-                plan,
-                &audio_segs.iter().collect::<Vec<_>>(),
-                &event_refs,
-            );
+            let all_segs: Vec<&crate::plan::AudioSeg> = audio_segs.iter().collect();
+            let (group_parts, labels) =
+                crate::across::grouped_bus_labels(plan, &all_segs, &event_refs);
             filters.extend(group_parts);
             filters.push(format!(
                 "{}amix=inputs={}:duration=longest:normalize=0[bus]",
@@ -289,18 +397,26 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
         }
     }
     // 总线([bus] 恒存在:bgm-only 工程用 anullsrc 占位)
-    if audio_segs.is_empty() && plan.bgm.is_some() {
-        args.extend(["-f".into(), "lavfi".into(), "-i".into(), "anullsrc=r=48000:cl=stereo".into()]);
+    if audio_segs.is_empty() && live_bgm.is_some() {
+        args.extend([
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            "anullsrc=r=48000:cl=stereo".into(),
+        ]);
         filters.push(format!("[{input_idx}:a]anull[bus]"));
         input_idx += 1;
     }
     // BGM(循环铺满 + gain + ducking 侧链,参数化 T5.3)
-    if let Some(bgm) = &plan.bgm {
+    if let Some(bgm) = live_bgm {
         let bgm_path = plan.project_dir.join(&bgm.src);
         args.extend([
-            "-stream_loop".into(), "-1".into(),
-            "-t".into(), format!("{}", total_ms as f64 / 1000.0),
-            "-i".into(), bgm_path.to_string_lossy().into(),
+            "-stream_loop".into(),
+            "-1".into(),
+            "-t".into(),
+            format!("{}", total_ms as f64 / 1000.0),
+            "-i".into(),
+            bgm_path.to_string_lossy().into(),
         ]);
         let bgm_idx = input_idx;
         filters.push(format!(
@@ -311,21 +427,36 @@ pub fn mix_pass_a_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
             // [bus] 需被 sidechain(key)与 amix 各消费一次 → asplit 分流
             // (本地 ffmpeg 容忍重复 label,CI 严格报 Invalid stream specifier)
             filters.push("[bus]asplit=2[busA][busB]".into());
-            filters.push(format!("[bgmg][busA]{}[bgmc]", crate::across::ducking_filter(bgm)));
+            filters.push(format!(
+                "[bgmg][busA]{}[bgmc]",
+                crate::across::ducking_filter(bgm)
+            ));
             filters.push("[busB][bgmc]amix=inputs=2:duration=first:normalize=0[mixout]".into());
         } else {
             filters.push("[bus][bgmg]amix=inputs=2:duration=first:normalize=0[mixout]".into());
         }
-        args.extend(["-filter_complex".into(), filters.join(";"), "-map".into(), "[mixout]".into()]);
+        args.extend([
+            "-filter_complex".into(),
+            filters.join(";"),
+            "-map".into(),
+            "[mixout]".into(),
+        ]);
     } else if !audio_segs.is_empty() {
-        args.extend(["-filter_complex".into(), filters.join(";"), "-map".into(), "[bus]".into()]);
+        args.extend([
+            "-filter_complex".into(),
+            filters.join(";"),
+            "-map".into(),
+            "[bus]".into(),
+        ]);
     }
-    if plan.bgm.is_none() && audio_segs.is_empty() {
+    if live_bgm.is_none() && audio_segs.is_empty() {
         // anullsrc 路径:输入即静音源,无 filter_complex
     }
     args.extend([
-        "-t".into(), format!("{}", total_ms as f64 / 1000.0),
-        "-c:a".into(), "aac".into(),
+        "-t".into(),
+        format!("{}", total_ms as f64 / 1000.0),
+        "-c:a".into(),
+        "aac".into(),
         mixed_raw_out.to_string_lossy().into(),
     ]);
     args
@@ -344,15 +475,37 @@ pub use crate::across::{
 /// Windows 盘符冒号在滤镜参数里的转义问题)。ass_rels = 烧录序列(册四 T4.7:
 /// 外部字幕 + 文本轨生成 ASS 串联——多条 subtitles 滤镜链式应用,免解析合并
 /// 外部文件;单条时参数与拆分前逐字一致,parity 红线)。
-pub fn subtitle_burn_args(video_in: &Path, mixed_in: &Path, ass_rels: &[String], subbed_out: &Path) -> Vec<String> {
-    let vf = ass_rels.iter().map(|r| format!("subtitles={r}")).collect::<Vec<_>>().join(",");
+pub fn subtitle_burn_args(
+    video_in: &Path,
+    mixed_in: &Path,
+    ass_rels: &[String],
+    subbed_out: &Path,
+) -> Vec<String> {
+    let vf = ass_rels
+        .iter()
+        .map(|r| format!("subtitles={r}"))
+        .collect::<Vec<_>>()
+        .join(",");
     [
-        "-y", "-v", "error",
-        "-i", &video_in.to_string_lossy(),
-        "-i", &mixed_in.to_string_lossy(),
-        "-vf", &vf,
-        "-map", "0:v", "-map", "1:a",
-        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy",
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        &video_in.to_string_lossy(),
+        "-i",
+        &mixed_in.to_string_lossy(),
+        "-vf",
+        &vf,
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-c:a",
+        "copy",
         &subbed_out.to_string_lossy(),
     ]
     .iter()
@@ -363,10 +516,21 @@ pub fn subtitle_burn_args(video_in: &Path, mixed_in: &Path, ass_rels: &[String],
 /// 无字幕合流命令行(零重编码转封装)。
 pub fn subtitle_mux_args(video_in: &Path, mixed_in: &Path, subbed_out: &Path) -> Vec<String> {
     [
-        "-y", "-v", "error",
-        "-i", &video_in.to_string_lossy(),
-        "-i", &mixed_in.to_string_lossy(),
-        "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "copy",
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        &video_in.to_string_lossy(),
+        "-i",
+        &mixed_in.to_string_lossy(),
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "copy",
         &subbed_out.to_string_lossy(),
     ]
     .iter()
@@ -380,7 +544,11 @@ pub fn subtitle_mux_args(video_in: &Path, mixed_in: &Path, subbed_out: &Path) ->
 /// 路径与格式与拆分前一致,不缓存)。
 pub fn encode_output_path(plan: &RenderPlan) -> PathBuf {
     let canvas = format!("{}x{}", plan.canvas_w, plan.canvas_h);
-    plan.out_dir.join(format!("final_cutforge_{}_{}.mp4", sanitize_slug(&plan.slug), canvas))
+    plan.out_dir.join(format!(
+        "final_cutforge_{}_{}.mp4",
+        sanitize_slug(&plan.slug),
+        canvas
+    ))
 }
 
 // ---------------- 共享小工具 ----------------
@@ -423,7 +591,7 @@ pub fn fmt_f64(v: f64) -> String {
 mod tests {
     use super::*;
     use cutforge_core::model::Overlay;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use std::path::PathBuf;
 
     /// 测试计划:fake 路径(纯函数不触 IO)。
@@ -465,7 +633,11 @@ mod tests {
         let mut v = base_clips();
         v[1]["transition"] = json!({"type": "fade", "durMs": 500, "reason": "topic"});
         let (_, clips) = test_plan(v);
-        assert_eq!(segment_tail_ms(&clips, 0), 500.0, "段 0 的尾帧由 clip 1 的入向转场决定");
+        assert_eq!(
+            segment_tail_ms(&clips, 0),
+            500.0,
+            "段 0 的尾帧由 clip 1 的入向转场决定"
+        );
         assert_eq!(segment_tail_ms(&clips, 1), 0.0, "末段无尾帧");
     }
 
@@ -492,9 +664,67 @@ mod tests {
         let args = compose_concat_args(Path::new("/c/tmp/c.txt"), Path::new("/c/compose/o.mp4"));
         assert_eq!(
             strv(&args),
-            ["-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", "/c/tmp/c.txt",
-             "-c", "copy", "/c/compose/o.mp4"]
+            [
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                "/c/tmp/c.txt",
+                "-c",
+                "copy",
+                "/c/compose/o.mp4"
+            ]
         );
+    }
+
+    /// I1 修:xfade 链只在「全边界相接 + 全边界有转场」时启用——任一边界
+    /// 空隙(不相接)或无有效转场(d=0,该边界 duration=0 的 xfade 会被
+    /// ffmpeg 丢段)都整链退化 concat。合法全转场链不受影响。
+    #[test]
+    fn xfade_chain_requires_connected_transitional_boundaries() {
+        // 相接 + 转场 → 链
+        let full = json!([
+            {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 2000},
+            {"id": "V1-002", "src": "a.mp4", "startMs": 2000, "durationMs": 2000,
+             "transition": {"type": "fade", "durMs": 500}}
+        ]);
+        let (_, clips) = test_plan(full);
+        assert!(is_xfade_chain(&clips));
+        // 空隙边界(前段末端 ≠ 后段起点)+ 转场 → 退化(concat 折叠空隙为末帧定格)
+        let gapped = json!([
+            {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 2000},
+            {"id": "V1-002", "src": "a.mp4", "startMs": 3000, "durationMs": 2000,
+             "transition": {"type": "fade", "durMs": 500}}
+        ]);
+        let (_, clips) = test_plan(gapped);
+        assert!(
+            !is_xfade_chain(&clips),
+            "空隙边界不得进 xfade 链(offset 对齐失配丢段)"
+        );
+        // 相接但边界无转场(d=0)→ 退化(duration=0 的 xfade 丢第二输入)
+        let partial = json!([
+            {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 2000},
+            {"id": "V1-002", "src": "a.mp4", "startMs": 2000, "durationMs": 2000},
+            {"id": "V1-003", "src": "a.mp4", "startMs": 4000, "durationMs": 2000,
+             "transition": {"type": "fade", "durMs": 500}}
+        ]);
+        let (_, clips) = test_plan(partial);
+        assert!(!is_xfade_chain(&clips), "d=0 边界(1→2)不得进 xfade 链");
+        // 单段/硬切照旧
+        let (_, single) = test_plan(json!([
+            {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 2000}
+        ]));
+        assert!(!is_xfade_chain(&single));
+        let (_, cut) = test_plan(json!([
+            {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 2000},
+            {"id": "V1-002", "src": "a.mp4", "startMs": 2000, "durationMs": 2000,
+             "transition": {"type": "cut", "durMs": 500}}
+        ]));
+        assert!(!is_xfade_chain(&cut), "显式硬切 = d=0,退化 concat");
     }
 
     #[test]
@@ -508,14 +738,32 @@ mod tests {
         assert!(warns.is_empty());
         let s = strv(&args);
         assert_eq!(
-            s[8],
-            "[0:v][1:v]xfade=transition=fade:duration=0.500000:offset=2.000000[x1]",
+            s[8], "[0:v][1:v]xfade=transition=fade:duration=0.500000:offset=2.000000[x1]",
             "offset = 前序**名义**时长累计(ADR-0023;尾帧只进重叠不前移 offset)"
         );
-        assert_eq!(&s[..7], ["-y", "-v", "error", "-i", "/c/seg/1.mp4", "-i", "/c/seg/2.mp4"]);
+        assert_eq!(
+            &s[..7],
+            [
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                "/c/seg/1.mp4",
+                "-i",
+                "/c/seg/2.mp4"
+            ]
+        );
         assert_eq!(
             &s[9..],
-            ["-map", "[x1]", "-c:v", "libx264", "-preset", "veryfast", "/c/compose/o.mp4"]
+            [
+                "-map",
+                "[x1]",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "/c/compose/o.mp4"
+            ]
         );
     }
 
@@ -528,15 +776,25 @@ mod tests {
         v[1]["durationMs"] = json!(1500);
         v[1]["startMs"] = json!(2000);
         v[1]["transition"] = json!({"type": "fade", "durMs": 500});
-        v.as_array_mut().unwrap().push(json!({"id": "V1-003", "src": "a.mp4", "startMs": 3500, "durationMs": 1000,
-             "role": "voice", "transition": {"type": "fade", "durMs": 400}}));
+        v.as_array_mut().unwrap().push(
+            json!({"id": "V1-003", "src": "a.mp4", "startMs": 3500, "durationMs": 1000,
+             "role": "voice", "transition": {"type": "fade", "durMs": 400}}),
+        );
         let (_, clips) = test_plan(v);
-        let segs: Vec<PathBuf> = (1..=3).map(|i| PathBuf::from(format!("/c/seg/{i}.mp4"))).collect();
+        let segs: Vec<PathBuf> = (1..=3)
+            .map(|i| PathBuf::from(format!("/c/seg/{i}.mp4")))
+            .collect();
         let (args, warns) = compose_xfade_args(&clips, &segs, Path::new("/c/o.mp4"));
         assert!(warns.is_empty());
         let s = args.join("\u{1}");
-        assert!(s.contains("xfade=transition=fade:duration=0.500000:offset=2.000000[x1]"), "{s}");
-        assert!(s.contains("[x1][2:v]xfade=transition=fade:duration=0.400000:offset=3.500000[x2]"), "{s}");
+        assert!(
+            s.contains("xfade=transition=fade:duration=0.500000:offset=2.000000[x1]"),
+            "{s}"
+        );
+        assert!(
+            s.contains("[x1][2:v]xfade=transition=fade:duration=0.400000:offset=3.500000[x2]"),
+            "{s}"
+        );
     }
 
     /// 目录直通:fx=tr.circleclose 覆写 type;未注册 id 进 WARN 列表(降级 fade)。
@@ -552,7 +810,10 @@ mod tests {
         v[1]["transition"] = json!({"type": "fade", "fx": "tr.幽灵", "durMs": 500});
         let (_, clips) = test_plan(v);
         let (args, warns) = compose_xfade_args(&clips, &segs, Path::new("/c/o.mp4"));
-        assert!(args.join("\u{1}").contains("transition=fade"), "未注册降级 fade");
+        assert!(
+            args.join("\u{1}").contains("transition=fade"),
+            "未注册降级 fade"
+        );
         assert!(warns.iter().any(|w| w.contains("未注册")), "{warns:?}");
     }
 
@@ -565,20 +826,49 @@ mod tests {
             src: PathBuf::from("/w/logo.png"),
             start_ms: 0,
             duration_ms: 2000,
-            spec: Overlay { x: 40, y: 40, w: 60, h: 60, opacity: 0.5 },
+            spec: Overlay {
+                x: 40,
+                y: 40,
+                w: 60,
+                h: 60,
+                opacity: 0.5,
+            },
         }];
-        let args = overlay_args(&ovs, &plan.cache_dir.join("c.mp4"), Path::new("/c/overlay/o.mp4"));
+        let args = overlay_args(
+            &ovs,
+            &plan.cache_dir.join("c.mp4"),
+            Path::new("/c/overlay/o.mp4"),
+        );
         let s = strv(&args);
         assert_eq!(
             &s[..7],
-            ["-y", "-v", "error", "-i", &pj(&plan.cache_dir.to_string_lossy(), "c.mp4"), "-i", "/w/logo.png"]
+            [
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                &pj(&plan.cache_dir.to_string_lossy(), "c.mp4"),
+                "-i",
+                "/w/logo.png"
+            ]
         );
         assert_eq!(
             s[8],
             "[1:v]scale=60:60,format=rgba,colorchannelmixer=aa=0.5000[l0];\
 [0:v][l0]overlay=x=40:y=40:enable='between(t,0.000,2.000)'[o0]"
         );
-        assert_eq!(&s[9..], ["-map", "[o0]", "-c:v", "libx264", "-preset", "veryfast", "/c/overlay/o.mp4"]);
+        assert_eq!(
+            &s[9..],
+            [
+                "-map",
+                "[o0]",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "/c/overlay/o.mp4"
+            ]
+        );
     }
 
     #[test]
@@ -587,10 +877,19 @@ mod tests {
             src: PathBuf::from("/w/logo.png"),
             start_ms: 0,
             duration_ms: 1000,
-            spec: Overlay { x: 1, y: 2, w: 3, h: 4, opacity: 1.0 },
+            spec: Overlay {
+                x: 1,
+                y: 2,
+                w: 3,
+                h: 4,
+                opacity: 1.0,
+            },
         }];
         let args = overlay_args(&ovs, Path::new("/c.mp4"), Path::new("/o.mp4"));
-        assert!(args[8].starts_with("[1:v]scale=3:4[l0];"), "opacity=1 不引入 rgba 链;层输入 = 1(基片恒 0)");
+        assert!(
+            args[8].starts_with("[1:v]scale=3:4[l0];"),
+            "opacity=1 不引入 rgba 链;层输入 = 1(基片恒 0)"
+        );
     }
 
     // ---- 步 5:mix ----
@@ -671,8 +970,126 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
         let args = mix_pass_a_args(&plan, Path::new("/c/mix/r.m4a"));
         let j = joined(&args);
         assert!(j.contains("[bus]asplit=2[busA][busB]"));
-        assert!(j.contains("[bgmg][busA]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]"));
+        assert!(j.contains(
+            "[bgmg][busA]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]"
+        ));
         assert!(j.contains("[busB][bgmc]amix=inputs=2:duration=first:normalize=0[mixout]"));
+    }
+
+    // ---- 音轨可用性(I1 缺口修:纯视频素材的段无音频流,[N:a] 零匹配炸图) ----
+
+    fn mix_two_voice_plan() -> RenderPlan {
+        let project: cutforge_core::model::Project = serde_json::from_value(json!({
+            "version": 1, "schemaVersion": "2.0.0", "slug": "m", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 2000, "role": "voice"},
+                {"id": "V1-002", "src": "b.mp4", "startMs": 2000, "durationMs": 2000, "role": "voice"}
+            ]}]
+        }))
+        .unwrap();
+        RenderPlan::build(&project, Path::new("/w"), None)
+    }
+
+    #[test]
+    fn mix_placeholders_events_whose_source_has_no_audio_stream() {
+        let plan = mix_two_voice_plan();
+        // 段 0 素材有音轨、段 1 素材纯视频 → 只开 a.mp4 一个输入;段 1 用静音占位
+        // (adelay 落点/段长照旧,amix 输入数恒 = 段数——占位撑住时间域)
+        let args = mix_pass_a_args_with(&plan, Path::new("/c/mix/r.m4a"), &[true, false], true);
+        let j = joined(&args);
+        assert_eq!(
+            j.matches("\u{1}-i\u{1}").count(),
+            1,
+            "无音轨段不开输入: {j}"
+        );
+        assert!(
+            j.contains("a.mp4") && !j.contains("b.mp4"),
+            "无音轨素材不得进命令行: {j}"
+        );
+        assert!(j.contains("[0:a]"), "有音轨段用实输入序 0: {j}");
+        assert!(!j.contains("[1:a]"), "不得出现零匹配流说明符: {j}");
+        assert!(
+            j.contains(
+                "anullsrc=r=48000:cl=stereo,atrim=0:2.000000,aformat=sample_rates=48000:channel_layouts=stereo,adelay=2000:all=1[as1]"
+            ),
+            "无音轨段 = 静音占位(落点/段长照旧): {j}"
+        );
+        assert!(
+            j.contains("[a0][as1]amix=inputs=2:duration=longest:normalize=0[bus]"),
+            "{j}"
+        );
+        // 对照:全可用 = 既有图(两输入两链,与包装版逐字一致)
+        let all = mix_pass_a_args(&plan, Path::new("/c/mix/r.m4a"));
+        let ja = joined(&all);
+        assert!(ja.contains("[0:a]") && ja.contains("[1:a]"));
+        assert!(ja.contains("amix=inputs=2:duration=longest:normalize=0[bus]"));
+    }
+
+    #[test]
+    fn mix_all_sourceless_graph_stays_silent_with_full_timespan() {
+        let plan = mix_two_voice_plan();
+        // 全部段素材无音轨 → 图照常(全占位),amix 输入数确定,产物等价静音
+        let args = mix_pass_a_args_with(&plan, Path::new("/c/mix/r.m4a"), &[false, false], false);
+        let j = joined(&args);
+        assert!(
+            j.contains("filter_complex") && j.contains("amix=inputs=2"),
+            "全占位图照常: {j}"
+        );
+        assert_eq!(j.matches("\u{1}-i\u{1}").count(), 0, "零实输入: {j}");
+        assert!(
+            j.contains("[as0][as1]amix=inputs=2:duration=longest:normalize=0[bus]"),
+            "{j}"
+        );
+        // 对照:有 BGM 工程在 bgm_has=true 时走既有 [mixout] 形态(ducking 需要
+        // bus,占位图照常提供)
+        let bgm_plan: cutforge_core::model::Project = serde_json::from_value(json!({
+            "version": 1, "schemaVersion": "2.0.0", "slug": "m", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "bgm": {"src": "bgm.mp3", "gainDb": -6, "ducking": true, "loop": true},
+            "tracks": [{"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 2000, "role": "voice"},
+                {"id": "V1-002", "src": "b.mp4", "startMs": 2000, "durationMs": 2000, "role": "voice"}
+            ]}]
+        }))
+        .unwrap();
+        let with_bgm = mix_pass_a_args_with(
+            &RenderPlan::build(&bgm_plan, Path::new("/w"), None),
+            Path::new("/c/mix/r.m4a"),
+            &[false, false],
+            true,
+        );
+        let jw = joined(&with_bgm);
+        assert!(
+            jw.contains("bgm.mp3") && jw.contains("[mixout]"),
+            "全占位 + 可用 BGM: {jw}"
+        );
+    }
+
+    #[test]
+    fn mix_bgm_without_source_audio_is_dropped() {
+        let project: cutforge_core::model::Project = serde_json::from_value(json!({
+            "version": 1, "schemaVersion": "2.0.0", "slug": "m", "fps": 30,
+            "canvas": {"width": 1080, "height": 1920},
+            "bgm": {"src": "bgm.mp3", "gainDb": -6, "ducking": true, "loop": true},
+            "tracks": [{"id": "A1", "kind": "audio", "clips": [
+                {"id": "A1-001", "src": "v.mp3", "startMs": 0, "durationMs": 2000, "volume": 1.0}
+            ]}]
+        }))
+        .unwrap();
+        let plan = RenderPlan::build(&project, Path::new("/w"), None);
+        // BGM 素材无音轨 → 按无 BGM 处理(静音背景乐 = 无);事件段照常
+        let args = mix_pass_a_args_with(&plan, Path::new("/c/mix/r.m4a"), &[true], false);
+        let j = joined(&args);
+        assert!(!j.contains("bgm.mp3"), "无音轨 BGM 不得进命令行: {j}");
+        assert!(
+            !j.contains("sidechaincompress"),
+            "无 BGM 即无 ducking 侧链: {j}"
+        );
+        assert!(j.contains("-map\u{1}[bus]"), "{j}");
+        // 对照:bgm 有音轨 = 既有形态
+        let with = mix_pass_a_args_with(&plan, Path::new("/c/mix/r.m4a"), &[true], true);
+        assert!(joined(&with).contains("bgm.mp3"));
     }
 
     #[test]
@@ -685,7 +1102,12 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
         .unwrap();
         let plan = RenderPlan::build(&project, Path::new("/w"), None);
         let args = mix_pass_a_args(&plan, Path::new("/c/mix/r.m4a"));
-        assert!(!args.iter().any(|a| a.contains("filter_complex") || a.contains("amix")), "无 filter_complex");
+        assert!(
+            !args
+                .iter()
+                .any(|a| a.contains("filter_complex") || a.contains("amix")),
+            "无 filter_complex"
+        );
         assert!(args.iter().any(|a| a.contains("anullsrc")));
     }
 
@@ -702,27 +1124,73 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
     #[test]
     fn subtitle_burn_and_mux_args_are_backward_compatible() {
         let burn = subtitle_burn_args(
-            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"), &["tmp/ass-k.ass".into()], Path::new("/c/sub/o.mp4"),
+            Path::new("/c/sub/v.mp4"),
+            Path::new("/c/mix/m.m4a"),
+            &["tmp/ass-k.ass".into()],
+            Path::new("/c/sub/o.mp4"),
         );
         assert_eq!(
             strv(&burn),
-            ["-y", "-v", "error", "-i", "/c/sub/v.mp4", "-i", "/c/mix/m.m4a",
-             "-vf", "subtitles=tmp/ass-k.ass", "-map", "0:v", "-map", "1:a",
-             "-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy", "/c/sub/o.mp4"]
+            [
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                "/c/sub/v.mp4",
+                "-i",
+                "/c/mix/m.m4a",
+                "-vf",
+                "subtitles=tmp/ass-k.ass",
+                "-map",
+                "0:v",
+                "-map",
+                "1:a",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-c:a",
+                "copy",
+                "/c/sub/o.mp4"
+            ]
         );
         // 册四 T4.7:外部字幕 + 文本轨生成 ASS 串联(链式 subtitles 滤镜)
         let both = subtitle_burn_args(
-            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"),
-            &["tmp/ass-user.ass".into(), "tmp/ass-text.ass".into()], Path::new("/c/sub/o.mp4"),
+            Path::new("/c/sub/v.mp4"),
+            Path::new("/c/mix/m.m4a"),
+            &["tmp/ass-user.ass".into(), "tmp/ass-text.ass".into()],
+            Path::new("/c/sub/o.mp4"),
         );
-        assert_eq!(both[8], "subtitles=tmp/ass-user.ass,subtitles=tmp/ass-text.ass", "{:?}", both[8]);
+        assert_eq!(
+            both[8], "subtitles=tmp/ass-user.ass,subtitles=tmp/ass-text.ass",
+            "{:?}",
+            both[8]
+        );
         let mux = subtitle_mux_args(
-            Path::new("/c/sub/v.mp4"), Path::new("/c/mix/m.m4a"), Path::new("/c/sub/o.mp4"),
+            Path::new("/c/sub/v.mp4"),
+            Path::new("/c/mix/m.m4a"),
+            Path::new("/c/sub/o.mp4"),
         );
         assert_eq!(
             strv(&mux),
-            ["-y", "-v", "error", "-i", "/c/sub/v.mp4", "-i", "/c/mix/m.m4a",
-             "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "copy", "/c/sub/o.mp4"]
+            [
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                "/c/sub/v.mp4",
+                "-i",
+                "/c/mix/m.m4a",
+                "-map",
+                "0:v",
+                "-map",
+                "1:a",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "copy",
+                "/c/sub/o.mp4"
+            ]
         );
     }
 
@@ -731,7 +1199,9 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
         let (plan, _) = test_plan(base_clips());
         assert_eq!(
             encode_output_path(&plan),
-            Path::new("/w").join("06_成片输出").join("final_cutforge_demo_1080x1920.mp4")
+            Path::new("/w")
+                .join("06_成片输出")
+                .join("final_cutforge_demo_1080x1920.mp4")
         );
         let project: cutforge_core::model::Project = serde_json::from_value(json!({
             "version": 1, "schemaVersion": "2.0.0", "slug": "bad*slug:<>", "fps": 30,
@@ -741,7 +1211,10 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
         .unwrap();
         let plan = RenderPlan::build(&project, Path::new("/w"), None);
         assert_eq!(
-            encode_output_path(&plan).file_name().unwrap().to_string_lossy(),
+            encode_output_path(&plan)
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
             "final_cutforge_bad_slug____1080x1920.mp4"
         );
     }
@@ -761,12 +1234,24 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
             src: PathBuf::from(format!("logo{i}.png")),
             start_ms: (i * 1000) as u64,
             duration_ms: 500,
-            spec: cutforge_core::model::Overlay { x: 4, y: 5, w: 60, h: 60, opacity: 1.0 },
+            spec: cutforge_core::model::Overlay {
+                x: 4,
+                y: 5,
+                w: 60,
+                h: 60,
+                opacity: 1.0,
+            },
         };
         let args = overlay_args(&[mk(0), mk(1)], Path::new("base.mp4"), Path::new("out.mp4"));
         let fc = &args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1];
-        assert!(fc.contains("[1:v]scale=60:60[l0];"), "第一层必须吃输入 1: {fc}");
-        assert!(fc.contains("[2:v]scale=60:60[l1];"), "第二层必须吃输入 2: {fc}");
+        assert!(
+            fc.contains("[1:v]scale=60:60[l0];"),
+            "第一层必须吃输入 1: {fc}"
+        );
+        assert!(
+            fc.contains("[2:v]scale=60:60[l1];"),
+            "第二层必须吃输入 2: {fc}"
+        );
         assert!(fc.contains("[o0][l1]overlay"), "层链串联: {fc}");
         assert!(fc.contains(";[0:v][l0]overlay="), "基片恒输入 0: {fc}");
     }
@@ -783,18 +1268,48 @@ afade=t=in:st=0:d=0.800,afade=t=out:st=1.600:d=0.400,adelay=0:all=1[a0]"
                       "grade": {"saturation": 1.5}})),
             mk(json!({"id": "X1-003", "startMs": 3000, "durationMs": 500})),
         ];
-        let args = adjust_args(&clips, Path::new("base.mp4"), Path::new("out.mp4"), Path::new("/w"), 320, 240, 30);
-        let fc = args.iter().find(|a| a == &&"-filter_complex".to_string()).map(|_| ()).is_some().then(|| args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1].clone()).unwrap();
-        assert!(fc.contains("trim=start=0.500:end=1.500,setpts=PTS-STARTPTS"), "{fc}");
-        assert!(fc.contains("overlay=enable='between(t,0.500,1.500)'"), "{fc}");
+        let args = adjust_args(
+            &clips,
+            Path::new("base.mp4"),
+            Path::new("out.mp4"),
+            Path::new("/w"),
+            320,
+            240,
+            30,
+        );
+        let fc = args
+            .iter()
+            .find(|a| a == &&"-filter_complex".to_string())
+            .map(|_| ())
+            .is_some()
+            .then(|| args[args.iter().position(|a| a == "-filter_complex").unwrap() + 1].clone())
+            .unwrap();
+        assert!(
+            fc.contains("trim=start=0.500:end=1.500,setpts=PTS-STARTPTS"),
+            "{fc}"
+        );
+        assert!(
+            fc.contains("overlay=enable='between(t,0.500,1.500)'"),
+            "{fc}"
+        );
         assert!(fc.contains("trim=start=2.000:end=2.500"), "{fc}");
         // 饱和度链(eq)在窗内流上;X1-003 无链不产窗
         assert!(fc.contains("eq="), "grade 链必须在窗内: {fc}");
         assert!(!fc.contains("trim=start=3.000"), "空链片段不产窗: {fc}");
         // 全空链 → 透传拷贝
         let empty = vec![mk(json!({"id": "X1-001", "startMs": 0, "durationMs": 500}))];
-        let args = adjust_args(&empty, Path::new("base.mp4"), Path::new("out.mp4"), Path::new("/w"), 320, 240, 30);
-        assert!(args.contains(&"-c".to_string()) && args.contains(&"copy".to_string()), "全空链透传: {args:?}");
+        let args = adjust_args(
+            &empty,
+            Path::new("base.mp4"),
+            Path::new("out.mp4"),
+            Path::new("/w"),
+            320,
+            240,
+            30,
+        );
+        assert!(
+            args.contains(&"-c".to_string()) && args.contains(&"copy".to_string()),
+            "全空链透传: {args:?}"
+        );
     }
-
 }

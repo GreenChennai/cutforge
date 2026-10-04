@@ -100,6 +100,10 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     if name == "render_frame" {
         return render_frame_tool(&ws_root, args);
     }
+    // I1-M2 时间线区间半分辨率预渲(preview-cache 内容寻址;免开工作区不持锁)
+    if name == "preview_zone_render" {
+        return crate::progress::preview_zone_render_tool(&ws_root, args);
+    }
     // 册五 T5.6 渲染队列(免开工作区;任务表为服务进程内存态)
     if name == "render_queue" {
         return crate::progress::render_queue_tool(&ws_root, args);

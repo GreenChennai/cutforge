@@ -278,6 +278,49 @@ fn render_frame_param_guards() {
     cutforge_io::fsutil::cleanup(&nowhere);
 }
 
+/// I1-M2 门禁:preview_zone_render 参数校验面(缺参/区间倒置/无工程;协议完整,
+/// 错误码如实——不依赖 cutforge-render 二进制在位;实渲证据在渲染端 zone_render.rs)。
+#[test]
+fn preview_zone_render_param_guards() {
+    // 缺 root → PRECONDITION_FAILED(派发表统一 root 探针)
+    let r = dispatch("preview_zone_render", &json!({}));
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "{r}");
+    let root = cutforge_io::tests_fixture("mcp-zone-guards").unwrap();
+    let root_s = root.to_string_lossy().to_string();
+    // 缺区间参 → PRECONDITION_FAILED
+    let r = dispatch("preview_zone_render", &json!({"root": root_s}));
+    assert_eq!(
+        r["code"],
+        json!("PRECONDITION_FAILED"),
+        "缺 startMs/endMs: {r}"
+    );
+    let r = dispatch(
+        "preview_zone_render",
+        &json!({"root": root_s, "startMs": 0}),
+    );
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "缺 endMs: {r}");
+    // 区间倒置/零长 → PRECONDITION_FAILED
+    let r = dispatch(
+        "preview_zone_render",
+        &json!({"root": root_s, "startMs": 2000, "endMs": 2000}),
+    );
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "零长区间: {r}");
+    let r = dispatch(
+        "preview_zone_render",
+        &json!({"root": root_s, "startMs": 3000, "endMs": 1000}),
+    );
+    assert_eq!(r["code"], json!("PRECONDITION_FAILED"), "倒置区间: {r}");
+    // 无工程 → NO_CONFIG
+    let nowhere = cutforge_io::fsutil::temp_dir("mcp-zone-noproject");
+    let r = dispatch(
+        "preview_zone_render",
+        &json!({"root": nowhere.to_string_lossy(), "startMs": 0, "endMs": 2000}),
+    );
+    assert_eq!(r["code"], json!("NO_CONFIG"), "无工程必须 NO_CONFIG: {r}");
+    cutforge_io::fsutil::cleanup(&root);
+    cutforge_io::fsutil::cleanup(&nowhere);
+}
+
 /// 阶段三门禁:transition_set/motion_set 走 ClipPatch,逐字段落盘;bgm_set 走
 /// /bgm 项目级 op(src=null 清除);全部经既有 rev/冲突/原子写通道。
 #[test]

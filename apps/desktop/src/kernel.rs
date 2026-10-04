@@ -38,13 +38,22 @@ impl Kernel {
             "未找到 cutforge-cli(设 CUTFORGE_CLI 或先 cargo build -p cutforge-cli)".to_string()
         })?;
 
+        // 端口 0 = 系统分配临时端口。固定端口在多实例/孤儿内核场景必撞车:
+        // taskkill /F 强杀桌面壳不触发 Drop,内核子进程存活并占着旧端口,
+        // 新实例的 RPC 会打到僵尸内核(曾致多轮播放"冻结"假象)。
+        let port = if args.port == 0 {
+            pick_ephemeral_port()?
+        } else {
+            args.port
+        };
+
         let mut child = Command::new(&cli)
             .args([
                 "serve".as_ref(),
                 "--root".as_ref(),
                 root.as_os_str(),
                 "--port".as_ref(),
-                args.port.to_string().as_ref(),
+                port.to_string().as_ref(),
                 "--token".as_ref(),
                 args.token.as_ref(),
             ])
@@ -56,7 +65,7 @@ impl Kernel {
         // 健康等待:就绪探针只验证 HTTP 服务面(/ui-fields),不要求工程合法
         // ——工程校验失败开窗后在状态栏展示,壳不为坏工程白等超时(内核起服务通常 <2s)
         let rpc = Rpc::new(
-            format!("http://127.0.0.1:{}", args.port),
+            format!("http://127.0.0.1:{}", port),
             &args.token,
             root.display().to_string(),
         );
@@ -80,7 +89,7 @@ impl Kernel {
 
         Ok(Kernel {
             child: Some(child),
-            port: args.port,
+            port,
             token: args.token.clone(),
             root,
         })
@@ -102,6 +111,16 @@ impl Drop for Kernel {
             let _ = child.wait();
         }
     }
+}
+
+/// 取一个系统空闲端口(bind :0 后即弃;内核随即便在该端口起服务)。
+/// 极小概率的抢占窗口对桌面应用可接受,胜过固定端口必撞。
+fn pick_ephemeral_port() -> Result<u16, String> {
+    let l = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|e| format!("分配临时端口失败:{e}"))?;
+    l.local_addr()
+        .map(|a| a.port())
+        .map_err(|e| format!("分配临时端口失败:{e}"))
 }
 
 /// 定位 cutforge-cli:CUTFORGE_CLI 环境变量 → 仓内 target(release/debug)。

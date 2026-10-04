@@ -15,7 +15,7 @@
 use crate::catalog;
 use crate::steps::fmt_f64;
 use cutforge_core::model::{Clip, Project, Track, TrackKind};
-use cutforge_core::text_style::{color_to_ass, TextStyle};
+use cutforge_core::text_style::{TextStyle, color_to_ass};
 
 /// ASS 默认样式参数(与 text_style.rs 的"缺省由渲染端裁决"对齐)。
 const DEFAULT_FONT: &str = "sans-serif";
@@ -44,7 +44,10 @@ pub fn generation_warnings(project: &Project) -> Vec<String> {
             if let Some(hz) = &c.huazi
                 && catalog::find_huazi(&hz.template).is_none()
             {
-                out.push(format!("clip {} 花字({}) 未注册,降级纯文本;", c.id, hz.template));
+                out.push(format!(
+                    "clip {} 花字({}) 未注册,降级纯文本;",
+                    c.id, hz.template
+                ));
             }
         }
     }
@@ -66,9 +69,11 @@ pub fn text_tracks(project: &Project) -> Vec<&Track> {
 
 /// 工程是否含可见文本片段(渲染端是否需要生成文本 ASS 的判定)。
 pub fn has_visible_text(project: &Project) -> bool {
-    text_tracks(project)
-        .iter()
-        .any(|t| t.clips.iter().any(|c| c.text.as_deref().is_some_and(|s| !s.trim().is_empty())))
+    text_tracks(project).iter().any(|t| {
+        t.clips
+            .iter()
+            .any(|c| c.text.as_deref().is_some_and(|s| !s.trim().is_empty()))
+    })
 }
 
 /// 工程文本轨 → 完整 ASS 文档(纯函数;无可文本片段 → None)。
@@ -124,15 +129,22 @@ fn style_line(name: &str, c: &Clip, _w: u32, h: u32) -> String {
     let opacity = ts.opacity.unwrap_or(DEFAULT_OPACITY).clamp(0.0, 1.0);
     // 不透明度 → ASS alpha(00=不透明,FF=全透);作用于主色/描边/底衬三处
     let alpha = format!("{:02X}", ((1.0 - opacity) * 255.0).round() as u8);
-    let primary_raw = hz_get("primaryColor")
-        .unwrap_or_else(|| color_to_ass(ts.color.as_deref().unwrap_or(DEFAULT_COLOR), DEFAULT_COLOR));
+    let primary_raw = hz_get("primaryColor").unwrap_or_else(|| {
+        color_to_ass(ts.color.as_deref().unwrap_or(DEFAULT_COLOR), DEFAULT_COLOR)
+    });
     let primary = with_alpha(&primary_raw, &alpha);
     let outline_raw = hz_get("outlineColor").unwrap_or_else(|| {
-        color_to_ass(ts.outline_color.as_deref().unwrap_or(DEFAULT_OUTLINE_COLOR), DEFAULT_OUTLINE_COLOR)
+        color_to_ass(
+            ts.outline_color.as_deref().unwrap_or(DEFAULT_OUTLINE_COLOR),
+            DEFAULT_OUTLINE_COLOR,
+        )
     });
     let outline_color = with_alpha(&outline_raw, &alpha);
     let back_raw = hz_get("backColor").unwrap_or_else(|| {
-        color_to_ass(ts.back_color.as_deref().unwrap_or(DEFAULT_BACK_COLOR), DEFAULT_BACK_COLOR)
+        color_to_ass(
+            ts.back_color.as_deref().unwrap_or(DEFAULT_BACK_COLOR),
+            DEFAULT_BACK_COLOR,
+        )
     });
     let back = with_alpha(&back_raw, &alpha);
     let border_style = hz_style
@@ -202,11 +214,17 @@ fn body_of(c: &Clip, text: &str) -> String {
         prefix.push_str(&format!("\\pos({},{})", fmt_f64(x), fmt_f64(y)));
     }
     let escaped = escape_text(text);
-    let pre = if prefix.is_empty() { String::new() } else { format!("{{{prefix}}}") };
+    let pre = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("{{{prefix}}}")
+    };
     // 卡拉OK(textStyle.karaoke 或 hz.karaoke 模板):逐字均分 \kf;
     // 已唱/未唱色由 Style 行 primary/secondary 承载(模板 style.primaryColor 覆写)。
     let karaoke = ts.karaoke.unwrap_or(false)
-        || c.huazi.as_ref().is_some_and(|h| catalog::find_huazi(&h.template).is_some_and(|d| d.karaoke));
+        || c.huazi
+            .as_ref()
+            .is_some_and(|h| catalog::find_huazi(&h.template).is_some_and(|d| d.karaoke));
     if karaoke {
         return format!("{pre}{}", karaoke_body(text, c.duration_ms));
     }
@@ -232,7 +250,12 @@ fn body_of(c: &Clip, text: &str) -> String {
                 def.params
                     .iter()
                     .find(|p| p.name == name)
-                    .map(|p| catalog::huazi_param_value(hz.params.as_ref(), p).0.parse::<f64>().unwrap_or(fallback))
+                    .map(|p| {
+                        catalog::huazi_param_value(hz.params.as_ref(), p)
+                            .0
+                            .parse::<f64>()
+                            .unwrap_or(fallback)
+                    })
                     .unwrap_or(fallback)
             };
             let step = pval("stepMs", 70.0);
@@ -253,7 +276,11 @@ fn karaoke_body(text: &str, duration_ms: u64) -> String {
     let per = total_cs / n;
     let mut out = String::new();
     for (i, ch) in chars.iter().enumerate() {
-        let k = if i as u64 + 1 == n { total_cs - per * (n - 1) } else { per };
+        let k = if i as u64 + 1 == n {
+            total_cs - per * (n - 1)
+        } else {
+            per
+        };
         out.push_str(&format!("{{\\kf{k}}}"));
         out.push(*ch);
     }
@@ -346,9 +373,12 @@ mod tests {
         let a = generate(&p).unwrap();
         let b = generate(&p).unwrap();
         assert_eq!(a, b, "同输入两次生成必须 byte 相同");
-        let round: Project =
-            serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
-        assert_eq!(a, generate(&round).unwrap(), "序列化往返后再生成仍 byte 相同");
+        let round: Project = serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+        assert_eq!(
+            a,
+            generate(&round).unwrap(),
+            "序列化往返后再生成仍 byte 相同"
+        );
     }
 
     #[test]
@@ -396,14 +426,20 @@ mod tests {
         let ass = generate(&p).unwrap();
         assert!(ass.contains("PlayResX: 1080\nPlayResY: 1920"), "{ass}");
         // 主色 #FF8800 → BBGGRR=0088FF;alpha 0.5 → 80 → &H800088FF
-        assert!(ass.contains("Style: CF_T1-001,黑体,88,&H800088FF,"), "{ass}");
+        assert!(
+            ass.contains("Style: CF_T1-001,黑体,88,&H800088FF,"),
+            "{ass}"
+        );
         // 描边色 #111111 → &H80111111;底衬 #222222 → &H80222222
         assert!(ass.contains(",&H80111111,&H80222222,"), "{ass}");
         // BorderStyle 1 / Outline 4 / Shadow 3 / Alignment 9(topRight);有 \pos → MarginV=0
         assert!(ass.contains(",1,4,3,9,40,40,0,1\n"), "{ass}");
         assert!(ass.contains("\\pos(960,200)"), "{ass}");
         let line = ass.lines().find(|l| l.starts_with("Dialogue")).unwrap();
-        assert!(line.starts_with("Dialogue: 0,0:00:00.00,0:00:01.00,CF_T1-001,,0,0,0,,"), "{line}");
+        assert!(
+            line.starts_with("Dialogue: 0,0:00:00.00,0:00:01.00,CF_T1-001,,0,0,0,,"),
+            "{line}"
+        );
     }
 
     /// 缺省样式:无 textStyle 的旧文本片段照常出字(默认 64px 白字黑描边,
@@ -414,7 +450,10 @@ mod tests {
         let ass = generate(&p).unwrap();
         assert!(ass.contains("Style: CF_T1-001,sans-serif,64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,40,40,192,1"), "{ass}");
         // 时窗:startMs=500 → 0:00:00.50,end=2500 → 0:00:02.50
-        assert!(ass.contains("Dialogue: 0,0:00:00.50,0:00:02.50,CF_T1-001,,0,0,0,,你好世界"), "{ass}");
+        assert!(
+            ass.contains("Dialogue: 0,0:00:00.50,0:00:02.50,CF_T1-001,,0,0,0,,你好世界"),
+            "{ass}"
+        );
     }
 
     /// 位置缺省走边距网格:无 x,y 不产 \pos,top 对齐 MarginV=10% 画布高。
@@ -426,7 +465,10 @@ mod tests {
         ]}])));
         let ass = generate(&p).unwrap();
         assert!(!ass.contains("\\pos"), "无 x,y 不得产 \\pos");
-        assert!(ass.contains(",8,40,40,192,1"), "top 对齐(topCenter=8)MarginV=192: {ass}");
+        assert!(
+            ass.contains(",8,40,40,192,1"),
+            "top 对齐(topCenter=8)MarginV=192: {ass}"
+        );
     }
 
     /// 卡拉OK:逐字均分 \kf(4 字 2000ms → 每字 50cs;尾字吸收取整余数)。
@@ -446,7 +488,10 @@ mod tests {
              "textStyle": {"karaoke": true}}
         ]}])));
         let ass = generate(&p).unwrap();
-        assert!(ass.contains("\\kf33}三") && ass.contains("\\kf33}字") && ass.contains("\\kf34}完"), "{ass}");
+        assert!(
+            ass.contains("\\kf33}三") && ass.contains("\\kf33}字") && ass.contains("\\kf34}完"),
+            "{ass}"
+        );
     }
 
     /// 花字:模板参数代入 + 样式级覆写 + 未注册降级 WARN。
@@ -464,14 +509,20 @@ mod tests {
              "huazi": {"template": "hz.gradient"}}
         ]}])));
         let ass = generate(&p).unwrap();
-        assert!(ass.contains("{\\1c&H00FFE0\\t(0,1500,\\1c&H20A0FF)}渐"), "{ass}");
+        assert!(
+            ass.contains("{\\1c&H00FFE0\\t(0,1500,\\1c&H20A0FF)}渐"),
+            "{ass}"
+        );
         // box 模板样式级覆写:borderStyle=3 + outline 10
         let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
             {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "块",
              "huazi": {"template": "hz.box"}}
         ]}])));
         let ass = generate(&p).unwrap();
-        assert!(ass.contains(",3,10,0,"), "BorderStyle=3 + outline 10: {ass}");
+        assert!(
+            ass.contains(",3,10,0,"),
+            "BorderStyle=3 + outline 10: {ass}"
+        );
         // 未注册模板:降级纯文本 + WARN
         let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
             {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "字",
@@ -481,7 +532,12 @@ mod tests {
         assert!(ass.contains(",,字"), "未注册花字降级纯文本: {ass}");
         assert!(!ass.contains("hz."), "{ass}");
         let warns = generation_warnings(&p);
-        assert!(warns.iter().any(|w| w.contains("未注册") && w.contains("hz.不存在")), "{warns:?}");
+        assert!(
+            warns
+                .iter()
+                .any(|w| w.contains("未注册") && w.contains("hz.不存在")),
+            "{warns:?}"
+        );
     }
 
     /// 逐字动画:pop/typewriter/wave 三种 bodyKind 确定性生成(相位步进可见)。
@@ -504,14 +560,20 @@ mod tests {
         ]}])));
         let ass = generate(&p).unwrap();
         assert!(ass.contains("\\fscx20\\fscy20\\t(0,120,\\fscx110"), "{ass}");
-        assert!(ass.contains("\\t(70,190,\\fscx110\\fscy110)"), "第二字相位 +70ms: {ass}");
+        assert!(
+            ass.contains("\\t(70,190,\\fscx110\\fscy110)"),
+            "第二字相位 +70ms: {ass}"
+        );
         // typewriter 逐字渐入
         let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
             {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "AB",
              "huazi": {"template": "hz.typewriter"}}
         ]}])));
         let ass = generate(&p).unwrap();
-        assert!(ass.contains("\\alpha&HFF&\\t(0,120,\\alpha&H00&)}A"), "{ass}");
+        assert!(
+            ass.contains("\\alpha&HFF&\\t(0,120,\\alpha&H00&)}A"),
+            "{ass}"
+        );
     }
 
     /// 转义:换行 → \N;花括号 → 全角(IR 文本不变,仅呈现层)。
@@ -546,7 +608,10 @@ mod tests {
         ]}])));
         let ass = generate(&p).unwrap();
         // 卡拉OK模板 primaryColor 覆写样式主色(&H0040FF→&H000040FF);字号仍用用户 100
-        assert!(ass.contains("Style: CF_T1-001,sans-serif,100,&H000040FF,"), "{ass}");
+        assert!(
+            ass.contains("Style: CF_T1-001,sans-serif,100,&H000040FF,"),
+            "{ass}"
+        );
         assert!(ass.contains("{\\kf100}合"), "卡拉OK \\kf 生成: {ass}");
     }
 }

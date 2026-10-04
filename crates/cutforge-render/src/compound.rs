@@ -40,25 +40,41 @@ pub fn resolve(
     let mut inner: Vec<&Clip> = spec.clips.iter().collect();
     inner.sort_by_key(|c| (c.start_ms, c.id.clone()));
     // 子时间线音频:诚实降级 WARN(渲染只取视频面)
-    let audio_spec = CompoundSpec { canvas: spec.canvas, clips: inner.iter().map(|c| (*c).clone()).collect() };
+    let audio_spec = CompoundSpec {
+        canvas: spec.canvas,
+        clips: inner.iter().map(|c| (*c).clone()).collect(),
+    };
     warns.extend(audio_warns(&audio_spec));
     // 子时间线画幅:compound.canvas 声明优先,缺省 = 工程画幅(canvas 不缩放
     // 中间段——中间段在子管线内已按该画幅归一)
-    let canvas = spec.canvas.unwrap_or(Canvas { width: plan.canvas_w, height: plan.canvas_h });
+    let canvas = spec.canvas.unwrap_or(Canvas {
+        width: plan.canvas_w,
+        height: plan.canvas_h,
+    });
     let mini = synthetic_project(&inner, canvas, plan.fps);
-    let mini_plan = RenderPlan::build_full(&mini, &plan.project_dir, None, false, RenderOptions::default());
+    let mini_plan = RenderPlan::build_full(
+        &mini,
+        &plan.project_dir,
+        None,
+        false,
+        RenderOptions::default(),
+    );
     if mini_plan.video_clips.is_empty() {
         return Err(format!("compound {} 子时间线为空", clip.id));
     }
     // 与整片渲染完全同源的子管线(共享 idx → 子段缓存跨渲染复用)
     let (_rep, seg_files, seg_keys, _h, _m) = crate::exec_segment(&mini_plan, idx)?;
-    let (_rep, composed, _key, _cmds) = crate::exec_compose(&mini_plan, idx, &seg_files, &seg_keys)?;
+    let (_rep, composed, _key, _cmds) =
+        crate::exec_compose(&mini_plan, idx, &seg_files, &seg_keys)?;
     let rel = composed
         .strip_prefix(&plan.project_dir)
         .map_err(|_| format!("中间段不在工程根内: {}", composed.display()))?
         .to_string_lossy()
         .replace('\\', "/");
-    Ok(CompoundResolved { src_rel: rel, warns })
+    Ok(CompoundResolved {
+        src_rel: rel,
+        warns,
+    })
 }
 
 /// 子时间线 → 单轨合成工程(纯构造;不经 from_value,渲染计划只消费字段面)。
@@ -111,7 +127,12 @@ pub fn audio_warns(spec: &CompoundSpec) -> Vec<String> {
                 || c.denoise.is_some()
                 || c.pitch.is_some()
         })
-        .map(|c| format!("compound 内音频暂不渲染(clip {c};单轨中间段只取视频面,登记遗留);", c = c.id))
+        .map(|c| {
+            format!(
+                "compound 内音频暂不渲染(clip {c};单轨中间段只取视频面,登记遗留);",
+                c = c.id
+            )
+        })
         .collect()
 }
 
@@ -134,12 +155,21 @@ mod tests {
                 {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 1000}
             ]}
         }));
-        let resolved = CompoundResolved { src_rel: ".cutforge/render-cache/compose/abc.mp4".into(), warns: vec![] };
+        let resolved = CompoundResolved {
+            src_rel: ".cutforge/render-cache/compose/abc.mp4".into(),
+            warns: vec![],
+        };
         let eff = effective_clip(&shell, &resolved);
-        assert_eq!(eff.src.as_deref(), Some(".cutforge/render-cache/compose/abc.mp4"));
+        assert_eq!(
+            eff.src.as_deref(),
+            Some(".cutforge/render-cache/compose/abc.mp4")
+        );
         assert_eq!(eff.speed, Some(2.0), "外层变速通路保留");
         assert_eq!(eff.opacity, Some(0.5));
-        assert!(eff.compound.is_some(), "compound 字段保留(seg 键含整 clip JSON)");
+        assert!(
+            eff.compound.is_some(),
+            "compound 字段保留(seg 键含整 clip JSON)"
+        );
     }
 
     /// 子时间线音频诚实降级 WARN:volume>0 / voice / denoise / pitch 命中即留痕。
@@ -148,7 +178,8 @@ mod tests {
         let spec: CompoundSpec = serde_json::from_value(json!({"clips": [
             {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 1000, "volume": 1.0},
             {"id": "V1-002", "src": "b.mp4", "startMs": 1000, "durationMs": 1000, "volume": 0}
-        ]})).unwrap();
+        ]}))
+        .unwrap();
         let w = audio_warns(&spec);
         assert_eq!(w.len(), 1, "volume=0 不告警: {w:?}");
         assert!(w[0].contains("V1-001"));
@@ -156,7 +187,8 @@ mod tests {
         let bad: CompoundSpec = serde_json::from_value(json!({"clips": [
             {"id": "V1-001", "startMs": 0, "durationMs": 1000,
              "compound": {"clips": [{"id": "V1-002", "startMs": 0, "durationMs": 500}]}}
-        ]})).unwrap();
+        ]}))
+        .unwrap();
         assert!(bad.clips.iter().any(|c| c.compound.is_some()));
     }
 }

@@ -559,6 +559,146 @@ pub(crate) fn render_progress(run_id: &str) -> Value {
     }
 }
 
+// ---------------- I1-M2 时间线区间预渲(preview_zone_render) ----------------
+
+/// preview_zone_render(I1-M2 zone 预览渲染,时间线播放的 Kdenlive 模式支撑):
+/// 对时间线 [startMs,endMs) 区间以半分辨率 + fast 质量档走 cutforge-render
+/// 既有管线(时间窗/分辨率/出口为渲染端 zone.rs 单源,不建第二条管线),产物
+/// 落 `.cutforge/preview-cache/<键>/zone.mp4`(内容寻址 = 工作区指纹 + 量化
+/// 区间 + RENDERER_VERSION),命中直接返回不重渲。同步执行(与 render_frame
+/// 同待遇,不持工程锁);渲染期间发 render.progress 事件(running→ok/fail,
+/// hub 未建立即丢弃)。参数面刻意收窄——不透传编码参数:质量档固定且进键,
+/// 杜绝「参数改了、键没改」的陈旧复用。
+pub(crate) fn preview_zone_render_tool(root: &Path, args: &Value) -> Value {
+    let (Some(start_ms), Some(end_ms)) = (args["startMs"].as_u64(), args["endMs"].as_u64()) else {
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 startMs/endMs(时间线区间,毫秒)",
+            json!({}),
+        );
+    };
+    if end_ms <= start_ms {
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            &format!("区间非法:endMs({end_ms}) 必须 > startMs({start_ms})"),
+            json!({}),
+        );
+    }
+    if !cutforge_io::paths::has_project(root) {
+        return envelope(
+            false,
+            "NO_CONFIG",
+            "工程不存在(缺 05_时间线工程/project.json,兼容旧 05_ir/)",
+            json!({}),
+        );
+    }
+    if resolve_render_bin().is_none() {
+        return render_missing_dep();
+    }
+    // ass 服务端过滤(与 render_frame 同口径:缺文件不烧录而非失败);
+    // 绝对化后透传——子进程 CWD 不随 root,相对路径会解析错位
+    let ass_abs: Option<PathBuf> =
+        existing_rel(root, args["ass"].as_str()).map(|rel| root.join(rel));
+    let ass_arg = ass_abs.as_ref().map(|p| p.to_string_lossy().into_owned());
+    let run_id = new_run_id();
+    publish_state(root, &run_id, "running");
+    let mut cmd = spawn_render(root, ass_arg.as_deref(), false, &[]);
+    cmd.arg("--zone-start").arg(format!("{start_ms}"));
+    cmd.arg("--zone-end").arg(format!("{end_ms}"));
+    match cmd.output() {
+        Ok(out) if out.status.success() => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            // 末行 JSON 完成事件优先;ZONE_OK 行兜底(接口与整片/单帧同风格)
+            let ev = text
+                .lines()
+                .rev()
+                .find_map(|l| serde_json::from_str::<Value>(l).ok())
+                .filter(|v| v.get("mode").and_then(|m| m.as_str()) == Some("zone"));
+            let zone_path = ev
+                .as_ref()
+                .and_then(|v| v.get("file"))
+                .and_then(|f| f.as_str())
+                .map(PathBuf::from)
+                .or_else(|| {
+                    text.lines()
+                        .rev()
+                        .find_map(|l| l.strip_prefix("ZONE_OK ").map(PathBuf::from))
+                });
+            let Some(zone_path) = zone_path else {
+                publish_state(root, &run_id, "fail");
+                return envelope(
+                    false,
+                    "INTERNAL",
+                    "cutforge-render zone 输出不可解析",
+                    json!({"stdout": text.trim()}),
+                );
+            };
+            publish_state(root, &run_id, "ok");
+            // file = 工程内相对路径(正斜杠约定)→ 壳经 /media 直接加载
+            let file = zone_path
+                .strip_prefix(root)
+                .unwrap_or(&zone_path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let cached = ev
+                .as_ref()
+                .and_then(|v| v.get("cached"))
+                .and_then(|c| c.as_bool())
+                .unwrap_or(false);
+            envelope(
+                true,
+                "OK",
+                if cached {
+                    "预渲缓存命中"
+                } else {
+                    "区间预渲完成"
+                },
+                json!({
+                    "file": file,
+                    "media": file,
+                    "startMs": ev.as_ref().and_then(|v| v.get("startMs")).cloned().unwrap_or(json!(start_ms)),
+                    "endMs": ev.as_ref().and_then(|v| v.get("endMs")).cloned().unwrap_or(json!(end_ms)),
+                    "rendererVersion": ev.as_ref().and_then(|v| v.get("rendererVersion")).cloned().unwrap_or(json!(cutforge_render::RENDERER_VERSION)),
+                    "cached": cached,
+                    "key": ev.as_ref().and_then(|v| v.get("key")).and_then(|k| k.as_str()).unwrap_or_default(),
+                    "canvas": ev.as_ref().and_then(|v| v.get("canvas")).cloned().unwrap_or(json!(null)),
+                }),
+            )
+        }
+        Ok(out) => {
+            publish_state(root, &run_id, "fail");
+            let err = String::from_utf8_lossy(&out.stderr);
+            let msg = err.trim().strip_prefix("ZONE_FAIL: ").unwrap_or(err.trim());
+            let code = if msg.starts_with("NO_CONFIG:") {
+                "NO_CONFIG"
+            } else if msg.starts_with("PRECONDITION:") {
+                "PRECONDITION_FAILED"
+            } else if msg.starts_with("SCHEMA_INVALID:") {
+                "SCHEMA_INVALID"
+            } else {
+                "INTERNAL"
+            };
+            envelope(
+                false,
+                code,
+                &msg.chars().take(300).collect::<String>(),
+                json!({}),
+            )
+        }
+        Err(e) => {
+            publish_state(root, &run_id, "fail");
+            envelope(
+                false,
+                "DEP_MISSING",
+                &format!("cutforge-render 不可用: {e}"),
+                json!({}),
+            )
+        }
+    }
+}
+
 // ---------------- T2.4 单帧精确预览(render_frame) ----------------
 
 /// render_frame(T2.4「精确预览」的服务端支撑):渲染指定时间点的一帧合成画面

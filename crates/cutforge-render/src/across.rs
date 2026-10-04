@@ -32,7 +32,9 @@ pub fn chain_active(plan: &RenderPlan) -> bool {
 /// 视频轨处理链(册五 T5.3,acrossfade 链模式):全部主线片段同属一条**有处理
 /// 声明**的轨时返回其链,否则空串(跨轨声明无单点归属,诚实跳过)。
 pub fn video_track_chain(plan: &RenderPlan) -> String {
-    let Some(first) = plan.video_track_of.first() else { return String::new() };
+    let Some(first) = plan.video_track_of.first() else {
+        return String::new();
+    };
     if plan.video_track_of.iter().any(|t| t != first) {
         return String::new();
     }
@@ -100,7 +102,11 @@ pub fn eq_band_filter(b: &EqBand) -> Option<String> {
 
 /// 轨道 EQ 链(段序 = 数组序;空 = 空串)。
 pub fn track_eq_chain(bands: &[EqBand]) -> String {
-    bands.iter().filter_map(eq_band_filter).collect::<Vec<_>>().join(",")
+    bands
+        .iter()
+        .filter_map(eq_band_filter)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// 轨道动态链(册五 T5.3):acompressor(参数子集;threshold/limit IR dB → 线性域
@@ -168,9 +174,14 @@ pub fn grouped_bus_labels(
             continue;
         }
         done.push(tid);
-        let idxs: Vec<usize> =
-            (0..segs.len()).filter(|&j| segs[j].track_id.as_deref() == Some(tid)).collect();
-        let proc = plan.track_proc.iter().find(|p| p.track_id == tid).filter(|p| !p.is_empty());
+        let idxs: Vec<usize> = (0..segs.len())
+            .filter(|&j| segs[j].track_id.as_deref() == Some(tid))
+            .collect();
+        let proc = plan
+            .track_proc
+            .iter()
+            .find(|p| p.track_id == tid)
+            .filter(|p| !p.is_empty());
         match proc {
             Some(p) => {
                 let chain = track_chain(p.eq.as_deref(), p.dyn_.as_ref());
@@ -187,8 +198,11 @@ pub fn grouped_bus_labels(
                     parts.push(format!("{}{chain}[tp{i0}]", refs[i0]));
                     labels.push(format!("[tp{i0}]"));
                 } else {
-                    let grouped: String =
-                        idxs.iter().map(|&j| refs[j].as_str()).collect::<Vec<_>>().join("");
+                    let grouped: String = idxs
+                        .iter()
+                        .map(|&j| refs[j].as_str())
+                        .collect::<Vec<_>>()
+                        .join("");
                     parts.push(format!(
                         "{grouped}amix=inputs={}:duration=longest:normalize=0[tg{tid}]",
                         idxs.len()
@@ -250,11 +264,17 @@ pub fn event_body(seg: &AudioSeg) -> String {
         body.push_str(&format!(",volume={:.4}", seg.volume));
     }
     if seg.fade_in_ms > 0.0 {
-        body.push_str(&format!(",afade=t=in:st=0:d={:.3}", seg.fade_in_ms / 1000.0));
+        body.push_str(&format!(
+            ",afade=t=in:st=0:d={:.3}",
+            seg.fade_in_ms / 1000.0
+        ));
     }
     if seg.fade_out_ms > 0.0 {
         let st = (seg.duration_ms as f64 - seg.fade_out_ms).max(0.0) / 1000.0;
-        body.push_str(&format!(",afade=t=out:st={st:.3}:d={:.3}", seg.fade_out_ms / 1000.0));
+        body.push_str(&format!(
+            ",afade=t=out:st={st:.3}:d={:.3}",
+            seg.fade_out_ms / 1000.0
+        ));
     }
     body
 }
@@ -270,16 +290,43 @@ fn clip_stream_sec(plan: &RenderPlan, i: usize) -> f64 {
 /// 无事件片段 = anullsrc 静音)→ 边界 acrossfade/concat 链 → adelay 首片段落点
 /// → [bus] → (BGM ducking 与旧路径同一形态)→ aac。
 pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<String> {
+    let all = vec![true; plan.audio_segs.len()];
+    mix_pass_a_chain_args_with(plan, mixed_raw_out, &all, true)
+}
+
+/// 同 [`mix_pass_a_chain_args`],逐事件素材音轨可用性显式给定(I1 渲染缺口修,
+/// 语义同 [`crate::steps::mix_pass_a_args_with`]):无音轨素材的事件段不进图,
+/// 其所属片段回落到既有的 anullsrc 垫位流(链结构不变形,时间域由垫位撑住)。
+pub fn mix_pass_a_chain_args_with(
+    plan: &RenderPlan,
+    mixed_raw_out: &Path,
+    segs_has: &[bool],
+    bgm_has: bool,
+) -> Vec<String> {
+    let has = |i: usize| segs_has.get(i).copied().unwrap_or(true);
+    let live_bgm = plan.bgm.as_ref().filter(|_| bgm_has);
     let total_ms = plan.total_ms;
     let mut args: Vec<String> = vec!["-y".into(), "-v".into(), "error".into()];
     let mut filters: Vec<String> = Vec::new();
-    for seg in &plan.audio_segs {
-        let read_ms = (seg.duration_ms as f64 * seg.speed).ceil();
-        args.extend([
-            "-ss".into(), format!("{}", seg.source_in_ms as f64 / 1000.0),
-            "-t".into(), format!("{}", read_ms / 1000.0),
-            "-i".into(), seg.src.to_string_lossy().into(),
-        ]);
+    // -i 输入序 = 有音轨事件的**过滤后**序号(图内 [k:a] 必须与 -i 位置一致)
+    let mut input_of: Vec<Option<usize>> = Vec::with_capacity(plan.audio_segs.len());
+    let mut next_input = 0usize;
+    for (i, seg) in plan.audio_segs.iter().enumerate() {
+        if has(i) {
+            let read_ms = (seg.duration_ms as f64 * seg.speed).ceil();
+            args.extend([
+                "-ss".into(),
+                format!("{}", seg.source_in_ms as f64 / 1000.0),
+                "-t".into(),
+                format!("{}", read_ms / 1000.0),
+                "-i".into(),
+                seg.src.to_string_lossy().into(),
+            ]);
+            input_of.push(Some(next_input));
+            next_input += 1;
+        } else {
+            input_of.push(None);
+        }
     }
     let n = plan.video_clips.len();
     // ---- 逐片段流 ----
@@ -290,10 +337,10 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
             .audio_segs
             .iter()
             .enumerate()
-            .filter(|(_, s)| s.clip_idx == Some(i))
+            .filter(|(k, s)| s.clip_idx == Some(i) && has(*k))
             .collect();
         if evs.is_empty() {
-            // 无音频片段(图块/静音):静音流垫位,链结构不变形
+            // 无音频片段(图块/静音/素材无音轨):静音流垫位,链结构不变形
             filters.push(format!(
                 "anullsrc=r=48000:cl=stereo,atrim=0:{sec:.6},aformat=sample_rates=48000:channel_layouts=stereo[pc{i}]"
             ));
@@ -303,7 +350,11 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
         let mut refs = String::new();
         for (k, s) in &evs {
             let rel = s.start_ms.saturating_sub(clip.start_ms);
-            parts.push(format!("[{k}:a]{},adelay={rel}:all=1[e{i}_{k}]", event_body(s)));
+            let idx = input_of[*k].expect("has(i) 为真的段必有输入序");
+            parts.push(format!(
+                "[{idx}:a]{},adelay={rel}:all=1[e{i}_{k}]",
+                event_body(s)
+            ));
             refs.push_str(&format!("[e{i}_{k}]"));
         }
         parts.push(format!(
@@ -317,7 +368,10 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
     for k in 1..n {
         let d = plan.boundary_durs_ms[k - 1];
         if d > 0.0 {
-            filters.push(format!("[{cur}][pc{k}]acrossfade=d={:.6}:c1=tri:c2=tri[x{k}]", d / 1000.0));
+            filters.push(format!(
+                "[{cur}][pc{k}]acrossfade=d={:.6}:c1=tri:c2=tri[x{k}]",
+                d / 1000.0
+            ));
         } else {
             filters.push(format!("[{cur}][pc{k}]concat=n=2:v=0:a=1[x{k}]"));
         }
@@ -328,12 +382,15 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
     // 应用(acrossfade 链把多视频轨主线熔成单流,跨轨声明无单点归属——诚实跳过);
     // 无处理 = 拼接逐字一致(parity 红线)。
     let vchain = video_track_chain(plan);
-    filters.push(format!("[{cur}]adelay={}:all=1{vchain}[acb]", plan.video_clips[0].start_ms));
+    filters.push(format!(
+        "[{cur}]adelay={}:all=1{vchain}[acb]",
+        plan.video_clips[0].start_ms
+    ));
     let others: Vec<(usize, &AudioSeg)> = plan
         .audio_segs
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.clip_idx.is_none())
+        .filter(|(k, s)| s.clip_idx.is_none() && has(*k))
         .collect();
     if others.is_empty() {
         filters.push("[acb]anull[bus]".into());
@@ -342,8 +399,13 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
         let mut other_refs: Vec<String> = Vec::new();
         let other_segs: Vec<&AudioSeg> = others.iter().map(|(_, s)| *s).collect();
         for (k, s) in &others {
-            parts.push(format!("[{k}:a]{},adelay={}:all=1[a{k}]", event_body(s), s.start_ms));
-            other_refs.push(format!("[a{k}]"));
+            let idx = input_of[*k].expect("has(i) 为真的段必有输入序");
+            parts.push(format!(
+                "[{idx}:a]{},adelay={}:all=1[a{idx}]",
+                event_body(s),
+                s.start_ms
+            ));
+            other_refs.push(format!("[a{idx}]"));
         }
         // 轨道组建流(册五 T5.3):有处理声明的轨 amix 建流 → per-track 链 → 单标签;
         // 无处理轨保持逐事件标签(零变化面)
@@ -359,33 +421,54 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
         filters.extend(parts);
     }
     // ---- BGM(与旧路径同一形态:循环铺满 + gain + ducking 侧链) ----
-    if let Some(bgm) = &plan.bgm {
-        let bgm_idx = plan.audio_segs.len();
+    if let Some(bgm) = live_bgm {
+        let bgm_idx = next_input;
         let bgm_path = plan.project_dir.join(&bgm.src);
         args.extend([
-            "-stream_loop".into(), "-1".into(),
-            "-t".into(), format!("{}", total_ms as f64 / 1000.0),
-            "-i".into(), bgm_path.to_string_lossy().into(),
+            "-stream_loop".into(),
+            "-1".into(),
+            "-t".into(),
+            format!("{}", total_ms as f64 / 1000.0),
+            "-i".into(),
+            bgm_path.to_string_lossy().into(),
         ]);
         filters.push(format!(
             "[{bgm_idx}:a]aformat=sample_rates=48000:channel_layouts=stereo,volume={:.1}dB[bgmg]",
             bgm.gain_db
         ));
-        if bgm.ducking && !plan.audio_segs.is_empty() {
+        let any_main_audio = plan.audio_segs.iter().enumerate().any(|(k, _)| has(k));
+        if bgm.ducking && any_main_audio {
             filters.push("[bus]asplit=2[busA][busB]".into());
             filters.push(format!("[bgmg][busA]{}[bgmc]", ducking_filter(bgm)));
             filters.push("[busB][bgmc]amix=inputs=2:duration=first:normalize=0[mixout]".into());
-            args.extend(["-filter_complex".into(), filters.join(";"), "-map".into(), "[mixout]".into()]);
+            args.extend([
+                "-filter_complex".into(),
+                filters.join(";"),
+                "-map".into(),
+                "[mixout]".into(),
+            ]);
         } else {
             filters.push("[bus][bgmg]amix=inputs=2:duration=first:normalize=0[mixout]".into());
-            args.extend(["-filter_complex".into(), filters.join(";"), "-map".into(), "[mixout]".into()]);
+            args.extend([
+                "-filter_complex".into(),
+                filters.join(";"),
+                "-map".into(),
+                "[mixout]".into(),
+            ]);
         }
     } else {
-        args.extend(["-filter_complex".into(), filters.join(";"), "-map".into(), "[bus]".into()]);
+        args.extend([
+            "-filter_complex".into(),
+            filters.join(";"),
+            "-map".into(),
+            "[bus]".into(),
+        ]);
     }
     args.extend([
-        "-t".into(), format!("{}", plan.total_ms as f64 / 1000.0),
-        "-c:a".into(), "aac".into(),
+        "-t".into(),
+        format!("{}", plan.total_ms as f64 / 1000.0),
+        "-c:a".into(),
+        "aac".into(),
         mixed_raw_out.to_string_lossy().into(),
     ]);
     args
@@ -395,9 +478,15 @@ pub fn mix_pass_a_chain_args(plan: &RenderPlan, mixed_raw_out: &Path) -> Vec<Str
 /// 字面串与拆分前逐字一致(parity 红线);目标参数化走 [`mix_measure_args_t`]。
 pub fn mix_measure_args(mixed_raw: &Path) -> Vec<String> {
     [
-        "-hide_banner", "-nostats", "-i", &mixed_raw.to_string_lossy(),
-        "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json",
-        "-f", "null", "-",
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        &mixed_raw.to_string_lossy(),
+        "-filter_complex",
+        "loudnorm=I=-14:TP=-1.0:print_format=json",
+        "-f",
+        "null",
+        "-",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -408,13 +497,19 @@ pub fn mix_measure_args(mixed_raw: &Path) -> Vec<String> {
 /// 响度单/交付域定制,缺省目标用上者的既有字面串)。
 pub fn mix_measure_args_t(mixed_raw: &Path, target_i: f64, target_tp: f64) -> Vec<String> {
     [
-        "-hide_banner", "-nostats", "-i", &mixed_raw.to_string_lossy(),
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        &mixed_raw.to_string_lossy(),
         "-filter_complex",
         &format!(
             "loudnorm=I={}:TP={}:print_format=json",
-            crate::steps::fmt_f64(target_i), crate::steps::fmt_f64(target_tp)
+            crate::steps::fmt_f64(target_i),
+            crate::steps::fmt_f64(target_tp)
         ),
-        "-f", "null", "-",
+        "-f",
+        "null",
+        "-",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -450,9 +545,16 @@ pub fn mix_linear_filter_t(measured: &Value, target_i: f64, target_tp: f64) -> S
 /// [`mix_linear_filter_t`](响度目标参数化,T5.6)单源构造。
 pub fn mix_pass_b_args(linear_filter: &str, mixed_raw: &Path, mix_out: &Path) -> Vec<String> {
     [
-        "-y", "-v", "error", "-i", &mixed_raw.to_string_lossy(),
-        "-af", linear_filter,
-        "-c:a", "aac", &mix_out.to_string_lossy(),
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        &mixed_raw.to_string_lossy(),
+        "-af",
+        linear_filter,
+        "-c:a",
+        "aac",
+        &mix_out.to_string_lossy(),
     ]
     .iter()
     .map(|s| s.to_string())
@@ -463,8 +565,14 @@ pub fn mix_pass_b_args(linear_filter: &str, mixed_raw: &Path, mix_out: &Path) ->
 /// (数字静音 -inf 遇 linear=true 的 measured 值,ffmpeg 报 "Result too large" 直接失败。)
 pub fn mix_pass_b_silent_args(mixed_raw: &Path, mix_out: &Path) -> Vec<String> {
     [
-        "-y", "-v", "error", "-i", &mixed_raw.to_string_lossy(),
-        "-c:a", "copy", &mix_out.to_string_lossy(),
+        "-y",
+        "-v",
+        "error",
+        "-i",
+        &mixed_raw.to_string_lossy(),
+        "-c:a",
+        "copy",
+        &mix_out.to_string_lossy(),
     ]
     .iter()
     .map(|s| s.to_string())
@@ -478,7 +586,6 @@ pub fn mix_measured_is_loud(measured: &Value) -> bool {
         Some(v) if v.is_finite() && v > -70.0
     )
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -498,31 +605,72 @@ mod tests {
         let raw = Path::new("/c/mix/r.m4a");
         assert_eq!(
             strv(&mix_measure_args(raw)),
-            ["-hide_banner", "-nostats", "-i", "/c/mix/r.m4a",
-             "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json", "-f", "null", "-"]
+            [
+                "-hide_banner",
+                "-nostats",
+                "-i",
+                "/c/mix/r.m4a",
+                "-filter_complex",
+                "loudnorm=I=-14:TP=-1.0:print_format=json",
+                "-f",
+                "null",
+                "-"
+            ]
         );
         assert_eq!(
-            strv(&mix_pass_b_args(&mix_linear_filter(&measured), raw, Path::new("/c/mix/o.m4a"))),
-            ["-y", "-v", "error", "-i", "/c/mix/r.m4a", "-af",
-             "loudnorm=I=-14:TP=-1.0:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true",
-             "-c:a", "aac", "/c/mix/o.m4a"]
+            strv(&mix_pass_b_args(
+                &mix_linear_filter(&measured),
+                raw,
+                Path::new("/c/mix/o.m4a")
+            )),
+            [
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                "/c/mix/r.m4a",
+                "-af",
+                "loudnorm=I=-14:TP=-1.0:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true",
+                "-c:a",
+                "aac",
+                "/c/mix/o.m4a"
+            ]
         );
         // 目标参数化(T5.6 loudnormTarget):-16/-1.5 交付域定制
         assert_eq!(
             strv(&mix_measure_args_t(raw, -16.0, -1.5)),
-            ["-hide_banner", "-nostats", "-i", "/c/mix/r.m4a",
-             "-filter_complex", "loudnorm=I=-16:TP=-1.5:print_format=json", "-f", "null", "-"]
+            [
+                "-hide_banner",
+                "-nostats",
+                "-i",
+                "/c/mix/r.m4a",
+                "-filter_complex",
+                "loudnorm=I=-16:TP=-1.5:print_format=json",
+                "-f",
+                "null",
+                "-"
+            ]
         );
         assert_eq!(
             mix_linear_filter_t(&measured, -16.0, -1.5),
             "loudnorm=I=-16:TP=-1.5:measured_I=-14.5:measured_TP=-1.2:measured_LRA=3.1:measured_thresh=-24.5:linear=true"
         );
         // 静音:input_i = -inf → 不走 linear,转封装
-        let silent = json!({"input_i": "-inf", "input_tp": "-inf", "input_lra": "0", "input_thresh": "-70"});
+        let silent =
+            json!({"input_i": "-inf", "input_tp": "-inf", "input_lra": "0", "input_thresh": "-70"});
         assert!(!mix_measured_is_loud(&silent));
         assert_eq!(
             strv(&mix_pass_b_silent_args(raw, Path::new("/c/mix/o.m4a"))),
-            ["-y", "-v", "error", "-i", "/c/mix/r.m4a", "-c:a", "copy", "/c/mix/o.m4a"]
+            [
+                "-y",
+                "-v",
+                "error",
+                "-i",
+                "/c/mix/r.m4a",
+                "-c:a",
+                "copy",
+                "/c/mix/o.m4a"
+            ]
         );
     }
 
@@ -577,9 +725,22 @@ mod tests {
         let args = mix_pass_a_chain_args(&p, Path::new("/c/mix/r.m4a"));
         let s = args.join("\u{1}");
         assert!(s.contains("[0:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=1.0000,adelay=0:all=1[e0_0]"), "{s}");
-        assert!(s.contains("[e0_0]amix=inputs=1:duration=longest:normalize=0,apad=whole_dur=2.500000[pc0]"), "流长=dur+尾帧 0.5: {s}");
-        assert!(s.contains("[e1_1]amix=inputs=1:duration=longest:normalize=0,apad=whole_dur=2.000000[pc1]"), "末段无尾帧: {s}");
-        assert!(s.contains("[pc0][pc1]acrossfade=d=0.500000:c1=tri:c2=tri[x1]"), "{s}");
+        assert!(
+            s.contains(
+                "[e0_0]amix=inputs=1:duration=longest:normalize=0,apad=whole_dur=2.500000[pc0]"
+            ),
+            "流长=dur+尾帧 0.5: {s}"
+        );
+        assert!(
+            s.contains(
+                "[e1_1]amix=inputs=1:duration=longest:normalize=0,apad=whole_dur=2.000000[pc1]"
+            ),
+            "末段无尾帧: {s}"
+        );
+        assert!(
+            s.contains("[pc0][pc1]acrossfade=d=0.500000:c1=tri:c2=tri[x1]"),
+            "{s}"
+        );
         assert!(s.contains("[x1]adelay=0:all=1[acb];[acb]anull[bus]"), "{s}");
         assert!(s.contains("-map\u{1}[bus]"), "{s}");
         // 链总长 = Σdur(2.5+2−0.5 = 4.0 = Σdur;构造性零漂移)
@@ -593,9 +754,34 @@ mod tests {
         assert!(p.audio_segs.is_empty(), "静音片段无事件");
         let args = mix_pass_a_chain_args(&p, Path::new("/c/mix/r.m4a"));
         let s = args.join("\u{1}");
-        assert!(s.contains("anullsrc=r=48000:cl=stereo,atrim=0:2.500000"), "{s}");
+        assert!(
+            s.contains("anullsrc=r=48000:cl=stereo,atrim=0:2.500000"),
+            "{s}"
+        );
         assert!(!s.contains("-i\u{1}"), "无事件不开输入");
         assert!(s.contains("[pc0][pc1]acrossfade=d=0.500000"), "{s}");
+    }
+
+    /// 音轨可用性(I1 缺口修):链模式下素材无音轨的 clip 事件不进图,
+    /// 该片段回落 anullsrc 垫位流(链结构不变形);可用事件输入序前移。
+    #[test]
+    fn chain_mode_drops_events_without_source_audio() {
+        let p = plan(two_clip(true));
+        let args = mix_pass_a_chain_args_with(&p, Path::new("/c/mix/r.m4a"), &[true, false], true);
+        let s = args.join("\u{1}");
+        assert!(s.contains("[0:a]aformat"), "可用事件保留输入序 0: {s}");
+        assert!(!s.contains("[1:a]"), "无音轨事件不得出现流说明符: {s}");
+        assert!(
+            s.contains("anullsrc=r=48000:cl=stereo,atrim=0:2.000000"),
+            "无音轨 clip 垫位(末段无尾帧 2.0s): {s}"
+        );
+        assert!(
+            s.contains("[pc0][pc1]acrossfade=d=0.500000"),
+            "链结构保持: {s}"
+        );
+        // 对照:全可用 = 既有图(两事件两输入)
+        let all = mix_pass_a_chain_args(&p, Path::new("/c/mix/r.m4a"));
+        assert!(all.join("\u{1}").contains("[1:a]"));
     }
 
     /// 音频轨事件在链模式下保持绝对落点,与链输出 amix 同一 [bus]。
@@ -611,7 +797,10 @@ mod tests {
         let args = mix_pass_a_chain_args(&p, Path::new("/c/mix/r.m4a"));
         let s = args.join("\u{1}");
         assert!(s.contains("[2:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=0.9000,adelay=2500:all=1[a2]"), "绝对落点(全局输入下标): {s}");
-        assert!(s.contains("[acb][a2]amix=inputs=2:duration=longest:normalize=0[bus]"), "{s}");
+        assert!(
+            s.contains("[acb][a2]amix=inputs=2:duration=longest:normalize=0[bus]"),
+            "{s}"
+        );
     }
 
     /// 链模式 + BGM ducking:与旧路径同一侧链形态([bus] asplit)。
@@ -623,7 +812,12 @@ mod tests {
         let args = mix_pass_a_chain_args(&p, Path::new("/c/mix/r.m4a"));
         let s = args.join("\u{1}");
         assert!(s.contains("[bus]asplit=2[busA][busB]"), "{s}");
-        assert!(s.contains("[bgmg][busA]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]"), "{s}");
+        assert!(
+            s.contains(
+                "[bgmg][busA]sidechaincompress=threshold=0.03:ratio=8:attack=80:release=500[bgmc]"
+            ),
+            "{s}"
+        );
         assert!(s.contains("-map\u{1}[mixout]"), "{s}");
     }
 
@@ -654,9 +848,17 @@ mod tests {
     #[test]
     fn event_body_matches_legacy_shape() {
         let seg = AudioSeg {
-            src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
-            volume: 0.8, speed: 2.0, reverse: true, denoise: None, pitch: 1.0,
-            fade_in_ms: 100.0, fade_out_ms: 200.0,
+            src: "a.mp4".into(),
+            start_ms: 0,
+            duration_ms: 1000,
+            source_in_ms: 0,
+            volume: 0.8,
+            speed: 2.0,
+            reverse: true,
+            denoise: None,
+            pitch: 1.0,
+            fade_in_ms: 100.0,
+            fade_out_ms: 200.0,
             volume_expr: None,
             track_id: None,
             clip_idx: None,
@@ -685,7 +887,10 @@ mod tests {
         assert!((pitch_factor(12.0) - 2.0).abs() < 1e-9, "+12 半音 = 倍频");
         assert!((pitch_factor(-12.0) - 0.5).abs() < 1e-9, "-12 半音 = 半频");
         assert!((pitch_factor(0.0) - 1.0).abs() < 1e-9);
-        assert!((pitch_factor(f64::NAN) - 1.0).abs() < 1e-9, "非有限诚实回落");
+        assert!(
+            (pitch_factor(f64::NAN) - 1.0).abs() < 1e-9,
+            "非有限诚实回落"
+        );
     }
 
     /// 链序红线(册四 T4.8):aformat → **denoise** → areverse → **变调(asetrate
@@ -694,9 +899,17 @@ mod tests {
     #[test]
     fn denoise_pitch_chain_order_is_fixed() {
         let seg = AudioSeg {
-            src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
-            volume: 1.0, speed: 1.0, reverse: true, denoise: Some("mid".into()), pitch: 2.0,
-            fade_in_ms: 0.0, fade_out_ms: 0.0,
+            src: "a.mp4".into(),
+            start_ms: 0,
+            duration_ms: 1000,
+            source_in_ms: 0,
+            volume: 1.0,
+            speed: 1.0,
+            reverse: true,
+            denoise: Some("mid".into()),
+            pitch: 2.0,
+            fade_in_ms: 0.0,
+            fade_out_ms: 0.0,
             volume_expr: None,
             track_id: None,
             clip_idx: None,
@@ -714,28 +927,53 @@ mod tests {
     #[test]
     fn pitch_tempo_compensation_combines_with_speed() {
         let seg = AudioSeg {
-            src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
-            volume: 1.0, speed: 0.5, reverse: false, denoise: None, pitch: 2.0,
-            fade_in_ms: 0.0, fade_out_ms: 0.0,
+            src: "a.mp4".into(),
+            start_ms: 0,
+            duration_ms: 1000,
+            source_in_ms: 0,
+            volume: 1.0,
+            speed: 0.5,
+            reverse: false,
+            denoise: None,
+            pitch: 2.0,
+            fade_in_ms: 0.0,
+            fade_out_ms: 0.0,
             volume_expr: None,
             track_id: None,
             clip_idx: None,
         };
         let body = event_body(&seg);
         assert!(body.contains("asetrate=96000"), "{body}");
-        assert!(body.contains("atempo=0.5,atempo=0.500000"), "atempo 链 = 0.25 分解: {body}");
+        assert!(
+            body.contains("atempo=0.5,atempo=0.500000"),
+            "atempo 链 = 0.25 分解: {body}"
+        );
         // -12 半音(k=0.5)+ 2x 速度 → atempo = 4(链分解 2×2);降噪先于倒放
         let seg = AudioSeg {
-            src: "a.mp4".into(), start_ms: 0, duration_ms: 1000, source_in_ms: 0,
-            volume: 1.0, speed: 2.0, reverse: false, denoise: Some("high".into()), pitch: 0.5,
-            fade_in_ms: 0.0, fade_out_ms: 0.0,
+            src: "a.mp4".into(),
+            start_ms: 0,
+            duration_ms: 1000,
+            source_in_ms: 0,
+            volume: 1.0,
+            speed: 2.0,
+            reverse: false,
+            denoise: Some("high".into()),
+            pitch: 0.5,
+            fade_in_ms: 0.0,
+            fade_out_ms: 0.0,
             volume_expr: None,
             track_id: None,
             clip_idx: None,
         };
         let body = event_body(&seg);
         assert!(body.contains("asetrate=24000"), "{body}");
-        assert!(body.contains("afftdn=nr=25:nf=-45:tn=1,asetrate=24000"), "降噪在变调前(此例无倒放): {body}");
-        assert!(body.contains("atempo=2.0,atempo=2.000000"), "atempo 链 = 4 分解: {body}");
+        assert!(
+            body.contains("afftdn=nr=25:nf=-45:tn=1,asetrate=24000"),
+            "降噪在变调前(此例无倒放): {body}"
+        );
+        assert!(
+            body.contains("atempo=2.0,atempo=2.000000"),
+            "atempo 链 = 4 分解: {body}"
+        );
     }
 }

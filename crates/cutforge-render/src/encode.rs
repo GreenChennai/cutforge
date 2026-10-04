@@ -22,7 +22,7 @@
 //! (ffmpeg 缺失 → None,调用方降级)。
 
 use crate::plan::RenderOptions;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 /// 硬件编码器候选(试编顺序:nvenc → qsv → amf;CUDA/Intel/AMD 各归其位)。
@@ -52,7 +52,14 @@ fn hw_quality_args(encoder: &str, quality: Option<&str>, crf: Option<u32>) -> Ve
                 Some("quality") => "22".into(),
                 _ => "27".into(),
             });
-            vec!["-preset".into(), p.into(), "-rc".into(), "vbr".into(), "-cq".into(), cq]
+            vec![
+                "-preset".into(),
+                p.into(),
+                "-rc".into(),
+                "vbr".into(),
+                "-cq".into(),
+                cq,
+            ]
         }
         "h264_qsv" => {
             let p = match quality {
@@ -86,10 +93,14 @@ fn hw_quality_args(encoder: &str, quality: Option<&str>, crf: Option<u32>) -> Ve
 /// `-color_primaries/-color_trc` 单独给不落 VUI,必须经 setparams 才复验可见)。
 pub fn color_tag_args() -> [&'static str; 8] {
     [
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
-        "-color_range", "tv",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-color_range",
+        "tv",
     ]
 }
 
@@ -118,9 +129,13 @@ pub fn final_encode_args(
     if hw.is_none() && !needs_reencode(opts) {
         // 缺省:remux + bt709 标签(零重编码;mp4 colr 由输出流参数写入,实测可复验)
         let mut args: Vec<String> = vec![
-            "-y".into(), "-v".into(), "error".into(),
-            "-i".into(), input.to_string_lossy().into(),
-            "-c".into(), "copy".into(),
+            "-y".into(),
+            "-v".into(),
+            "error".into(),
+            "-i".into(),
+            input.to_string_lossy().into(),
+            "-c".into(),
+            "copy".into(),
         ];
         args.extend(color_tag_args().iter().map(|s| s.to_string()));
         args.push(output.to_string_lossy().into());
@@ -129,8 +144,11 @@ pub fn final_encode_args(
     let (crf_def, preset_def) = quality_settings(opts.quality.as_deref());
     let crf = opts.crf.unwrap_or(crf_def);
     let mut args: Vec<String> = vec![
-        "-y".into(), "-v".into(), "error".into(),
-        "-i".into(), input.to_string_lossy().into(),
+        "-y".into(),
+        "-v".into(),
+        "error".into(),
+        "-i".into(),
+        input.to_string_lossy().into(),
     ];
     let encoder = hw.unwrap_or("libx264");
     match hw {
@@ -140,7 +158,12 @@ pub fn final_encode_args(
             args.extend(hw_quality_args(encoder, opts.quality.as_deref(), opts.crf));
         }
         None => {
-            args.extend(["-c:v".into(), "libx264".into(), "-preset".into(), preset_def.into()]);
+            args.extend([
+                "-c:v".into(),
+                "libx264".into(),
+                "-preset".into(),
+                preset_def.into(),
+            ]);
             if opts.bitrate_kbps.is_none() {
                 args.extend(["-crf".into(), crf.to_string()]);
             }
@@ -152,7 +175,10 @@ pub fn final_encode_args(
     if let Some(gop) = opts.gop {
         args.extend(["-g".into(), gop.to_string()]);
     }
-    args.extend(["-pix_fmt".into(), opts.pix_fmt.clone().unwrap_or_else(|| "yuv420p".into())]);
+    args.extend([
+        "-pix_fmt".into(),
+        opts.pix_fmt.clone().unwrap_or_else(|| "yuv420p".into()),
+    ]);
     args.extend(["-vf".into(), COLOR_TAG_SET_PARAMS.into()]);
     args.extend(color_tag_args().iter().map(|s| s.to_string()));
     args.extend(["-c:a".into(), "copy".into()]);
@@ -166,8 +192,19 @@ pub fn final_encode_args(
 pub fn hw_encoder_usable(encoder: &str) -> bool {
     let out = std::process::Command::new(crate::ff_bin("ffmpeg"))
         .args([
-            "-v", "error", "-f", "lavfi", "-i", "color=black:size=256x256:rate=30:duration=0.1",
-            "-c:v", encoder, "-frames:v", "2", "-f", "null", "-",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:size=256x256:rate=30:duration=0.1",
+            "-c:v",
+            encoder,
+            "-frames:v",
+            "2",
+            "-f",
+            "null",
+            "-",
         ])
         .output();
     matches!(out, Ok(o) if o.status.success())
@@ -183,16 +220,26 @@ pub fn resolve_hw_candidate() -> Option<&'static str> {
 pub fn verify_color_tags(output: &Path) -> Result<Value, String> {
     let out = std::process::Command::new(crate::ff_bin("ffprobe"))
         .args([
-            "-v", "error", "-select_streams", "v:0",
-            "-show_entries", "stream=color_primaries,color_transfer,color_space,color_range",
-            "-print_format", "json", &output.to_string_lossy(),
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=color_primaries,color_transfer,color_space,color_range",
+            "-print_format",
+            "json",
+            &output.to_string_lossy(),
         ])
         .output()
         .map_err(|e| format!("ffprobe 启动失败: {e}"))?;
     if !out.status.success() {
         return Err(format!(
             "ffprobe 失败: {}",
-            String::from_utf8_lossy(&out.stderr).trim().chars().take(200).collect::<String>()
+            String::from_utf8_lossy(&out.stderr)
+                .trim()
+                .chars()
+                .take(200)
+                .collect::<String>()
         ));
     }
     let v: Value =
@@ -226,7 +273,8 @@ mod tests {
     /// 拆分前经济);显式编码选项才走重编码(sw medium crf23 + setparams 双写)。
     #[test]
     fn default_args_are_remux_with_bt709_tags() {
-        let (args, enc) = final_encode_args(Path::new("/i.mp4"), Path::new("/o.mp4"), &base_opts(), None);
+        let (args, enc) =
+            final_encode_args(Path::new("/i.mp4"), Path::new("/o.mp4"), &base_opts(), None);
         assert_eq!(enc, "copy");
         let s = args.join("\u{1}");
         assert!(s.contains("-c\u{1}copy"), "{s}");
@@ -238,9 +286,15 @@ mod tests {
         let (args, enc) = final_encode_args(Path::new("/i.mp4"), Path::new("/o.mp4"), &o, None);
         assert_eq!(enc, "libx264");
         let s = args.join("\u{1}");
-        assert!(s.contains("-c:v\u{1}libx264\u{1}-preset\u{1}medium\u{1}-crf\u{1}20"), "{s}");
+        assert!(
+            s.contains("-c:v\u{1}libx264\u{1}-preset\u{1}medium\u{1}-crf\u{1}20"),
+            "{s}"
+        );
         assert!(s.contains("-color_primaries\u{1}bt709\u{1}-color_trc\u{1}bt709\u{1}-colorspace\u{1}bt709\u{1}-color_range\u{1}tv"), "{s}");
-        assert!(s.contains("setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"), "{s}");
+        assert!(
+            s.contains("setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"),
+            "{s}"
+        );
         assert!(s.contains("-pix_fmt\u{1}yuv420p"), "{s}");
         assert!(s.contains("-c:a\u{1}copy"), "{s}");
     }
@@ -251,10 +305,16 @@ mod tests {
         let mut o = base_opts();
         o.quality = Some("fast".into());
         let (args, _) = final_encode_args(Path::new("/i"), Path::new("/o"), &o, None);
-        assert!(args.join("\u{1}").contains("-preset\u{1}veryfast\u{1}-crf\u{1}28"));
+        assert!(
+            args.join("\u{1}")
+                .contains("-preset\u{1}veryfast\u{1}-crf\u{1}28")
+        );
         o.quality = Some("quality".into());
         let (args, _) = final_encode_args(Path::new("/i"), Path::new("/o"), &o, None);
-        assert!(args.join("\u{1}").contains("-preset\u{1}slow\u{1}-crf\u{1}18"));
+        assert!(
+            args.join("\u{1}")
+                .contains("-preset\u{1}slow\u{1}-crf\u{1}18")
+        );
         o.crf = Some(20);
         let (args, _) = final_encode_args(Path::new("/i"), Path::new("/o"), &o, None);
         assert!(args.join("\u{1}").contains("-crf\u{1}20"));
@@ -275,10 +335,13 @@ mod tests {
             ("h264_qsv", "-global_quality\u{1}27"),
             ("h264_amf", "-quality\u{1}balanced"),
         ] {
-            let (args, name) =
-                final_encode_args(Path::new("/i"), Path::new("/o"), &o, Some(enc));
+            let (args, name) = final_encode_args(Path::new("/i"), Path::new("/o"), &o, Some(enc));
             assert_eq!(name, enc);
-            assert!(args.join("\u{1}").contains(needle), "{enc}: {}", args.join("\u{1}"));
+            assert!(
+                args.join("\u{1}").contains(needle),
+                "{enc}: {}",
+                args.join("\u{1}")
+            );
         }
         let mut o = base_opts();
         o.gop = Some(60);

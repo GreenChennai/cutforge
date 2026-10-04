@@ -22,17 +22,21 @@
 //! | fx.<id>.<p> | 注册表三态:sendcmd 命令序列 / segment 分支重建 / static 已拒 | t(源域) |
 
 use crate::plan::RenderPlan;
-use cutforge_core::keyframes::{group_by_property, FxTimeline};
-use cutforge_core::model::{speed_segments, Clip};
+use cutforge_core::keyframes::{FxTimeline, group_by_property};
+use cutforge_core::model::{Clip, speed_segments};
 use serde_json::Value;
 
 /// clip 是否携带**视觉类**关键帧(需要段图模式的属性;volume 走混音链,speed 走
 /// 分段变速,都不强制段图)。
 pub fn has_visual_keyframes(clip: &Clip) -> bool {
-    let Some(kfs) = &clip.keyframes else { return false };
+    let Some(kfs) = &clip.keyframes else {
+        return false;
+    };
     kfs.iter().any(|k| {
-        matches!(k.property.as_str(), "position.x" | "position.y" | "scale" | "rotation" | "opacity")
-            || k.property.starts_with("fx.")
+        matches!(
+            k.property.as_str(),
+            "position.x" | "position.y" | "scale" | "rotation" | "opacity"
+        ) || k.property.starts_with("fx.")
     })
 }
 
@@ -85,15 +89,20 @@ fn anchors(clip: &Clip, property: &str, domain: Domain) -> Option<Vec<(f64, f64)
     };
     let ev = |t_play: f64| -> f64 {
         let refs: Vec<&cutforge_core::keyframes::Keyframe> = group.iter().collect();
-        cutforge_core::keyframes::eval_group(&refs, |k| {
-            cutforge_core::keyframes::parse_interp(&k.interp, k.bezier)
-        }, t_play)
+        cutforge_core::keyframes::eval_group(
+            &refs,
+            |k| cutforge_core::keyframes::parse_interp(&k.interp, k.bezier),
+            t_play,
+        )
     };
     let speed_bounds: Vec<f64> = match domain {
         Domain::Play => Vec::new(),
         Domain::Source => {
             let segs = speed_segments(clip);
-            segs.iter().map(|&(a, _, _)| a as f64).chain(std::iter::once(clip.duration_ms as f64)).collect()
+            segs.iter()
+                .map(|&(a, _, _)| a as f64)
+                .chain(std::iter::once(clip.duration_ms as f64))
+                .collect()
         }
     };
     let mut out: Vec<(f64, f64)> = Vec::new();
@@ -156,11 +165,20 @@ fn emit_if_else(anchors: &[(f64, f64)], var: &str) -> String {
         } else {
             fmt(va)
         };
-        expr = format!("if(between({var},{},{}),{},****ELSE****)", fmt(ta), fmt(tb), lerp)
-            .replace("****ELSE****", &expr);
+        expr = format!(
+            "if(between({var},{},{}),{},****ELSE****)",
+            fmt(ta),
+            fmt(tb),
+            lerp
+        )
+        .replace("****ELSE****", &expr);
     }
-    format!("if(lt({var},{}),{},****FIRST****)", fmt(anchors[0].0), fmt(first))
-        .replace("****FIRST****", &expr)
+    format!(
+        "if(lt({var},{}),{},****FIRST****)",
+        fmt(anchors[0].0),
+        fmt(first)
+    )
+    .replace("****FIRST****", &expr)
 }
 
 // ---------------- 视觉通路(A 级表达式直译) ----------------
@@ -178,8 +196,10 @@ pub fn kf_rotate_filter(clip: &Clip) -> Option<String> {
 pub fn kf_zoompan_filter(clip: &Clip, plan: &RenderPlan) -> Option<String> {
     let anchors = anchors(clip, "scale", Domain::Source)?;
     // τ(源域秒)→ 帧索引:每帧代表 [n/fps,(n+1)/fps) → 锚点取帧索引 = τ×fps
-    let on_anchors: Vec<(f64, f64)> =
-        anchors.into_iter().map(|(t, v)| ((t * plan.fps as f64 * 100.0).round() / 100.0, v)).collect();
+    let on_anchors: Vec<(f64, f64)> = anchors
+        .into_iter()
+        .map(|(t, v)| ((t * plan.fps as f64 * 100.0).round() / 100.0, v))
+        .collect();
     let expr = emit_if_else(&on_anchors, "on");
     let (w, h, fps) = (plan.canvas_w, plan.canvas_h, plan.fps);
     Some(format!(
@@ -196,7 +216,12 @@ pub fn kf_zoompan_filter(clip: &Clip, plan: &RenderPlan) -> Option<String> {
 ///
 /// 两者任一存在即挂黑底 overlay。返回 graph 片段:
 /// `[fg]chain[fgk];color=black:...[bg];[bg][fgk]overlay=...[out]`。
-pub fn kf_composite_block(clip: &Clip, plan: &RenderPlan, fg_label: &str, out_label: &str) -> Option<String> {
+pub fn kf_composite_block(
+    clip: &Clip,
+    plan: &RenderPlan,
+    fg_label: &str,
+    out_label: &str,
+) -> Option<String> {
     let has_pos = has_property(clip, "position.x") || has_property(clip, "position.y");
     let has_opa = has_property(clip, "opacity");
     if !has_pos && !has_opa {
@@ -216,7 +241,11 @@ pub fn kf_composite_block(clip: &Clip, plan: &RenderPlan, fg_label: &str, out_la
     let xy = |prop: &str, span: u32| -> String {
         if has_property(clip, prop) {
             let anchors = anchors(clip, prop, Domain::Play).expect("position 关键帧已判存在");
-            format!("(({expr})*{span}-{half})", expr = emit_if_else(&anchors, "t"), half = span / 2)
+            format!(
+                "(({expr})*{span}-{half})",
+                expr = emit_if_else(&anchors, "t"),
+                half = span / 2
+            )
         } else {
             "0".to_string()
         }
@@ -240,7 +269,9 @@ pub fn kf_composite_block(clip: &Clip, plan: &RenderPlan, fg_label: &str, out_la
 }
 
 fn has_property(clip: &Clip, prop: &str) -> bool {
-    clip.keyframes.as_ref().is_some_and(|kfs| kfs.iter().any(|k| k.property == prop))
+    clip.keyframes
+        .as_ref()
+        .is_some_and(|kfs| kfs.iter().any(|k| k.property == prop))
 }
 
 // ---------------- volume 通路(混音链;播放域局部 t) ----------------
@@ -256,8 +287,7 @@ pub fn kf_volume_filter(clip: &Clip, offset_ms: u64) -> Option<String> {
     // 播放域锚点(秒;volume 在 atempo 之后,t 已是子段局部播放秒)→ 平移 offset
     let anchors_all = anchors(clip, "volume", Domain::Play).expect("volume 关键帧已判存在");
     let off = offset_ms as f64 / 1000.0;
-    let mut shifted: Vec<(f64, f64)> =
-        anchors_all.into_iter().map(|(t, v)| (t - off, v)).collect();
+    let mut shifted: Vec<(f64, f64)> = anchors_all.into_iter().map(|(t, v)| (t - off, v)).collect();
     shifted.sort_by(|x, y| x.0.total_cmp(&y.0));
     shifted.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-9);
     let expr = emit_if_else(&shifted, "t");
@@ -286,15 +316,23 @@ pub fn fx_keyframe_sendcmd(clip: &Clip, w: u32, h: u32, fps: u32) -> Option<(Str
             if !kfs.iter().any(|k| k.property == prop) {
                 continue;
             }
-            if cutforge_core::keyframes::fx_param_timeline(&def.id, &p.name).2 != FxTimeline::Sendcmd {
+            if cutforge_core::keyframes::fx_param_timeline(&def.id, &p.name).2
+                != FxTimeline::Sendcmd
+            {
                 continue; // segment 态由 fx_keyframe_segments 承接;static 已被校验拒
             }
             // 采样密度 100ms(播放域;B 级分段常量逼近,密度与对拍阈值同源):
             // sendcmd 裸时间点 = "t≥T 起生效",逐采样点设值,阶梯逼近曲线
             let (t_start, t_end) = {
-                let pts: Vec<u64> =
-                    kfs.iter().filter(|k| k.property == prop).map(|k| k.time_ms).collect();
-                (*pts.iter().min().unwrap_or(&0), *pts.iter().max().unwrap_or(&0))
+                let pts: Vec<u64> = kfs
+                    .iter()
+                    .filter(|k| k.property == prop)
+                    .map(|k| k.time_ms)
+                    .collect();
+                (
+                    *pts.iter().min().unwrap_or(&0),
+                    *pts.iter().max().unwrap_or(&0),
+                )
             };
             let mut step = t_start;
             let mut times: Vec<u64> = Vec::new();
@@ -309,7 +347,12 @@ pub fn fx_keyframe_sendcmd(clip: &Clip, w: u32, h: u32, fps: u32) -> Option<(Str
                 let v = cutforge_core::keyframes::eval_property(clip, &prop, t_play as f64)
                     .unwrap_or(0.0)
                     .clamp(p.min, p.max);
-                commands.push(format!("{tau:.3} {}@kf{i} {} {};", def.id, cmd, crate::steps::fmt_f64(v)));
+                commands.push(format!(
+                    "{tau:.3} {}@kf{i} {} {};",
+                    def.id,
+                    cmd,
+                    crate::steps::fmt_f64(v)
+                ));
             }
             labeled = true;
             any = true;
@@ -344,8 +387,7 @@ fn p_cmd_option(def: &crate::catalog::FxDef, param: &str) -> Option<String> {
         .find(|f| f["id"].as_str() == Some(def.id.as_str()))?["params"]
         .as_array()?
         .iter()
-        .find(|p| p["name"].as_str() == Some(param))?
-        ["cmdOption"]
+        .find(|p| p["name"].as_str() == Some(param))?["cmdOption"]
         .as_str()
         .map(String::from)
 }
@@ -369,15 +411,26 @@ pub fn source_to_play_ms(clip: &Clip, source_ms: f64) -> f64 {
 /// (分段边界源域秒升序去重, 每段滤镜链)——段数 = 边界数-1;segment 态
 /// keyframed 参数按**段中点求值常量化**(B 级分段逼近,求值单源),其余条目/参数
 /// 走既有默认裁决。无 segment 态 keyframed 参数 → None。
-pub fn fx_keyframe_segments(clip: &Clip, w: u32, h: u32, fps: u32) -> Option<(Vec<f64>, Vec<String>)> {
+pub fn fx_keyframe_segments(
+    clip: &Clip,
+    w: u32,
+    h: u32,
+    fps: u32,
+) -> Option<(Vec<f64>, Vec<String>)> {
     let combo = clip.fx.as_ref()?.combo.as_ref()?;
     let kfs = clip.keyframes.as_ref()?;
     let is_seg_param = |prop: &str| -> bool {
-        prop.strip_prefix("fx.").and_then(|rest| rest.rsplit_once('.')).is_some_and(|(fx_id, param)| {
-            cutforge_core::keyframes::fx_param_timeline(fx_id, param).2 == FxTimeline::Segment
-        })
+        prop.strip_prefix("fx.")
+            .and_then(|rest| rest.rsplit_once('.'))
+            .is_some_and(|(fx_id, param)| {
+                cutforge_core::keyframes::fx_param_timeline(fx_id, param).2 == FxTimeline::Segment
+            })
     };
-    let seg_props: Vec<&str> = kfs.iter().map(|k| k.property.as_str()).filter(|p| p.starts_with("fx.") && is_seg_param(p)).collect();
+    let seg_props: Vec<&str> = kfs
+        .iter()
+        .map(|k| k.property.as_str())
+        .filter(|p| p.starts_with("fx.") && is_seg_param(p))
+        .collect();
     if seg_props.is_empty() {
         return None;
     }
@@ -406,7 +459,8 @@ pub fn fx_keyframe_segments(clip: &Clip, w: u32, h: u32, fps: u32) -> Option<(Ve
                 for p in &def.params {
                     let prop = format!("fx.{}.{}", def.id, p.name);
                     if seg_props.contains(&prop.as_str())
-                        && let Some(v) = cutforge_core::keyframes::eval_property(clip, &prop, mid_play)
+                        && let Some(v) =
+                            cutforge_core::keyframes::eval_property(clip, &prop, mid_play)
                     {
                         params.insert(p.name.clone(), serde_json::json!(v.clamp(p.min, p.max)));
                     }
@@ -447,8 +501,15 @@ mod tests {
     #[test]
     fn play_source_conversion_roundtrip_constant_speed() {
         let c = clip_with(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000, "speed": 2.0}));
-        assert_eq!(play_to_source_ms(&c, 1000.0), 2000.0, "2x 速:播放 1s 消费源 2s");
-        assert!((source_to_play_ms(&c, 2000.0) - 1000.0).abs() < 1e-9, "逆变换回程");
+        assert_eq!(
+            play_to_source_ms(&c, 1000.0),
+            2000.0,
+            "2x 速:播放 1s 消费源 2s"
+        );
+        assert!(
+            (source_to_play_ms(&c, 2000.0) - 1000.0).abs() < 1e-9,
+            "逆变换回程"
+        );
         let c = clip_with(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000}));
         assert_eq!(play_to_source_ms(&c, 777.0), 777.0, "1x 恒等");
     }
@@ -482,8 +543,14 @@ mod tests {
         assert!(f1.starts_with("rotate='("), "{f1}");
         assert!(f1.contains("between(t,0,1)"), "{f1}");
         assert!(f1.contains("*PI/180"), "角度转弧度: {f1}");
-        assert!(f1.ends_with("':c=black"), "黑底补白与静态 rotate 同语义: {f1}");
-        assert!(f1.contains("if(between(t,0,1),0+(90)*(t-0),90)"), "线性区间 lerp: {f1}");
+        assert!(
+            f1.ends_with("':c=black"),
+            "黑底补白与静态 rotate 同语义: {f1}"
+        );
+        assert!(
+            f1.contains("if(between(t,0,1),0+(90)*(t-0),90)"),
+            "线性区间 lerp: {f1}"
+        );
         let c2 = clip_with(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000}));
         assert!(kf_rotate_filter(&c2).is_none(), "无关键帧不产滤镜");
     }
@@ -500,7 +567,10 @@ mod tests {
         }));
         let f = kf_zoompan_filter(&c, &p).unwrap();
         assert!(f.starts_with("zoompan=z='"), "{f}");
-        assert!(f.contains("between(on,0,30)"), "1000ms@30fps → 30 帧索引: {f}");
+        assert!(
+            f.contains("between(on,0,30)"),
+            "1000ms@30fps → 30 帧索引: {f}"
+        );
         assert!(f.contains("s=320x240:fps=30"), "输出锁画布: {f}");
         assert!(f.contains("iw/2-(iw/zoom/2)"), "居中取景: {f}");
     }
@@ -519,12 +589,21 @@ mod tests {
         }));
         let g = kf_composite_block(&c, &p, "fg", "out").unwrap();
         assert!(g.contains("format=rgba,geq="), "opacity 走 geq alpha: {g}");
-        assert!(g.contains("alpha(X,Y)*("), "alpha 平面乘式(alpha() 访问器): {g}");
+        assert!(
+            g.contains("alpha(X,Y)*("),
+            "alpha 平面乘式(alpha() 访问器): {g}"
+        );
         assert!(g.contains("overlay=x='"), "{g}");
         assert!(g.contains("*320-160"), "x = pos.x×W − W/2(0.5 居中): {g}");
         assert!(g.contains("eval=frame"), "{g}");
-        assert!(g.contains("color=c=black:s=320x240:r=30:d=2"), "黑底画布宿主(有界): {g}");
-        assert!(g.contains("shortest=1"), "overlay 终止于前景(黑底宿主有界双保险): {g}");
+        assert!(
+            g.contains("color=c=black:s=320x240:r=30:d=2"),
+            "黑底画布宿主(有界): {g}"
+        );
+        assert!(
+            g.contains("shortest=1"),
+            "overlay 终止于前景(黑底宿主有界双保险): {g}"
+        );
         // 只有 opacity:overlay 仍在(合成宿主),x/y 恒 0
         let c2 = clip_with(json!({
             "id": "V1-001", "startMs": 0, "durationMs": 2000,
@@ -534,7 +613,10 @@ mod tests {
             ]
         }));
         let g2 = kf_composite_block(&c2, &p, "fg", "out").unwrap();
-        assert!(g2.contains("overlay=x='0':y='0'"), "无位移关键帧 x/y 恒 0: {g2}");
+        assert!(
+            g2.contains("overlay=x='0':y='0'"),
+            "无位移关键帧 x/y 恒 0: {g2}"
+        );
         // 都没有:None
         let c3 = clip_with(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000}));
         assert!(kf_composite_block(&c3, &p, "fg", "out").is_none());
@@ -552,7 +634,10 @@ mod tests {
         // 子段起点 500ms:锚点平移 −0.5s(淡出区间 [0,1000) → 局部 [−0.5,0.5))
         let f = kf_volume_filter(&c, 500).unwrap();
         assert!(f.starts_with("volume='"), "{f}");
-        assert!(f.contains("between(t,-0.5,0.5)"), "局部时间锚点(平移后): {f}");
+        assert!(
+            f.contains("between(t,-0.5,0.5)"),
+            "局部时间锚点(平移后): {f}"
+        );
         assert!(f.contains("eval=frame"), "{f}");
         let none = clip_with(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000}));
         assert!(kf_volume_filter(&none, 0).is_none());
@@ -572,13 +657,22 @@ mod tests {
         }));
         let (sc, chain) = fx_keyframe_sendcmd(&c, 320, 240, 30).unwrap();
         assert!(sc.starts_with("sendcmd=commands='"), "{sc}");
-        assert!(sc.contains(" fx.grain@kf0 alls "), "裸时间点命令 + 实例标签: {sc}");
+        assert!(
+            sc.contains(" fx.grain@kf0 alls "),
+            "裸时间点命令 + 实例标签: {sc}"
+        );
         assert!(sc.contains(';'), "多采样点以 ';' 分隔: {sc}");
         assert!(chain.contains("noise@kf0="), "滤镜串打标签: {chain}");
         // 端点值 = 求值器同点输出(单源):t=0 → 10;t=1s → 40;采样密度 100ms
-        assert!(sc.starts_with("sendcmd=commands='0.000 fx.grain@kf0 alls 10;"), "{sc}");
+        assert!(
+            sc.starts_with("sendcmd=commands='0.000 fx.grain@kf0 alls 10;"),
+            "{sc}"
+        );
         assert!(sc.contains("1.000 fx.grain@kf0 alls 40;"), "末点值: {sc}");
-        assert!(sc.contains("0.500 fx.grain@kf0 alls 25;"), "线性中点值(求值器同点): {sc}");
+        assert!(
+            sc.contains("0.500 fx.grain@kf0 alls 25;"),
+            "线性中点值(求值器同点): {sc}"
+        );
     }
 
     #[test]
@@ -591,7 +685,10 @@ mod tests {
                 {"property": "opacity", "timeMs": 1000, "value": 1.0}
             ]
         }));
-        assert!(fx_keyframe_sendcmd(&c, 320, 240, 30).is_none(), "无 fx 关键帧不产 sendcmd");
+        assert!(
+            fx_keyframe_sendcmd(&c, 320, 240, 30).is_none(),
+            "无 fx 关键帧不产 sendcmd"
+        );
     }
 
     #[test]
@@ -606,9 +703,18 @@ mod tests {
         }));
         let (bounds, chains) = fx_keyframe_segments(&c, 320, 240, 30).unwrap();
         assert_eq!(bounds.first(), Some(&0.0));
-        assert_eq!(bounds.last().map(|b| (*b * 1000.0).round()), Some(2000.0), "末界 = 播放末点折算");
+        assert_eq!(
+            bounds.last().map(|b| (*b * 1000.0).round()),
+            Some(2000.0),
+            "末界 = 播放末点折算"
+        );
         assert_eq!(chains.len(), bounds.len() - 1, "每段一条重建链");
-        assert!(chains.iter().all(|c| c.contains("mosaic") || c.contains("scale=iw")), "段链含 fx 重建: {chains:?}");
+        assert!(
+            chains
+                .iter()
+                .all(|c| c.contains("mosaic") || c.contains("scale=iw")),
+            "段链含 fx 重建: {chains:?}"
+        );
     }
 
     #[test]
@@ -636,6 +742,9 @@ mod tests {
                 {"property": "rotation", "timeMs": 1000, "value": 45.0}
             ]
         }));
-        assert!(has_visual_keyframes(&rot), "rotation 亦入段图(单路径免漂移;含 kf rotate 的 transform_pre_chain)");
+        assert!(
+            has_visual_keyframes(&rot),
+            "rotation 亦入段图(单路径免漂移;含 kf rotate 的 transform_pre_chain)"
+        );
     }
 }

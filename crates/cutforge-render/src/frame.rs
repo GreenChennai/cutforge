@@ -116,30 +116,22 @@ pub fn frame_extract_args(
 
 /// 片段在时间线上**真实可产出**的内容长度(ms;不含转场尾帧扩展,单帧越界守卫用)。
 /// avail = 源域可用毫秒(源时长 − sourceIn;None = 探测不可用,退回未折算口径)。
-/// 口径(与 segment::play_segments / segment_pad_ms 同一播放域真相源):
-/// - 变速按 speed_segments 分段积分逐段消耗源,源耗尽处截断播放域(t_in);
-/// - 定格 tpad 的尾帧克隆属真实内容(定格补长计满),故 content = min(duration, t_in + pad);
-/// - 源充足时 t_in = 播放域末点,content = durationMs(与投影 endMs 一致,行为不变)。
+/// 口径(I1 起与 segment::source_clamped_clip 的渲染面同源):
+/// - 源窗完全越出素材(可用预算 = 0)→ 0:整窗无源可读,守卫拦下给
+///   PRECONDITION(渲染面无从定格,任何帧都产不出);
+/// - 源部分可用 → **源耗尽的尾段按末帧定格计满**(segment 步已同口径钳制:缺额
+///   tpad 末帧补长,与 freezeMs 定格同哲学、与时间线空隙钳前段末帧同哲学),
+///   content = durationMs——定格区是真实可见画面,抽帧放行;
+/// - 源充足 / 探测不可用 → durationMs(与投影 endMs 一致,行为不变)。
 pub fn clip_content_len_ms(clip: &Clip, avail_ms: Option<u64>) -> u64 {
     let Some(avail) = avail_ms else {
         return clip.duration_ms;
     };
-    // 定格 tpad 的尾帧克隆属真实内容:pad = durationMs − 播放域末点(定格补长计满)
-    let pad = crate::segment::segment_pad_ms(clip, 0.0);
-    let mut used = 0f64;
-    let mut t_in = 0u64;
-    for (a, b, s) in crate::segment::play_segments(clip) {
-        let need = (b - a) as f64 * s;
-        if used + need <= avail as f64 {
-            used += need;
-            t_in = b;
-        } else {
-            let remain = (avail as f64 - used).max(0.0);
-            t_in = a + (remain / s).floor() as u64;
-            break;
-        }
+    let budget = avail.saturating_sub(clip.source_in_ms.unwrap_or(0));
+    if budget == 0 {
+        return 0;
     }
-    ((t_in as f64 + pad).floor() as u64).min(clip.duration_ms)
+    clip.duration_ms
 }
 
 /// 时间线 atMs → 合成域毫秒(单帧抽帧专用;与 compose 两路径 offset 口径同源)。
@@ -308,10 +300,10 @@ pub fn render_frame_opts(
             "PRECONDITION: atMs({at_q}) 超出视频时间线时长({video_end}ms)"
         ));
     }
-    // 册四收口(候 BE 了断):越界口径按**真实内容末端**判定——曲线/常速变速折算后
-    // 源不够读时,合成基片末端早于投影末端(start+duration),放行会让 ffmpeg 越过
-    // EOF 空产出(INTERNAL)。源可用时长经 ffprobe 探测;探测不可用 → 退回未折算
-    // 口径(不改变既有行为,渲染失败如实上报)。
+    // 越界守卫(I1 口径):content_end = 真实可产出末端——源耗尽的尾段已被
+    // segment 步按末帧定格补长(定格区可抽帧),只有「整窗无源可读」的片段
+    // content = 0;此处拦 at 落在全部片段都无源的区间,不再给 ffmpeg 空产出。
+    // 源可用时长经 ffprobe 探测;探测不可用 → 退回未折算口径(渲染失败如实上报)。
     let content_end = plan
         .video_clips
         .iter()
@@ -322,10 +314,7 @@ pub fn render_frame_opts(
                 }
                 cutforge_io::probe::probe(&plan.project_dir.join(src))
                     .ok()
-                    .map(|info| {
-                        info.duration_ms()
-                            .saturating_sub(c.source_in_ms.unwrap_or(0))
-                    })
+                    .map(|info| info.duration_ms())
             });
             c.start_ms + clip_content_len_ms(c, avail)
         })
@@ -333,7 +322,7 @@ pub fn render_frame_opts(
         .unwrap_or(0);
     if at_q >= content_end {
         return Err(format!(
-            "PRECONDITION: atMs({at_q}) 超出真实内容末端({content_end}ms;时间线标称 {video_end}ms,变速按可用源时长折算)"
+            "PRECONDITION: atMs({at_q}) 超出真实内容末端({content_end}ms;时间线标称 {video_end}ms,源窗整体越出素材的片段无帧可产)"
         ));
     }
     let (_rep_seg, seg_files, seg_keys, _hits, _misses) = crate::exec_segment(&plan, &mut idx)?;
@@ -733,41 +722,57 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    // ---- 内容末端折算(册四收口:曲线变速源耗尽的越界口径) ----
+    // ---- 内容末端口径(I1:源耗尽定格计满,只拦整窗无源) ----
 
-    /// 纯函数面:源充足 = 未折算口径(行为不变);源耗尽 = 按分段积分截断;
-    /// 定格 tpad 尾帧克隆属真实内容;探测不可用(None)退回未折算。
+    /// 纯函数面(I1 口径,与 segment::source_clamped_clip 的渲染面同源):
+    /// 源充足/探测不可用 = 未折算(行为不变);源部分耗尽 = 定格计满(段步已按
+    /// 末帧定格补长,定格区可抽帧);源窗整体越出素材(预算 0)→ 0,守卫拦下。
     #[test]
-    fn content_len_folds_source_availability() {
+    fn content_len_freezes_source_exhausted_tail() {
         let mk = |v: Value| -> Clip { serde_json::from_value(v).unwrap() };
         // 源充足(含曲线):与投影一致
         let c = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 3000,
                           "speedCurve": [{"atMs": 0, "speed": 2.0}]}));
         assert_eq!(clip_content_len_ms(&c, Some(10_000)), 3000);
         assert_eq!(clip_content_len_ms(&c, None), 3000, "探测不可用退回未折算");
-        // 常速 2.0:需 6000ms 源,只有 4000ms → 折算末端 2000ms
+        // 源部分耗尽:常速 2.0 需 6000ms 源,只有 4000ms → 播放域 2000ms 后定格
+        // 补满到标称(渲染面段产出满 3000ms,定格区真实可见)
         let c2 = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 3000, "speed": 2.0}));
-        assert_eq!(clip_content_len_ms(&c2, Some(4000)), 2000);
-        // 曲线分段中段耗尽:segs=[(0,1000,1.0),(1000,2000,2.0)] 需 3000ms 源;
-        // 可用 2500 → 首段耗 1000,余 1500ms@2.0 → t=1000+750=1750
+        assert_eq!(clip_content_len_ms(&c2, Some(4000)), 3000);
+        // 曲线中段耗尽(需 3000ms 源,可用 2500)→ 同样定格计满
         let c3 = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000,
                            "speedCurve": [{"atMs": 0, "speed": 1.0}, {"atMs": 1000, "speed": 1.0},
                                           {"atMs": 2000, "speed": 3.0}]}));
-        assert_eq!(clip_content_len_ms(&c3, Some(2500)), 1750);
-        // 定格组合:duration 3000 / freeze 1200 / 均速 1.5,源充足 → 定格补长计满 = 3000;
-        // 源只剩 900 → t_in=600,pad=1800 → 2400(冻结克隆仍在,但真源只有 600ms 播放域)
+        assert_eq!(clip_content_len_ms(&c3, Some(2500)), 2000);
+        // 定格组合:源只剩 900(播放域 600ms)→ 定格计满 3000
         let c4 = mk(
             json!({"id": "V1-001", "startMs": 0, "durationMs": 3000, "freezeMs": 1200,
                            "speedCurve": [{"atMs": 0, "speed": 1.0}, {"atMs": 2000, "speed": 2.0}]}),
         );
         assert_eq!(clip_content_len_ms(&c4, Some(100_000)), 3000);
-        assert_eq!(clip_content_len_ms(&c4, Some(900)), 2400);
+        assert_eq!(clip_content_len_ms(&c4, Some(900)), 3000);
+        // 源窗整体越出素材:sourceIn 5000 > 素材 1000 → 预算 0 → 无帧可产
+        let c5 = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000, "sourceInMs": 5000}));
+        assert_eq!(clip_content_len_ms(&c5, Some(1000)), 0);
+        // sourceIn 计入预算(调用方传素材总时长)
+        let c6 = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000, "sourceInMs": 500}));
+        assert_eq!(
+            clip_content_len_ms(&c6, Some(1000)),
+            2000,
+            "预算 500ms > 0 → 定格计满"
+        );
+        assert_eq!(
+            clip_content_len_ms(&c6, Some(500)),
+            0,
+            "预算恰 = srcIn → 无源可读"
+        );
     }
 
-    /// 真实渲染面:曲线变速折算后内容末端(1000ms)< 标称末端(3000ms),
-    /// 超末端 atMs 必须 PRECONDITION(守卫先于 ffmpeg;修复前为空产出 INTERNAL)。
+    /// 真实渲染面(I1 口径):曲线变速源耗尽(播放域 1.5s 后无源)→ 渲染面末帧
+    /// 定格补满到标称 3s,超耗尽点的 atMs **出帧**(修复前报 PRECONDITION/INTERNAL);
+    /// 源窗整体越出素材(sourceIn 超素材长)才 PRECONDITION。
     #[test]
-    fn render_frame_curve_exhaustion_is_precondition_not_internal() {
+    fn render_frame_source_exhaustion_freezes_tail() {
         assert!(ffmpeg_ok(), "ffmpeg 必须存在(与 render_matrix 同口径)");
         assert!(
             cutforge_io::probe::ffprobe_available(),
@@ -775,7 +780,7 @@ mod tests {
         );
         let dir = fixture("exhaust");
         // 夹具源 3s;片段标称 3s + 曲线 [0:1.0, 3000:3.0](区间均值 2.0,需 6s 源)
-        // → 源 3s 在播放域 1.5s 处耗尽 → 内容末端 = 1500ms < 标称末端 3000ms
+        // → 源 3s 在播放域 1.5s 处耗尽 → 段步末帧定格补满(成片仍 3s)
         let v: Value = serde_json::from_str(
             &std::fs::read_to_string(cutforge_io::paths::project_path(&dir)).unwrap(),
         )
@@ -790,20 +795,63 @@ mod tests {
         )
         .unwrap();
         let project = load_project(&dir);
-        // 内容末端内:正常出帧(守卫不得误伤)
-        let ok = render_frame(&project, &dir, None, 500, FrameFormat::Png).expect("内容末端内必成");
+        // 源耗尽点前:正常出帧
+        let ok = render_frame(&project, &dir, None, 500, FrameFormat::Png).expect("源耗尽点前必成");
         assert_eq!(
             &std::fs::read(&ok.output).unwrap()[..8],
             b"\x89PNG\r\n\x1a\n"
         );
-        // 超内容末端(但在标称末端内)→ PRECONDITION,不再是 ffmpeg 空产出 INTERNAL
-        let err = render_frame(&project, &dir, None, 2000, FrameFormat::Png).unwrap_err();
+        // 超源耗尽点(定格区)→ 末帧定格出帧,不再 PRECONDITION/INTERNAL
+        let frozen =
+            render_frame(&project, &dir, None, 2000, FrameFormat::Png).expect("定格区必出帧");
+        assert_eq!(
+            &std::fs::read(&frozen.output).unwrap()[..8],
+            b"\x89PNG\r\n\x1a\n"
+        );
+        // 定格区画面 = 耗尽点末帧(与末端同画面;有损编码对静止克隆帧有逐帧
+        // 量化噪声,断言按解码像素差异比例近似相同,非字节相等)
+        let at_end =
+            render_frame(&project, &dir, None, 2900, FrameFormat::Png).expect("标称末端内必成");
+        let px = |p: &std::path::Path| -> Vec<u8> {
+            let out = std::process::Command::new("ffmpeg")
+                .args([
+                    "-i",
+                    p.to_str().unwrap(),
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    "rgb24",
+                    "-",
+                ])
+                .output()
+                .expect("ffmpeg 必须存在");
+            out.stdout
+        };
+        let fa = px(&frozen.output);
+        let fb = px(&at_end.output);
+        assert_eq!(fa.len(), fb.len(), "同画幅像素数必须一致");
+        let diff = fa.iter().zip(fb.iter()).filter(|(x, y)| x != y).count();
+        assert!(
+            diff * 100 < fa.len(),
+            "定格区两帧应同为末帧画面(允许编码噪声),差异字节 {diff}"
+        );
+        // 源窗整体越出素材(sourceIn 5000 > 素材 3s)→ PRECONDITION(整窗无源)
+        let mut v3 = v.clone();
+        v3["tracks"] = json!([{"id": "V1", "kind": "video", "clips": [
+            {"id": "V1-001", "src": "voice.mp4", "startMs": 0, "durationMs": 3000,
+             "sourceInMs": 5000}]}]);
+        cutforge_io::atomic::atomic_write(
+            &dir.join("05_时间线工程/project.json"),
+            serde_json::to_string_pretty(&v3).unwrap().as_bytes(),
+        )
+        .unwrap();
+        let project3 = load_project(&dir);
+        let err = render_frame(&project3, &dir, None, 100, FrameFormat::Png).unwrap_err();
         assert!(
             err.starts_with("PRECONDITION:"),
-            "须 PRECONDITION 而非 {err}"
+            "整窗无源必须 PRECONDITION 而非 {err}"
         );
-        assert!(err.contains("1500"), "报错须给出折算末端 1500ms: {err}");
-        assert!(err.contains("3000"), "报错须同时给出标称末端: {err}");
+        assert!(err.contains("超出真实内容末端"), "{err}");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

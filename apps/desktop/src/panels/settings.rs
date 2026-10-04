@@ -17,11 +17,16 @@ use sable::widgets::tokens::FONT_SIZE_CAPTION;
 
 use crate::app::DesktopApp;
 
-/// 快捷键速查表(键位 → 动作;与 DesktopApp::on_key 实装一一对应)。
+/// 快捷键速查表(键位/入口 → 动作;与 DesktopApp::on_key 与预览面板实装一一对应)。
 const SHORTCUTS: &[(&str, &str)] = &[
-    ("空格", "播放 / 暂停"),
+    ("空格", "播放 / 暂停(流畅=引擎 · 精确=逐帧)"),
+    ("K", "暂停"),
+    ("L", "正向倍速循环 1→2→4→1(≠1x 自动静音)"),
+    ("Shift+L", "慢放倍速循环 1→0.5→0.25"),
+    ("J", "减速方向 4→2→1→0.5→0.25(到 0.25 停)"),
     ("← / →", "步退 / 步进一帧(Shift = 1 秒)"),
     ("Home / End", "跳到开头 / 结尾"),
+    ("Esc", "退出沉浸预览"),
     ("S", "在播放头分割选中片段"),
     ("T", "在播放头分割全部轨道"),
     ("D", "复制选中片段到播放头"),
@@ -31,6 +36,12 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Del / Backspace", "删除选中片段"),
     ("Ctrl+Z / Ctrl+Y", "撤销 / 重做"),
     ("+ / −", "时间轴缩放"),
+    ("循环按钮", "当前片段 A→B 循环(传输条 ↻)"),
+    ("静音按钮", "静音开关(传输条 🔊/🔇;无声卡提示 toast)"),
+    ("画质按钮", "流畅(引擎直解码)/ 精确(逐帧 render_frame)"),
+    ("截图按钮", "当前帧落 <工程>/screenshots/(预览右下)"),
+    ("沉浸按钮", "收起其他面板只留预览(非系统全屏;Esc 退出)"),
+    ("拖进度条", "按下拖动直接映射(零动画);松手才 seek"),
     ("拖动片段", "移动(松手提交;拖拽中本地预览)"),
     ("点标尺/轨道空白", "跳转播放头"),
     ("吸附按钮", "开关片段边缘/播放头吸附"),
@@ -55,7 +66,7 @@ impl Render for SettingsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme(cx).colors;
         let app = self.app.upgrade();
-        let (snap_on, rev, kernel_status) = app
+        let (snap_on, rev, kernel_status, engine_status, playback_line) = app
             .as_ref()
             .map(|a| {
                 let a = a.read(cx);
@@ -63,6 +74,29 @@ impl Render for SettingsPanel {
                     .shared
                     .connected
                     .load(std::sync::atomic::Ordering::Relaxed);
+                // 引擎状态(诚实呈现:I1 降级链的可展开原因落在这里)
+                let engine = match (&a.engine_note, a.engine_source.is_some()) {
+                    (Some(note), _) => format!("已回落幻灯片({note})"),
+                    (None, true) => "正常(引擎播放路径在场)".to_string(),
+                    (None, false) => {
+                        if a.quality_precise {
+                            "正常(精确画质:逐帧 render_frame)".to_string()
+                        } else {
+                            "未启动(按空格播放时惰性创建)".to_string()
+                        }
+                    }
+                };
+                let pb = format!(
+                    "画质 {} · 倍速 {}x · 循环 {} · 静音 {}",
+                    if a.quality_precise {
+                        "精确"
+                    } else {
+                        "流畅"
+                    },
+                    crate::app::fmt_speed(a.transport_speed),
+                    if a.loop_clip { "开" } else { "关" },
+                    if a.user_muted { "开" } else { "关" },
+                );
                 (
                     a.snap_enabled,
                     a.shared.rev.load(std::sync::atomic::Ordering::Relaxed),
@@ -71,9 +105,17 @@ impl Render for SettingsPanel {
                     } else {
                         "未连接".to_string()
                     },
+                    engine,
+                    pb,
                 )
             })
-            .unwrap_or((true, 0, "未连接".to_string()));
+            .unwrap_or((
+                true,
+                0,
+                "未连接".to_string(),
+                "未启动".to_string(),
+                "-".to_string(),
+            ));
         let weak = self.app.clone();
 
         // —— 剪辑行为 ——
@@ -147,6 +189,42 @@ impl Render for SettingsPanel {
                 ),
         );
 
+        // —— 播放(I1 M3)——
+        let engine_ok = !engine_status.starts_with("已回落");
+        let playback = section(
+            "播放",
+            v_flex()
+                .gap(px(SpacingTokens::XS))
+                .child(
+                    PropertyRow::new("引擎状态").control(
+                        div()
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(if engine_ok {
+                                colors.success
+                            } else {
+                                colors.danger
+                            })
+                            .child(engine_status),
+                    ),
+                )
+                .child(
+                    PropertyRow::new("当前状态").control(
+                        div()
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(colors.text_secondary)
+                            .child(playback_line),
+                    ),
+                )
+                .child(
+                    PropertyRow::new("预览口径").control(
+                        div()
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(colors.text_secondary)
+                            .child("预览画质,精确画面以导出为准"),
+                    ),
+                ),
+        );
+
         // —— 快捷键速查 ——
         let mut rows = v_flex().gap(px(SpacingTokens::XS));
         for (keys, action) in SHORTCUTS {
@@ -183,6 +261,7 @@ impl Render for SettingsPanel {
             .p(px(SpacingTokens::SM))
             .gap(px(SpacingTokens::SM))
             .child(behavior)
+            .child(playback)
             .child(kernel)
             .child(shortcuts)
             .child(pending)

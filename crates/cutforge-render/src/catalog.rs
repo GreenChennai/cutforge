@@ -27,7 +27,9 @@ pub const HUAZI_CATALOG_JSON: &str = include_str!("../../../schemas/huazi-catalo
 
 fn catalog_doc() -> &'static Value {
     static DOC: OnceLock<Value> = OnceLock::new();
-    DOC.get_or_init(|| serde_json::from_str(TRANSITION_CATALOG_JSON).expect("transition-catalog.json 必须合法"))
+    DOC.get_or_init(|| {
+        serde_json::from_str(TRANSITION_CATALOG_JSON).expect("transition-catalog.json 必须合法")
+    })
 }
 
 fn fx_doc() -> &'static Value {
@@ -72,7 +74,9 @@ fn find_transition(id: &str) -> Option<&'static TransitionDef> {
 /// 优先于 `type`;两者同给以 fx 为准并 WARN;fx 未注册回退 type;type 未注册
 /// 降级 fade 并 WARN(返回 (xfade 名, WARN))。cut/none 由调用方先行排除。
 pub fn resolve_transition(clip: &Clip) -> (String, Option<String>) {
-    let Some(t) = &clip.transition else { return ("fade".into(), None) };
+    let Some(t) = &clip.transition else {
+        return ("fade".into(), None);
+    };
     let mut warns: Option<String> = None;
     if let Some(fx) = &t.fx {
         let id = fx.strip_prefix("tr.").unwrap_or(fx);
@@ -109,7 +113,9 @@ pub fn effective_transition_ms(clips: &[Clip], boundary: usize) -> f64 {
     if boundary == 0 || boundary >= clips.len() {
         return 0.0;
     }
-    let Some(t) = &clips[boundary].transition else { return 0.0 };
+    let Some(t) = &clips[boundary].transition else {
+        return 0.0;
+    };
     match t.type_.as_deref() {
         Some("cut") | Some("none") => return 0.0,
         _ => {}
@@ -118,7 +124,8 @@ pub fn effective_transition_ms(clips: &[Clip], boundary: usize) -> f64 {
     if raw <= 0.0 {
         return 0.0;
     }
-    raw.min(clips[boundary - 1].duration_ms as f64).min(clips[boundary].duration_ms as f64)
+    raw.min(clips[boundary - 1].duration_ms as f64)
+        .min(clips[boundary].duration_ms as f64)
 }
 
 // ---------------- 花字目录(T4.7;ADR-0016 ASS 路线的模板面) ----------------
@@ -189,7 +196,9 @@ pub fn huazi_list() -> &'static [HuaziDef] {
 /// 花字模板解析:`hz.<id>` 或裸 id;未注册 → None(调用方诚实降级纯文本)。
 pub fn find_huazi(id: &str) -> Option<&'static HuaziDef> {
     let id = id.strip_prefix("hz.").unwrap_or(id);
-    huazi_list().iter().find(|h| h.id.strip_prefix("hz.").unwrap_or(&h.id) == id)
+    huazi_list()
+        .iter()
+        .find(|h| h.id.strip_prefix("hz.").unwrap_or(&h.id) == id)
 }
 
 /// 花字单参数取值:clip 覆写 → 目录默认;数值钳到 [min,max];未知键按默认裁决。
@@ -298,7 +307,13 @@ pub fn fx_entry_text(
         warns.append(&mut w2);
         text = text.replace(&format!("{{{}}}", p.name), &crate::steps::fmt_f64(val));
     }
-    for key in entry.params.as_ref().map(|m| m.keys()).into_iter().flatten() {
+    for key in entry
+        .params
+        .as_ref()
+        .map(|m| m.keys())
+        .into_iter()
+        .flatten()
+    {
         if !def.params.iter().any(|p| &p.name == key) {
             warns.push(format!("fx({}) 参数 {key} 未声明,按默认值裁决;", def.id));
         }
@@ -316,10 +331,17 @@ pub fn fx_entry_text(
 /// 画布宽高 + 帧率(马赛克/抖镜模板需要);{L} 标签前缀逐实例唯一化。
 pub fn fx_chain(clip: &Clip, w: u32, h: u32, fps: u32) -> (String, Vec<String>) {
     let mut warns: Vec<String> = Vec::new();
-    let Some(fx_spec) = &clip.fx else { return (String::new(), warns) };
-    let Some(combo) = &fx_spec.combo else { return (String::new(), warns) };
+    let Some(fx_spec) = &clip.fx else {
+        return (String::new(), warns);
+    };
+    let Some(combo) = &fx_spec.combo else {
+        return (String::new(), warns);
+    };
     if combo.len() > FX_COMBO_CAP {
-        warns.push(format!("fx.combo {} 条超上限 {FX_COMBO_CAP},截断;", combo.len()));
+        warns.push(format!(
+            "fx.combo {} 条超上限 {FX_COMBO_CAP},截断;",
+            combo.len()
+        ));
     }
     let mut parts: Vec<String> = Vec::new();
     for (i, entry) in combo.iter().take(FX_COMBO_CAP).enumerate() {
@@ -393,9 +415,16 @@ fn find_motion(dir: &str, id: &str) -> Option<&'static MotionDef> {
 /// 枚举值不在目录(理论不可达:schema 枚举与目录同源)→ 空 + WARN。
 pub fn motion_chains(clip: &Clip, w: u32, h: u32, fps: u32) -> (String, String, Vec<String>) {
     let mut warns: Vec<String> = Vec::new();
-    let Some(m) = &clip.motion else { return (String::new(), String::new(), warns) };
+    let Some(m) = &clip.motion else {
+        return (String::new(), String::new(), warns);
+    };
     let dur_ms = clip.duration_ms as f64;
-    let mut mk = |dir: &str, enum_id: Option<&str>, fx_id: Option<&String>, ms: f64, label: &str| -> String {
+    let mut mk = |dir: &str,
+                  enum_id: Option<&str>,
+                  fx_id: Option<&String>,
+                  ms: f64,
+                  label: &str|
+     -> String {
         let mut id_owned: Option<String> = None;
         if let Some(fx) = fx_id {
             let id = fx.strip_prefix("mo.").unwrap_or(fx);
@@ -405,7 +434,10 @@ pub fn motion_chains(clip: &Clip, w: u32, h: u32, fps: u32) -> (String, String, 
                     warns.push(format!("motion.{dir}Fx({fx}) 与枚举同给,以 fx 为准;"));
                 }
             } else {
-                warns.push(format!("motion.{dir}Fx({fx}) 未注册,降级枚举 { };", enum_id.unwrap_or("none")));
+                warns.push(format!(
+                    "motion.{dir}Fx({fx}) 未注册,降级枚举 { };",
+                    enum_id.unwrap_or("none")
+                ));
             }
         }
         let id = id_owned.or_else(|| enum_id.map(String::from));
@@ -418,7 +450,11 @@ pub fn motion_chains(clip: &Clip, w: u32, h: u32, fps: u32) -> (String, String, 
             return String::new();
         };
         let d = ms.min(dur_ms).max(0.0) / 1000.0;
-        let st = if dir == "out" { ((dur_ms - ms).max(0.0)) / 1000.0 } else { 0.0 };
+        let st = if dir == "out" {
+            ((dur_ms - ms).max(0.0)) / 1000.0
+        } else {
+            0.0
+        };
         let n = (d * fps as f64).round().max(1.0);
         def.filter
             .replace("{D}", &crate::steps::fmt_f64(d))
@@ -429,8 +465,20 @@ pub fn motion_chains(clip: &Clip, w: u32, h: u32, fps: u32) -> (String, String, 
             .replace("{FPS}", &fps.to_string())
             .replace("{L}", label)
     };
-    let in_chain = mk("in", m.in_.as_deref(), m.in_fx.as_ref(), m.in_ms.unwrap_or(400.0), "mi");
-    let out_chain = mk("out", m.out.as_deref(), m.out_fx.as_ref(), m.out_ms.unwrap_or(400.0), "mo");
+    let in_chain = mk(
+        "in",
+        m.in_.as_deref(),
+        m.in_fx.as_ref(),
+        m.in_ms.unwrap_or(400.0),
+        "mi",
+    );
+    let out_chain = mk(
+        "out",
+        m.out.as_deref(),
+        m.out_fx.as_ref(),
+        m.out_ms.unwrap_or(400.0),
+        "mo",
+    );
     (in_chain, out_chain, warns)
 }
 
@@ -438,19 +486,33 @@ pub fn motion_chains(clip: &Clip, w: u32, h: u32, fps: u32) -> (String, String, 
 pub fn clip_degradations(clip: &Clip, w: u32, h: u32, fps: u32) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(t) = &clip.transition
-        && (t.fx.is_some() || t.type_.as_deref().is_some_and(|ty| find_transition(ty).is_none()))
+        && (t.fx.is_some()
+            || t.type_
+                .as_deref()
+                .is_some_and(|ty| find_transition(ty).is_none()))
         && let Some(warn) = resolve_transition(clip).1
     {
         out.push(format!("clip {} 转场: {warn}", clip.id));
     }
     let (_, fx_warns) = fx_chain(clip, w, h, fps);
-    out.extend(fx_warns.into_iter().map(|x| format!("clip {} fx: {x}", clip.id)));
+    out.extend(
+        fx_warns
+            .into_iter()
+            .map(|x| format!("clip {} fx: {x}", clip.id)),
+    );
     let (_, _, mo_warns) = motion_chains(clip, w, h, fps);
-    out.extend(mo_warns.into_iter().map(|x| format!("clip {} motion: {x}", clip.id)));
+    out.extend(
+        mo_warns
+            .into_iter()
+            .map(|x| format!("clip {} motion: {x}", clip.id)),
+    );
     if let Some(fx) = &clip.fx
         && (fx.in_.is_some() || fx.out.is_some())
     {
-        out.push(format!("clip {} fx: in/out 槽位暂不渲染(册五遗留),仅 combo 生效;", clip.id));
+        out.push(format!(
+            "clip {} fx: in/out 槽位暂不渲染(册五遗留),仅 combo 生效;",
+            clip.id
+        ));
     }
     out
 }
@@ -472,11 +534,39 @@ mod tests {
         assert_eq!(transitions().len(), 58, "xfade 全集 58 项(实测口径)");
         let ids: Vec<&str> = transitions().iter().map(|t| t.id.as_str()).collect();
         for must in [
-            "fade", "dissolve", "pixelize", "slideleft", "slideright", "slideup", "slidedown",
-            "wipeleft", "wiperight", "wipeup", "wipedown", "radial", "circleopen", "circleclose",
-            "smoothleft", "smoothright", "smoothup", "smoothdown", "hlslice", "hrslice",
-            "vuslice", "vdslice", "zoomin", "hblur", "fadeblack", "fadewhite", "distance",
-            "squeezev", "squeezeh", "coverleft", "revealright", "hlwind", "diagtl",
+            "fade",
+            "dissolve",
+            "pixelize",
+            "slideleft",
+            "slideright",
+            "slideup",
+            "slidedown",
+            "wipeleft",
+            "wiperight",
+            "wipeup",
+            "wipedown",
+            "radial",
+            "circleopen",
+            "circleclose",
+            "smoothleft",
+            "smoothright",
+            "smoothup",
+            "smoothdown",
+            "hlslice",
+            "hrslice",
+            "vuslice",
+            "vdslice",
+            "zoomin",
+            "hblur",
+            "fadeblack",
+            "fadewhite",
+            "distance",
+            "squeezev",
+            "squeezeh",
+            "coverleft",
+            "revealright",
+            "hlwind",
+            "diagtl",
         ] {
             assert!(ids.contains(&must), "计划书点名族缺 {must}");
         }
@@ -492,7 +582,11 @@ mod tests {
         for ty in ["fade", "wipeleft", "wipeup", "slideleft", "circleopen"] {
             let c = clip(json!({"id": "V1-001", "startMs": 0, "durationMs": 1000,
                 "transition": {"type": ty, "durMs": 300}}));
-            assert_eq!(resolve_transition(&c), (ty.to_string(), None), "旧枚举 {ty} 直通");
+            assert_eq!(
+                resolve_transition(&c),
+                (ty.to_string(), None),
+                "旧枚举 {ty} 直通"
+            );
         }
     }
 
@@ -535,7 +629,10 @@ mod tests {
                 })
                 .collect()
         };
-        assert_eq!(effective_transition_ms(&mk(vec![2000, 2000], 500), 1), 500.0);
+        assert_eq!(
+            effective_transition_ms(&mk(vec![2000, 2000], 500), 1),
+            500.0
+        );
         assert_eq!(
             effective_transition_ms(&mk(vec![300, 2000], 500), 1),
             300.0,
@@ -546,8 +643,16 @@ mod tests {
             400.0,
             "超过后段时长 → 钳到后段"
         );
-        assert_eq!(effective_transition_ms(&mk(vec![2000, 2000], 0), 1), 0.0, "durMs=0 硬切");
-        assert_eq!(effective_transition_ms(&mk(vec![2000, 2000], 500), 0), 0.0, "边界 0 无效");
+        assert_eq!(
+            effective_transition_ms(&mk(vec![2000, 2000], 0), 1),
+            0.0,
+            "durMs=0 硬切"
+        );
+        assert_eq!(
+            effective_transition_ms(&mk(vec![2000, 2000], 500), 0),
+            0.0,
+            "边界 0 无效"
+        );
     }
 
     // ---- 花字目录(册四 T4.7) ----
@@ -555,20 +660,41 @@ mod tests {
     /// AC-4.4:花字目录 ≥10 模板;分类覆盖描边/发光/立体/底衬/渐变/动画/卡拉OK。
     #[test]
     fn huazi_catalog_has_12_templates_across_categories() {
-        assert!(huazi_list().len() >= 10, "花字 ≥10(AC-4.4),实得 {}", huazi_list().len());
+        assert!(
+            huazi_list().len() >= 10,
+            "花字 ≥10(AC-4.4),实得 {}",
+            huazi_list().len()
+        );
         let ids: Vec<&str> = huazi_list().iter().map(|h| h.id.as_str()).collect();
         for must in [
-            "hz.outline", "hz.neon", "hz.glow", "hz.emboss", "hz.extrude", "hz.box",
-            "hz.brush", "hz.gradient", "hz.pop", "hz.typewriter", "hz.wave", "hz.karaoke",
+            "hz.outline",
+            "hz.neon",
+            "hz.glow",
+            "hz.emboss",
+            "hz.extrude",
+            "hz.box",
+            "hz.brush",
+            "hz.gradient",
+            "hz.pop",
+            "hz.typewriter",
+            "hz.wave",
+            "hz.karaoke",
         ] {
             assert!(ids.contains(&must), "花字模板缺 {must}");
         }
         for cat in ["描边", "发光", "立体", "底衬", "渐变", "动画", "卡拉OK"] {
-            assert!(huazi_list().iter().any(|h| h.category == cat), "分类 {cat} 空");
+            assert!(
+                huazi_list().iter().any(|h| h.category == cat),
+                "分类 {cat} 空"
+            );
         }
         // 每个模板:body 与 bodyKind 至少其一;karaoké 模板必须声明 karaoke
         for h in huazi_list() {
-            assert!(h.body.is_some() || h.body_kind.is_some(), "{} 无产物模板", h.id);
+            assert!(
+                h.body.is_some() || h.body_kind.is_some(),
+                "{} 无产物模板",
+                h.id
+            );
             assert_eq!(h.karaoke, h.id == "hz.karaoke");
         }
     }
@@ -606,11 +732,24 @@ mod tests {
 
     #[test]
     fn fx_catalog_has_first_batch_11() {
-        assert!(fx_list().len() >= 11, "首批特效 ≥11,实得 {}", fx_list().len());
+        assert!(
+            fx_list().len() >= 11,
+            "首批特效 ≥11,实得 {}",
+            fx_list().len()
+        );
         let ids: Vec<&str> = fx_list().iter().map(|f| f.id.as_str()).collect();
         for must in [
-            "fx.blur", "fx.gaussian", "fx.mosaic", "fx.sharpen", "fx.glow", "fx.shake",
-            "fx.glitch", "fx.grain", "fx.vignette", "fx.mono", "fx.vintage",
+            "fx.blur",
+            "fx.gaussian",
+            "fx.mosaic",
+            "fx.sharpen",
+            "fx.glow",
+            "fx.shake",
+            "fx.glitch",
+            "fx.grain",
+            "fx.vignette",
+            "fx.mono",
+            "fx.vintage",
         ] {
             assert!(ids.contains(&must), "首批特效缺 {must}");
         }
@@ -619,34 +758,53 @@ mod tests {
     #[test]
     fn fx_chain_orders_combo_and_clamps_params() {
         let c = clip(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000,
-            "fx": {"combo": [
-                {"fx": "fx.mono"},
-                {"fx": "fx.gaussian", "params": {"sigma": 999}},
-                {"fx": "fx.grain", "params": {"strength": 24, "未知键": 1}}
-            ]}}));
+        "fx": {"combo": [
+            {"fx": "fx.mono"},
+            {"fx": "fx.gaussian", "params": {"sigma": 999}},
+            {"fx": "fx.grain", "params": {"strength": 24, "未知键": 1}}
+        ]}}));
         let (chain, warns) = fx_chain(&c, 1080, 1920, 30);
         assert!(chain.starts_with("hue=s=0,"), "数组顺序即应用顺序: {chain}");
         assert!(chain.contains("gblur=sigma=50"), "越界钳到 max: {chain}");
         assert!(chain.contains("noise=alls=24:allf=t+u"), "{chain}");
-        assert_eq!(fx_list().iter().find(|f| f.id == "fx.gaussian").unwrap().params[0].max, 50.0);
-        assert!(warns.iter().any(|w| w.contains("未声明")), "未知参数键 WARN: {warns:?}");
+        assert_eq!(
+            fx_list()
+                .iter()
+                .find(|f| f.id == "fx.gaussian")
+                .unwrap()
+                .params[0]
+                .max,
+            50.0
+        );
+        assert!(
+            warns.iter().any(|w| w.contains("未声明")),
+            "未知参数键 WARN: {warns:?}"
+        );
     }
 
     #[test]
     fn fx_chain_caps_at_three_and_skips_unknown_with_warn() {
         let c = clip(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000,
-            "fx": {"combo": [
-                {"fx": "fx.mono"}, {"fx": "fx.blur"}, {"fx": "fx.不存在"}, {"fx": "fx.vignette"}
-            ]}}));
+        "fx": {"combo": [
+            {"fx": "fx.mono"}, {"fx": "fx.blur"}, {"fx": "fx.不存在"}, {"fx": "fx.vignette"}
+        ]}}));
         let (chain, warns) = fx_chain(&c, 1080, 1920, 30);
         assert_eq!(chain.matches("vignette").count(), 0, "超上限第 4 条截断");
         assert!(warns.iter().any(|w| w.contains("超上限")));
-        assert!(warns.iter().any(|w| w.contains("fx.不存在") && w.contains("未注册")), "{warns:?}");
+        assert!(
+            warns
+                .iter()
+                .any(|w| w.contains("fx.不存在") && w.contains("未注册")),
+            "{warns:?}"
+        );
         // glow 多实例标签唯一化(split/blend 图内标签不得互撞)
         let c2 = clip(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000,
             "fx": {"combo": [{"fx": "fx.glow"}, {"fx": "fx.glow"}]}}));
         let (chain2, _) = fx_chain(&c2, 1080, 1920, 30);
-        assert!(chain2.contains("[c0a]") && chain2.contains("[c1a]"), "标签逐实例唯一: {chain2}");
+        assert!(
+            chain2.contains("[c0a]") && chain2.contains("[c1a]"),
+            "标签逐实例唯一: {chain2}"
+        );
     }
 
     // ---- motion 目录 ----
@@ -666,10 +824,21 @@ mod tests {
         for must in ["slideInUp", "slideInDown", "popIn", "bounceIn", "spinIn"] {
             assert!(in_ids.contains(&must), "新增 {must}");
         }
-        for must in ["slideOutUp", "slideOutDown", "zoomOut", "popOut", "bounceOut", "spinOut"] {
+        for must in [
+            "slideOutUp",
+            "slideOutDown",
+            "zoomOut",
+            "popOut",
+            "bounceOut",
+            "spinOut",
+        ] {
             assert!(out_ids.contains(&must), "新增 {must}");
         }
-        assert!(in_ids.len() + out_ids.len() >= 19, "目录规模(不含 none): {}", in_ids.len() + out_ids.len());
+        assert!(
+            in_ids.len() + out_ids.len() >= 19,
+            "目录规模(不含 none): {}",
+            in_ids.len() + out_ids.len()
+        );
     }
 
     #[test]
@@ -716,7 +885,10 @@ mod tests {
         let c = clip(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000,
             "fx": {"in": {"fx": "fx.mono"}, "combo": [{"fx": "fx.blur"}]}}));
         let ds = clip_degradations(&c, 1080, 1920, 30);
-        assert!(ds.iter().any(|d| d.contains("in/out 槽位暂不渲染")), "{ds:?}");
+        assert!(
+            ds.iter().any(|d| d.contains("in/out 槽位暂不渲染")),
+            "{ds:?}"
+        );
         // 无 fx/motion/转场问题的片段零降级报告
         let clean = clip(json!({"id": "V1-001", "startMs": 0, "durationMs": 2000,
             "fx": {"combo": [{"fx": "fx.blur"}]}}));

@@ -34,7 +34,7 @@ pub(crate) fn produces_rev_mutation(name: &str) -> bool {
         || matches!(
             name,
             "capability_matrix" | "project_new" | "render" | "render_run" | "render_progress"
-            | "render_frame" | "render_queue"
+            | "render_frame" | "render_queue" | "preview_zone_render"
             | "media_probe" | "media_browse" | "render_probe" | "stage_status"
             | "clip_copy"
             // 册四 A4 T4.1/T4.8:派生物缓存与纯计算工具(产物非 IR,不升 rev)

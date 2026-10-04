@@ -49,11 +49,19 @@ pub struct OverlaySeg {
     pub spec: cutforge_core::model::Overlay,
 }
 
-    /// 渲染步骤的显式名单(顺序即执行顺序;外部进度事件的 step 名以此为准,
-    /// 与既有字符串接口逐字对齐,不得擅改——册五 T5.4 加法扩展 "adjust",
-    /// 既有七名逐字不变)。
-    pub const STEP_NAMES: [&str; 8] =
-        ["probe", "segment", "compose-video", "overlay", "adjust", "mix", "subtitle", "encode"];
+/// 渲染步骤的显式名单(顺序即执行顺序;外部进度事件的 step 名以此为准,
+/// 与既有字符串接口逐字对齐,不得擅改——册五 T5.4 加法扩展 "adjust",
+/// 既有七名逐字不变)。
+pub const STEP_NAMES: [&str; 8] = [
+    "probe",
+    "segment",
+    "compose-video",
+    "overlay",
+    "adjust",
+    "mix",
+    "subtitle",
+    "encode",
+];
 
 /// 结构化步骤报告(T1.4):每步执行完产出一份;进度事件由它单源派生,
 /// 保证 cutforge-render stdout 的 JSON 行接口向后兼容(键名与拆分前逐字一致)。
@@ -70,7 +78,12 @@ pub struct StepReport {
 
 impl StepReport {
     pub fn new(name: &'static str, detail: Value) -> Self {
-        StepReport { name, ok: true, cache_hit: false, detail }
+        StepReport {
+            name,
+            ok: true,
+            cache_hit: false,
+            detail,
+        }
     }
 
     pub fn with_cache_hit(mut self, hit: bool) -> Self {
@@ -150,7 +163,8 @@ pub struct TrackProc {
 impl TrackProc {
     /// 是否声明了任一处理(EQ 段非空或动态非空)。
     pub fn is_empty(&self) -> bool {
-        self.eq.as_ref().is_none_or(|b| b.is_empty()) && self.dyn_.as_ref().is_none_or(|d| d.is_empty())
+        self.eq.as_ref().is_none_or(|b| b.is_empty())
+            && self.dyn_.as_ref().is_none_or(|d| d.is_empty())
     }
 }
 
@@ -162,7 +176,10 @@ impl TrackProc {
 /// - loudnorm_i/tp:响度目标(缺省 -14/-1.0 = 既有双 pass 参数);
 /// - verbose_cmd:进度事件附带命令原文(缺省关——安全);
 /// - export(册六 T6.3 导出矩阵):None = 既有路径逐位不变;Some 时 encode 步
-///   按格式分派(export.rs 单源),画幅/窗口在工程侧先行换写。
+///   按格式分派(export.rs 单源),画幅/窗口在工程侧先行换写;
+/// - preview_output(I1-M2 zone 预渲出口重定向):None = 既有路径逐位不变;Some
+///   时 encode 步把产物直写该路径(preview-cache 内容寻址件,见 zone.rs),
+///   其余步骤与缺省渲染完全同管线——不建第二条管线,只改最终出口。
 #[derive(Debug, Clone, Default)]
 pub struct RenderOptions {
     pub encoder: Option<String>,
@@ -175,6 +192,7 @@ pub struct RenderOptions {
     pub loudnorm_tp: Option<f64>,
     pub verbose_cmd: bool,
     pub export: Option<crate::export::ExportSpec>,
+    pub preview_output: Option<PathBuf>,
 }
 
 impl RenderPlan {
@@ -186,8 +204,19 @@ impl RenderPlan {
     /// 同 [`RenderPlan::build`],代理预览开关显式给定(册四 T4.1)。
     /// 代理替换在收集前完成:src 换写进 clip 副本 → seg/mix 键自动分叉
     /// (代理渲染与原片渲染不共享缓存条目)。
-    pub fn build_opts(project: &Project, project_dir: &Path, ass_path: Option<&Path>, use_proxy: bool) -> RenderPlan {
-        Self::build_full(project, project_dir, ass_path, use_proxy, RenderOptions::default())
+    pub fn build_opts(
+        project: &Project,
+        project_dir: &Path,
+        ass_path: Option<&Path>,
+        use_proxy: bool,
+    ) -> RenderPlan {
+        Self::build_full(
+            project,
+            project_dir,
+            ass_path,
+            use_proxy,
+            RenderOptions::default(),
+        )
     }
 
     /// 同 [`RenderPlan::build_opts`],渲染选项显式给定(册五 T5.6;Default = 现行为)。
@@ -242,10 +271,16 @@ impl RenderPlan {
             if t.kind != TrackKind::Video && t.kind != TrackKind::Audio {
                 continue;
             }
-            if t.eq.as_ref().is_none_or(|b| b.is_empty()) && t.dyn_.as_ref().is_none_or(|d| d.is_empty()) {
+            if t.eq.as_ref().is_none_or(|b| b.is_empty())
+                && t.dyn_.as_ref().is_none_or(|d| d.is_empty())
+            {
                 continue;
             }
-            plan.track_proc.push(TrackProc { track_id: t.id.clone(), eq: t.eq.clone(), dyn_: t.dyn_.clone() });
+            plan.track_proc.push(TrackProc {
+                track_id: t.id.clone(),
+                eq: t.eq.clone(),
+                dyn_: t.dyn_.clone(),
+            });
         }
         for t in &project.tracks {
             // 轨道级渲染联动(册四 BE3b 收口,BE1 欠账):
@@ -265,9 +300,7 @@ impl RenderPlan {
                         // overlay 字段的 clip 是**叠加层**(rs_brand 变体轨口径),
                         // 不占用主时间线 concat 序列,由 overlay 步合成(不产音频事件)
                         if let Some(ov) = c.overlay {
-                            if !track_hidden
-                                && let Some(src) = &c.src
-                            {
+                            if !track_hidden && let Some(src) = &c.src {
                                 plan.overlay_segs.push(OverlaySeg {
                                     src: project_dir.join(src),
                                     start_ms: c.start_ms,
@@ -285,11 +318,12 @@ impl RenderPlan {
                             plan.video_clips.push(c.clone());
                             plan.video_track_of.push(t.id.clone());
                             if audio_ok && has_audio && clip_gain(c) > 0.0 {
-                                plan.audio_segs
-                                    .extend(audio_segs_of(project_dir, t, c).into_iter().map(|mut s| {
+                                plan.audio_segs.extend(
+                                    audio_segs_of(project_dir, t, c).into_iter().map(|mut s| {
                                         s.clip_idx = Some(idx);
                                         s
-                                    }));
+                                    }),
+                                );
                             }
                         } else if audio_ok && has_audio && clip_gain(c) > 0.0 {
                             // hidden 只作用视觉面(册四 BE3b 定义):画面不进合成,声音仍在
@@ -334,9 +368,10 @@ impl RenderPlan {
 
 /// solo 语义的判定前提:任一音频承载轨(video/audio)声明了 solo。
 fn any_solo(project: &Project) -> bool {
-    project.tracks.iter().any(|t| {
-        (t.kind == TrackKind::Video || t.kind == TrackKind::Audio) && t.solo == Some(true)
-    })
+    project
+        .tracks
+        .iter()
+        .any(|t| (t.kind == TrackKind::Video || t.kind == TrackKind::Audio) && t.solo == Some(true))
 }
 
 /// 代理替换(册四 T4.1):素材存在内容寻址代理(.cutforge/proxy/<key>.mp4,
@@ -353,9 +388,7 @@ pub fn swap_to_proxies(project: &mut Project, project_dir: &Path) -> Vec<String>
             if c.overlay.is_some() {
                 continue; // 叠加层(品牌位图等)通常非视频素材,保持原样
             }
-            let Some(proxy_rel) =
-                cutforge_io::mediacache::proxy_lookup(project_dir, src)
-            else {
+            let Some(proxy_rel) = cutforge_io::mediacache::proxy_lookup(project_dir, src) else {
                 continue;
             };
             c.src = Some(proxy_rel);
@@ -370,7 +403,8 @@ pub fn swap_to_proxies(project: &mut Project, project_dir: &Path) -> Vec<String>
 /// 整片无声,全静音混音又令 loudnorm 测得 -inf、linear=true 应用时 ffmpeg 崩
 /// ("Result too large")。parity 夹具此前总是显式写 volume,故矩阵未暴露。
 pub fn clip_gain(c: &Clip) -> f64 {
-    c.volume.unwrap_or(if c.role == Some(Role::Sfx) { 0.8 } else { 1.0 })
+    c.volume
+        .unwrap_or(if c.role == Some(Role::Sfx) { 0.8 } else { 1.0 })
 }
 
 /// 定格截断后的播放毫秒(册四 T4.4 组合语义):freezeMs 有值时源只播放到
@@ -472,7 +506,10 @@ mod tests {
         assert_eq!(plan.canvas_w, 1080);
         assert_eq!(plan.fps, 30);
         assert_eq!(plan.out_dir, Path::new("/w").join("06_成片输出"));
-        assert_eq!(plan.cache_dir, Path::new("/w").join(".cutforge/render-cache"));
+        assert_eq!(
+            plan.cache_dir,
+            Path::new("/w").join(".cutforge/render-cache")
+        );
     }
 
     #[test]
@@ -556,11 +593,8 @@ mod tests {
 
     #[test]
     fn step_report_progress_shape_is_backward_compatible() {
-        let r = StepReport::new(
-            "segment",
-            json!({"cacheHits": 2, "segments": 5}),
-        )
-        .with_cache_hit(false);
+        let r = StepReport::new("segment", json!({"cacheHits": 2, "segments": 5}))
+            .with_cache_hit(false);
         assert_eq!(
             r.to_progress(),
             json!({"step": "segment", "ok": true, "cacheHits": 2, "segments": 5})
@@ -573,7 +607,16 @@ mod tests {
     fn step_names_are_the_eight_stage_pipeline() {
         assert_eq!(
             STEP_NAMES,
-            ["probe", "segment", "compose-video", "overlay", "adjust", "mix", "subtitle", "encode"]
+            [
+                "probe",
+                "segment",
+                "compose-video",
+                "overlay",
+                "adjust",
+                "mix",
+                "subtitle",
+                "encode"
+            ]
         );
     }
 
@@ -617,7 +660,12 @@ mod tests {
                 ]}
             ]
         }));
-        assert!(RenderPlan::build(&p2, Path::new("/w"), None).adjust_clips.is_empty(), "hidden 调整层不收集");
+        assert!(
+            RenderPlan::build(&p2, Path::new("/w"), None)
+                .adjust_clips
+                .is_empty(),
+            "hidden 调整层不收集"
+        );
     }
 
     // ---- 册四 BE3b:track mute/solo/hidden 渲染联动收口 ----
@@ -643,7 +691,11 @@ mod tests {
             ]
         }));
         let plan = RenderPlan::build(&p, Path::new("/w"), None);
-        assert_eq!(plan.audio_segs.len(), 1, "mute 轨的音频事件不进混音(仅 V1 的人声)");
+        assert_eq!(
+            plan.audio_segs.len(),
+            1,
+            "mute 轨的音频事件不进混音(仅 V1 的人声)"
+        );
         assert_eq!(plan.audio_segs[0].src.to_string_lossy(), pj("/w", "a.mp4"));
         assert_eq!(plan.video_clips.len(), 1, "mute 不影响视觉面");
         assert_eq!(plan.total_ms, 2000);
@@ -687,9 +739,18 @@ mod tests {
         }));
         let plan = RenderPlan::build(&p, Path::new("/w"), None);
         let srcs: Vec<&std::path::Path> = plan.audio_segs.iter().map(|s| s.src.as_path()).collect();
-        assert!(srcs.contains(&std::path::Path::new(&pj("/w", "sfx.mp3"))), "solo 轨出声: {srcs:?}");
-        assert!(!srcs.contains(&std::path::Path::new(&pj("/w", "bgm.mp3"))), "非 solo 轨静音: {srcs:?}");
-        assert!(!srcs.contains(&std::path::Path::new(&pj("/w", "a.mp4"))), "非 solo 视频轨的音频同样静音");
+        assert!(
+            srcs.contains(&std::path::Path::new(&pj("/w", "sfx.mp3"))),
+            "solo 轨出声: {srcs:?}"
+        );
+        assert!(
+            !srcs.contains(&std::path::Path::new(&pj("/w", "bgm.mp3"))),
+            "非 solo 轨静音: {srcs:?}"
+        );
+        assert!(
+            !srcs.contains(&std::path::Path::new(&pj("/w", "a.mp4"))),
+            "非 solo 视频轨的音频同样静音"
+        );
         assert_eq!(plan.video_clips.len(), 1, "solo 不影响视觉面");
     }
 
@@ -711,7 +772,11 @@ mod tests {
         let plan = RenderPlan::build(&p, Path::new("/w"), None);
         assert_eq!(plan.video_clips.len(), 1, "hidden 轨不进合成");
         assert_eq!(plan.video_clips[0].id, "V2-001");
-        assert_eq!(plan.audio_segs.len(), 1, "hidden 轨的音频仍进混音(hidden 只作用视觉)");
+        assert_eq!(
+            plan.audio_segs.len(),
+            1,
+            "hidden 轨的音频仍进混音(hidden 只作用视觉)"
+        );
         assert_eq!(plan.audio_segs[0].src.to_string_lossy(), pj("/w", "a.mp4"));
         assert_eq!(plan.total_ms, 2000, "时长上界按过滤后重算(隐藏片段不撑长)");
     }
@@ -730,7 +795,10 @@ mod tests {
         let plan = RenderPlan::build(&p, Path::new("/w"), None);
         let s = &plan.audio_segs[0];
         assert_eq!(s.denoise.as_deref(), Some("mid"));
-        assert!((s.pitch - 2f64.powf(3.0 / 12.0)).abs() < 1e-9, "pitch = 2^(3/12)");
+        assert!(
+            (s.pitch - 2f64.powf(3.0 / 12.0)).abs() < 1e-9,
+            "pitch = 2^(3/12)"
+        );
         // off 档 → None(不产滤镜)
         let p2 = project(json!({
             "version": 1, "schemaVersion": "2.0.0", "slug": "d", "fps": 30,
@@ -740,7 +808,11 @@ mod tests {
                  "role": "voice", "volume": 1.0, "denoise": "off"}
             ]}]
         }));
-        assert!(RenderPlan::build(&p2, Path::new("/w"), None).audio_segs[0].denoise.is_none());
+        assert!(
+            RenderPlan::build(&p2, Path::new("/w"), None).audio_segs[0]
+                .denoise
+                .is_none()
+        );
     }
 
     /// 册四 T4.1:use_proxy 时存在代理的片段换 src;缺失回落原片。
@@ -780,8 +852,15 @@ mod tests {
             proxy_rel,
             "有代理 → 换写(相对路径)"
         );
-        assert_eq!(plan_on.video_clips[1].src.as_deref(), Some("缺代理.mp4"), "缺代理回落原片");
-        assert_eq!(plan_off.video_clips[0].start_ms, plan_on.video_clips[0].start_ms, "时域不变");
+        assert_eq!(
+            plan_on.video_clips[1].src.as_deref(),
+            Some("缺代理.mp4"),
+            "缺代理回落原片"
+        );
+        assert_eq!(
+            plan_off.video_clips[0].start_ms, plan_on.video_clips[0].start_ms,
+            "时域不变"
+        );
         // 换写进 clip JSON → seg 键分叉(代理渲染不与原片共享缓存)
         let tail = 0.0;
         assert_ne!(

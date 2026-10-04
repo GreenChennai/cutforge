@@ -66,11 +66,20 @@ def last_json(text: str) -> dict:
 # ---------------------------------------------------------------- 源级对拍
 
 def test_export_jianying_dispatch_maps_to_same_script():
-    """cutforge-mcp 源级:export_jianying 与 stage_run 等同组,统一落到 rs_jy_draft.py。"""
+    """cutforge-mcp 源级:export_jianying 与 stage_run 等同组,统一落到 rs_jy_draft.py。
+
+    A-01 注册表化后编排映射收口在 handlers/orchestrate.rs::script_for(单一实现):
+    export_jianying 不得私开脚本映射(显式臂),必须走回退臂与 stage 家族同脚本,
+    并经 run_stage 编排面(参数透传纪律的唯一守门点)。
+    """
     src = mcp_source()
-    m = re.search(r'"stage_run"[^\n]*\n(?:.*\n){0,12}?.*_ => "rs_jy_draft\.py"', src)
-    assert m, "export_jianying 编排组必须落 rs_jy_draft.py(同一脚本同一映射)"
-    assert "export_jianying" in m.group(0), "export_jianying 必须在同一编排组内"
+    m = re.search(r'fn script_for[\s\S]{0,400}?_ => "rs_jy_draft\.py"', src)
+    assert m, "script_for 映射必须保留 rs_jy_draft.py 回退(export_jianying 同组落点)"
+    assert '"stage_run"' in m.group(0), "stage 家族必须与回退在同一映射(script_for)"
+    assert '"export_jianying" => "rs_' not in src, "export_jianying 不得私开脚本映射臂"
+    i = src.find("fn run_stage")
+    assert i >= 0 and "export_jianying" in src[i: i + 4000], \
+        "export_jianying 必须经 run_stage 编排面(script_for 单一映射)"
 
 
 def test_export_jianying_passthrough_no_flag_injection():

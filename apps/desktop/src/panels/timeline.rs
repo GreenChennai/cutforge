@@ -1,9 +1,9 @@
 //! 时间轴宿主:widgets `TimelineView` 挂底部 dock;回调全部转内核意图。
 //!
 //! 布局(剪映对标 docs/upstream/04 T1/T2/T3):
-//! - 顶部工具行(横跨全宽):新建轨 ▾ / 撤销 重做 / 分割 副本 删除 冻结帧
-//!   / 吸附(视觉态) · 右侧缩放 − 适配 +;
-//! - 轨道头列(V/A/T 徽标 + 名称 + 锁/M,`track_update`);
+//! - 顶部工具行(横跨全宽,图标为 SVG,见 ui/icon.rs):新建轨 / 撤销 重做 /
+//!   分割 副本 删除 冻结帧 / 吸附(视觉态)· 右侧缩放 − 适配 +;
+//! - 轨道头列(V/A/T 徽标 + 名称 + 锁/静音,`track_update`);
 //! - 片段缩略图条:后台按素材串行抽帧(media_thumbnail,按 src+槽位缓存),
 //!   喂 `TimelineView::set_clip_thumbs` 平铺渲染。
 //!
@@ -29,6 +29,7 @@ use sable::widgets::tokens::FONT_SIZE_CAPTION;
 
 use crate::app::DesktopApp;
 use crate::rpc::Rpc;
+use crate::ui::icon::Icon;
 
 /// 缩放档(pps;60 为 1:1 基准)。
 const ZOOM_MIN: f64 = 12.0;
@@ -229,10 +230,10 @@ impl TimelineHost {
         cx.notify();
     }
 
-    /// 缩放按钮(倍率 ×/÷ 1.3;适配 = 全长铺 700px)。
+    /// 缩放按钮(倍率 ×/÷ 1.3;适配 = 全长铺 700px;A-09:SVG 图标)。
     fn zoom_button(
         id: &'static str,
-        label: &'static str,
+        icon: Icon,
         app: &WeakEntity<DesktopApp>,
         colors: &sable::widgets::tokens::ColorTokens,
         mode: Zoom,
@@ -244,11 +245,9 @@ impl TimelineHost {
             .py(px(2.0))
             .rounded_sm()
             .bg(colors.surface_2)
-            .text_size(px(FONT_SIZE_CAPTION))
-            .text_color(colors.text_primary)
             .hover(|s| s.bg(colors.border_subtle))
             .cursor_pointer()
-            .child(label)
+            .child(icon.icon_at(14.0, colors.text_primary))
             .on_click(move |_, _, cx: &mut App| {
                 if let Some(app) = weak.upgrade() {
                     app.update(cx, |app, cx| {
@@ -268,29 +267,47 @@ impl TimelineHost {
             })
     }
 
-    /// 工具行图标按钮(剪映 T1;enabled=false 置灰)。
+    /// 工具行图标按钮(剪映 T1;SVG 图标 + 可选文字标签)。
+    /// `active` = 锁开态(强调底,如吸附);`enabled=false` 置灰。
     fn tool_button(
         id: &'static str,
+        icon: Icon,
         label: &'static str,
         enabled: bool,
+        active: bool,
         colors: &sable::widgets::tokens::ColorTokens,
     ) -> sable::gpui::Stateful<sable::gpui::Div> {
-        div()
+        let (bg, fg) = if active {
+            (colors.accent, colors.surface_0)
+        } else if enabled {
+            (colors.surface_2, colors.text_primary)
+        } else {
+            (colors.surface_1, colors.text_secondary)
+        };
+        let button = div()
             .id(sable::gpui::ElementId::Name(id.into()))
             .px(px(SpacingTokens::XS + 1.0))
             .py(px(2.0))
             .rounded_sm()
+            .flex()
+            .items_center()
+            .gap(px(3.0))
+            .bg(bg)
+            .child(icon.icon_at(14.0, fg))
             .text_size(px(FONT_SIZE_CAPTION + 1.0))
-            .when(enabled, |s| {
-                s.bg(colors.surface_2)
-                    .text_color(colors.text_primary)
-                    .hover(|s| s.bg(colors.border_subtle))
-                    .cursor_pointer()
-            })
-            .when(!enabled, |s| {
-                s.bg(colors.surface_1).text_color(colors.text_secondary)
-            })
-            .child(label)
+            .text_color(fg);
+        let button = if enabled && !active {
+            button
+                .hover(|s| s.bg(colors.border_subtle))
+                .cursor_pointer()
+        } else {
+            button
+        };
+        if label.is_empty() {
+            button
+        } else {
+            button.child(label)
+        }
     }
 }
 
@@ -376,23 +393,24 @@ fn track_header(
                 .child(name.to_string())
                 .truncate(),
         )
-        // 锁定(剪映 T2;点击 → track_update locked)
+        // 锁定(剪映 T2;点击 → track_update locked;A-09:字形 → SVG)
         .child(
             div()
                 .id(sable::gpui::ElementId::Name(format!("lock-{id}").into()))
                 .px(px(3.0))
                 .rounded_sm()
-                .text_size(px(9.0))
+                .flex()
+                .items_center()
                 .cursor_pointer()
                 .when(locked, |s| {
-                    s.bg(colors.warning).text_color(colors.surface_0)
+                    s.bg(colors.warning)
+                        .child(Icon::Lock.icon_at(10.0, colors.surface_0))
                 })
                 .when(!locked, |s| {
                     s.bg(colors.surface_2)
-                        .text_color(colors.text_secondary)
                         .hover(|s| s.bg(colors.border_subtle))
+                        .child(Icon::LockOpen.icon_at(10.0, colors.text_secondary))
                 })
-                .child("L")
                 .on_click(move |_, _, cx: &mut App| {
                     if let Some(app) = weak_lock.upgrade() {
                         app.update(cx, |app, cx| {
@@ -408,7 +426,7 @@ fn track_header(
                     }
                 }),
         )
-        // 静音(仅音轨;剪映 M)
+        // 静音(仅音轨;剪映 M;A-09:字形 → SVG)
         .when(kind == TrackKind::Audio, |c| {
             let weak = weak.clone();
             let track_id = track_id.clone();
@@ -417,15 +435,18 @@ fn track_header(
                     .id(sable::gpui::ElementId::Name(format!("mute-{id}").into()))
                     .px(px(3.0))
                     .rounded_sm()
-                    .text_size(px(9.0))
+                    .flex()
+                    .items_center()
                     .cursor_pointer()
-                    .when(mute, |s| s.bg(colors.danger).text_color(colors.surface_0))
+                    .when(mute, |s| {
+                        s.bg(colors.danger)
+                            .child(Icon::VolumeOff.icon_at(10.0, colors.surface_0))
+                    })
                     .when(!mute, |s| {
                         s.bg(colors.surface_2)
-                            .text_color(colors.text_secondary)
                             .hover(|s| s.bg(colors.border_subtle))
+                            .child(Icon::Volume.icon_at(10.0, colors.text_secondary))
                     })
-                    .child("M")
                     .on_click(move |_, _, cx: &mut App| {
                         if let Some(app) = weak.upgrade() {
                             app.update(cx, |app, cx| {
@@ -495,27 +516,30 @@ impl Render for TimelineHost {
             .bg(colors.surface_1)
             .border_b_1()
             .border_color(colors.border_subtle)
-            // 撤销/重做
-            .child(Self::tool_button("tl-undo", "↶", true, &colors).on_click({
-                let weak = app_weak.clone();
-                move |_, _, cx: &mut App| {
-                    if let Some(app) = weak.upgrade() {
-                        app.update(cx, |app, cx| app.submit("undo", serde_json::json!({}), cx));
-                    }
-                }
-            }))
-            .child(Self::tool_button("tl-redo", "↷", true, &colors).on_click({
-                let weak = app_weak.clone();
-                move |_, _, cx: &mut App| {
-                    if let Some(app) = weak.upgrade() {
-                        app.update(cx, |app, cx| app.submit("redo", serde_json::json!({}), cx));
-                    }
-                }
-            }))
-            // 吸附开关(磁铁;active = accent 底)
+            // 撤销/重做(A-09:字形 → SVG 图标;禁用态见后续波)
             .child(
-                Self::tool_button("tl-snap", "⚖ 吸附", true, &colors)
-                    .when(snap_on, |s| s.bg(sable::gpui::hsla(0.0, 0.0, 0.0, 0.0)))
+                Self::tool_button("tl-undo", Icon::Undo, "", true, false, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| app.submit("undo", serde_json::json!({}), cx));
+                        }
+                    }
+                }),
+            )
+            .child(
+                Self::tool_button("tl-redo", Icon::Redo, "", true, false, &colors).on_click({
+                    let weak = app_weak.clone();
+                    move |_, _, cx: &mut App| {
+                        if let Some(app) = weak.upgrade() {
+                            app.update(cx, |app, cx| app.submit("redo", serde_json::json!({}), cx));
+                        }
+                    }
+                }),
+            )
+            // 吸附开关(磁铁;active = 强调底)
+            .child(
+                Self::tool_button("tl-snap", Icon::Magnet, "吸附", true, snap_on, &colors)
                     .on_click({
                         let weak = app_weak.clone();
                         move |_, _, cx: &mut App| {
@@ -526,70 +550,83 @@ impl Render for TimelineHost {
                     }),
             )
             .child(
-                Self::tool_button("tl-split", "✂ 分割", has_sel, &colors).on_click({
-                    let weak = app_weak.clone();
-                    move |_, _, cx: &mut App| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| {
-                                let clip = app.selection.clone();
-                                if let Some(clip) = clip {
-                                    app.submit(
-                                        "clip_split",
-                                        serde_json::json!({
-                                            "clipId": clip,
-                                            "tMs": app.playhead_ms
-                                        }),
-                                        cx,
-                                    );
-                                }
-                            });
+                Self::tool_button("tl-split", Icon::Scissors, "分割", has_sel, false, &colors)
+                    .on_click({
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| {
+                                    let clip = app.selection.clone();
+                                    if let Some(clip) = clip {
+                                        app.submit(
+                                            "clip_split",
+                                            serde_json::json!({
+                                                "clipId": clip,
+                                                "tMs": app.playhead_ms
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                });
+                            }
                         }
-                    }
-                }),
+                    }),
             )
             .child(
-                Self::tool_button("tl-dup", "⧉ 副本", has_sel, &colors).on_click({
-                    let weak = app_weak.clone();
-                    move |_, _, cx: &mut App| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| {
-                                let clip = app.selection.clone();
-                                if let Some(clip) = clip {
-                                    app.submit(
-                                        "clip_duplicate",
-                                        serde_json::json!({
-                                            "clipId": clip,
-                                            "startMs": app.playhead_ms
-                                        }),
-                                        cx,
-                                    );
-                                }
-                            });
+                Self::tool_button("tl-dup", Icon::Copy, "副本", has_sel, false, &colors).on_click(
+                    {
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| {
+                                    let clip = app.selection.clone();
+                                    if let Some(clip) = clip {
+                                        app.submit(
+                                            "clip_duplicate",
+                                            serde_json::json!({
+                                                "clipId": clip,
+                                                "startMs": app.playhead_ms
+                                            }),
+                                            cx,
+                                        );
+                                    }
+                                });
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .child(
-                Self::tool_button("tl-del", "✕ 删除", has_sel, &colors).on_click({
-                    let weak = app_weak.clone();
-                    move |_, _, cx: &mut App| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| {
-                                let clip = app.selection.clone();
-                                if let Some(clip) = clip {
-                                    app.submit(
-                                        "clip_delete",
-                                        serde_json::json!({ "clipId": clip }),
-                                        cx,
-                                    );
-                                }
-                            });
+                Self::tool_button("tl-del", Icon::Trash, "删除", has_sel, false, &colors).on_click(
+                    {
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| {
+                                    let clip = app.selection.clone();
+                                    if let Some(clip) = clip {
+                                        app.submit(
+                                            "clip_delete",
+                                            serde_json::json!({ "clipId": clip }),
+                                            cx,
+                                        );
+                                    }
+                                });
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .child(
-                Self::tool_button("tl-freeze", "❄ 冻结+0.5s", has_sel, &colors).on_click({
+                Self::tool_button(
+                    "tl-freeze",
+                    Icon::Snowflake,
+                    "冻结+0.5s",
+                    has_sel,
+                    false,
+                    &colors,
+                )
+                .on_click({
                     let weak = app_weak.clone();
                     move |_, _, cx: &mut App| {
                         if let Some(app) = weak.upgrade() {
@@ -617,17 +654,27 @@ impl Render for TimelineHost {
             )
             // 复制/粘贴(壳侧剪贴板;与 Ctrl+C/V 同逻辑)
             .child(
-                Self::tool_button("tl-copy", "⧉ 复制", has_sel, &colors).on_click({
-                    let weak = app_weak.clone();
-                    move |_, _, cx: &mut App| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| app.copy_selected(cx));
+                Self::tool_button("tl-copy", Icon::Copy, "复制", has_sel, false, &colors).on_click(
+                    {
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| app.copy_selected(cx));
+                            }
                         }
-                    }
-                }),
+                    },
+                ),
             )
             .child(
-                Self::tool_button("tl-paste", "📋 粘贴", true, &colors).on_click({
+                Self::tool_button(
+                    "tl-paste",
+                    Icon::ClipboardPaste,
+                    "粘贴",
+                    true,
+                    false,
+                    &colors,
+                )
+                .on_click({
                     let weak = app_weak.clone();
                     move |_, _, cx: &mut App| {
                         if let Some(app) = weak.upgrade() {
@@ -636,9 +683,17 @@ impl Render for TimelineHost {
                     }
                 }),
             )
-            // 全轨分割 / 关闭空隙(工程级剪辑)
+            // 全轨分割 / 关闭空隙(工程级剪辑;A-09:原乱码字形已由 SplitAll 图标替换)
             .child(
-                Self::tool_button("tl-split-all", "卑 全分割", true, &colors).on_click({
+                Self::tool_button(
+                    "tl-split-all",
+                    Icon::SplitAll,
+                    "全分割",
+                    true,
+                    false,
+                    &colors,
+                )
+                .on_click({
                     let weak = app_weak.clone();
                     move |_, _, cx: &mut App| {
                         if let Some(app) = weak.upgrade() {
@@ -654,70 +709,86 @@ impl Render for TimelineHost {
                 }),
             )
             .child(
-                Self::tool_button("tl-gap", "⇤ 关空隙", true, &colors).on_click({
-                    let weak = app_weak.clone();
-                    move |_, _, cx: &mut App| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| app.close_gap_at_playhead(cx));
+                Self::tool_button("tl-gap", Icon::GapClose, "关空隙", true, false, &colors)
+                    .on_click({
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| app.close_gap_at_playhead(cx));
+                            }
                         }
-                    }
-                }),
+                    }),
             )
             .child(div().flex_1())
             // 轨道新增(从顶栏迁入;剪映 IA:轨道操作归时间线)
             .child(
-                Self::tool_button("tl-add-v", "+ 视频轨", true, &colors).on_click({
-                    let weak = app_weak.clone();
-                    move |_, _, cx: &mut App| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| {
-                                app.submit("track_add", serde_json::json!({ "kind": "video" }), cx)
-                            });
+                Self::tool_button("tl-add-v", Icon::AddTrack, "视频轨", true, false, &colors)
+                    .on_click({
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| {
+                                    app.submit(
+                                        "track_add",
+                                        serde_json::json!({ "kind": "video" }),
+                                        cx,
+                                    )
+                                });
+                            }
                         }
-                    }
-                }),
+                    }),
             )
             .child(
-                Self::tool_button("tl-add-a", "+ 音频轨", true, &colors).on_click({
-                    let weak = app_weak.clone();
-                    move |_, _, cx: &mut App| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| {
-                                app.submit("track_add", serde_json::json!({ "kind": "audio" }), cx)
-                            });
+                Self::tool_button("tl-add-a", Icon::AddTrack, "音频轨", true, false, &colors)
+                    .on_click({
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| {
+                                    app.submit(
+                                        "track_add",
+                                        serde_json::json!({ "kind": "audio" }),
+                                        cx,
+                                    )
+                                });
+                            }
                         }
-                    }
-                }),
+                    }),
             )
             .child(
-                Self::tool_button("tl-add-t", "+ 字幕轨", true, &colors).on_click({
-                    let weak = app_weak.clone();
-                    move |_, _, cx: &mut App| {
-                        if let Some(app) = weak.upgrade() {
-                            app.update(cx, |app, cx| {
-                                app.submit("track_add", serde_json::json!({ "kind": "text" }), cx)
-                            });
+                Self::tool_button("tl-add-t", Icon::AddTrack, "字幕轨", true, false, &colors)
+                    .on_click({
+                        let weak = app_weak.clone();
+                        move |_, _, cx: &mut App| {
+                            if let Some(app) = weak.upgrade() {
+                                app.update(cx, |app, cx| {
+                                    app.submit(
+                                        "track_add",
+                                        serde_json::json!({ "kind": "text" }),
+                                        cx,
+                                    )
+                                });
+                            }
                         }
-                    }
-                }),
+                    }),
             )
             .child(Self::zoom_button(
                 "tl-out",
-                "−",
+                Icon::ZoomOut,
                 &app_weak,
                 &colors,
                 Zoom::Out,
             ))
             .child(Self::zoom_button(
                 "tl-fit",
-                "⤢",
+                Icon::ZoomFit,
                 &app_weak,
                 &colors,
                 Zoom::Fit,
             ))
             .child(Self::zoom_button(
                 "tl-in",
-                "+",
+                Icon::ZoomIn,
                 &app_weak,
                 &colors,
                 Zoom::In,

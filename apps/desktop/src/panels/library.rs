@@ -10,7 +10,7 @@ use sable::gpui::prelude::FluentBuilder as _;
 use sable::gpui::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ObjectFit,
     ParentElement as _, Render, RenderImage, StatefulInteractiveElement as _, Styled as _,
-    StyledImage as _, Window, div, hsla, img, px,
+    StyledImage as _, Window, div, img, px,
 };
 use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
 use sable::widgets::theme::theme;
@@ -21,6 +21,8 @@ use sable::gpui_component::input::{Input, InputEvent, InputState};
 use crate::app::DesktopApp;
 use crate::rpc::Rpc;
 use crate::state::Shared;
+use crate::ui::icon::Icon;
+use crate::ui::theme as cf_theme;
 
 /// 卡片缩略图区尺寸(px)。
 const THUMB_H: f32 = 74.0;
@@ -158,12 +160,12 @@ fn png_rgba_to_render_image(rgba: &[u8], width: u32, height: u32) -> Option<Arc<
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
 }
 
-/// 素材类型 → 占位字形。
-fn kind_glyph(kind: &str) -> &'static str {
+/// 素材类型 → 占位图标(A-09:文本字形 → SVG)。
+fn kind_icon(kind: &str) -> Icon {
     match kind {
-        "audio" => "♪",
-        "image" => "▣",
-        _ => "▶",
+        "audio" => Icon::Audio,
+        "image" => Icon::Image,
+        _ => Icon::Video,
     }
 }
 
@@ -205,7 +207,7 @@ impl Render for LibraryPanel {
         }
         for entry in &media {
             let thumb = self.thumbs.get(&entry.path).cloned();
-            let glyph = kind_glyph(&entry.kind);
+            let icon = kind_icon(&entry.kind);
             let duration = entry
                 .duration_ms
                 .map(|d| {
@@ -248,9 +250,8 @@ impl Render for LibraryPanel {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .text_size(px(18.0))
-                                    .text_color(colors.text_secondary)
-                                    .child(glyph)
+                                    // A-09:占位字形 → SVG 图标
+                                    .child(icon.icon_at(18.0, colors.text_secondary))
                                     .into_any_element(),
                             })
                             .when(added.contains(entry.path.as_str()), |c| {
@@ -276,7 +277,8 @@ impl Render for LibraryPanel {
                                         .bottom(px(2.0))
                                         .px(px(3.0))
                                         .rounded_sm()
-                                        .bg(hsla(0.0, 0.0, 0.0, 0.65))
+                                        // A-08:时长角标遮罩 → 语义层 MASK(web --cf-mask 同值)
+                                        .bg(cf_theme::h(cf_theme::MASK))
                                         .text_size(px(9.0))
                                         .text_color(colors.text_primary)
                                         .child(duration),

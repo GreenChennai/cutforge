@@ -6,10 +6,10 @@
 //!
 //! 视觉/交互(NLE 惯例):
 //! - 取景区 = 纯黑画布 + 细边框,帧等比居中(canvas paint 阶段算目的矩形);
-//! - 右下小按钮组(画质/截图/沉浸)+ zone「预览渲染中」角标(160ms 淡入 /
-//!   240ms 淡出,动效只出现在状态变化);
-//! - 传输条 = 左时间码(当前大字/总长小字)· 居中 ⏮◀▶/⏸▶⏭ + 循环/静音
-//!   (播放态高亮)· 右倍速挡 + 出帧状态徽标;
+//! - 右下小按钮组(画质/截图/沉浸)+ zone「预览渲染中」角标(淡入/淡出走
+//!   ui/fx.rs 时长 token,reduced-motion 直切,动效只出现在状态变化);
+//! - 传输条 = 左时间码(当前大字/总长小字)· 居中 传输键组(SVG 图标:
+//!   回开头/逐帧/播放暂停/循环/音量)· 右倍速挡 + 出帧状态徽标;
 //! - 进度条 = 传输条上方 4px 通栏,按下拖动(拖拽零动画直接映射),
 //!   **松手才 seek**(引擎 seek = 重启流,约百 ms)。
 
@@ -19,7 +19,7 @@ use std::time::Duration;
 use sable::gpui::WeakEntity;
 use sable::gpui::prelude::FluentBuilder as _;
 use sable::gpui::{
-    Animation, AnimationExt as _, App, AppContext as _, Context, Corners, ElementId, Entity,
+    AnimationExt as _, App, AppContext as _, Context, Corners, ElementId, Entity,
     InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Render, RenderImage,
     StatefulInteractiveElement as _, Styled as _, Window, canvas, div, px,
 };
@@ -30,6 +30,8 @@ use sable::widgets::tokens::{FONT_SIZE_CAPTION, FONT_SIZE_HEADING};
 use crate::app::DesktopApp;
 use crate::rpc::{Rpc, render_timeout};
 use crate::state::{PreviewFrame, Shared};
+use crate::ui::fx;
+use crate::ui::icon::Icon;
 
 /// 渲染卡死自愈上限(超过即放弃该帧;render_timeout 300s 是内核上限,
 /// 壳侧 60s 还没回包基本=挂了)。
@@ -228,10 +230,10 @@ impl PreviewPanel {
         }
     }
 
-    /// 传输按钮(播放键放大居中;`primary` = accent 底)。
+    /// 传输按钮(播放键放大居中;`primary` = accent 底;A-09:字形 → SVG 图标)。
     fn transport_button(
         id: &'static str,
-        glyph: &'static str,
+        icon: Icon,
         primary: bool,
         big: bool,
         colors: &sable::widgets::tokens::ColorTokens,
@@ -239,7 +241,7 @@ impl PreviewPanel {
     ) -> sable::gpui::AnyElement {
         let weak = app.clone();
         let size = if big { TP_BTN + 6.0 } else { TP_BTN };
-        let font = if big { 13.0 } else { 11.0 };
+        let icon_size = if big { 18.0 } else { 14.0 };
         let btn = div()
             .id(id)
             .w(px(size))
@@ -248,7 +250,6 @@ impl PreviewPanel {
             .items_center()
             .justify_center()
             .rounded(px(5.0))
-            .text_size(px(font))
             .on_click(move |_, window, cx: &mut App| {
                 if let Some(app) = weak.upgrade() {
                     app.update(cx, |app, cx| match id {
@@ -272,17 +273,15 @@ impl PreviewPanel {
             });
         if primary {
             btn.bg(colors.accent)
-                .text_color(colors.surface_0)
                 .hover(|s| s.bg(colors.text_secondary))
                 .cursor_pointer()
-                .child(glyph)
+                .child(icon.icon_at(icon_size, colors.surface_0))
                 .into_any_element()
         } else {
             btn.bg(colors.surface_2)
-                .text_color(colors.text_primary)
                 .hover(|s| s.bg(colors.border_subtle))
                 .cursor_pointer()
-                .child(glyph)
+                .child(icon.icon_at(icon_size, colors.text_primary))
                 .into_any_element()
         }
     }
@@ -439,10 +438,11 @@ impl Render for PreviewPanel {
                 &colors,
             ));
 
-        // —— zone 角标(状态变化驱动:160ms 淡入 / 240ms 淡出)——
+        // —— zone 角标(状态变化驱动:160ms 淡入 / 240ms 淡出;ms 收敛 ui/fx.rs,
+        //    reduced-motion 时直切)——
         let badge = (self.badge_epoch > 0).then(|| {
             let shown = self.badge_shown;
-            let dur = if shown { 160 } else { 240 };
+            let dur = if shown { fx::FX_PANEL } else { fx::FX_VIEW };
             div()
                 .px(px(SpacingTokens::XS + 2.0))
                 .py(px(2.0))
@@ -454,8 +454,8 @@ impl Render for PreviewPanel {
                 .text_color(colors.text_primary)
                 .child("预览渲染中…")
                 .with_animation(
-                    ElementId::named_usize("zone-badge", self.badge_epoch),
-                    Animation::new(Duration::from_millis(dur)),
+                    fx::epoch_id("zone-badge", self.badge_epoch),
+                    fx::animation(dur, fx::ease_out_quart),
                     move |el, delta| el.opacity(if shown { delta } else { 1.0 - delta }),
                 )
         });
@@ -513,12 +513,8 @@ impl Render for PreviewPanel {
                             None => v_flex()
                                 .gap(px(SpacingTokens::XS))
                                 .items_center()
-                                .child(
-                                    div()
-                                        .text_size(px(22.0))
-                                        .text_color(colors.surface_2)
-                                        .child("▸"),
-                                )
+                                // A-09:空态占位字形 → SVG 图标
+                                .child(Icon::Film.icon_at(22.0, colors.surface_2))
                                 .child(
                                     div()
                                         .text_size(px(FONT_SIZE_CAPTION))
@@ -658,31 +654,60 @@ impl Render for PreviewPanel {
                             .justify_center()
                             .gap(px(SpacingTokens::SM))
                             .child(Self::transport_button(
-                                "tp-home", "|◀", false, false, &colors, &weak,
+                                "tp-home",
+                                Icon::SkipStart,
+                                false,
+                                false,
+                                &colors,
+                                &weak,
                             ))
                             .child(Self::transport_button(
-                                "tp-prev", "◀", false, false, &colors, &weak,
+                                "tp-prev",
+                                Icon::StepBack,
+                                false,
+                                false,
+                                &colors,
+                                &weak,
                             ))
                             .child(Self::transport_button(
                                 "tp-play",
-                                if playing { "❚❚" } else { "▶" },
+                                if playing { Icon::Pause } else { Icon::Play },
                                 true,
                                 true,
                                 &colors,
                                 &weak,
                             ))
                             .child(Self::transport_button(
-                                "tp-next", "▶", false, false, &colors, &weak,
+                                "tp-next",
+                                Icon::StepForward,
+                                false,
+                                false,
+                                &colors,
+                                &weak,
                             ))
                             .child(Self::transport_button(
-                                "tp-end", "▶|", false, false, &colors, &weak,
+                                "tp-end",
+                                Icon::SkipEnd,
+                                false,
+                                false,
+                                &colors,
+                                &weak,
                             ))
                             .child(Self::transport_button(
-                                "tp-loop", "↻", loop_on, false, &colors, &weak,
+                                "tp-loop",
+                                Icon::Loop,
+                                loop_on,
+                                false,
+                                &colors,
+                                &weak,
                             ))
                             .child(Self::transport_button(
                                 "tp-mute",
-                                if muted_eff { "🔇" } else { "🔊" },
+                                if muted_eff {
+                                    Icon::VolumeOff
+                                } else {
+                                    Icon::Volume
+                                },
                                 muted_eff,
                                 false,
                                 &colors,

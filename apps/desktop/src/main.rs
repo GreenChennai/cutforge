@@ -19,6 +19,7 @@ mod panels;
 mod playback;
 mod rpc;
 mod state;
+mod ui;
 
 use std::path::PathBuf;
 
@@ -72,29 +73,33 @@ fn main() {
 
     // 无 --root → 开始界面(不拉内核;选工程后 spawn 自身 --root)
     if args.root.is_none() {
-        sable::gpui::Application::new().run(move |cx: &mut App| {
-            sable::dock::init(cx);
-            sable::gpui_component::theme::Theme::change(
-                sable::gpui_component::ThemeMode::Dark,
-                None,
-                cx,
-            );
-            let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(sable::gpui::TitlebarOptions {
-                    title: Some("CutForge".into()),
+        sable::gpui::Application::new()
+            .with_assets(ui::icon::Assets)
+            .run(move |cx: &mut App| {
+                sable::dock::init(cx);
+                // A-08:sable ColorTokens ← ui/theme.rs 语义层(跨壳同源桥接)
+                ui::theme::inject(cx);
+                sable::gpui_component::theme::Theme::change(
+                    sable::gpui_component::ThemeMode::Dark,
+                    None,
+                    cx,
+                );
+                let bounds = Bounds::centered(None, size(px(1100.), px(700.)), cx);
+                let options = WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(sable::gpui::TitlebarOptions {
+                        title: Some("CutForge".into()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            };
-            cx.open_window(options, |window, cx| {
-                let shell = home::HomeApp::new(window, cx);
-                cx.new(|cx| Root::new(shell, window, cx))
-            })
-            .expect("开始界面开窗失败");
-            cx.activate(true);
-        });
+                };
+                cx.open_window(options, |window, cx| {
+                    let shell = home::HomeApp::new(window, cx);
+                    cx.new(|cx| Root::new(shell, window, cx))
+                })
+                .expect("开始界面开窗失败");
+                cx.activate(true);
+            });
         return;
     }
 
@@ -115,41 +120,44 @@ fn main() {
         }
     };
 
-    sable::gpui::Application::new().run(move |cx: &mut App| {
-        // 两套主题全局各自初始化:sable tokens(widgets 面板自绘)+ gpui-component
-        // (DockArea/tab/输入框 chrome)。sable::dock::init 已含 gpui_component::init
-        // 与 sable theme::init,不能只调后者(丢 sable 主题即启动 panic)
-        sable::dock::init(cx);
-        // gpui-component 面板 chrome 默认跟系统(浅色)——桌面壳固定深色,
-        // 与 sable tokens 深色一致
-        sable::gpui_component::theme::Theme::change(
-            sable::gpui_component::ThemeMode::Dark,
-            None,
-            cx,
-        );
+    sable::gpui::Application::new()
+        .with_assets(ui::icon::Assets)
+        .run(move |cx: &mut App| {
+            // 两套主题全局各自初始化:sable tokens(widgets 面板自绘)+ gpui-component
+            // (DockArea/tab/输入框 chrome)。sable::dock::init 已含 gpui_component::init
+            // 与 sable theme::init,不能只调后者(丢 sable 主题即启动 panic)。
+            // A-08:sable ColorTokens 由 ui/theme.rs 语义层派生注入(桥接而非替换),
+            // 消除"两套主题并存"的一致性风险;gpui-component chrome 固定深色。
+            sable::dock::init(cx);
+            ui::theme::inject(cx);
+            sable::gpui_component::theme::Theme::change(
+                sable::gpui_component::ThemeMode::Dark,
+                None,
+                cx,
+            );
 
-        // 剪映 H3:打开即记录最近工程(recent.json,与开始界面共用)
-        home::record_recent(&root_dir);
+            // 剪映 H3:打开即记录最近工程(recent.json,与开始界面共用)
+            home::record_recent(&root_dir);
 
-        let bounds = Bounds::centered(None, size(px(1560.), px(950.)), cx);
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            titlebar: Some(sable::gpui::TitlebarOptions {
-                title: Some("CutForge".into()),
+            let bounds = Bounds::centered(None, size(px(1560.), px(950.)), cx);
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(sable::gpui::TitlebarOptions {
+                    title: Some("CutForge".into()),
+                    ..Default::default()
+                }),
                 ..Default::default()
-            }),
-            ..Default::default()
-        };
+            };
 
-        let base = base.clone();
-        let token = args.token.clone();
-        let root_for_view = root_dir.clone();
-        cx.open_window(options, move |window, cx| {
-            let shell = app::DesktopApp::new(base, token, root_for_view, window, cx);
-            cx.new(|cx| Root::new(shell, window, cx))
-        })
-        .expect("桌面壳开窗失败:gpui 平台层初始化异常(显卡驱动/显示服务)");
+            let base = base.clone();
+            let token = args.token.clone();
+            let root_for_view = root_dir.clone();
+            cx.open_window(options, move |window, cx| {
+                let shell = app::DesktopApp::new(base, token, root_for_view, window, cx);
+                cx.new(|cx| Root::new(shell, window, cx))
+            })
+            .expect("桌面壳开窗失败:gpui 平台层初始化异常(显卡驱动/显示服务)");
 
-        cx.activate(true);
-    });
+            cx.activate(true);
+        });
 }

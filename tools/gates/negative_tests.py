@@ -2,11 +2,14 @@
 # -*- coding: utf-8 -*-
 """门禁反面测试(工程纪律 §8.2-2:每条门禁配一个"注入缺陷应红灯"的负例)。
 
-用例清单(审查报告 v2 §4 BUG-15 / §8 / §9.4 A-08):
+用例清单(审查报告 v2 §4 BUG-15 / §8 / §9.4 A-08 / §9.7):
     TC-GATE-001 (BUG-15): 向 CORE-FILES 注入不存在路径 → gate M0/license 反例非零退出(exit=2);
                           真实清单 → 通过(exit=0)。红-绿双向证明存在性校验生效。
     TC-GATE-002 (BUG-18): 桌面壳 Box::leak 扫描器对注入缺陷必须命中;并报告当前树真实命中。
     TC-GATE-003 (A-08):  桌面壳裸色值扫描器对注入缺陷必须命中;并报告当前树真实命中。
+    TC-GATE-004 (§9.7):  桌面壳动效散写 ms 扫描器(Animation::new 直写 from_millis)
+                          对注入缺陷必须命中;附当前树真实命中。
+    TC-DESK-ICON-002 (A-09): 字形字面量扫描器对注入字形必须命中;并报告当前树真实命中。
 
 运行:python tools/gates/negative_tests.py [--json]
 退出码:0=全部反面测试通过(门禁能红,即门禁健在);2=有反面测试失败(门禁腐化)。
@@ -23,7 +26,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.gates import m0, run_milestone  # noqa: E402
-from tools.gates.a1 import _DESKTOP_BARE_COLOR_RX, _desktop_rs_hits  # noqa: E402
+from tools.gates.a1 import (  # noqa: E402
+    _DESKTOP_BARE_COLOR_RX,
+    _DESKTOP_GLYPH_RX,
+    _DESKTOP_MAGIC_MS_RX,
+    _desktop_rs_hits,
+)
 
 OK = "OK"
 GATE_FAILED = "GATE_FAILED"
@@ -111,13 +119,56 @@ def tc_gate_003() -> tuple[bool, str, dict]:
                                                   "real_hits": [f"{f}:{n}" for f, n, _s in real]}
 
 
+def tc_gate_004() -> tuple[bool, str, dict]:
+    """散写动效 ms 扫描器:注入 Animation::new 直写 from_millis 的临时目录必须命中;
+    附当前树真实命中报告(报告模式)。"""
+    with tempfile.TemporaryDirectory(prefix="tc-gate-004-") as td:
+        bad = Path(td) / "fixture.rs"
+        bad.write_text(
+            "fn f() { el.with_animation(id, Animation::new(Duration::from_millis(200)), |e, d| e) }\n",
+            encoding="utf-8",
+        )
+        Path(td, "clean.rs").write_text(
+            "fn g() { let t = Duration::from_millis(100); }\n", encoding="utf-8"
+        )
+        hits = _desktop_rs_hits(_DESKTOP_MAGIC_MS_RX.pattern, root=Path(td))
+        if [(f, n) for f, n, _s in hits] != [("fixture.rs", 1)]:
+            return False, f"TC-GATE-004 失败: 注入散写 ms 未被精确命中: {hits}", {}
+    real = _desktop_rs_hits(_DESKTOP_MAGIC_MS_RX.pattern)
+    return True, (f"TC-GATE-004 通过: 扫描器对注入缺陷精确命中;当前树真实命中 {len(real)} 处"
+                  f"(报告模式;动效时长应引用 ui/fx.rs token)"), {"seed_hit": True,
+                                                          "real_hits": [f"{f}:{n}" for f, n, _s in real]}
+
+
+def tc_desk_icon_002() -> tuple[bool, str, dict]:
+    """字形字面量扫描器(TC-DESK-ICON-002):注入字形(✂)的临时目录必须命中;
+    ×(乘号单位)不在字形集——注入 × 的行必须不命中;附当前树真实命中。"""
+    with tempfile.TemporaryDirectory(prefix="tc-desk-icon-002-") as td:
+        bad = Path(td) / "fixture.rs"
+        bad.write_text('fn f() { btn.child("✂ 分割") }\n', encoding="utf-8")
+        Path(td, "unit.rs").write_text('fn g() { label("2.0×") }\n', encoding="utf-8")
+        hits = _desktop_rs_hits(_DESKTOP_GLYPH_RX.pattern, root=Path(td))
+        if [(f, n) for f, n, _s in hits] != [("fixture.rs", 1)]:
+            return False, f"TC-DESK-ICON-002 失败: 注入字形未被精确命中(×误报/漏报): {hits}", {}
+    real = _desktop_rs_hits(_DESKTOP_GLYPH_RX.pattern)
+    return True, (f"TC-DESK-ICON-002 通过: 字形扫描器对注入精确命中且 × 单位不误报;"
+                  f"当前树真实命中 {len(real)} 处"), {"seed_hit": True,
+                                            "real_hits": [f"{f}:{n}" for f, n, _s in real]}
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="CutForge 门禁反面测试(TC-GATE-001/002/003)")
+    parser = argparse.ArgumentParser(description="CutForge 门禁反面测试(TC-GATE-001~004 + TC-DESK-ICON-002)")
     parser.add_argument("--json", action="store_true", help="输出 JSON 结果协议")
     args = parser.parse_args(argv)
 
     results: list[dict] = []
-    for name, fn in (("TC-GATE-001", tc_gate_001), ("TC-GATE-002", tc_gate_002), ("TC-GATE-003", tc_gate_003)):
+    for name, fn in (
+        ("TC-GATE-001", tc_gate_001),
+        ("TC-GATE-002", tc_gate_002),
+        ("TC-GATE-003", tc_gate_003),
+        ("TC-GATE-004", tc_gate_004),
+        ("TC-DESK-ICON-002", tc_desk_icon_002),
+    ):
         try:
             ok, msg, data = fn()
         except Exception as exc:  # noqa: BLE001
@@ -126,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
 
     all_ok = all(r["ok"] for r in results)
     envelope = {"ok": all_ok, "code": OK if all_ok else GATE_FAILED,
-                "message": ("3 条反面测试全部通过(被测门禁均能正确红灯)"
+                "message": ("5 条反面测试全部通过(被测门禁均能正确红灯)"
                             if all_ok else
                             "反面测试失败(被测门禁腐化): " + "; ".join(r["name"] for r in results if not r["ok"])),
                 "data": {"results": results}}

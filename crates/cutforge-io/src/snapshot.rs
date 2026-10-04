@@ -109,6 +109,59 @@ pub fn snapshot_if_due(
     write_snapshot(root, &snapshots_dir, keep).map(Some)
 }
 
+/// 最新快照的 rev(按 rev 数值序;无快照 = None)。
+/// R-13②③ 的「快照存在性」判定唯一入口(open 快照优先装载 / persist 空闲压实)。
+pub fn latest_snapshot_rev(root: &Path) -> Option<u64> {
+    list_snapshots(&root.join(SNAPSHOTS_DIR))
+        .into_iter()
+        .next_back()
+        .map(|(rev, _)| rev)
+}
+
+/// 读取快照 r<rev> 的 base 工程(R-13②:`replay_from_snapshot` 的回放起点)。
+/// 目录/project.json 缺失、非法 JSON 或未过契约(含 v1 迁移)→ None
+/// ——调用方一律按「快照不可信」回退全量装载,绝不带病起跳。
+pub fn read_snapshot_base(root: &Path, rev: u64) -> Option<cutforge_core::model::Project> {
+    let text = std::fs::read_to_string(snapshot_dir(root, rev).join("project.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    cutforge_core::model::Project::from_value(&value)
+        .or_else(|_| cutforge_core::model::migrate_from_value(&value))
+        .ok()
+}
+
+/// 读取快照 r<rev> 的 oplog 全量副本(分片按文件名升序拼接;保留原 ts)。
+/// 任一非空行不是完整合法 Op → None(副本不可信,调用方回退全量装载)。
+/// R-13② 撤销栈前缀重建的数据源:被压实截掉的 rev ≤ S 前缀仍可经此恢复
+/// (护城河 6:OpLog 即历史——盘面截断不等于历史丢失)。
+pub fn read_snapshot_ops(root: &Path, rev: u64) -> Option<Vec<cutforge_core::oplog::Op>> {
+    let dir = snapshot_dir(root, rev).join("oplog");
+    let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .collect();
+    files.sort();
+    let mut out = Vec::new();
+    for file in files {
+        let content = std::fs::read(&file).ok()?;
+        for line in content.split(|&b| b == b'\n') {
+            if line.iter().all(|&b| b.is_ascii_whitespace()) {
+                continue;
+            }
+            let op: cutforge_core::oplog::Op = serde_json::from_slice(line).ok()?;
+            out.push(op);
+        }
+    }
+    Some(out)
+}
+
+/// 快照目录 `.cutforge/snapshots/r<rev>/`。
+fn snapshot_dir(root: &Path, rev: u64) -> PathBuf {
+    root.join(SNAPSHOTS_DIR).join(format!("r{rev}"))
+}
+
 /// 无条件快照当前 rev(到期判定外的直写口;persist 管线不直呼,测试与手动面用)。
 pub fn write_snapshot(root: &Path, snapshots_dir: &Path, keep: usize) -> io::Result<PathBuf> {
     let rev_text = std::fs::read_to_string(root.join(".cutforge/rev")).unwrap_or_default();

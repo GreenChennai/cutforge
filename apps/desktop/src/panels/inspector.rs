@@ -28,6 +28,7 @@ use sable::widgets::tokens::{ColorTokens, FONT_SIZE_CAPTION};
 
 use crate::app::DesktopApp;
 use crate::state::Snapshot;
+use crate::ui::icon::Icon;
 
 /// 数值字段域表(步长/范围/单位;不在表内的数值字段走缺省档)。
 const NUMERIC: &[(&str, f64, f64, f64, &str)] = &[
@@ -390,7 +391,8 @@ impl Render for InspectorPanel {
             .gap(px(SpacingTokens::XS))
             .child(action_button(
                 "insp-split",
-                "✂ 分割@播放头",
+                Icon::Scissors,
+                "分割@播放头",
                 &colors,
                 app.clone(),
                 {
@@ -403,7 +405,8 @@ impl Render for InspectorPanel {
             ))
             .child(action_button(
                 "insp-dup",
-                "⧉ 副本@播放头",
+                Icon::Copy,
+                "副本@播放头",
                 &colors,
                 app.clone(),
                 {
@@ -416,7 +419,8 @@ impl Render for InspectorPanel {
             ))
             .child(action_button(
                 "insp-del",
-                "✕ 删除",
+                Icon::Trash,
+                "删除",
                 &colors,
                 app.clone(),
                 {
@@ -636,6 +640,7 @@ fn summarize(value: &serde_json::Value) -> String {
 /// 片段操作按钮(点击 → weak 升级 → params 闭包现算 → submit)。
 fn action_button(
     id: &'static str,
+    icon: Icon,
     label: &'static str,
     colors: &ColorTokens,
     app: WeakEntity<DesktopApp>,
@@ -652,6 +657,10 @@ fn action_button(
         .text_color(colors.text_primary)
         .hover(|s| s.bg(colors.border_subtle))
         .cursor_pointer()
+        .flex()
+        .items_center()
+        .gap(px(3.0))
+        .child(icon.icon_at(14.0, colors.text_primary))
         .child(label.to_string())
         .on_click(move |_: &ClickEvent, _, cx: &mut App| {
             if let Some(app) = app.upgrade() {

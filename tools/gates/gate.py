@@ -12,7 +12,7 @@
 
 门禁工程纪律(§8.2,全文见 CONTRIBUTING.md「门禁工程纪律」):
 1. 宣称即证据——结论必须附可复现命令 + 退出码 + 关键输出;
-2. 门禁要有反面测试——python tools/gates/negative_tests.py(TC-GATE-001/002/003);
+2. 门禁要有反面测试——python tools/gates/negative_tests.py(TC-GATE-001~004 + TC-DESK-ICON-002);
 3. 门禁扫描面显式化——crates/800、apps/desktop/600、apps/web js/400 分列,登记在 CONTRIBUTING.md。
 """
 from __future__ import annotations

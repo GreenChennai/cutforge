@@ -17,6 +17,7 @@ use sable::widgets::tokens::FONT_SIZE_CAPTION;
 
 use crate::app::DesktopApp;
 use crate::app::shortcut_rows;
+use crate::ui::fx;
 
 pub struct SettingsPanel {
     app: WeakEntity<DesktopApp>,
@@ -88,6 +89,7 @@ impl Render for SettingsPanel {
                 "-".to_string(),
             ));
         let weak = self.app.clone();
+        let weak_motion = weak.clone();
 
         // —— 剪辑行为 ——
         let snap_row = PropertyRow::new("吸附").control(
@@ -121,6 +123,48 @@ impl Render for SettingsPanel {
                         .text_size(px(FONT_SIZE_CAPTION))
                         .text_color(colors.text_secondary)
                         .child("片段边缘 · 工程起点 · 播放头(容差 8px)"),
+                ),
+            ),
+        );
+
+        // —— 外观与动效(§9.7:reduced-motion 总控;fx 全局闸桥接 sable 库侧)——
+        let reduced = fx::reduced_motion();
+        let motion = section(
+            "外观与动效",
+            v_flex().gap(px(SpacingTokens::XS)).child(
+                PropertyRow::new("减弱动态效果").control(
+                    div()
+                        .id("set-reduced-motion")
+                        .px(px(SpacingTokens::SM))
+                        .py(px(3.0))
+                        .rounded_sm()
+                        .text_size(px(FONT_SIZE_CAPTION))
+                        .cursor_pointer()
+                        .when(reduced, |s| {
+                            s.bg(colors.accent).text_color(colors.surface_0)
+                        })
+                        .when(!reduced, |s| {
+                            s.bg(colors.surface_2)
+                                .text_color(colors.text_secondary)
+                                .hover(|s| s.bg(colors.border_subtle))
+                        })
+                        .child(if reduced { "已减弱" } else { "正常" })
+                        .on_click(move |_, _, cx: &mut App| {
+                            fx::set_reduced_motion(!fx::reduced_motion());
+                            if let Some(app) = weak_motion.upgrade() {
+                                app.update(cx, |app, cx| {
+                                    app.status = format!(
+                                        "动效 {}",
+                                        if fx::reduced_motion() {
+                                            "已减弱"
+                                        } else {
+                                            "正常"
+                                        }
+                                    );
+                                    cx.notify();
+                                });
+                            }
+                        }),
                 ),
             ),
         );
@@ -243,6 +287,7 @@ impl Render for SettingsPanel {
             .p(px(SpacingTokens::SM))
             .gap(px(SpacingTokens::SM))
             .child(behavior)
+            .child(motion)
             .child(playback)
             .child(kernel)
             .children(shortcut_sections)

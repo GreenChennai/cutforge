@@ -111,8 +111,8 @@ pub(crate) static REGISTRY: &[Binding] = &[
     key("view.zoomIn",  "视图", "时间轴放大", "+ / =", "+",  false, false, true),
     key("view.zoomOut", "视图", "时间轴缩小", "−",      "-", false, false, true),
     // ---- 按钮/手势入口(速查展示;实装在面板与传输条) ----
-    gesture("loop.toggle",       "播放", "当前片段 A→B 循环(传输条 ↻)",                 "循环按钮"),
-    gesture("mute.toggle",       "播放", "静音开关(传输条 🔊/🔇;无声卡提示 toast)",      "静音按钮"),
+    gesture("loop.toggle",       "播放", "当前片段 A→B 循环(传输条循环键)",                 "循环按钮"),
+    gesture("mute.toggle",       "播放", "静音开关(传输条音量/静音键;无声卡提示 toast)",      "静音按钮"),
     gesture("quality.toggle",    "播放", "流畅(引擎直解码)/ 精确(逐帧 render_frame)",   "画质按钮"),
     gesture("capture.screenshot","播放", "当前帧落 <工程>/screenshots/(预览右下)",       "截图按钮"),
     gesture("view.immersive",    "视图", "收起其他面板只留预览(非系统全屏;Esc 退出)",    "沉浸按钮"),

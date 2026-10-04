@@ -21,6 +21,20 @@
 
 ### 新增
 
+- **V2-W3a OpLog 压实接线(R-13 收口)+ 桌面壳视觉基础层(A-08/A-09/§9.7)**:
+  **io**——open 快照优先装载(`replay_from_snapshot`+增量双栈,**引擎内存保全量虚拟
+  历史**,护城河「OpLog 即历史」在压实后成立;不可信自动回退全量路径绝不静默);
+  persist 写尾自动压实(廉价头窗门+整行校验+逐分片原子重写);真实文件级回归
+  TC-IO-SNAP-003(压实前后四面相等)/004(kill -9 三态自愈)/005(快照缺失拒绝压实);
+  **desktop**——`ui/theme.rs` 三层 token 与 web tokens.css **自动平价测试逐值对拍**
+  (62 原始+32 语义/组件槽,任一侧漂移即红;跨壳同源优先于 §9.3 提案色,裁决已注记),
+  sable `theme::inject` 桥接,WCAG AA 对比表+守门测试,三处既有裸色值清零;
+  `ui/icon.rs`+46 个内嵌 SVG(web 15 个逐字同源+31 个 NLE 自绘),panels 全部文本
+  字形清零(含"卑"乱码,TC-DESK-ICON-002 零命中);`ui/fx.rs` 动效 token
+  (80/160/240+三族 easing+reduced-motion 总控接 sable anim,zone 角标散写收编);
+  纯度扫描三项零命中(可转阻断);桌面壳测试 95 全绿;ui-taste 8.5/10。
+  **io 另登记新发现既有 bug 候选**:serde_json 缺省解析 17 位浮点 1 ULP 漂移可致
+  check_window_drift 假阳性 CONFLICT(建议 feature 开关或比较容差,另立票)。
 - **V2-W2 性能与架构轮(工单 docs/tickets/V2-W2-*,审查报告 v2 §5/§7/§4)**:
   **KERNEL2(R-12/R-13/A-05)**——apply 去全量 clone(`engine/revert.rs` 逆向回滚令牌,
   五条失败路径逐字节相等)+ schema 增量校验(`engine/validate.rs` 受影响子树+全局

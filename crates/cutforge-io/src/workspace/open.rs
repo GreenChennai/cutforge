@@ -192,8 +192,6 @@ impl Workspace {
         if let Some(d) = disk_rev {
             rev = rev.max(d);
         }
-        let (undo_stack, redo_stack) = cutforge_core::engine::rebuild_stacks(log.ops());
-        let persisted = log.len();
 
         // notes.json(标注):缺失 = 空存储;存在则必须过 notes.schema
         let (notes, notes_value) = match std::fs::read_to_string(root.join(NOTES_REL)) {
@@ -226,9 +224,65 @@ impl Workspace {
         }
         file_states.insert("notes.json".to_string(), notes_value);
 
-        let engine =
-            Engine::restore_with_stacks(project, log, rev, undo_stack, redo_stack, file_states)
+        // R-13② 快照优先装载:最新 `.cutforge/snapshots/r<S>/` 存在且可信 →
+        // `replay_from_snapshot(base, S, rev>S 后缀)` 重建头态(rev 链从 S+1 起
+        // 强校验,残留前缀幂等由 core::retained_ops 保证);撤销/重做双栈 =
+        // 快照前缀重建 + 后缀折叠(`rebuild_stacks_incremental`,与全量重建
+        // 逐语义相等)。引擎内存 OpLog 保持**全量虚拟历史**(前缀取自未压实的
+        // 盘面日志或快照 oplog 副本)——护城河 6(OpLog 即历史)在压实后依然
+        // 成立:跨压实边界的 undo/redo 所需 Op 全在内存。任一环节不可信
+        //(旧日志缺 rev / rev 链断裂 / 快照残缺 / rev 对账不齐)→ stderr 警告
+        //(绝不静默)+ 回退既有全量路径(该路径零变化)。
+        let mut snapshot_state = None;
+        if let Some(s_rev) = crate::snapshot::latest_snapshot_rev(root) {
+            match load_from_snapshot(root, s_rev, &log, rev) {
+                Ok(state) => snapshot_state = Some(state),
+                Err(reason) => eprintln!(
+                    "[cutforge-io][warn] 快照优先装载放弃(r{s_rev} 不可信),回退全量装载: {reason}"
+                ),
+            }
+        }
+
+        let (engine, persisted) = match snapshot_state {
+            Some(state) => {
+                // 全量虚拟日志:前缀(快照侧权威)+ 后缀(rev > S,盘面实况)
+                let mut log = cutforge_core::oplog::OpLog::new();
+                for op in &state.prefix_ops {
+                    log.push_loaded(op.clone());
+                }
+                for op in &state.suffix_ops {
+                    log.push_loaded(op.clone());
+                }
+                let (undo_stack, redo_stack) = cutforge_core::engine::rebuild_stacks_incremental(
+                    cutforge_core::engine::rebuild_stacks(&state.prefix_ops),
+                    &state.suffix_ops,
+                );
+                let engine = Engine::restore_with_stacks(
+                    state.project,
+                    log,
+                    rev,
+                    undo_stack,
+                    redo_stack,
+                    file_states,
+                )
                 .map_err(|errs| io::Error::other(errs.join("; ")))?;
+                (engine, state.persisted)
+            }
+            None => {
+                let (undo_stack, redo_stack) = cutforge_core::engine::rebuild_stacks(log.ops());
+                let persisted = log.len();
+                let engine = Engine::restore_with_stacks(
+                    project,
+                    log,
+                    rev,
+                    undo_stack,
+                    redo_stack,
+                    file_states,
+                )
+                .map_err(|errs| io::Error::other(errs.join("; ")))?;
+                (engine, persisted)
+            }
+        };
 
         // 最近落盘值快照(落盘 diff 用)
         let mut files = BTreeMap::new();
@@ -261,6 +315,74 @@ impl Workspace {
             report,
         ))
     }
+}
+
+/// R-13② 快照优先装载的中间态(纯装载,无磁盘副作用)。
+struct SnapshotState {
+    /// 快照时刻工程(replay_from_snapshot 的 base)经后缀回放后的**头态**。
+    project: Project,
+    /// rev ≤ S 的前缀 Op(撤销栈前缀重建 + 虚拟全量日志的前半)。
+    prefix_ops: Vec<cutforge_core::oplog::Op>,
+    /// rev > S 的后缀 Op(retained_ops;虚拟全量日志的后半)。
+    suffix_ops: Vec<cutforge_core::oplog::Op>,
+    /// 已落盘 Op 数口径:盘面仍持完整前缀 = 盘面 Op 数;盘面已截 = 后缀数。
+    persisted: usize,
+}
+
+/// 快照优先装载(R-13②):以快照 r<S> 为基线做增量回放,返回引擎构造所需
+/// 中间态。返回 Err = 快照面不可信/与盘面不衔接,调用方回退全量装载
+/// (报告原因,绝不静默)。装载本身只读,无任何磁盘副作用。
+fn load_from_snapshot(
+    root: &Path,
+    s_rev: u64,
+    log: &cutforge_core::oplog::OpLog,
+    rev: u64,
+) -> Result<SnapshotState, String> {
+    let ops = log.ops();
+    // 旧日志缺 rev:无法证明「被截前缀 ⊆ 快照覆盖面」→ 放弃(compact::plan 同口径)
+    if ops.iter().any(|o| o.rev.is_none()) {
+        return Err("oplog 存在缺 rev 的旧格式 Op".to_string());
+    }
+    let base = crate::snapshot::read_snapshot_base(root, s_rev)
+        .ok_or_else(|| "快照 project.json 缺失或未过契约".to_string())?;
+    let split = ops.partition_point(|o| o.rev.unwrap_or(0) <= s_rev);
+    let suffix_ops: Vec<cutforge_core::oplog::Op> = ops[split..].to_vec();
+    // 前缀来源二选一:
+    // - 盘面日志仍完整覆盖 1..=S(未压实/截断中断态)→ 直接取盘面
+    //  (追加序 = rev 序,首条 rev=1 且 rev≤S 恰有 S 条 ⇔ 连续无缺);
+    // - 盘面已截 → 取快照 oplog 副本,并整链校验恰为 1..=S(残缺即放弃)。
+    let disk_prefix_complete =
+        ops.first().and_then(|o| o.rev) == Some(1) && split == s_rev as usize;
+    let (prefix_ops, persisted) = if disk_prefix_complete {
+        (ops[..split].to_vec(), ops.len())
+    } else {
+        let snap_ops = crate::snapshot::read_snapshot_ops(root, s_rev)
+            .ok_or_else(|| "快照 oplog 副本缺失或含非法行".to_string())?;
+        let contiguous = snap_ops.len() == s_rev as usize
+            && snap_ops
+                .iter()
+                .enumerate()
+                .all(|(i, o)| o.rev == Some(i as u64 + 1));
+        if !contiguous {
+            return Err("快照 oplog 副本非完整 1..=S 前缀".to_string());
+        }
+        (snap_ops, suffix_ops.len())
+    };
+    // 增量回放(rev 链从 S+1 起强校验;断链/乱序 = 快照与日志不衔接 → 放弃)
+    let replayed = Engine::replay_from_snapshot(base, s_rev, &suffix_ops)
+        .map_err(|e| format!("增量回放失败: {e:?}"))?;
+    if replayed.rev() != rev {
+        return Err(format!(
+            "rev 对账不一致:回放到 {},盘面对账为 {rev}(存在缺口,走全量装载)",
+            replayed.rev()
+        ));
+    }
+    Ok(SnapshotState {
+        project: replayed.project().clone(),
+        prefix_ops,
+        suffix_ops,
+        persisted,
+    })
 }
 
 /// 测试夹具:从仓库回归样本搭建完整工程目录(0.5 新布局/中文目录;旧布局夹具见

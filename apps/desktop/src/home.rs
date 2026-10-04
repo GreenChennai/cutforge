@@ -12,12 +12,14 @@ use sable::gpui::WeakEntity;
 use sable::gpui::prelude::FluentBuilder as _;
 use sable::gpui::{
     App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, div, hsla,
-    px,
+    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
 use sable::widgets::theme::theme;
 use sable::widgets::tokens::{FONT_SIZE_CAPTION, FONT_SIZE_HEADING};
+
+use crate::ui::icon::Icon;
+use crate::ui::theme as cf_theme;
 
 /// recent.json 读写。
 fn recent_path() -> Option<PathBuf> {
@@ -182,9 +184,8 @@ fn recent_card(
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(px(20.0))
-                .text_color(colors.text_secondary)
-                .child("▸"),
+                // A-09:封面占位字形 → SVG 图标(首帧封面留第 4 波)
+                .child(Icon::Play.icon_at(20.0, colors.text_secondary)),
         )
         .child(
             v_flex()
@@ -260,14 +261,14 @@ impl Render for HomeApp {
                     .child(
                         v_flex()
                             .gap(px(SpacingTokens::LG))
-                            // hero:新建工程渐变卡
+                            // hero:新建工程品牌色块(§9.6 ①:第 4 波换首帧封面)
                             .child(
                                 div()
                                     .id("home-new")
                                     .h(px(120.0))
                                     .w_full()
                                     .rounded(px(8.0))
-                                    .bg(hsla(0.58, 0.55, 0.35, 1.0))
+                                    .bg(cf_theme::semantic().accent)
                                     .flex()
                                     .items_center()
                                     .justify_center()
@@ -291,9 +292,8 @@ impl Render for HomeApp {
                                             .flex()
                                             .items_center()
                                             .justify_center()
-                                            .text_size(px(16.0))
-                                            .text_color(colors.text_primary)
-                                            .child("+"),
+                                            // A-09:占位字形 → SVG 图标
+                                            .child(Icon::Plus.icon_at(16.0, colors.text_primary)),
                                     )
                                     .child(
                                         div()

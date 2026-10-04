@@ -250,12 +250,72 @@ def check_pytest_suite() -> CheckResult:
                        f"pytest tests 全绿({tail[-1] if tail else 'ok'})", {"tail": tail})
 
 
+# 图标字形口径(A-09/TC-DESK-ICON-002):NLE 图标用 Unicode 符号/emoji 充当的字形集。
+# 不含 ×(U+00D7 乘号):它是数值单位排版(如 "2.0×"),与 % 同族,非图标。
+_DESKTOP_GLYPH_RX = re.compile(
+    r"[▶◀❚↶↷✂⧉✕❄⇤⚖♪▣▸⤢📋🔇🔊卑⏮⏭▼▲◆●○■□✓✗➕]"
+)
+
+
+def check_desktop_glyph_icon() -> CheckResult:
+    """TC-DESK-ICON-002(审查报告 v2 A-09): 桌面壳禁文本字形作图标(报告模式,观察项)。
+    ui/icon.rs + assets/icons/*.svg(A-09)落地后字形字面量应清零;清零即可转阻断。
+    口径:扫描 apps/desktop/src/**/*.rs(豁免 ui/,同纯度/行数扫描),命中上面字形集
+    的非注释行;× 乘号是数值单位,不在字形集内。
+    反面测试:negative_tests.py TC-GATE-004 同批的字形注入夹具。"""
+    hits: list[tuple[str, int, str]] = []
+    base = REPO_ROOT / "apps" / "desktop" / "src"
+    for p in sorted(base.rglob("*.rs")):
+        rel = "/".join(p.relative_to(base).parts)
+        if "ui" in p.relative_to(base).parts:
+            continue
+        try:
+            text = p.read_text("utf-8", errors="replace")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            if line.strip().startswith("//"):
+                continue  # 注释/文档提及字形不算(实现面只看代码行)
+            if _DESKTOP_GLYPH_RX.search(line):
+                hits.append((rel, i, line.strip()[:120]))
+    if hits:
+        head = "; ".join(f"{f}:{n}" for f, n, _s in hits[:8])
+        return CheckResult("desktop-glyph-icon", False, False, GATE_FAILED,
+                           f"报告模式(观察,不阻断): 发现 {len(hits)} 处字形字面量"
+                           f"(待 Icon 枚举替换): {head}", {"hits": hits})
+    return CheckResult("desktop-glyph-icon", False, True, OK,
+                       "apps/desktop/src 零图标字形(A-09 清零,可转阻断)", {"hits": []})
+
+
+# 散写动效 ms 口径(TC-GATE-004/§9.7):gpui 动画构造处的毫秒字面量。
+# 只扫 Animation::new(动效时长)——泵/看门狗/测试 sleep 的 ms 是 IO 节拍,不属动效纪律。
+_DESKTOP_MAGIC_MS_RX = re.compile(r"Animation::new\(\s*Duration::from_millis\(")
+
+
+def check_desktop_magic_ms() -> CheckResult:
+    """TC-GATE-004(审查报告 v2 §9.7): 桌面壳动效散写 ms 扫描(报告模式,观察项)。
+    ui/fx.rs(FX_PRESS 80/FX_PANEL 160/FX_VIEW 240 + easing 三族)是动效时长
+    唯一定义点;Animation::new(Duration::from_millis(..)) 直写即散写。
+    扫描面 apps/desktop/src/**/*.rs(豁免 ui/);转阻断条件:全绿后随 GATES 收口轮翻转。
+    反面测试:negative_tests.py TC-GATE-004。"""
+    hits = _desktop_rs_hits(_DESKTOP_MAGIC_MS_RX.pattern)
+    if hits:
+        head = "; ".join(f"{f}:{n}" for f, n, _s in hits[:8])
+        return CheckResult("desktop-magic-ms", False, False, GATE_FAILED,
+                           f"报告模式(观察,不阻断): 发现 {len(hits)} 处散写动效 ms"
+                           f"(待收编 ui/fx.rs): {head}", {"hits": hits})
+    return CheckResult("desktop-magic-ms", False, True, OK,
+                       "apps/desktop/src 零散写动效 ms(fx token 唯一定义点)", {"hits": []})
+
+
 CHECKS_A1: dict[str, tuple[Callable[[], CheckResult], bool]] = {
     "bench-threshold": (check_bench_threshold, False),  # bench.py 未落库前为观察 SKIP(T1.8)
     "cargo-clippy": (check_cargo_clippy, True),
     "cargo-test-workspace": (check_cargo_test_workspace, True),
     "desktop-box-leak": (check_desktop_box_leak, False),    # TC-GATE-002;BUG-18 清零后转阻断
     "desktop-color-purity": (check_desktop_color_purity, False),  # TC-GATE-003;A-08 落地后转阻断
+    "desktop-glyph-icon": (check_desktop_glyph_icon, False),      # TC-DESK-ICON-002;A-09 清零后转阻断
+    "desktop-magic-ms": (check_desktop_magic_ms, False),          # TC-GATE-004;§9.7 观察项
     "desktop-line-limit": (check_desktop_line_limit, False),      # G-1;A-02 落地后转阻断
     "e2e-events": (check_e2e_events, True),
     "e2e-static": (check_e2e_static, True),

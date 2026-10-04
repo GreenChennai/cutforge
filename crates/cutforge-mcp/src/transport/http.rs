@@ -516,7 +516,9 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
                 .to_string(),
             )
         } else {
-            let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(&root_p));
+            // R-10 消费侧收口:走宿主 pin 表(逐请求 ensure 在 Weak 生命周期下
+            // 会每请求一个 seq=0 的新 hub,since 语义即废)
+            let hub = crate::workspace_svc::sync_hub_for(Path::new(&root_p));
             let wait = Duration::from_millis(900);
             let body = match hub.wait_since(since, wait) {
                 Some(seq) => {

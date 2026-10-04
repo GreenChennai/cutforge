@@ -189,6 +189,35 @@ mod tests {
         assert!(detect_stale(&q).is_none(), "活进程新锁不是恢复对象");
         drop(_g);
         assert!(detect_stale(&q).is_none(), "锁已释放更不是");
+        // 陈旧但持锁进程活着(锁龄超 + 心跳过期 + pid 活)→ 不是恢复对象。
+        // 两平台等价口径:不再依赖"某硬编码 pid 恰好死"(Linux pid=1 恒活,
+        // 曾致 conformance 用例在 CI 翻红)。伪造"陈旧现场"必须配必死 pid。
+        let r2 = lib.join("aged-alive");
+        make_project(&r2);
+        let alive_lock = r2.join(".cutforge/lock");
+        crate::library::write_atomic(
+            &alive_lock,
+            format!(
+                "pid={} boot= ts={}",
+                std::process::id(),
+                now_ms().saturating_sub(120_000) as u64
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&alive_lock)
+                .unwrap();
+            f.set_modified(
+                std::time::SystemTime::now()
+                    .checked_sub(std::time::Duration::from_millis(120_000))
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+        assert!(detect_stale(&r2).is_none(), "陈旧但 pid 活 → 不是恢复对象");
         // 执行恢复:清锁 + OpLog 一致性校验(rev 归 0,零 Op)
         let report = recover(&p).unwrap();
         assert!(report.lock_cleared);

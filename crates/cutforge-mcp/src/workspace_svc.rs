@@ -207,6 +207,27 @@ pub fn resolve_root_arg(arg: &str) -> Result<PathBuf, String> {
 /// 端口占用时的换端口搜索窗(与 cli doctor 的 PORT_WINDOW 同一口径:+1..+20)。
 const PORT_WINDOW: u16 = 20;
 
+/// SyncHub 宿主登记(R-10 消费侧收口):进程级强引用表,绑定工程根的 SyncHub
+/// 一经 pin 常驻到进程退出——守护线程不退、事件 seq 跨请求单调,长轮询降级面
+/// (workspace 通道与辅通道共用)的 since 语义由此成立。
+pub(crate) fn sync_hub_for(root: &Path) -> std::sync::Arc<cutforge_io::watcher::SyncHub> {
+    static HUBS: std::sync::OnceLock<
+        std::sync::Mutex<
+            std::collections::HashMap<PathBuf, std::sync::Arc<cutforge_io::watcher::SyncHub>>,
+        >,
+    > = std::sync::OnceLock::new();
+    let mut map = HUBS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if let Some(h) = map.get(root) {
+        return h.clone();
+    }
+    let h = cutforge_io::watcher::ensure_sync_daemon(root);
+    map.insert(root.to_path_buf(), h.clone());
+    h
+}
+
 /// 工作区常驻服务(M10 本地服务化):静态托管 Web 编辑器 + /rpc + /events +
 /// /session 会话信息 + /media(E2)+ /media/browse 与 /ui-fields(E3/E4)。
 /// S-01:随机主 token 不再落盘/入响应体——`.cutforge/session`(0600)只记
@@ -220,7 +241,10 @@ pub fn serve_workspace(
     web_dir: &Path,
     open_browser: bool,
 ) -> i32 {
-    let _ = cutforge_io::watcher::ensure_sync_daemon(root);
+    // R-10 消费侧收口:ensure_sync_daemon 的注册表持 Weak——强引用全丢则守护
+    // 线程退出、seq 归零,长轮询 since 语义即废。serve 进程是 SyncHub 的宿主:
+    // 启动即 pin(强引用常驻),长轮询分支复用同一 hub(sync_hub_for)。
+    let _pinned = sync_hub_for(root);
     if let Err(e) = serve_preflight(root, web_dir) {
         eprintln!("启动中止:{e}");
         return 3;
@@ -423,19 +447,30 @@ fn handle_workspace_conn(
     // ---- S-01/BUG-10/S-04 鉴权面(单一实现,不再整段 contains) ----
     // ① 主 token Bearer(值精确相等/恒定时间;头名大小写不敏感;重复头与续行拒绝);
     // ② 已兑换的会话 token Bearer(S-01 一次性凭据兑换产物);
-    // ③ URL ?token=(S-01 兼容一版:key 精确切分 + 恒定时间比较;响应带 Deprecation 头)。
+    // ③ URL ?token= 查询参数面(两态,恒定时间比较):
+    //    - master(兼容一版,响应带 Deprecation 头,下版移除);
+    //    - 会话 token(S-01 设计内通道:EventSource/媒体元素无法带 Authorization 头,
+    //      壳的 SSE 建流与 <img>/<video> src 物理上只能走查询参数,会话 token 必须
+    //      可经此面使用;该面非弃用对象,不判 Deprecation)。
     let presented = bearer_value(&req.head);
     let master_ok = check_auth(&req.head, token);
     let session_ok = presented
         .as_deref()
         .is_some_and(crate::session::is_session_token);
-    let url_token_ok = !master_ok
+    let url_token = query_param(query, "token");
+    let url_master_ok = !master_ok
         && !session_ok
-        && query_param(query, "token")
+        && url_token
+            .as_deref()
             .is_some_and(|t| constant_time_eq(t.as_bytes(), token.as_bytes()));
-    let authorized = master_ok || session_ok || url_token_ok;
-    // S-01:URL token 鉴权的响应必须带 Deprecation 头(下版移除该兼容面)
-    let deprecation = if url_token_ok {
+    let url_session_ok = !master_ok
+        && !session_ok
+        && url_token
+            .as_deref()
+            .is_some_and(crate::session::is_session_token);
+    let authorized = master_ok || session_ok || url_master_ok || url_session_ok;
+    // S-01:仅 master 走 URL 面时判弃用(会话 token 经 URL 是设计内通道)
+    let deprecation = if url_master_ok {
         "Deprecation: true\r\n"
     } else {
         ""
@@ -632,7 +667,9 @@ fn handle_workspace_conn(
         let since: u64 = query_param(query, "since")
             .and_then(|v| v.parse().ok())
             .unwrap_or(0);
-        let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(root));
+        // R-10:用宿主 pin 的同一 hub(seq 跨请求单调),不得逐请求 ensure
+        // (Weak 生命周期下那会每请求一个 seq=0 的新 hub)
+        let hub = sync_hub_for(Path::new(root));
         let v = match hub.wait_since(since, std::time::Duration::from_millis(900)) {
             Some(seq) => {
                 json!({"ok": true, "code": "OK", "event": "workspace.changed", "seq": seq})

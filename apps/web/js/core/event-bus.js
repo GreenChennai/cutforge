@@ -47,7 +47,8 @@ function dispatch(topic, data) {
 }
 
 /** 启动事件通道(SSE 主 + 长轮询降级;幂等)。EventSource 无法带 Authorization 头,
- * 走数据面查询参数通道(服务端 first_line 含 token= 即鉴权,同 /media 契约)。 */
+ * 走数据面查询参数兼容通道;S-01 起主调传入的是会话引导换出的 sessionToken
+ * (master 不经此面;服务端对查询参数面回 Deprecation 头,兼容一版)。 */
 export function startEvents(token, bootstrapSeq = 0) {
   if (started) return;
   started = true;

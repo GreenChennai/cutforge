@@ -103,7 +103,7 @@ def main() -> int:
         while time.time() < deadline:
             try:
                 code, _, body, _ = raw_get(port, f"/session?token={token}")
-                if code == 200 and b'"token"' in body:
+                if code == 200 and b'"credential"' in body and b'"sessionId"' in body:
                     ready = True
                     break
             except OSError:
@@ -124,7 +124,7 @@ def main() -> int:
                 f"{p} Content-Type 应 {ctype}*,实得 {hdrs.get('content-type')}"
             print(f"兼容 {p} → {ctype}(内容字节一致,{dt * 1000:.1f}ms): PASS")
         code, _, body, _ = raw_get(port, f"/session?token={token}")
-        assert code == 200 and b'"port"' in body, "token 查询参数流(数据面)必须照常"
+        assert code == 200 and b'"sessionId"' in body, "token 查询参数流(数据面)必须照常(S-01:体含会话元数据,不再含主 token)"
         print("兼容 /session?token= 查询参数流: PASS")
 
         # 2) 目录化:serve 已就绪后新落 js/x.js,零 Rust 改动、零重启立即可达

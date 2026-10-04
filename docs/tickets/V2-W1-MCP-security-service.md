@@ -18,4 +18,20 @@ S-03(插件强制层:Unix ulimit 包裹+声明层确认+违规禁用;Windows 留
 - tool_parity 对拍暂为 exit 2:确定性失败 text_add(serve 线程 panic 于 cutforge-core/src/engine/apply.rs:66「轨道 startMs 升序不变量」debug_assert,内核轮 BUG-05/A-03 在途代码)与 render_run 首调(同源级联),连带 23 个 DRIFT(op 序列移位)。已用保留 serve stderr 的驱动脚本取证。内核轮稳定并再生成金样后,本工单 golden delta 与对拍自然收敛。
 - R-14 落在 MCP 层(常驻 HashSet 索引 + O(1) 预检);内核 has_request_id 全扫仍是正确性底线(core 不在本工单文件域)。
 - S-03 强制层落在 cutforge-mcp::plugin 公开 API(check_filesystem_access/authorize_call/disable_plugin/process_spawn_command);cli plugin-call 拉起点的接线属 cli 文件域,后续轮换用 authorize_call 即可。
+- S-01 壳侧迁移与契约随行(2026-10-05,web-e2e E2 预览红了之后当场收口):
+  ① apps/web 会话引导迁一次性凭据流(boot:URL master 仅作引导凭据 → GET /session 拿
+  {sessionId,credential} → exchangeSession(POST /session/exchange,Bearer=credential,
+  quietAuth 不触发全局鉴权横幅)换 sessionToken → setToken 覆盖(master 不驻留全局);
+  applySession 增第二参显式传 sessionToken(projectStore.token 供媒体元素 src 查询参数面);
+  startEvents(sessionToken);exchange 失败回退 sess.token/URL token 并 console.warn,旧 serve 可用。
+  ② 服务端契约随行(声明越界一行):workspace_svc 查询参数面扩为「master(判 Deprecation)
+  或会话 token(设计内通道,不判)」——EventSource/媒体元素无法带 Authorization 头,
+  会话 token 必须可走 ?token= 面,否则壳 SSE/媒体全 401;http.rs 辅通道同口径。
+  ③ R-10 消费侧收口:IO 轮把 ensure_sync_daemon 注册表改 Weak 生命周期后,长轮询逐请求
+  ensure 会"每请求一个 seq=0 的新 hub"(e2e_events 长轮询 20 轮全 MISS 实证)——新增
+  sync_hub_for 进程级宿主登记(强引用常驻,workspace 通道启动 pin + 两通道长轮询复用)。
+  ④ tools/e2e_static.py 会话断言窄改(工单授权范围):就绪探测与查询参数流断言从
+  '"token" in body' 改为 '"credential"'+'"sessionId"'(S-01 新契约)。
+  e2e:preview/events/edit_ops/ui_smoke/static/hotkeys 六份全 PASS;cargo test -p cutforge-mcp
+  EXIT=0(97)、clippy --all-targets EXIT=0。
 - R-09 并发缺陷联合验收修复(2026-10-05):根因 = 摘键式逐出(evict/_clear_for_tests 把 cell 摘出 map,在途借用的旧 Arc 与新建 cell 双锁并存 → 同工程真并发;原全局锁实现"查+插+用"同锁故无此窗口)。修法 = **cell 身份恒定**:Entry API 原子 get-or-insert + cell 入 map 永不摘除,逐出一律逻辑逐出(置 Option=None);强化测试 RESIDENT-002(8 线程×50 笔 barrier 冷启动并发 miss,max=1)与新增 RESIDENT-003(4 工程×3 线程混合负载,同工程 max=1 + 全局峰值≥2 双断言);resident 三连绿(--test-threads=8)、全 lib 8 测试线程两连绿(65/65)、cargo test -p cutforge-mcp EXIT=0(97)、clippy --all-targets EXIT=0。

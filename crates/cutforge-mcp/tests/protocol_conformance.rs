@@ -883,7 +883,10 @@ fn library_migrate_recover_full_chain() {
     );
     assert_eq!(r["code"], json!("OK"), "{r}");
     std::fs::create_dir_all(p.join(".cutforge")).unwrap();
-    // R-02 同源判据:锁龄 ≥30s(ts 拨旧)+ pid 死 + 心跳过期(mtime 拨旧)
+    // R-02 同源判据:锁龄 ≥30s(ts 拨旧)+ pid 死 + 心跳过期(mtime 拨旧)。
+    // 死 pid 必须两平台都"不存在":pid=1 在 Linux 是 init/systemd(恒活),
+    // /proc/1 存在 → detect_stale 判"持锁进程还在" → 不入恢复清单(Linux CI 红根因)。
+    let dead = cutforge_io::probe::definitely_dead_pid();
     let stale_ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -891,7 +894,7 @@ fn library_migrate_recover_full_chain() {
         .saturating_sub(120_000);
     std::fs::write(
         p.join(".cutforge/lock"),
-        format!("pid=1 boot= ts={stale_ts}").as_bytes(),
+        format!("pid={dead} boot= ts={stale_ts}").as_bytes(),
     )
     .unwrap();
     {

@@ -53,12 +53,16 @@ export function onNetOk(cb) { netOkCbs.add(cb); return () => netOkCbs.delete(cb)
 
 function authHeaders(extra) {
   const h = { ...(extra || {}) };
-  if (token) h["Authorization"] = `Bearer ${token}`;
+  // S-01:显式传入的 Authorization 优先(会话引导用一次性凭据换会话 token 时,
+  // 全局 token 尚是引导凭据,不得覆盖调用方显式给出的 Bearer)
+  const hasAuth = Object.keys(h).some((k) => k.toLowerCase() === "authorization");
+  if (!hasAuth && token) h["Authorization"] = `Bearer ${token}`;
   return h;
 }
 
-/** 底层 fetch:超时(AbortController)+ 401 分流;返回 {status, json} 或抛网络错。 */
-async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT_TIMEOUT_MS, headers = {} } = {}) {
+/** 底层 fetch:超时(AbortController)+ 401 分流;返回 {status, json} 或抛网络错。
+ * quietAuth=true 时 401 不触发全局 authFail 回调(会话引导等自有降级路径用)。 */
+async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT_TIMEOUT_MS, headers = {}, quietAuth = false } = {}) {
   const ctrl = new AbortController();
   const timer = timeoutMs > 0
     ? setTimeout(() => ctrl.abort("timeout"), timeoutMs)
@@ -73,7 +77,7 @@ async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT
     });
     for (const cb of netOkCbs) cb(); // 传输层活着(A2 接线:断连横幅恢复信号)
     if (resp.status === 401) {
-      for (const cb of authFailCbs) cb();
+      if (!quietAuth) for (const cb of authFailCbs) cb();
       return { status: 401, json: null };
     }
     const json = await resp.json().catch(() => null);
@@ -85,6 +89,32 @@ async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * S-01 会话引导:一次性短期凭据兑换会话 token(POST /session/exchange;
+ * Bearer=credential + body {sessionId};成功 → {sessionToken})。
+ * 主 token 不经此面(服务端契约:响应体永不含 master)。
+ * @param {string} credential /session 下发的一次性凭据(5 分钟/单次/绑 sessionId)
+ * @param {string} sessionId 服务会话 id(凭据绑定校验)
+ * @returns {Promise<string|null>} 会话 token;失败(旧内核/凭据过期/已消费)→ null
+ */
+export async function exchangeSession(credential, sessionId) {
+  if (!credential || !sessionId) return null;
+  try {
+    const { status, json } = await rawFetch("/session/exchange", {
+      method: "POST",
+      body: { sessionId },
+      headers: { Authorization: `Bearer ${credential}` },
+      quietAuth: true, // 自有降级路径:401 不触发全局鉴权横幅/ toast
+    });
+    if (status === 200 && json && typeof json.sessionToken === "string" && json.sessionToken) {
+      return json.sessionToken;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 数据面 GET(白名单校验;事件轮询经 pollOnce)。

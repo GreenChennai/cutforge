@@ -1,7 +1,7 @@
 /* CutForge 编辑器壳 · 引导与装配(T2.1;≤100 行纪律)。
  * 单向流:手势 → commands → api → projector → store → 增量渲染。
  * 旧 id 兼容红线见 TESTIDS.md;壳纯度:投影只读 + ephemeral.*(ADR-0013)。 */
-import { setToken, setSessionRoot, onAuthFail, dataGet } from "./core/api.js";
+import { setToken, setSessionRoot, onAuthFail, dataGet, exchangeSession } from "./core/api.js";
 import { projectStore, timelineStore, selectionStore, uiStore, ephemeralStore } from "./core/store.js";
 import { reproject, refreshConflicts, refreshUiFields, applySession, selfTestRebuild, invalidateWorkspace } from "./core/projector.js";
 import * as commands from "./core/commands.js";
@@ -88,15 +88,32 @@ async function boot() {
   if (sess.token && sess.token !== urlToken) {
     uiStore.set({ tokenBanner: "⚠ 本页 token 与服务当前 token 不一致,请改用服务窗口打印的最新链接。" });
   }
+  // S-01 会话引导迁移:页面仍以 ?token=<master> 进入(兼容版)→ GET /session 拿
+  // {sessionId, credential} → POST /session/exchange(Bearer=credential)换
+  // sessionToken → 数据面与 SSE 一律用 sessionToken,master 不落任何全局态。
+  // 兑换失败(旧内核无该端点 / 凭据过期)→ 回退旧行为并 console.warn,保证壳对
+  // 老 serve 仍可用(sess.token 存在用它,否则沿用 URL token 兼容面)。
+  let sessionToken = await exchangeSession(sess.credential, sess.sessionId);
+  if (sessionToken) {
+    setToken(sessionToken); // 覆盖引导凭据:此后数据面 Bearer / 媒体 src / SSE 全走会话 token
+  } else {
+    if (sess.credential) {
+      console.warn("[session] 一次性凭据兑换失败,回退兼容 token 面(后续版本移除;排查:凭据是否已消费/过期、sessionId 是否匹配)");
+    } else {
+      console.warn("[session] 旧内核未提供一次性凭据,沿用既有 token 行为(建议升级 cutforge-mcp ≥ S-01 版)");
+    }
+    sessionToken = sess.token || urlToken;
+    setToken(sessionToken);
+  }
   setSessionRoot(sess.root);
-  applySession(sess);
+  applySession(sess, sessionToken);
   $("session-info").textContent = `root=${sess.root}`;
   await refreshUiFields();   // 检查器真相源先行(旧壳顺序)
   await reproject();         // 投影 → store → 增量渲染(#rev 翻牌,e2e 就绪锚点)
   await refreshConflicts();
   await mediaPanel.initialMediaBrowse();
   ensureCatalogs();          // 转场/特效/花字目录预热(面板各自也会 ensure,幂等)
-  startEvents(sess.token);
+  startEvents(sessionToken);
   // 册六 T6.1:v2/v1 工程迁移提示条(可关,常驻入口在「工程」菜单)+ 崩溃残留锁提示
   mountMigrateNotice();
   checkRecoverBanner();

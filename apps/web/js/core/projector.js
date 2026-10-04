@@ -165,11 +165,13 @@ export async function selfTestRebuild() {
   return { ok: before === after, before, after };
 }
 
-/** 导出会话根(api.rpcArgs 注入用)。 */
-export function applySession(sess) {
+/** 导出会话根(api.rpcArgs 注入用)。
+ * S-01:token = 会话引导换出的 sessionToken(主调显式传入;媒体元素 src 的
+ * 查询参数面消费它);第二参缺省时回退 sess.token(旧内核兼容)。 */
+export function applySession(sess, sessionToken = "") {
   ps.set({
     root: sess.root,
-    token: sess.token || "",
+    token: sessionToken || sess.token || "",
     projectRel: sess.projectRel || "05_时间线工程/project.json",
   });
 }

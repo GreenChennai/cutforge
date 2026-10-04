@@ -40,9 +40,10 @@ const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 /// SSE 流寿命封顶:到点优雅收流,浏览器 EventSource 自动重连(带 Last-Event-ID 续传)。
 const SSE_LIFETIME: Duration = Duration::from_secs(30 * 60);
 
-/// SSE 响应头。`Connection: keep-alive` 是本服务唯一的显式长连接形态(连接纪律
+/// SSE 响应头(`Connection: keep-alive` 是本服务唯一的显式长连接形态(连接纪律
 /// 见 transport::http:普通响应一律 `Connection: close` 短连接)。
-const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n";
+/// 头区结束的空行由 run_sse_stream 统一补写(附加头插槽之后)。
+const SSE_HEAD: &str = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n";
 
 /// 一条事件:自增 seq + 事件名 + 负载(data 内已注入 ok/code/event/seq——
 /// 老字段一个不少,与新老客户端共用同一套解析)。
@@ -220,24 +221,20 @@ fn watch_loop(root: &Path, hub: &EvHub) {
 /// SSE 入口(两通道共用):解析起点 → 建/取 Hub → 跑流。起点语义:
 /// 显式 `since=N` 或 `Last-Event-ID: N` → 从 N 补发(滚出窗即 resync);
 /// 都没给 → 只推当下(EventSource 首连不该吞历史)。
+/// `extra_headers`:调用侧附加响应头(每行自带 \r\n;S-01 的 Deprecation 由此透出)。
 pub(crate) fn serve_sse(
     stream: &mut TcpStream,
     root: &Path,
     query: &str,
     last_event_id: Option<&str>,
+    extra_headers: &str,
 ) -> std::io::Result<()> {
     let hub = ensure_ev_hub(root);
-    let since_q = query.split('&').find_map(|kv| {
-        let mut it = kv.split('=');
-        match (it.next(), it.next()) {
-            (Some("since"), Some(v)) => v.parse::<u64>().ok(),
-            _ => None,
-        }
-    });
+    let since_q = super::http::query_param(query, "since").and_then(|v| v.parse::<u64>().ok());
     let leid = last_event_id.and_then(|v| v.trim().parse::<u64>().ok());
     let since = since_q.or(leid).unwrap_or_else(|| hub.current());
     hub.clients.fetch_add(1, Ordering::Relaxed);
-    let r = run_sse_stream(stream, &hub, since);
+    let r = run_sse_stream(stream, &hub, since, extra_headers);
     hub.clients.fetch_sub(1, Ordering::Relaxed);
     r
 }
@@ -245,9 +242,18 @@ pub(crate) fn serve_sse(
 /// 在既有连接上跑 SSE 流:先回响应头 + `: connected` 注释(探针据此确认建立),
 /// 随后逐事件写 `id:`/`event:`/`data:` 帧;空闲期以 `: ping` 注释保活。
 /// 写失败(客户端离开)或寿命到顶即返回,连接关闭;浏览器端 EventSource 自动重连。
-fn run_sse_stream(stream: &mut TcpStream, hub: &EvHub, mut since: u64) -> std::io::Result<()> {
+fn run_sse_stream(
+    stream: &mut TcpStream,
+    hub: &EvHub,
+    mut since: u64,
+    extra_headers: &str,
+) -> std::io::Result<()> {
     stream.set_write_timeout(Some(READ_TIMEOUT))?;
     stream.write_all(SSE_HEAD.as_bytes())?;
+    if !extra_headers.is_empty() {
+        stream.write_all(extra_headers.as_bytes())?;
+    }
+    stream.write_all(b"\r\n")?;
     stream.write_all(b": connected\n\n")?;
     stream.flush()?;
     let deadline = Instant::now() + SSE_LIFETIME;

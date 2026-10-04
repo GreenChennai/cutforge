@@ -13,6 +13,7 @@
      "backend": "cutforge",
      "cached": false,
      "format": "png",
+     "framePath": ".cutforge/render-cache/frame/<FRAME>.png",
      "key": "<FRAME_KEY>",
      "media": ".cutforge/render-cache/frame/<FRAME>.png",
      "path": "<TMP>/proot/.cutforge/render-cache/frame/<FRAME>.png"

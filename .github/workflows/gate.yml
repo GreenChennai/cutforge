@@ -20,8 +20,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      # A1 册级门禁(D-A2 注册制)不整挂进 CI:全量 cargo test/clippy + tool_parity +
-      # e2e + bench 阈值由本机册收官统一执行 —— python tools/gates/gate.py A1(§1.4)
+      # A1 册级门禁(D-A2 注册制)不整挂进 CI:全量 cargo test + tool_parity + e2e + bench
+      # 阈值由本机册收官统一执行 —— python tools/gates/gate.py A1(§1.4);
+      # clippy 已单独挂 clippy-gates job(G-3,见下)。
       - name: Milestone gates (CI-runnable subset; M2-M6 本地阻断,见 docs/FLOW.md)
         run: |
           python tools/gates/gate.py M0 --json
@@ -56,6 +57,60 @@ jobs:
       - name: MCP tool parity golden check (AC-1.2)
         if: hashFiles('tools/bench/tool_parity.py') != ''
         run: python3 tools/bench/tool_parity.py --json
+
+  # G-3(审查报告 v2 §8.1): clippy -D warnings 进 CI(此前只在本地册收官人工跑,会漏)。
+  # 预期注记(V2-W1-GATES 挂载时点):本地预跑因并行动工波次(cutforge-mcp io/安全在制品
+  # 的 3 处 lint:progress.rs let_unit_value / resident.rs type_complexity / doc list)暂红,
+  # 基线归因见工单报告;波次集成后由主会话统一验证转绿,本 job 即恢复把关效力。
+  # 注:A1 行数红线(rust-line-limit)与 bench 阈值本轮仍不挂 CI——crates/ 现存多个 >800 行
+  # 文件(A-01/A-02/A-05 拆分波进行中,详见 docs/A8-ITERATION-SUMMARY.md 订正段),挂了永红。
+  # 启用条件:① rust-line-limit——上述拆分波落地、`gate.py A1 --check rust-line-limit` 转绿后,
+  # 以 `python tools/gates/gate.py A1 --check rust-line-limit --json` 形态挂回;
+  # ② bench 阈值——bench 基线在共享 runner 可复现(安静时段双跑抖动 <5%)后挂回。
+  clippy-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install ffmpeg + gpui Linux 系统库(--all-targets 会编译 apps/desktop,同 rust-gates)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libgbm-dev libfontconfig-dev libxcb1-dev libx11-dev libudev-dev libasound2-dev pkg-config
+      - name: cargo clippy --workspace --all-targets -D warnings (A1-2/G-3)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  # G-6(审查报告 v2 §8.1): check-write-paths(命令通道唯一性,项目立身之本)进 CI,
+  # 随 M2 全册一次跑齐(覆盖率/往返/撤销/wasm/依赖方向)。
+  # 预期注记(V2-W1-GATES 挂载时点):本地预跑 M2 为红(退出码 2),归因两处、均不在本工单改动面——
+  # ① 基线存量:media_library.rs:369 生产代码 std::fs::write 旁路(册六 media_import 落库时
+  #    写路径纪律不在 CI 而漏检,G-6 预言的失效模式实证)+ mcp→render 违规依赖边
+  #    (HEAD crates/cutforge-mcp/Cargo.toml:14 既有);② 并行波次在制品:scratch.rs 新增 2 处
+  #    (IO 耐久工单 copy_tree 改造中)。本 job 挂载即为把这两类违规显式化;波次集成、
+  #    上述违规收口后由主会话统一验证转绿。
+  # G-4 check_changelog(警告级)随本 job 生效:PR 传 base sha 做真 diff,push 无基准自然跳过;
+  # 升级红线条件见 CONTRIBUTING.md「门禁扫描面登记」。
+  kernel-gates:
+    runs-on: ubuntu-latest
+    env:
+      CUTFORGE_CHANGELOG_BASE: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # G-4 需要 PR base 提交对象可 diff
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown   # M2-5 wasm-core 构建
+      - name: Install cargo-llvm-cov(M2-1 覆盖率门禁依赖)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Milestone gates M2(write-paths G-6 + 覆盖率/往返/撤销/wasm/依赖方向 + changelog G-4)
+        run: python tools/gates/gate.py M2 --json
 
   web-e2e:
     runs-on: ubuntu-latest

@@ -11,7 +11,10 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// 生成唯一临时目录(不自动存在,调用方按需创建)。
 pub fn temp_dir(tag: &str) -> PathBuf {
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
     let n = SEQ.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!("cutforge-{tag}-{}-{ts}-{n}", std::process::id()))
 }

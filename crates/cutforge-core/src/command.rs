@@ -210,13 +210,24 @@ pub enum Command {
     /// 删除片段。
     ClipDelete { clip_id: String },
     /// 移动片段(改起点,可选换轨;换轨必须同 kind)。
-    ClipMove { clip_id: String, new_start_ms: u64, to_track: Option<String> },
+    ClipMove {
+        clip_id: String,
+        new_start_ms: u64,
+        to_track: Option<String>,
+    },
     /// 新增片段(overlay_add/sfx_add 等非幂等写由此承接,须带 request_id 去重)。
-    ClipInsert { to_track: String, clip: Clip, request_id: Option<String> },
+    ClipInsert {
+        to_track: String,
+        clip: Clip,
+        request_id: Option<String>,
+    },
     /// 合并相邻两片段(left 在前且边界相接;无损逆操作)。
     ClipMerge { left_id: String, right_id: String },
     /// 新增空轨道(M10 多轨管理;id 由 Engine 按 kind 确定性生成)。
-    TrackAdd { kind: crate::model::TrackKind, request_id: Option<String> },
+    TrackAdd {
+        kind: crate::model::TrackKind,
+        request_id: Option<String>,
+    },
     /// 设置/合并工程级背景乐(doc.bgm;工程尚无 bgm 时 patch 必须携带 src)。
     BgmSet { patch: BgmPatch },
     /// 清除工程级背景乐(已无 bgm 时幂等)。
@@ -225,7 +236,12 @@ pub enum Command {
     /// roll 相邻边界双边联动(总时长不变)/ slip 内容平移(sourceInMs 平移,
     /// 时间线占位不变)/ slide 位置平移(贴合邻居让位/压缩)。
     /// 硬约束(时长>0、不越 0、无重叠)违反返回既有 InvariantViolation/NotAdjacent。
-    ClipTrim { clip_id: String, mode: TrimMode, edge: TrimEdge, delta_ms: i64 },
+    ClipTrim {
+        clip_id: String,
+        mode: TrimMode,
+        edge: TrimEdge,
+        delta_ms: i64,
+    },
     /// 播放头处**所有轨**命中的片段一次全分割(单 Op;切点在片段内部才切)。
     ClipSplitAll { t_ms: u64 },
     /// 轨道属性 patch(幂等;None 字段不改)。
@@ -234,20 +250,32 @@ pub enum Command {
     ClipGapDelete { track_id: String, t_ms: u64 },
     /// 批量插入片段(册四 A4 T4.7 subtitle_import):单 Op 原子——任一片段
     /// id 重复或落点重叠则整批拒绝;id 已由派发层确定性分配。
-    ClipsInsert { to_track: String, clips: Vec<Clip>, request_id: Option<String> },
+    ClipsInsert {
+        to_track: String,
+        clips: Vec<Clip>,
+        request_id: Option<String>,
+    },
     /// 批量改片段属性(册四 A4 T4.7 subtitle_replace 批量替换):单 Op 原子,
     /// 每个 (clipId, patch) 独立按字段合并;任一 clipId 不存在则整批拒绝。
     ClipsPatch { updates: Vec<(String, ClipPatch)> },
     /// 复合片段打包(册五 T5.4/ADR-0019):选中多片段打包为一个复合片段
     /// (单 Op 原子;原片段移除,子时间线 = 选中片段按 startMs 升序的局部时间域;
     /// 守卫:全部在视频轨、两两不重叠且首尾相接、不得含复合片段——深度上限两级)。
-    CompoundCreate { clip_ids: Vec<String>, to_track: String, start_ms: u64, request_id: Option<String> },
+    CompoundCreate {
+        clip_ids: Vec<String>,
+        to_track: String,
+        start_ms: u64,
+        request_id: Option<String>,
+    },
     /// 复合片段解包(册五 T5.4/ADR-0019):复合片段还原为子片段落回所在轨
     /// (单 Op 原子;局部时间域平移回主时间线,id 重新确定性分配;逆操作)。
     CompoundUnbind { clip_id: String },
     /// 单轨多点分割(册五 T5.4 scene_detect 自动切段):给定轨上**严格包含**
     /// 任一切点的片段一次全切(单 Op 原子;切点不在片段内部时不切)。
-    TrackSplitAt { track_id: String, t_points: Vec<u64> },
+    TrackSplitAt {
+        track_id: String,
+        t_points: Vec<u64>,
+    },
 }
 
 /// `clip_trim` 模式(册四 A4 T4.2):trim 单边/roll 双边联动/slip 内容/slide 位置。
@@ -269,8 +297,8 @@ pub enum TrimEdge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
     use crate::model::FxEntry;
+    use serde_json::Value;
 
     fn clip() -> Clip {
         serde_json::from_value(serde_json::json!({
@@ -288,10 +316,18 @@ mod tests {
             duration_ms: Some(8000),
             source_in_ms: Some(12100),
             speed: Some(1.25),
-            speed_curve: Some(vec![SpeedPoint { at_ms: 0, speed: 1.25 }]),
+            speed_curve: Some(vec![SpeedPoint {
+                at_ms: 0,
+                speed: 1.25,
+            }]),
             reverse: Some(false),
             rotation: Some(0.0),
-            crop: Some(Crop { x: 0, y: 0, w: 320, h: 240 }),
+            crop: Some(Crop {
+                x: 0,
+                y: 0,
+                w: 320,
+                h: 240,
+            }),
             flip: Some("none".into()),
             volume: Some(0.8),
             denoise: Some("high".into()),
@@ -299,12 +335,25 @@ mod tests {
             opacity: Some(0.5),
             scale: Some(1.1),
             text: Some("字幕".into()),
-            text_style: Some(crate::text_style::TextStyle { color: Some("#FFCC00".into()), ..Default::default() }),
-            huazi: Some(crate::text_style::Huazi { template: "hz.pop".into(), params: None }),
+            text_style: Some(crate::text_style::TextStyle {
+                color: Some("#FFCC00".into()),
+                ..Default::default()
+            }),
+            huazi: Some(crate::text_style::Huazi {
+                template: "hz.pop".into(),
+                params: None,
+            }),
             huazi_clear: false,
             freeze_ms: Some(300),
-            transition: Some(TransitionPatch { type_: Some("fade".into()), dur_ms: Some(300.0), ..Default::default() }),
-            motion: Some(MotionPatch { in_: Some("fadeIn".into()), ..Default::default() }),
+            transition: Some(TransitionPatch {
+                type_: Some("fade".into()),
+                dur_ms: Some(300.0),
+                ..Default::default()
+            }),
+            motion: Some(MotionPatch {
+                in_: Some("fadeIn".into()),
+                ..Default::default()
+            }),
             fx: None,
             keyframes: None,
             grade: None,
@@ -320,7 +369,15 @@ mod tests {
         assert_eq!(c.speed_curve.as_ref().unwrap().len(), 1);
         assert_eq!(c.reverse, Some(false));
         assert_eq!(c.rotation, Some(0.0));
-        assert_eq!(c.crop, Some(Crop { x: 0, y: 0, w: 320, h: 240 }));
+        assert_eq!(
+            c.crop,
+            Some(Crop {
+                x: 0,
+                y: 0,
+                w: 320,
+                h: 240
+            })
+        );
         assert_eq!(c.flip.as_deref(), Some("none"));
         assert_eq!(c.volume, Some(0.8));
         assert_eq!(c.denoise.as_deref(), Some("high"));
@@ -347,7 +404,11 @@ mod tests {
     #[test]
     fn same_value_patch_yields_no_changes() {
         let mut c = clip();
-        let changes = ClipPatch { volume: Some(1.0), ..Default::default() }.apply_to(&mut c);
+        let changes = ClipPatch {
+            volume: Some(1.0),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
         assert!(changes.is_empty(), "同值字段不得计入变更");
     }
 
@@ -358,12 +419,23 @@ mod tests {
         let mut c = clip(); // volume=1.0,无新字段
         let changes = ClipPatch {
             speed_curve: Some(vec![
-                SpeedPoint { at_ms: 0, speed: 0.5 },
-                SpeedPoint { at_ms: 1000, speed: 2.0 },
+                SpeedPoint {
+                    at_ms: 0,
+                    speed: 0.5,
+                },
+                SpeedPoint {
+                    at_ms: 1000,
+                    speed: 2.0,
+                },
             ]),
             reverse: Some(true),
             rotation: Some(-90.0),
-            crop: Some(Crop { x: 10, y: 0, w: 160, h: 120 }),
+            crop: Some(Crop {
+                x: 10,
+                y: 0,
+                w: 160,
+                h: 120,
+            }),
             flip: Some("h".into()),
             ..Default::default()
         }
@@ -382,17 +454,36 @@ mod tests {
         assert_eq!(cn["w"], serde_json::json!(160));
         assert_eq!(m.get("/flip").unwrap().1, serde_json::json!("h"));
         assert_eq!(c.speed_curve.as_ref().unwrap().len(), 2);
-        assert_eq!(c.crop, Some(Crop { x: 10, y: 0, w: 160, h: 120 }));
+        assert_eq!(
+            c.crop,
+            Some(Crop {
+                x: 10,
+                y: 0,
+                w: 160,
+                h: 120
+            })
+        );
 
         // 同值重复应用:零变更(幂等)
         let changes = ClipPatch {
             speed_curve: Some(vec![
-                SpeedPoint { at_ms: 0, speed: 0.5 },
-                SpeedPoint { at_ms: 1000, speed: 2.0 },
+                SpeedPoint {
+                    at_ms: 0,
+                    speed: 0.5,
+                },
+                SpeedPoint {
+                    at_ms: 1000,
+                    speed: 2.0,
+                },
             ]),
             reverse: Some(true),
             rotation: Some(-90.0),
-            crop: Some(Crop { x: 10, y: 0, w: 160, h: 120 }),
+            crop: Some(Crop {
+                x: 10,
+                y: 0,
+                w: 160,
+                h: 120,
+            }),
             flip: Some("h".into()),
             ..Default::default()
         }
@@ -400,7 +491,11 @@ mod tests {
         assert!(changes.is_empty(), "同值整组替换不得计入变更: {changes:?}");
 
         // 部分合并:只改 rotation,其余保持(None 不改)
-        let changes = ClipPatch { rotation: Some(45.0), ..Default::default() }.apply_to(&mut c);
+        let changes = ClipPatch {
+            rotation: Some(45.0),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
         assert_eq!(changes.len(), 1);
         assert_eq!(c.rotation, Some(45.0));
         assert_eq!(c.flip.as_deref(), Some("h"), "未给出的字段不得被清掉");
@@ -420,7 +515,11 @@ mod tests {
 
         // 首次给出:只给 type/fx,其余字段缺席 → 新建对象且只含给出的字段
         let changes = ClipPatch {
-            transition: Some(TransitionPatch { type_: Some("wipeleft".into()), fx: Some("tr.demo".into()), ..Default::default() }),
+            transition: Some(TransitionPatch {
+                type_: Some("wipeleft".into()),
+                fx: Some("tr.demo".into()),
+                ..Default::default()
+            }),
             ..Default::default()
         }
         .apply_to(&mut c);
@@ -433,25 +532,43 @@ mod tests {
 
         // 部分覆盖:durMs/reason 合并进既有对象,type/fx 保持
         let changes = ClipPatch {
-            transition: Some(TransitionPatch { dur_ms: Some(420.0), reason: Some("topic".into()), ..Default::default() }),
+            transition: Some(TransitionPatch {
+                dur_ms: Some(420.0),
+                reason: Some("topic".into()),
+                ..Default::default()
+            }),
             ..Default::default()
         }
         .apply_to(&mut c);
         assert_eq!(changes.len(), 2);
         let tr = c.transition.as_ref().unwrap();
-        assert_eq!(tr.type_.as_deref(), Some("wipeleft"), "未给出的字段不得被清掉");
+        assert_eq!(
+            tr.type_.as_deref(),
+            Some("wipeleft"),
+            "未给出的字段不得被清掉"
+        );
         assert_eq!(tr.fx.as_deref(), Some("tr.demo"));
         assert_eq!(tr.dur_ms, Some(420.0));
         assert_eq!(tr.reason.as_deref(), Some("topic"));
 
         // Some 覆盖同名字段
         ClipPatch {
-            transition: Some(TransitionPatch { type_: Some("circleopen".into()), ..Default::default() }),
-            motion: Some(MotionPatch { in_: Some("slideInLeft".into()), in_ms: Some(280.0), ..Default::default() }),
+            transition: Some(TransitionPatch {
+                type_: Some("circleopen".into()),
+                ..Default::default()
+            }),
+            motion: Some(MotionPatch {
+                in_: Some("slideInLeft".into()),
+                in_ms: Some(280.0),
+                ..Default::default()
+            }),
             ..Default::default()
         }
         .apply_to(&mut c);
-        assert_eq!(c.transition.as_ref().unwrap().type_.as_deref(), Some("circleopen"));
+        assert_eq!(
+            c.transition.as_ref().unwrap().type_.as_deref(),
+            Some("circleopen")
+        );
         let m = c.motion.as_ref().unwrap();
         assert_eq!(m.in_.as_deref(), Some("slideInLeft"));
         assert_eq!(m.in_ms, Some(280.0));
@@ -459,8 +576,14 @@ mod tests {
 
         // 同值 patch 不产变更
         let changes = ClipPatch {
-            transition: Some(TransitionPatch { type_: Some("circleopen".into()), ..Default::default() }),
-            motion: Some(MotionPatch { in_ms: Some(280.0), ..Default::default() }),
+            transition: Some(TransitionPatch {
+                type_: Some("circleopen".into()),
+                ..Default::default()
+            }),
+            motion: Some(MotionPatch {
+                in_ms: Some(280.0),
+                ..Default::default()
+            }),
             ..Default::default()
         }
         .apply_to(&mut c);
@@ -477,7 +600,10 @@ mod tests {
         let changes = ClipPatch {
             fx: Some(FxSpec {
                 combo: Some(vec![
-                    FxEntry { fx: "fx.mono".into(), params: None },
+                    FxEntry {
+                        fx: "fx.mono".into(),
+                        params: None,
+                    },
                     FxEntry {
                         fx: "fx.grain".into(),
                         params: Some(serde_json::from_str(r#"{"strength":24}"#).unwrap()),
@@ -495,7 +621,13 @@ mod tests {
         assert_eq!(fx.combo.as_ref().unwrap()[1].fx, "fx.grain");
         // 覆盖:整对象替换(不逐项合并),combo 被换掉、in 槽位出现
         let changes = ClipPatch {
-            fx: Some(FxSpec { in_: Some(FxEntry { fx: "mo.fadeIn".into(), params: None }), ..Default::default() }),
+            fx: Some(FxSpec {
+                in_: Some(FxEntry {
+                    fx: "mo.fadeIn".into(),
+                    params: None,
+                }),
+                ..Default::default()
+            }),
             ..Default::default()
         }
         .apply_to(&mut c);
@@ -506,7 +638,13 @@ mod tests {
         assert_eq!(fx.in_.as_ref().unwrap().fx, "mo.fadeIn");
         // 同值不产变更
         let changes = ClipPatch {
-            fx: Some(FxSpec { in_: Some(FxEntry { fx: "mo.fadeIn".into(), params: None }), ..Default::default() }),
+            fx: Some(FxSpec {
+                in_: Some(FxEntry {
+                    fx: "mo.fadeIn".into(),
+                    params: None,
+                }),
+                ..Default::default()
+            }),
             ..Default::default()
         }
         .apply_to(&mut c);
@@ -519,31 +657,59 @@ mod tests {
     fn compound_patch_replaces_whole_object() {
         let mut c = clip();
         assert!(c.compound.is_none());
-        let spec = crate::model::CompoundSpec { canvas: None, clips: vec![
-            serde_json::from_value(serde_json::json!({
-                "id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000
-            })).unwrap(),
-            serde_json::from_value(serde_json::json!({
-                "id": "V1-002", "src": "blue.mp4", "startMs": 1000, "durationMs": 1000
-            })).unwrap(),
-        ] };
-        let changes = ClipPatch { compound: Some(spec.clone()), ..Default::default() }.apply_to(&mut c);
+        let spec = crate::model::CompoundSpec {
+            canvas: None,
+            clips: vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000
+                }))
+                .unwrap(),
+                serde_json::from_value(serde_json::json!({
+                    "id": "V1-002", "src": "blue.mp4", "startMs": 1000, "durationMs": 1000
+                }))
+                .unwrap(),
+            ],
+        };
+        let changes = ClipPatch {
+            compound: Some(spec.clone()),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].0, "/compound");
         assert_eq!(c.compound.as_ref().unwrap().clips.len(), 2);
         // 同值不产变更;None 不改
-        let changes = ClipPatch { compound: Some(spec.clone()), ..Default::default() }.apply_to(&mut c);
-        assert!(changes.is_empty(), "同值 compound 不得计入变更: {changes:?}");
-        let changes = ClipPatch { rotation: Some(45.0), ..Default::default() }.apply_to(&mut c);
+        let changes = ClipPatch {
+            compound: Some(spec.clone()),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
+        assert!(
+            changes.is_empty(),
+            "同值 compound 不得计入变更: {changes:?}"
+        );
+        let changes = ClipPatch {
+            rotation: Some(45.0),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
         assert_eq!(changes.len(), 1);
         assert_eq!(c.compound.as_ref().unwrap().clips.len(), 2, "None 不改");
         // 整对象替换:旧子 clips 不残留
-        let spec2 = crate::model::CompoundSpec { canvas: None, clips: vec![
-            serde_json::from_value(serde_json::json!({
-                "id": "V1-001", "src": "x.mp4", "startMs": 0, "durationMs": 500
-            })).unwrap(),
-        ] };
-        let changes = ClipPatch { compound: Some(spec2), ..Default::default() }.apply_to(&mut c);
+        let spec2 = crate::model::CompoundSpec {
+            canvas: None,
+            clips: vec![
+                serde_json::from_value(serde_json::json!({
+                    "id": "V1-001", "src": "x.mp4", "startMs": 0, "durationMs": 500
+                }))
+                .unwrap(),
+            ],
+        };
+        let changes = ClipPatch {
+            compound: Some(spec2),
+            ..Default::default()
+        }
+        .apply_to(&mut c);
         assert_eq!(changes.len(), 1);
         assert_eq!(c.compound.as_ref().unwrap().clips.len(), 1);
     }
@@ -553,11 +719,18 @@ mod tests {
     fn bgm_patch_merges_and_creates_with_schema_defaults() {
         let mut bgm: Option<crate::model::Bgm> = None;
         // 无 bgm 时只给 gainDb → 新建但 src 为空串(Engine 层拒绝此前置,见 engine 测试)
-        let changes = BgmPatch { gain_db: Some(-12.0), ..Default::default() }.apply_to(&mut bgm);
+        let changes = BgmPatch {
+            gain_db: Some(-12.0),
+            ..Default::default()
+        }
+        .apply_to(&mut bgm);
         let b = bgm.as_ref().unwrap();
         assert_eq!(b.gain_db, -12.0);
         assert_eq!(b.src, "");
-        assert!(b.ducking && b.loop_, "新建必须落 schema 默认 ducking=true/loop=true");
+        assert!(
+            b.ducking && b.loop_,
+            "新建必须落 schema 默认 ducking=true/loop=true"
+        );
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].0, "/bgm/gainDb");
 
@@ -576,11 +749,20 @@ mod tests {
         assert!(b.ducking);
 
         // 同值不产变更
-        let changes = BgmPatch { src: Some("02_音乐/bgm.mp3".into()), ..Default::default() }.apply_to(&mut bgm);
+        let changes = BgmPatch {
+            src: Some("02_音乐/bgm.mp3".into()),
+            ..Default::default()
+        }
+        .apply_to(&mut bgm);
         assert!(changes.is_empty(), "同值 bgm 字段不得计入变更");
 
         assert!(BgmPatch::default().is_empty());
-        assert!(!BgmPatch { src: Some("x".into()), ..Default::default() }.is_empty());
+        assert!(
+            !BgmPatch {
+                src: Some("x".into()),
+                ..Default::default()
+            }
+            .is_empty()
+        );
     }
-
 }

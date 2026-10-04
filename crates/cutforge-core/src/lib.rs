@@ -6,17 +6,19 @@
 //! 内核可在 wasm32 构建(M2-5 门禁)。
 
 pub mod anchor;
+pub mod clip_ops;
 pub mod command;
 mod compound_ir;
-mod grade_ir;
 pub mod engine;
+pub mod fx_registry;
+mod grade_ir;
 pub mod interop;
 pub mod keyframes;
 pub mod merge;
 pub mod model;
-mod patch_apply;
 pub mod notes;
 pub mod oplog;
+mod patch_apply;
 pub mod text_style;
 pub mod timeutil;
 

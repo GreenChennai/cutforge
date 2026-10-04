@@ -3,7 +3,7 @@
 //! 核心纪律:锚点重定位失败转 orphan **显式保留**,禁止静默丢弃;
 //! 结案回执必须带 opIds(把"标注结案"与"哪几个 Op 导致结案"绑定,可审计)。
 
-use crate::anchor::{relocate, Anchor, AnchorKind, AnchorState};
+use crate::anchor::{Anchor, AnchorKind, AnchorState, relocate};
 use crate::model::Project;
 use crate::timeutil;
 use serde::{Deserialize, Serialize};
@@ -90,8 +90,9 @@ impl NotesStore {
         if !errors.is_empty() {
             return Err(errors);
         }
-        let parsed: Vec<Note> = serde_json::from_value(v.get("items").cloned().unwrap_or(Value::Array(vec![])))
-            .map_err(|e| vec![format!("notes 反序列化失败: {e}")])?;
+        let parsed: Vec<Note> =
+            serde_json::from_value(v.get("items").cloned().unwrap_or(Value::Array(vec![])))
+                .map_err(|e| vec![format!("notes 反序列化失败: {e}")])?;
         Ok(Self { notes: parsed })
     }
 
@@ -120,7 +121,13 @@ impl NotesStore {
     }
 
     /// 新建标注(author=user 用户提需求 / author=agent AI 反向提问)。
-    pub fn add(&mut self, anchor: Anchor, body: String, author: NoteAuthor, tags: Vec<String>) -> &Note {
+    pub fn add(
+        &mut self,
+        anchor: Anchor,
+        body: String,
+        author: NoteAuthor,
+        tags: Vec<String>,
+    ) -> &Note {
         let note = Note {
             id: self.next_id(),
             anchor,
@@ -140,16 +147,30 @@ impl NotesStore {
     }
 
     /// 结案回执:state=resolved 并绑定 opIds(幂等:同回复重复结案无副作用)。
-    pub fn resolve(&mut self, id: &str, reply: String, op_ids: Vec<String>) -> Result<&Note, NoteReject> {
+    pub fn resolve(
+        &mut self,
+        id: &str,
+        reply: String,
+        op_ids: Vec<String>,
+    ) -> Result<&Note, NoteReject> {
         if reply.trim().is_empty() {
             return Err(NoteReject::EmptyReply(id.to_string()));
         }
         if op_ids.is_empty() {
-            return Err(NoteReject::EmptyReply(format!("{id}:结案必须至少绑定一个 Op")));
+            return Err(NoteReject::EmptyReply(format!(
+                "{id}:结案必须至少绑定一个 Op"
+            )));
         }
-        let note = self.notes.iter_mut().find(|n| n.id == id).ok_or_else(|| NoteReject::UnknownNote(id.to_string()))?;
+        let note = self
+            .notes
+            .iter_mut()
+            .find(|n| n.id == id)
+            .ok_or_else(|| NoteReject::UnknownNote(id.to_string()))?;
         if note.state == NoteState::Resolved {
-            let same = note.resolved_by.as_ref().is_some_and(|r| r.reply == reply && r.op_ids == op_ids);
+            let same = note
+                .resolved_by
+                .as_ref()
+                .is_some_and(|r| r.reply == reply && r.op_ids == op_ids);
             if same {
                 return Ok(note);
             }
@@ -163,7 +184,11 @@ impl NotesStore {
 
     /// 否决标注。
     pub fn reject(&mut self, id: &str, reason: String) -> Result<&Note, NoteReject> {
-        let note = self.notes.iter_mut().find(|n| n.id == id).ok_or_else(|| NoteReject::UnknownNote(id.to_string()))?;
+        let note = self
+            .notes
+            .iter_mut()
+            .find(|n| n.id == id)
+            .ok_or_else(|| NoteReject::UnknownNote(id.to_string()))?;
         note.state = NoteState::Rejected;
         note.rejected_reason = Some(reason);
         Ok(note)
@@ -171,11 +196,20 @@ impl NotesStore {
 
     /// 追加线程回复(册七 T7.5 note_reply):不改 state、不碰 resolved_by——
     /// 多轮对话是标注的讨论史,结案与否是另一件事;空回复拒绝,未知标注拒绝。
-    pub fn reply(&mut self, id: &str, author: NoteAuthor, body: String) -> Result<&Note, NoteReject> {
+    pub fn reply(
+        &mut self,
+        id: &str,
+        author: NoteAuthor,
+        body: String,
+    ) -> Result<&Note, NoteReject> {
         if body.trim().is_empty() {
             return Err(NoteReject::EmptyReply(id.to_string()));
         }
-        let note = self.notes.iter_mut().find(|n| n.id == id).ok_or_else(|| NoteReject::UnknownNote(id.to_string()))?;
+        let note = self
+            .notes
+            .iter_mut()
+            .find(|n| n.id == id)
+            .ok_or_else(|| NoteReject::UnknownNote(id.to_string()))?;
         note.thread.get_or_insert_with(Vec::new).push(NoteReply {
             at: timeutil::now_rfc3339(),
             author,
@@ -186,7 +220,10 @@ impl NotesStore {
 
     /// 线程回复数(会话报告/线程化视图用)。
     pub fn reply_count(&self, id: &str) -> usize {
-        self.find(id).and_then(|n| n.thread.as_ref()).map(|t| t.len()).unwrap_or(0)
+        self.find(id)
+            .and_then(|n| n.thread.as_ref())
+            .map(|t| t.len())
+            .unwrap_or(0)
     }
 
     /// 重定位(3.6 规则表):元素位移→跟随;消失→≤nearest_ms 重挂;否则 orphan。
@@ -225,7 +262,10 @@ impl NotesStore {
 
     /// 孤儿标注视图(编辑器"孤儿标注"面板;orphan 显式可见)。
     pub fn orphans(&self) -> Vec<&Note> {
-        self.notes.iter().filter(|n| n.state == NoteState::Orphan).collect()
+        self.notes
+            .iter()
+            .filter(|n| n.state == NoteState::Orphan)
+            .collect()
     }
 
     /// 按状态过滤(notes_list 查询)。
@@ -253,38 +293,85 @@ mod tests {
     use crate::engine::sample_project;
 
     fn clip_anchor(id: &str, t: u64) -> Anchor {
-        Anchor { kind: AnchorKind::Clip, ref_: Some(id.into()), t_ms: t, span: None }
+        Anchor {
+            kind: AnchorKind::Clip,
+            ref_: Some(id.into()),
+            t_ms: t,
+            span: None,
+        }
     }
 
     #[test]
     fn add_resolve_reject_lifecycle() {
         let mut store = NotesStore::new();
-        let n1 = store.add(clip_anchor("V1-001", 4000), "这里语速太快".into(), NoteAuthor::User, vec!["节奏".into()]);
+        let n1 = store.add(
+            clip_anchor("V1-001", 4000),
+            "这里语速太快".into(),
+            NoteAuthor::User,
+            vec!["节奏".into()],
+        );
         assert_eq!(n1.id, "n-0001");
         assert_eq!(n1.state, NoteState::Open);
-        let n2 = store.add(clip_anchor("V1-002", 9000), "要不要删 300ms?".into(), NoteAuthor::Agent, vec![]);
+        let n2 = store.add(
+            clip_anchor("V1-002", 9000),
+            "要不要删 300ms?".into(),
+            NoteAuthor::Agent,
+            vec![],
+        );
         assert_eq!(n2.id, "n-0002");
 
-        store.resolve("n-0001", "已删 320ms 并重烧字幕".into(), vec!["op-1".into()]).unwrap();
+        store
+            .resolve(
+                "n-0001",
+                "已删 320ms 并重烧字幕".into(),
+                vec!["op-1".into()],
+            )
+            .unwrap();
         let r = store.find("n-0001").unwrap();
         assert_eq!(r.state, NoteState::Resolved);
-        assert_eq!(r.resolved_by.as_ref().unwrap().op_ids, vec!["op-1".to_string()]);
+        assert_eq!(
+            r.resolved_by.as_ref().unwrap().op_ids,
+            vec!["op-1".to_string()]
+        );
         // 幂等:同回复重复结案 → Ok 无变化
-        assert!(store.resolve("n-0001", "已删 320ms 并重烧字幕".into(), vec!["op-1".into()]).is_ok());
+        assert!(
+            store
+                .resolve(
+                    "n-0001",
+                    "已删 320ms 并重烧字幕".into(),
+                    vec!["op-1".into()]
+                )
+                .is_ok()
+        );
         // 不同回复覆盖已结案 → 拒绝
-        assert!(matches!(store.resolve("n-0001", "改口".into(), vec!["op-2".into()]), Err(NoteReject::AlreadyResolved(_))));
+        assert!(matches!(
+            store.resolve("n-0001", "改口".into(), vec!["op-2".into()]),
+            Err(NoteReject::AlreadyResolved(_))
+        ));
         // 空 reply / 空 opIds 拒绝
-        assert!(store.resolve("n-0002", "  ".into(), vec!["op-1".into()]).is_err());
+        assert!(
+            store
+                .resolve("n-0002", "  ".into(), vec!["op-1".into()])
+                .is_err()
+        );
         assert!(store.resolve("n-0002", "好".into(), vec![]).is_err());
         store.reject("n-0002", "先不动".into()).unwrap();
         assert_eq!(store.find("n-0002").unwrap().state, NoteState::Rejected);
-        assert!(matches!(store.resolve("n-9999", "x".into(), vec!["op-1".into()]), Err(NoteReject::UnknownNote(_))));
+        assert!(matches!(
+            store.resolve("n-9999", "x".into(), vec!["op-1".into()]),
+            Err(NoteReject::UnknownNote(_))
+        ));
     }
 
     #[test]
     fn roundtrip_value_and_schema() {
         let mut store = NotesStore::new();
-        store.add(clip_anchor("V1-001", 4000), "正文".into(), NoteAuthor::User, vec![]);
+        store.add(
+            clip_anchor("V1-001", 4000),
+            "正文".into(),
+            NoteAuthor::User,
+            vec![],
+        );
         let v = store.to_value();
         let back = NotesStore::from_value(&v).expect("自产 notes 必须过 schema");
         assert_eq!(back.notes().len(), 1);
@@ -295,12 +382,27 @@ mod tests {
     #[test]
     fn reply_thread_appends_and_roundtrips() {
         let mut store = NotesStore::new();
-        store.add(clip_anchor("V1-001", 4000), "这里语速太快".into(), NoteAuthor::User, vec!["节奏".into()]);
-        store.reply("n-0001", NoteAuthor::Agent, "建议 1.15x,要我改吗?".into()).unwrap();
-        store.reply("n-0001", NoteAuthor::User, "好,改吧".into()).unwrap();
+        store.add(
+            clip_anchor("V1-001", 4000),
+            "这里语速太快".into(),
+            NoteAuthor::User,
+            vec!["节奏".into()],
+        );
+        store
+            .reply("n-0001", NoteAuthor::Agent, "建议 1.15x,要我改吗?".into())
+            .unwrap();
+        store
+            .reply("n-0001", NoteAuthor::User, "好,改吧".into())
+            .unwrap();
         // 空回复 / 未知标注拒绝
-        assert!(matches!(store.reply("n-0001", NoteAuthor::Agent, "  ".into()), Err(NoteReject::EmptyReply(_))));
-        assert!(matches!(store.reply("n-9999", NoteAuthor::Agent, "x".into()), Err(NoteReject::UnknownNote(_))));
+        assert!(matches!(
+            store.reply("n-0001", NoteAuthor::Agent, "  ".into()),
+            Err(NoteReject::EmptyReply(_))
+        ));
+        assert!(matches!(
+            store.reply("n-9999", NoteAuthor::Agent, "x".into()),
+            Err(NoteReject::UnknownNote(_))
+        ));
         let n = store.find("n-0001").unwrap();
         assert_eq!(n.state, NoteState::Open, "回复不得改状态");
         assert_eq!(n.thread.as_ref().unwrap().len(), 2);
@@ -308,18 +410,41 @@ mod tests {
         assert_eq!(store.reply_count("n-0001"), 2);
         assert_eq!(store.reply_count("无"), 0);
         // 往返:thread 落盘后再读回必须过 schema
-        let back = NotesStore::from_value(&store.to_value()).expect("带 thread 的 notes 必须过 schema");
+        let back =
+            NotesStore::from_value(&store.to_value()).expect("带 thread 的 notes 必须过 schema");
         assert_eq!(back.reply_count("n-0001"), 2);
     }
 
     #[test]
     fn relocate_all_classifies_and_never_drops() {
         let mut store = NotesStore::new();
-        store.add(clip_anchor("V1-002", 9000), "会跟随".into(), NoteAuthor::User, vec![]);
-        store.add(clip_anchor("V1-002", 8600), "会重挂".into(), NoteAuthor::User, vec![]);
-        store.add(clip_anchor("V1-002", 20000), "会孤儿".into(), NoteAuthor::User, vec![]);
-        store.add(clip_anchor("V1-002", 3000), "已结案不迁移".into(), NoteAuthor::User, vec![]);
-        store.resolve("n-0004", "done".into(), vec!["op-9".into()]).unwrap();
+        store.add(
+            clip_anchor("V1-002", 9000),
+            "会跟随".into(),
+            NoteAuthor::User,
+            vec![],
+        );
+        store.add(
+            clip_anchor("V1-002", 8600),
+            "会重挂".into(),
+            NoteAuthor::User,
+            vec![],
+        );
+        store.add(
+            clip_anchor("V1-002", 20000),
+            "会孤儿".into(),
+            NoteAuthor::User,
+            vec![],
+        );
+        store.add(
+            clip_anchor("V1-002", 3000),
+            "已结案不迁移".into(),
+            NoteAuthor::User,
+            vec![],
+        );
+        store
+            .resolve("n-0004", "done".into(), vec!["op-9".into()])
+            .unwrap();
 
         let mut p = sample_project();
         p.tracks[0].clips.remove(1); // V1-002 消失
@@ -328,9 +453,19 @@ mod tests {
         assert_eq!(orphaned, 1, "越界转 orphan");
         assert_eq!(store.notes().len(), 4, "无静默丢失");
         assert_eq!(store.orphans().len(), 1);
-        assert!(store.orphans()[0].orphan_reason.as_deref().unwrap().contains("V1-002"));
+        assert!(
+            store.orphans()[0]
+                .orphan_reason
+                .as_deref()
+                .unwrap()
+                .contains("V1-002")
+        );
         let resolved = store.find("n-0004").unwrap();
-        assert_eq!(resolved.state, NoteState::Resolved, "已结案标注不参与重定位");
+        assert_eq!(
+            resolved.state,
+            NoteState::Resolved,
+            "已结案标注不参与重定位"
+        );
         assert!(resolved.relocated.is_none());
     }
 }

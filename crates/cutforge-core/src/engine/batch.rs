@@ -6,15 +6,15 @@
 //! - `ClipsPatch`:批量按字段合并 patch,单 Op 原子——任一 clipId 不存在则整批拒绝
 //!   (subtitle_replace 批量替换;未来"批量变速/音量"复用同一通道)。
 
-use super::invariants::enforce_no_overlap;
 use super::Reject;
+use super::invariants::enforce_no_overlap;
 use crate::command::{ClipPatch, Command};
 use crate::engine::Engine;
 use crate::oplog::OpKind;
 use serde_json::Value;
 
 /// mutate 的统一返回面(路径, before, after, 摘要, Op 类型)——与 apply.rs 同形。
-type MutateOutcome = Result<(String, Value, Value, String, OpKind), Reject>;
+type MutateOutcome = Result<(String, Value, Value, String, OpKind, Option<String>), Reject>;
 
 impl Engine {
     pub(super) fn mutate_clips_insert(
@@ -23,24 +23,44 @@ impl Engine {
         clips: Vec<crate::model::Clip>,
     ) -> MutateOutcome {
         let p = &mut self.project;
-        let ti = p.find_track(&to_track).ok_or(Reject::UnknownTrack(to_track.clone()))?;
+        let ti = p
+            .find_track(&to_track)
+            .ok_or(Reject::UnknownTrack(to_track.clone()))?;
         for c in &clips {
-            if p.tracks.iter().any(|t| t.clips.iter().any(|x| x.id == c.id)) {
+            if p.tracks
+                .iter()
+                .any(|t| t.clips.iter().any(|x| x.id == c.id))
+            {
                 return Err(Reject::DuplicateClipId(c.id.clone()));
             }
         }
         let path = format!("/tracks/{ti}/clips");
         let before = serde_json::to_value(&p.tracks[ti].clips).unwrap();
-        p.tracks[ti].clips.extend(clips.iter().cloned());
+        // BUG-05 补口:逐个按 startMs 二分插入(与 clip_insert 同款)——乱序批次
+        // 不得 extend 尾部破坏"轨道 startMs 升序"不变量;批内相对次序保持
+        for c in &clips {
+            let pos = p.tracks[ti]
+                .clips
+                .partition_point(|x| x.start_ms < c.start_ms);
+            p.tracks[ti].clips.insert(pos, c.clone());
+        }
         let after = serde_json::to_value(&p.tracks[ti].clips).unwrap();
         enforce_no_overlap(p, ti)?;
-        Ok((path, before, after, format!("clips_insert {}→{to_track}({} 段)", clips.first().map(|c| c.id.as_str()).unwrap_or("-"), clips.len()), OpKind::Insert))
+        Ok((
+            path,
+            before,
+            after,
+            format!(
+                "clips_insert {}→{to_track}({} 段)",
+                clips.first().map(|c| c.id.as_str()).unwrap_or("-"),
+                clips.len()
+            ),
+            OpKind::Insert,
+            None,
+        ))
     }
 
-    pub(super) fn mutate_clips_patch(
-        &mut self,
-        updates: &[(String, ClipPatch)],
-    ) -> MutateOutcome {
+    pub(super) fn mutate_clips_patch(&mut self, updates: &[(String, ClipPatch)]) -> MutateOutcome {
         for (clip_id, patch) in updates {
             if patch.is_empty() {
                 return Err(Reject::EmptyPatch(clip_id.clone()));
@@ -50,14 +70,17 @@ impl Engine {
         // 先全部定位再改:任一 clipId 不存在 → 整批拒绝(原子)
         let mut locs: Vec<(usize, usize)> = Vec::with_capacity(updates.len());
         for (clip_id, _) in updates {
-            let (ti, ci) = p.find_clip(clip_id).ok_or_else(|| Reject::UnknownClip(clip_id.clone()))?;
+            let (ti, ci) = p
+                .find_clip(clip_id)
+                .ok_or_else(|| Reject::UnknownClip(clip_id.clone()))?;
             locs.push((ti, ci));
         }
         // Op 面按轨归并:同一轨多次修改 → 该轨 clips 数组一个 before/after
         let mut touched: Vec<usize> = locs.iter().map(|(ti, _)| *ti).collect();
         touched.sort_unstable();
         touched.dedup();
-        let before: Vec<(usize, Value)> = touched.iter()
+        let before: Vec<(usize, Value)> = touched
+            .iter()
             .map(|&ti| (ti, serde_json::to_value(&p.tracks[ti].clips).unwrap()))
             .collect();
         let mut n_changes = 0usize;
@@ -70,26 +93,38 @@ impl Engine {
             enforce_no_overlap(p, ti)?;
         }
         // 摘要带首个非空变更示例(批量摘要不逐条展开)
-        let after: Vec<(usize, Value)> = touched.iter()
+        let after: Vec<(usize, Value)> = touched
+            .iter()
             .map(|&ti| (ti, serde_json::to_value(&p.tracks[ti].clips).unwrap()))
             .collect();
         let first_track = touched[0];
         let path = format!("/tracks/{first_track}/clips");
-        let before_v = before.iter().find(|(ti, _)| *ti == first_track).map(|(_, v)| v.clone()).unwrap();
-        let after_v = after.iter().find(|(ti, _)| *ti == first_track).map(|(_, v)| v.clone()).unwrap();
-        Ok((path, before_v, after_v,
-            format!("clips_patch({} clip,{} 字段)", updates.len(), n_changes), OpKind::Set))
+        let before_v = before
+            .iter()
+            .find(|(ti, _)| *ti == first_track)
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        let after_v = after
+            .iter()
+            .find(|(ti, _)| *ti == first_track)
+            .map(|(_, v)| v.clone())
+            .unwrap();
+        Ok((
+            path,
+            before_v,
+            after_v,
+            format!("clips_patch({} clip,{} 字段)", updates.len(), n_changes),
+            OpKind::Set,
+            None,
+        ))
     }
 
     /// mutate 主分派接入(apply.rs 的 match 末尾两分支委托至此,保持行数红线)。
-    pub(super) fn mutate_dispatch_batch(
-        &mut self,
-        cmd: &Command,
-    ) -> Option<MutateOutcome> {
+    pub(super) fn mutate_dispatch_batch(&mut self, cmd: &Command) -> Option<MutateOutcome> {
         match cmd {
-            Command::ClipsInsert { to_track, clips, .. } => {
-                Some(self.mutate_clips_insert(to_track.clone(), clips.clone()))
-            }
+            Command::ClipsInsert {
+                to_track, clips, ..
+            } => Some(self.mutate_clips_insert(to_track.clone(), clips.clone())),
             Command::ClipsPatch { updates } => Some(self.mutate_clips_patch(updates)),
             _ => None,
         }

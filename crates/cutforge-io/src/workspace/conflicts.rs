@@ -15,12 +15,19 @@ impl Workspace {
         if !dir.is_dir() {
             return Ok(out);
         }
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "json"))
+            .collect();
         files.sort();
         for f in files {
             let text = std::fs::read_to_string(&f)?;
             let v: serde_json::Value = serde_json::from_str(&text)?;
-            let id = f.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let id = f
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
             let conflict = serde_json::from_value::<PersistedConflict>(v)?.into_conflict();
             out.push((id, conflict));
         }
@@ -56,7 +63,10 @@ impl Workspace {
         });
         let dir = self.root.join(".cutforge/conflicts");
         let _ = std::fs::create_dir_all(&dir);
-        let _ = crate::atomic::atomic_write(&dir.join(format!("{id}.json")), payload.to_string().as_bytes());
+        let _ = crate::atomic::atomic_write(
+            &dir.join(format!("{id}.json")),
+            payload.to_string().as_bytes(),
+        );
         id
     }
 }
@@ -81,6 +91,12 @@ impl PersistedConflict {
             "CF-003" => ConflictCode::DupId,
             _ => ConflictCode::FieldConflict,
         };
-        Conflict { code, pointer: self.pointer, base: self.base, disk: self.disk, local: self.local }
+        Conflict {
+            code,
+            pointer: self.pointer,
+            base: self.base,
+            disk: self.disk,
+            local: self.local,
+        }
     }
 }

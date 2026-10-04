@@ -20,7 +20,12 @@ impl Workspace {
         let mut best: Option<(u64, PathBuf)> = None;
         for entry in std::fs::read_dir(&dir).ok()?.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            let Some(n) = name.strip_suffix(".json").and_then(|s| s.parse::<u64>().ok()) else { continue };
+            let Some(n) = name
+                .strip_suffix(".json")
+                .and_then(|s| s.parse::<u64>().ok())
+            else {
+                continue;
+            };
             if n <= self.engine.rev() && best.as_ref().map(|(b, _)| n > *b).unwrap_or(true) {
                 best = Some((n, entry.path()));
             }
@@ -37,7 +42,9 @@ impl Workspace {
         let bases_dir = self.root.join(BASES_REL);
         let _ = std::fs::create_dir_all(&bases_dir);
         let base_value = self.engine.query(cutforge_core::engine::Query::ProjectView);
-        let cutforge_core::engine::Answer::Project(ref bv) = base_value else { unreachable!() };
+        let cutforge_core::engine::Answer::Project(ref bv) = base_value else {
+            unreachable!()
+        };
         let mut bb = serde_json::to_vec_pretty(bv)?;
         bb.push(b'\n');
         let _ = crate::atomic::atomic_write(&bases_dir.join(format!("{rev}.json")), &bb);
@@ -48,12 +55,16 @@ impl Workspace {
 
 /// baseRev 快照 LRU 淘汰:保留 rev 最大的 keep 份(计划书 V2-R4 防膨胀)。
 fn prune_bases(dir: &Path, keep: usize) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut revs: Vec<(u64, PathBuf)> = rd
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            name.strip_suffix(".json").and_then(|x| x.parse::<u64>().ok()).map(|n| (n, e.path()))
+            name.strip_suffix(".json")
+                .and_then(|x| x.parse::<u64>().ok())
+                .map(|n| (n, e.path()))
         })
         .collect();
     revs.sort_by_key(|(n, _)| *n);

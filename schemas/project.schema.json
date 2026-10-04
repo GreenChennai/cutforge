@@ -601,7 +601,9 @@
         },
         "sourceInMs": {
           "type": "number",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 86400000,
+          "description": "源素材入点(毫秒)。上界 86400000 = 24h(BUG-03 纵深防御第二层):engine 的 roll/slide 拒绝式守卫漏网时,拦截负数 i128→u64 位回绕产生的天文数字(约 1.8e19)落盘——该值一旦进 OpLog 即污染持久状态"
         },
         "speed": {
           "type": "number",

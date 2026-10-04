@@ -193,11 +193,12 @@ pub fn render_cutforge_sync(
 
 // ---------------- T5.6 渲染队列(排队/暂停/继续/取消/重试;并发上限可配) ----------------
 
-/// 队列任务(内存态;进程生命周期内有效)。state 机:
+/// 队列任务(内存态 + R-11 持久化)。state 机:
 /// `queued → running → ok|fail`;queued/running --pause→ paused;paused --resume→ queued;
-/// queued/running/paused --cancel→ canceled;fail/canceled --retry→ queued。
+/// queued/running/paused --cancel→ canceled;fail/canceled/interrupted --retry→ queued。
+/// interrupted = 进程重启时上一生命周期仍为 running 的任务(可一键重试)。
 struct QueueJob {
-    state: &'static str, // queued | running | paused | ok | fail | canceled
+    state: &'static str, // queued | running | paused | ok | fail | canceled | interrupted
     lines: Vec<String>,
     output: Option<String>,
     error: Option<String>,
@@ -215,6 +216,150 @@ fn queue() -> &'static std::sync::Mutex<Vec<(String, QueueJob)>> {
     Q.get_or_init(|| std::sync::Mutex::new(Vec::new()))
 }
 
+// ---------------- R-11:队列持久化(.cutforge/render-queue.jsonl,append-only) ----------------
+
+/// 持久化落点:工程内 `.cutforge/render-queue.jsonl`(io 层 append-only 原语,
+/// 与 OpLog 同族;每次状态迁移追加一行全量快照,last-wins 折叠)。
+fn queue_journal_path(root: &Path) -> PathBuf {
+    root.join(".cutforge/render-queue.jsonl")
+}
+
+/// 本次进程已从磁盘重建过的工程根(每根只重建一次;重启 = 新进程自然重触发)。
+fn loaded_roots() -> &'static std::sync::Mutex<std::collections::HashSet<PathBuf>> {
+    static L: OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> = OnceLock::new();
+    L.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// 状态迁移记账(append-only;publish_state 是唯一状态出口,天然单点)。
+fn journal_append(job: &QueueJob, run_id: &str, state: &str) {
+    let line = json!({
+        "runId": run_id,
+        "root": job.root.to_string_lossy(),
+        "ass": job.ass,
+        "useProxy": job.use_proxy,
+        "extra": job.extra,
+        "state": state,
+        "ts": cutforge_core::timeutil::now_rfc3339(),
+    });
+    let _ = cutforge_io::atomic::append_line(&queue_journal_path(&job.root), &format!("{line}\n"));
+}
+
+/// 从磁盘重建队列(R-11):last-wins 折叠后,`queued/paused` 原样恢复、
+/// `running → interrupted`(可一键重试);终态任务不恢复(输出已在日志)。
+/// 重建后压实重写(原子写,防 append 文件无限增长)。
+pub(crate) fn queue_reload(root: &Path) {
+    {
+        let mut l = match loaded_roots().lock() {
+            Ok(l) => l,
+            Err(_) => return,
+        };
+        if !l.insert(root.to_path_buf()) {
+            return; // 本进程已重建过
+        }
+    }
+    let Ok(text) = std::fs::read_to_string(queue_journal_path(root)) else {
+        return;
+    };
+    // last-wins 折叠(文件序即时间序)
+    let mut latest: Vec<(String, Value)> = Vec::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue; // 半行截断:跳过(与 open.rs 的"读到完整行为止"同策)
+        };
+        let Some(run_id) = v["runId"].as_str().map(String::from) else {
+            continue;
+        };
+        if let Some(slot) = latest.iter_mut().find(|(id, _)| *id == run_id) {
+            slot.1 = v;
+        } else {
+            latest.push((run_id, v));
+        }
+    }
+    let mut restored: Vec<(String, QueueJob)> = Vec::new();
+    let mut restored_states: Vec<(String, &'static str)> = Vec::new();
+    for (run_id, v) in &latest {
+        let state = v["state"].as_str().unwrap_or("");
+        let restored_state = match state {
+            "queued" => "queued",
+            "paused" => "paused",
+            // 上一生命周期中断的任务:可重试(渲染缓存吸收重跑成本)
+            "running" | "interrupted" => "interrupted",
+            _ => continue, // 终态不恢复
+        };
+        restored_states.push((run_id.clone(), restored_state));
+        restored.push((
+            run_id.clone(),
+            QueueJob {
+                state: restored_state,
+                lines: Vec::new(),
+                output: None,
+                error: if restored_state == "interrupted" {
+                    Some("服务重启中断(上一生命周期 running);可 retry 重跑".into())
+                } else {
+                    None
+                },
+                root: v["root"]
+                    .as_str()
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| root.to_path_buf()),
+                ass: v["ass"].as_str().map(String::from),
+                use_proxy: v["useProxy"].as_bool().unwrap_or(false),
+                extra: v["extra"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                child: None,
+            },
+        ));
+    }
+    if restored.is_empty() && latest.is_empty() {
+        return;
+    }
+    if let Ok(mut q) = queue().lock() {
+        for (run_id, job) in restored {
+            if !q.iter().any(|(id, _)| *id == run_id) {
+                q.push((run_id, job));
+            }
+        }
+    }
+    // 压实重写:每任务一行当前态(原子写;append 文件不再无限增长)
+    let mut compact = String::new();
+    for (run_id, v) in &latest {
+        let Some((_, state)) = restored_states.iter().find(|(id, _)| id == run_id) else {
+            continue;
+        };
+        let mut line = v.clone();
+        line["state"] = json!(state);
+        compact.push_str(&line.to_string());
+        compact.push('\n');
+    }
+    let _ = cutforge_io::atomic::atomic_write(&queue_journal_path(root), compact.as_bytes());
+}
+
+/// 入队(不经渲染依赖门;render_run_async 与测试钩子共用)。
+fn enqueue_job(root: &Path, ass: Option<&str>, use_proxy: bool, extra: Vec<String>) -> String {
+    let run_id = new_run_id();
+    let job = QueueJob {
+        state: "queued",
+        lines: Vec::new(),
+        output: None,
+        error: None,
+        root: root.to_path_buf(),
+        ass: ass.map(String::from),
+        use_proxy,
+        extra,
+        child: None,
+    };
+    if let Ok(mut q) = queue().lock() {
+        q.push((run_id.clone(), job));
+    }
+    run_id
+}
+
 /// 并发上限(env CUTFORGE_RENDER_CONCURRENCY,缺省 1;非正数回落 1)。
 fn concurrency_limit() -> usize {
     std::env::var("CUTFORGE_RENDER_CONCURRENCY")
@@ -224,8 +369,34 @@ fn concurrency_limit() -> usize {
         .unwrap_or(1)
 }
 
+/// 状态事件出口(事件面发布;R-11 的持久化记账在各持锁点就地调
+/// [`journal_append`]——本函数不得再取队列锁,render_queue_tool 的互斥体内
+/// 会调它,二次加锁即自锁死)。
 fn publish_state(root: &Path, run_id: &str, state: &str) {
     crate::transport::events::publish_render(root, run_id, state);
+}
+
+/// R-11 记账(入队面;参数即任务快照,不取队列锁)。
+fn journal_enqueue(
+    root: &Path,
+    run_id: &str,
+    ass: Option<&str>,
+    use_proxy: bool,
+    extra: &[String],
+    state: &str,
+) {
+    let job = QueueJob {
+        state: "",
+        lines: Vec::new(),
+        output: None,
+        error: None,
+        root: root.to_path_buf(),
+        ass: ass.map(String::from),
+        use_proxy,
+        extra: extra.to_vec(),
+        child: None,
+    };
+    journal_append(&job, run_id, state);
 }
 
 /// 取新 runId(r + 16hex;进程号 + 纳秒哈希,与拆分前同源)。
@@ -244,6 +415,7 @@ fn new_run_id() -> String {
 /// 异步渲染入口(册五 T5.6 队列化):任务**入队**即返回 runId;
 /// 单例 worker 按并发上限派发。队列空且空闲时首任务即时起跑(与拆分前的
 /// 立即启动体感一致;进度轮询接口 render_progress 不变)。
+/// R-11:入队前先做磁盘重建(重启后 pending/interrupted 恢复,每根一次)。
 pub(crate) fn render_run_async(
     root: &Path,
     ass: Option<&str>,
@@ -253,22 +425,10 @@ pub(crate) fn render_run_async(
     if resolve_render_bin().is_none() {
         return render_missing_dep();
     }
-    let run_id = new_run_id();
-    let job = QueueJob {
-        state: "queued",
-        lines: Vec::new(),
-        output: None,
-        error: None,
-        root: root.to_path_buf(),
-        ass: ass.map(String::from),
-        use_proxy,
-        extra,
-        child: None,
-    };
-    if let Ok(mut q) = queue().lock() {
-        q.push((run_id.clone(), job));
-    }
+    queue_reload(root);
+    let run_id = enqueue_job(root, ass, use_proxy, extra.clone());
     publish_state(root, &run_id, "queued");
+    journal_enqueue(root, &run_id, ass, use_proxy, &extra, "queued");
     ensure_worker();
     envelope(
         true,
@@ -276,6 +436,48 @@ pub(crate) fn render_run_async(
         "渲染任务已入队",
         json!({"runId": run_id, "concurrency": concurrency_limit()}),
     )
+}
+
+// ---------------- R-11 测试钩子(TC-MCP-QUEUE-001;不经渲染依赖门) ----------------
+
+/// 测试钩子:直接入队并入账(生产入口 render_run_async 的队列语义同此)。
+#[doc(hidden)]
+#[cfg(test)]
+pub(crate) fn enqueue_test_job(
+    root: &Path,
+    ass: Option<&str>,
+    use_proxy: bool,
+    extra: Vec<String>,
+) -> String {
+    queue_reload(root);
+    let run_id = enqueue_job(root, ass, use_proxy, extra.clone());
+    publish_state(root, &run_id, "queued");
+    journal_enqueue(root, &run_id, ass, use_proxy, &extra, "queued");
+    run_id
+}
+
+/// 测试钩子:把任务标为 running 并入账(模拟上一生命周期的运行中态)。
+#[doc(hidden)]
+#[cfg(test)]
+pub(crate) fn mark_test_running(run_id: &str) {
+    if let Ok(mut q) = queue().lock()
+        && let Some((_, j)) = q.iter_mut().find(|(id, _)| id == run_id)
+    {
+        j.state = "running";
+        journal_append(j, run_id, "running");
+    }
+}
+
+/// 测试钩子:清空内存队列与已重建标记(模拟进程重启;磁盘 jsonl 保留)。
+#[doc(hidden)]
+#[cfg(test)]
+pub(crate) fn reset_queue_for_tests() {
+    if let Ok(mut q) = queue().lock() {
+        q.clear();
+    }
+    if let Ok(mut l) = loaded_roots().lock() {
+        l.clear();
+    }
 }
 
 fn ensure_worker() {
@@ -294,6 +496,7 @@ fn ensure_worker() {
                         .find(|(_, j)| j.state == "queued")
                         .map(|(id, j)| {
                             j.state = "running";
+                            journal_append(j, id, "running");
                             id.clone()
                         })
                 };
@@ -328,6 +531,7 @@ fn run_job(root: &Path, run_id: &str, mut cmd: std::process::Command) {
             {
                 j.state = "fail";
                 j.error = Some("cutforge-render 子进程启动失败".into());
+                journal_append(j, run_id, "fail");
             }
             publish_state(root, run_id, "fail");
             return;
@@ -378,6 +582,7 @@ fn run_job(root: &Path, run_id: &str, mut cmd: std::process::Command) {
             if !ok {
                 j.error = Some("cutforge-render 非零退出;详见服务端控制台".into());
             }
+            journal_append(j, run_id, j.state);
         }
     }
     let final_state = queue()
@@ -397,6 +602,8 @@ pub(crate) fn render_queue_tool(root: &Path, args: &Value) -> Value {
     if args["root"].as_str().is_none() {
         return envelope(false, "PRECONDITION_FAILED", "缺 root(工程目录)", json!({}));
     }
+    // R-11:首次触达该工程根时从磁盘重建(重启后 interrupted/pending 恢复)
+    crate::progress::queue_reload(root);
     let action = args["action"].as_str().unwrap_or("list");
     let Ok(mut q) = queue().lock() else {
         return envelope(false, "INTERNAL", "渲染队列不可用", json!({}));
@@ -444,6 +651,7 @@ pub(crate) fn render_queue_tool(root: &Path, args: &Value) -> Value {
                         let _ = child.wait();
                     }
                     j.state = "paused";
+                    journal_append(j, run_id, "paused");
                     publish_state(&j.root, run_id, "paused");
                     envelope(
                         true,
@@ -462,6 +670,7 @@ pub(crate) fn render_queue_tool(root: &Path, args: &Value) -> Value {
                     j.state = "queued";
                     j.lines.clear();
                     j.error = None;
+                    journal_append(j, run_id, "queued");
                     publish_state(&j.root, run_id, "queued");
                     ensure_worker();
                     envelope(
@@ -477,12 +686,13 @@ pub(crate) fn render_queue_tool(root: &Path, args: &Value) -> Value {
                     &format!("state={other} 不可恢复(仅 paused)"),
                     json!({}),
                 ),
-                ("cancel", "queued" | "running" | "paused") => {
+                ("cancel", "queued" | "running" | "paused" | "interrupted") => {
                     if let Some(mut child) = j.child.take() {
                         let _ = child.kill();
                         let _ = child.wait();
                     }
                     j.state = "canceled";
+                    journal_append(j, run_id, "canceled");
                     publish_state(&j.root, run_id, "canceled");
                     envelope(
                         true,
@@ -497,11 +707,12 @@ pub(crate) fn render_queue_tool(root: &Path, args: &Value) -> Value {
                     &format!("state={other} 不可取消(终态)"),
                     json!({}),
                 ),
-                ("retry", "fail" | "canceled" | "ok") => {
+                ("retry", "fail" | "canceled" | "ok" | "interrupted") => {
                     j.state = "queued";
                     j.lines.clear();
                     j.output = None;
                     j.error = None;
+                    journal_append(j, run_id, "queued");
                     publish_state(&j.root, run_id, "queued");
                     ensure_worker();
                     envelope(
@@ -514,7 +725,7 @@ pub(crate) fn render_queue_tool(root: &Path, args: &Value) -> Value {
                 ("retry", other) => envelope(
                     false,
                     "PRECONDITION_FAILED",
-                    &format!("state={other} 无可重试(仅 fail/canceled/ok)"),
+                    &format!("state={other} 无可重试(仅 fail/canceled/ok/interrupted)"),
                     json!({}),
                 ),
                 _ => envelope(
@@ -708,6 +919,38 @@ pub(crate) fn preview_zone_render_tool(root: &Path, args: &Value) -> Value {
 /// (内容寻址:键 = 工作区指纹 fresh.rs + atMs 100ms 量化 + 画幅 + 渲染版本,
 /// 改一笔即 miss 不出陈旧帧);壳经 /media 以返回的 `media` 相对路径加载
 /// (帧缓存位于工程根内,/media 的 canonicalize 校验天然覆盖,零新增面)。
+/// BUG-17:render_frame 成功响应的单一构造器(纯函数,契约测试直接对拍)。
+/// `framePath` = 工程根内相对路径(正斜杠)——壳直读此字段取帧,不再
+/// "任意层级扫 .png";旧字段 `path`(绝对)与 `media`(别名)保留一版。
+pub(crate) fn frame_success_envelope(
+    at_out: u64,
+    fmt: &str,
+    cached: bool,
+    key: &str,
+    frame_path: &Path,
+    media: &str,
+) -> Value {
+    envelope(
+        true,
+        "OK",
+        if cached {
+            "帧缓存命中"
+        } else {
+            "帧已渲染"
+        },
+        json!({
+            "backend": "cutforge",
+            "atMs": at_out,
+            "format": fmt,
+            "cached": cached,
+            "key": key,
+            "path": frame_path.to_string_lossy(),
+            "framePath": media,
+            "media": media,
+        }),
+    )
+}
+
 pub(crate) fn render_frame_tool(root: &Path, args: &Value) -> Value {
     let Some(at_ms) = args["atMs"].as_u64() else {
         return envelope(
@@ -793,30 +1036,14 @@ pub(crate) fn render_frame_tool(root: &Path, args: &Value) -> Value {
                 .and_then(|v| v.get("key"))
                 .and_then(|k| k.as_str())
                 .unwrap_or_default();
-            // media 相对路径(工程根内;正斜杠约定)→ 壳直接 /media?path=… 加载
+            // media 相对路径(工程根内;正斜杠约定)→ 壳直接 /media?path=… 加载;
+            // BUG-17:framePath 为契约定稿字段(壳直读),media/path 旧字段保留一版
             let media = frame_path
                 .strip_prefix(root)
                 .unwrap_or(&frame_path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            envelope(
-                true,
-                "OK",
-                if cached {
-                    "帧缓存命中"
-                } else {
-                    "帧已渲染"
-                },
-                json!({
-                    "backend": "cutforge",
-                    "atMs": at_out,
-                    "format": fmt,
-                    "cached": cached,
-                    "key": key,
-                    "path": frame_path.to_string_lossy(),
-                    "media": media,
-                }),
-            )
+            frame_success_envelope(at_out, fmt, cached, key, &frame_path, &media)
         }
         Ok(out) => {
             let err = String::from_utf8_lossy(&out.stderr);

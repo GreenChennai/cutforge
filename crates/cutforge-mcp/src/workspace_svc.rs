@@ -7,16 +7,22 @@ use crate::progress::resolve_render_bin;
 use crate::registry::{
     FX_CATALOG_JSON, HUAZI_CATALOG_JSON, TRANSITION_CATALOG_JSON, UI_FIELDS_JSON,
 };
-use crate::session::{session_journal_begin, session_journal_note, session_summary_path};
+use crate::session::{
+    CREDENTIAL_TTL_SEC, session_journal_begin, session_journal_note, session_summary_path,
+};
 use crate::tools_nolock::media_browse_payload;
 use crate::transport::events;
-use crate::transport::http::{self, HttpResp, mime_of, pct_decode, resp_plain};
+use crate::transport::http::{
+    self, ConnGate, HttpResp, RespBody, bearer_value, check_auth, constant_time_eq, mime_of,
+    query_param, resp_plain,
+};
 use crate::transport::static_files;
 use cutforge_core::oplog::Actor;
 use cutforge_io::paths;
 use serde_json::{Value, json};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// E1-6:serve 启动自检。缺工程(致命)→ Err;其余(渲染依赖/静态资源)→ 打印 △ 提示。
 fn serve_preflight(root: &Path, web_dir: &Path) -> Result<(), String> {
@@ -203,7 +209,10 @@ const PORT_WINDOW: u16 = 20;
 
 /// 工作区常驻服务(M10 本地服务化):静态托管 Web 编辑器 + /rpc + /events +
 /// /session 会话信息 + /media(E2)+ /media/browse 与 /ui-fields(E3/E4)。
-/// 随机 token 落盘 `.cutforge/session`(仅 127.0.0.1)。
+/// S-01:随机主 token 不再落盘/入响应体——`.cutforge/session`(0600)只记
+/// 一次性短期凭据(5 分钟/单次/绑会话 id),客户端凭它兑换会话 token;
+/// URL ?token= 兼容一版(响应带 Deprecation 头)。
+/// S-02:连接计数上限(缺省 64,env CUTFORGE_HTTP_MAX_CONNS),超限 503。
 pub fn serve_workspace(
     root: &Path,
     port: u16,
@@ -211,7 +220,6 @@ pub fn serve_workspace(
     web_dir: &Path,
     open_browser: bool,
 ) -> i32 {
-    use std::sync::Arc;
     let _ = cutforge_io::watcher::ensure_sync_daemon(root);
     if let Err(e) = serve_preflight(root, web_dir) {
         eprintln!("启动中止:{e}");
@@ -249,10 +257,15 @@ pub fn serve_workspace(
         }
     };
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
+    // S-01:一次性短期凭据(绑会话 id;5 分钟/单次)——主 token 只活在进程内
+    let (session_id, credential) = crate::session::register_session_boot();
     let session = json!({
         "root": root.to_string_lossy(),
         "port": port,
-        "token": token,
+        // 兼容注记:此文件不再携带主 token(0.7 起为一次性凭据 + 会话 id)
+        "sessionId": session_id,
+        "credential": credential,
+        "expiresInSec": CREDENTIAL_TTL_SEC,
         "pid": std::process::id(),
         "startedAt": cutforge_core::timeutil::now_rfc3339(),
         // 目录契约 0.5:project.json 的工程内相对路径(新布局中文目录;旧布局回退英文),
@@ -262,17 +275,26 @@ pub fn serve_workspace(
     let dir = root.join(".cutforge");
     let _ = std::fs::create_dir_all(&dir);
     // 唯一落盘点纪律:session 记账也走 atomic.rs(check-write-paths 口径)
+    let session_path = dir.join("session");
     let _ = cutforge_io::atomic::atomic_write(
-        &dir.join("session"),
+        &session_path,
         &serde_json::to_vec_pretty(&session).unwrap(),
     );
-    let session_str = session.to_string();
+    // S-01:会话文件权限收紧(Unix 0600;Windows 无纯 std ACL 面,以内容收紧为准)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let _ = std::fs::set_permissions(&session_path, std::fs::Permissions::from_mode(0o600));
+    }
     let root_s = root.to_string_lossy().to_string();
     let web = Arc::new(web_dir.to_path_buf());
     // RT-1:会话变更摘要从 serve 启动即建档,写操作后增量落盘(Ctrl+C/崩溃也不丢)
     session_journal_begin(root);
     eprintln!("── 首次运行/会话位置 ──");
-    eprintln!("  会话: {}", dir.join("session").display());
+    eprintln!(
+        "  会话: {}(一次性凭据;主 token 不落盘)",
+        session_path.display()
+    );
     eprintln!(
         "  写锁: {}(首次写操作时自动创建/释放)",
         dir.join("lock").display()
@@ -280,19 +302,27 @@ pub fn serve_workspace(
     eprintln!("  基线快照: {}", dir.join("bases").display());
     eprintln!("  本次变更摘要: {}", session_summary_path(root).display());
     eprintln!("────────────────────────");
+    // S-01 兼容一版:URL 仍带 ?token=(响应带 Deprecation 头;下版移除)
     let url = format!("http://127.0.0.1:{port}/?token={token}");
-    eprintln!("cutforge 编辑器:{url}");
+    eprintln!("cutforge 编辑器:{url}(⚠ URL token 已弃用,后续版本将移除)");
     if open_browser {
         open_in_browser(&url);
     }
+    let gate = Arc::new(ConnGate::new(http::max_conns_from_env()));
     for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
+        let Ok(mut stream) = stream else { continue };
+        // S-02:先占名额再 spawn;超限立即 503+Retry-After(连接不进读循环)
+        let Some(guard) = gate.acquire() else {
+            let _ = stream.write_all(http::RESP_UNAVAILABLE.as_bytes());
+            let _ = stream.flush();
+            continue;
+        };
         let token = token.to_string();
         let root_s = root_s.clone();
         let web = web.clone();
-        let session_str = session_str.clone();
         std::thread::spawn(move || {
-            let _ = handle_workspace_conn(stream, &token, &root_s, &web, &session_str);
+            let _ = handle_workspace_conn(stream, &token, &root_s, &web);
+            drop(guard);
         });
     }
     0
@@ -302,8 +332,10 @@ pub fn serve_workspace(
 /// 安全:①只收工程内相对路径;②canonicalize 后必须仍位于工程根之内(拒绝对外穿越);
 /// 鉴权走数据面统一 token(非静态白名单);支持 Range(浏览器 seek 的前提)。
 /// 路径校验统一走 resolve_within_root(与 /media/browse、clip_add、media_probe 同一实现)。
+/// R-08:体不再 read_to_end——文件面走 RespBody::Stream(恒定 64KB 缓冲 io::copy);
+/// 单 Range 上限 clamp 256MB(显式超限 416,开放右端截到上限)。
 fn media_response(root: &Path, path_param: Option<&str>, range: Option<&str>) -> HttpResp {
-    use std::io::{Read as _, Seek as _};
+    const MAX_RANGE_LEN: u64 = 256 * 1024 * 1024;
     let Some(rel) = path_param else {
         return resp_plain("400 Bad Request", "缺 path 参数");
     };
@@ -313,7 +345,7 @@ fn media_response(root: &Path, path_param: Option<&str>, range: Option<&str>) ->
         Err(_) => return resp_plain("404 Not Found", "媒体不存在"),
     };
     let ctype = mime_of(canon_t.extension().and_then(|e| e.to_str()).unwrap_or("")).to_string();
-    let Ok(mut file) = std::fs::File::open(&canon_t) else {
+    let Ok(file) = std::fs::File::open(&canon_t) else {
         return resp_plain("404 Not Found", "媒体不可读");
     };
     let total = file.metadata().map(|m| m.len()).unwrap_or(0);
@@ -322,9 +354,22 @@ fn media_response(root: &Path, path_param: Option<&str>, range: Option<&str>) ->
             let spec = r["bytes=".len()..].split(',').next().unwrap_or("").trim();
             let (a, b) = spec.split_once('-').unwrap_or(("", ""));
             match (a.trim().parse::<u64>().ok(), b.trim().parse::<u64>().ok()) {
-                (Some(s), Some(e)) if s <= e && e < total => (s, e, "206 Partial Content"),
-                (Some(s), None) if s < total => (s, total - 1, "206 Partial Content"),
+                (Some(s), Some(e)) if s <= e && e < total => {
+                    if e - s + 1 > MAX_RANGE_LEN {
+                        return resp_plain(
+                            "416 Range Not Satisfiable",
+                            "Range 超出单请求上限(256MB)",
+                        );
+                    }
+                    (s, e, "206 Partial Content")
+                }
+                (Some(s), None) if s < total => {
+                    // 开放右端:clamp 到上限(播放器可持续 Range 拉取)
+                    let e = (s + MAX_RANGE_LEN - 1).min(total - 1);
+                    (s, e, "206 Partial Content")
+                }
                 (None, Some(n)) if n > 0 && n <= total => {
+                    let n = n.min(MAX_RANGE_LEN);
                     (total - n, total - 1, "206 Partial Content")
                 }
                 _ => return resp_plain("416 Range Not Satisfiable", "Range 不合法"),
@@ -332,13 +377,15 @@ fn media_response(root: &Path, path_param: Option<&str>, range: Option<&str>) ->
         }
         _ => (0, total.saturating_sub(1), "200 OK"),
     };
-    let mut body = Vec::new();
-    if total > 0
-        && file.seek(std::io::SeekFrom::Start(start)).is_ok()
-        && let Err(e) = file.take(end - start + 1).read_to_end(&mut body)
-    {
-        return resp_plain("500 Internal Server Error", &format!("读取失败: {e}"));
-    }
+    let body = if total == 0 {
+        RespBody::Bytes(Vec::new())
+    } else {
+        RespBody::Stream {
+            file,
+            start,
+            len: end - start + 1,
+        }
+    };
     let extra = match status {
         "206 Partial Content" => {
             format!("Accept-Ranges: bytes\r\nContent-Range: bytes {start}-{end}/{total}\r\n")
@@ -358,7 +405,6 @@ fn handle_workspace_conn(
     token: &str,
     root: &str,
     web: &Path,
-    session_str: &str,
 ) -> std::io::Result<()> {
     // 连接纪律(T1.6/AC-1.7):请求读取统一走 http::read_request(读超时/头体上限/
     // 总时限,慢连接在此被隔离回收);与辅通道单一实现,不再各写一份读循环。
@@ -372,13 +418,61 @@ fn handle_workspace_conn(
         Err(crate::transport::ReadFail::Closed) => return Ok(()),
     };
     let first_line = req.first_line().to_string();
-    let authorized = req.head.contains(&format!("Authorization: Bearer {token}"))
-        || first_line.contains(&format!("token={token}"));
     let raw_path = first_line.split(' ').nth(1).unwrap_or("");
     let (path_only, query) = raw_path.split_once('?').unwrap_or((raw_path, ""));
+    // ---- S-01/BUG-10/S-04 鉴权面(单一实现,不再整段 contains) ----
+    // ① 主 token Bearer(值精确相等/恒定时间;头名大小写不敏感;重复头与续行拒绝);
+    // ② 已兑换的会话 token Bearer(S-01 一次性凭据兑换产物);
+    // ③ URL ?token=(S-01 兼容一版:key 精确切分 + 恒定时间比较;响应带 Deprecation 头)。
+    let presented = bearer_value(&req.head);
+    let master_ok = check_auth(&req.head, token);
+    let session_ok = presented
+        .as_deref()
+        .is_some_and(crate::session::is_session_token);
+    let url_token_ok = !master_ok
+        && !session_ok
+        && query_param(query, "token")
+            .is_some_and(|t| constant_time_eq(t.as_bytes(), token.as_bytes()));
+    let authorized = master_ok || session_ok || url_token_ok;
+    // S-01:URL token 鉴权的响应必须带 Deprecation 头(下版移除该兼容面)
+    let deprecation = if url_token_ok {
+        "Deprecation: true\r\n"
+    } else {
+        ""
+    };
     // 静态面(T1.6):旧四别名 + /assets/ 目录映射;数据面口径零变化
-    let is_get_session = path_only == "/session";
     let is_get_static = static_files::is_static_path(path_only);
+    // S-01:/session/exchange——一次性凭据兑换会话 token(凭据即鉴权;单次使用)
+    let is_exchange = path_only == "/session/exchange" && first_line.starts_with("POST");
+    if is_exchange {
+        let ok = presented.as_deref().is_some_and(|cred| {
+            serde_json::from_str::<Value>(&req.body)
+                .ok()
+                .and_then(|b| b["sessionId"].as_str().map(String::from))
+                .is_some_and(|sid| crate::session::consume_credential(cred, &sid))
+        });
+        let (status, body) = if ok {
+            (
+                "200 OK",
+                json!({"sessionToken": crate::session::issue_session_token(),
+                       "note": "凭据已消费(单次使用)"})
+                .to_string(),
+            )
+        } else {
+            (
+                "401 Unauthorized",
+                json!({"ok": false, "code": "GUARD_FAILED", "message": "凭据无效/已消费/过期/会话 id 不匹配"})
+                    .to_string(),
+            )
+        };
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        return Ok(());
+    }
+    let is_get_session = path_only == "/session";
     let is_rpc = path_only == "/rpc" && first_line.starts_with("POST");
     // 册七 T7.1:/api/v1 版本化 REST 面(ADR-0025);事件流别名并入既有 /events 分支
     // (SSE 单一实现),其余 /api/v1/* 走 transport::rest(转发既有 dispatch 单表)
@@ -412,47 +506,36 @@ fn handle_workspace_conn(
             Path::new(root),
             query,
             req.header("last-event-id").as_deref(),
+            deprecation,
         );
     }
-    let resp: HttpResp = if is_get_static {
+    let mut resp: HttpResp = if is_get_static {
         static_files::static_resp(web, path_only, req.header("if-none-match").as_deref())
     } else if is_media {
-        let path_param = query.split('&').find_map(|kv| {
-            let mut it = kv.split('=');
-            match (it.next(), it.next()) {
-                (Some("path"), Some(v)) => Some(pct_decode(v)),
-                _ => None,
-            }
-        });
+        // BUG-11/S-04:path 统一经 query_param(key 精确切分 + pct_decode)
+        let path_param = query_param(query, "path");
         media_response(Path::new(root), path_param.as_deref(), range.as_deref())
     } else if is_media_browse {
         // E3-3:素材浏览(与 media_browse 工具同一 payload 实现,不建并行)
-        let dir = query
-            .split('&')
-            .find_map(|kv| {
-                let mut it = kv.split('=');
-                match (it.next(), it.next()) {
-                    (Some("dir"), Some(v)) => Some(pct_decode(v)),
-                    _ => None,
-                }
-            })
-            .unwrap_or_default();
+        let dir = query_param(query, "dir").unwrap_or_default();
         match media_browse_payload(Path::new(root), &dir) {
             Ok(doc) => HttpResp {
                 status: "200 OK",
                 ctype: "application/json".into(),
                 extra: String::new(),
-                body: doc.to_string().into_bytes(),
+                body: RespBody::Bytes(doc.to_string().into_bytes()),
             },
             Err(m) => HttpResp {
                 status: "400 Bad Request",
                 ctype: "application/json".into(),
                 extra: String::new(),
                 // T1.7 三面同码:此面错误也带 ns(加法字段;code 取值不变)
-                body: json!({"ok": false, "code": "PRECONDITION_FAILED",
-                    "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": m})
-                .to_string()
-                .into_bytes(),
+                body: RespBody::Bytes(
+                    json!({"ok": false, "code": "PRECONDITION_FAILED",
+                        "ns": crate::code_namespace("PRECONDITION_FAILED"), "message": m})
+                    .to_string()
+                    .into_bytes(),
+                ),
             },
         }
     } else if is_ui_fields {
@@ -463,7 +546,7 @@ fn handle_workspace_conn(
             status: "200 OK",
             ctype: "application/json".into(),
             extra: String::new(),
-            body: doc.to_string().into_bytes(),
+            body: RespBody::Bytes(doc.to_string().into_bytes()),
         }
     } else if is_catalogs {
         // 册四 T4.5/T4.6 目录下发:转场(58 实测)+ 特效/动效(渲染端 catalog 模块同源)
@@ -479,14 +562,29 @@ fn handle_workspace_conn(
             status: "200 OK",
             ctype: "application/json".into(),
             extra: String::new(),
-            body: doc.to_string().into_bytes(),
+            body: RespBody::Bytes(doc.to_string().into_bytes()),
         }
     } else if is_get_session {
+        // S-01:响应体不再携带主 token——只回报一次性凭据视图(已消费则如实标注)
+        let (sid, cred) = match crate::session::active_credential() {
+            Some(pair) => (json!(pair.0), json!(pair.1)),
+            None => (json!(null), json!(null)),
+        };
         HttpResp {
             status: "200 OK",
             ctype: "application/json".into(),
             extra: String::new(),
-            body: session_str.as_bytes().to_vec(),
+            body: RespBody::Bytes(
+                json!({
+                    "root": root,
+                    "sessionId": sid,
+                    "credential": cred,
+                    "expiresInSec": CREDENTIAL_TTL_SEC,
+                    "note": "主 token 不经响应体;凭据单次使用,POST /session/exchange 兑换会话 token",
+                })
+                .to_string()
+                .into_bytes(),
+            ),
         }
     } else if is_rpc {
         let tool_name = serde_json::from_str::<Value>(body)
@@ -514,7 +612,7 @@ fn handle_workspace_conn(
             status: "200 OK",
             ctype: "application/json".into(),
             extra: String::new(),
-            body: v.into_bytes(),
+            body: RespBody::Bytes(v.into_bytes()),
         }
     } else if is_api_v1 {
         // 册七 T7.1:/api/v1 版本化 REST 面(ADR-0025)——POST /api/v1/tools/<tool>
@@ -531,13 +629,9 @@ fn handle_workspace_conn(
     } else if is_events {
         // 长轮询降级路径(A1-R2:兼容旧壳,册二完成后移除;负载老字段一个不少,
         // ok/code/event/seq 原样);新壳走上方 SSE,事件面经 transport::events。
-        let mut since: u64 = 0;
-        for kv in query.split('&') {
-            let mut it = kv.split('=');
-            if let (Some("since"), Some(v)) = (it.next(), it.next()) {
-                since = v.parse().unwrap_or(0);
-            }
-        }
+        let since: u64 = query_param(query, "since")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
         let hub = cutforge_io::watcher::ensure_sync_daemon(Path::new(root));
         let v = match hub.wait_since(since, std::time::Duration::from_millis(900)) {
             Some(seq) => {
@@ -549,28 +643,25 @@ fn handle_workspace_conn(
             status: "200 OK",
             ctype: "application/json".into(),
             extra: String::new(),
-            body: v.to_string().into_bytes(),
+            body: RespBody::Bytes(v.to_string().into_bytes()),
         }
     } else {
         HttpResp {
             status: "200 OK",
             ctype: "application/json".into(),
             extra: String::new(),
-            body: json!({"service": "cutforge-workspace"})
-                .to_string()
-                .into_bytes(),
+            body: RespBody::Bytes(
+                json!({"service": "cutforge-workspace"})
+                    .to_string()
+                    .into_bytes(),
+            ),
         }
     };
-    let _ = write!(
-        stream,
-        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n",
-        resp.status,
-        resp.ctype,
-        resp.body.len(),
-        resp.extra
-    );
-    // io::copy 而非流式写出:套接字输出不属于"文件旁路写入",避开 check-write-paths 误报
-    let _ = std::io::copy(&mut resp.body.as_slice(), &mut stream);
+    // S-01:URL token 鉴权的响应统一带 Deprecation 头(静态面除外——它无需鉴权)
+    if !deprecation.is_empty() && !is_get_static {
+        resp.extra.push_str(deprecation);
+    }
+    http::write_resp(&mut stream, resp)?;
     // 优雅关闭:先 shutdown(Write) 再把对端残余/确认读净,避免 Windows
     // 在未读数据存在时直接 RST(客户端表现为间歇性 ConnectionReset)
     use std::io::Read as _;

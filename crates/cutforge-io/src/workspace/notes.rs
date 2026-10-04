@@ -6,8 +6,8 @@ use cutforge_core::engine::ApplyOpts;
 use cutforge_core::notes::{NoteAuthor, NotesStore};
 use cutforge_core::oplog::{Actor, OpKind};
 
-use super::reject_to_io;
 use super::Workspace;
+use super::reject_to_io;
 
 impl Workspace {
     pub fn notes(&self) -> &NotesStore {
@@ -47,8 +47,13 @@ impl Workspace {
         let note_id = self.notes.next_id();
         self.notes.add(anchor, body, author, tags);
         self.record_notes_change(
-            &before, OpKind::Insert, actor,
-            format!("创建标注 {note_id}"), None, request_id, false,
+            &before,
+            OpKind::Insert,
+            actor,
+            format!("创建标注 {note_id}"),
+            None,
+            request_id,
+            false,
         )?;
         Ok(note_id)
     }
@@ -69,13 +74,24 @@ impl Workspace {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("PRECONDITION_FAILED: 标注 {note_id} 不存在"),
-                ))
+                ));
             }
             Err(e) => {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("PRECONDITION_FAILED: {e:?}")))
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("PRECONDITION_FAILED: {e:?}"),
+                ));
             }
         }
-        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 结案"), None, None, false)?;
+        self.record_notes_change(
+            &before,
+            OpKind::Set,
+            actor,
+            format!("标注 {note_id} 结案"),
+            None,
+            None,
+            false,
+        )?;
         Ok(())
     }
 
@@ -96,16 +112,26 @@ impl Workspace {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("PRECONDITION_FAILED: 标注 {note_id} 不存在"),
-                ))
+                ));
             }
             Err(e) => {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("PRECONDITION_FAILED: {e:?}")))
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("PRECONDITION_FAILED: {e:?}"),
+                ));
             }
         }
         self.record_notes_change(
-            &before, OpKind::Set, actor,
-            format!("标注 {note_id} 追加回复(第 {} 轮)", self.notes.reply_count(note_id)),
-            None, None, false,
+            &before,
+            OpKind::Set,
+            actor,
+            format!(
+                "标注 {note_id} 追加回复(第 {} 轮)",
+                self.notes.reply_count(note_id)
+            ),
+            None,
+            None,
+            false,
         )?;
         Ok((note_id.to_string(), self.notes.reply_count(note_id)))
     }
@@ -118,13 +144,24 @@ impl Workspace {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("PRECONDITION_FAILED: 标注 {note_id} 不存在"),
-                ))
+                ));
             }
             Err(e) => {
-                return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("PRECONDITION_FAILED: {e:?}")))
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("PRECONDITION_FAILED: {e:?}"),
+                ));
             }
         }
-        self.record_notes_change(&before, OpKind::Set, actor, format!("标注 {note_id} 否决"), None, None, false)?;
+        self.record_notes_change(
+            &before,
+            OpKind::Set,
+            actor,
+            format!("标注 {note_id} 否决"),
+            None,
+            None,
+            false,
+        )?;
         Ok(())
     }
 
@@ -141,7 +178,9 @@ impl Workspace {
                 OpKind::Set,
                 actor,
                 format!("锚点重定位:跟随/重挂 {moved},转孤儿 {orphaned}"),
-                None, None, true,
+                None,
+                None,
+                true,
             )?;
         }
         Ok(())
@@ -167,7 +206,15 @@ impl Workspace {
             ..Default::default()
         };
         self.engine
-            .record_file_change("notes.json", "/items", before.clone(), after, kind, actor, opts)
+            .record_file_change(
+                "notes.json",
+                "/items",
+                before.clone(),
+                after,
+                kind,
+                actor,
+                opts,
+            )
             .map_err(reject_to_io)?;
         self.notes_dirty = true;
         Ok(())
@@ -185,7 +232,15 @@ impl Workspace {
         request_id: Option<String>,
         non_undoable: bool,
     ) -> io::Result<()> {
-        self.record_notes_op(before, kind, actor, summary, caused_by, request_id, non_undoable)?;
+        self.record_notes_op(
+            before,
+            kind,
+            actor,
+            summary,
+            caused_by,
+            request_id,
+            non_undoable,
+        )?;
         self.persist()
     }
 }

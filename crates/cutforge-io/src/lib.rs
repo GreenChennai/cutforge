@@ -31,6 +31,7 @@ pub mod migrate;
 pub mod paths;
 pub mod probe;
 pub mod recover;
+pub mod repair;
 pub mod scaffold;
 pub mod scratch;
 pub mod snapshot;
@@ -42,7 +43,9 @@ mod workspace;
 
 // 目录契约唯一真相源在 `paths`(0.5.0 目录中文化,与 CutFlow rs_paths.py 同构);
 // 这里原样再导出,老调用面(API 兼容)不破。
-pub use paths::{CUTLIST_APPLIED_REL, CUTLIST_REL, NOTES_REL, PROJECT_REL, WORDLINE_REL, LayoutKind};
+pub use paths::{
+    CUTLIST_APPLIED_REL, CUTLIST_REL, LayoutKind, NOTES_REL, PROJECT_REL, WORDLINE_REL,
+};
 
 // Workspace 主类型与配套 API:实码在 workspace/ 子模块,此处只组导出面
 // (旧路径 `cutforge_io::Workspace`/`BASES_REL`/`tests_fixture` 保持原样)。

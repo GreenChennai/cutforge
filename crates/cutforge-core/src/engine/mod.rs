@@ -16,21 +16,21 @@
 
 mod apply;
 mod batch;
-mod pro_cmds;
 mod invariants;
+mod pro_cmds;
 mod projection;
 mod replay;
 mod undo;
 
 pub use apply::{ApplyOpts, OpReceipt};
 pub use invariants::Reject;
-pub use projection::{canonical_json, Answer, Query};
+pub use projection::{Answer, Query, canonical_json};
 pub use replay::{rebuild_stacks, rebuild_undo_stack};
 
 use crate::command::ClipPatch;
 use crate::model::Project;
 use crate::oplog::OpLog;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub struct Engine {
     project: Project,
@@ -49,8 +49,11 @@ impl Engine {
     pub fn new(project: Project) -> Result<Self, Vec<String>> {
         project.to_validated_value()?;
         Ok(Self {
-            project, log: OpLog::new(), rev: 0,
-            undo_stack: Vec::new(), redo_stack: Vec::new(),
+            project,
+            log: OpLog::new(),
+            rev: 0,
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
             file_states: std::collections::BTreeMap::new(),
             dirty_files: std::collections::BTreeSet::new(),
         })
@@ -66,9 +69,13 @@ impl Engine {
     ) -> Result<Self, Vec<String>> {
         project.to_validated_value()?;
         Ok(Self {
-            project, log, rev, undo_stack,
+            project,
+            log,
+            rev,
+            undo_stack,
             redo_stack: Vec::new(),
-            file_states, dirty_files: std::collections::BTreeSet::new(),
+            file_states,
+            dirty_files: std::collections::BTreeSet::new(),
         })
     }
 
@@ -83,7 +90,15 @@ impl Engine {
         file_states: std::collections::BTreeMap<String, Value>,
     ) -> Result<Self, Vec<String>> {
         project.to_validated_value()?;
-        Ok(Self { project, log, rev, undo_stack, redo_stack, file_states, dirty_files: std::collections::BTreeSet::new() })
+        Ok(Self {
+            project,
+            log,
+            rev,
+            undo_stack,
+            redo_stack,
+            file_states,
+            dirty_files: std::collections::BTreeSet::new(),
+        })
     }
 
     pub fn rev(&self) -> u64 {
@@ -119,7 +134,11 @@ impl Engine {
 /// 在 Project 上按 JSON Pointer 路径设值(undo/redo/replay 的通用机制)。
 fn apply_value_at(project: &mut Project, pointer: &str, value: Value) -> Result<(), String> {
     let mut v = serde_json::to_value(&*project).map_err(|e| e.to_string())?;
-    let segs: Vec<&str> = pointer.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    let segs: Vec<&str> = pointer
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
     let mut payload = Some(value);
     let mut cur: &mut serde_json::Value = &mut v;
     for (i, seg) in segs.iter().enumerate() {
@@ -127,10 +146,15 @@ fn apply_value_at(project: &mut Project, pointer: &str, value: Value) -> Result<
         if last {
             match cur {
                 serde_json::Value::Object(m) => {
-                    m.insert((*seg).to_string(), payload.take().unwrap_or(serde_json::Value::Null));
+                    m.insert(
+                        (*seg).to_string(),
+                        payload.take().unwrap_or(serde_json::Value::Null),
+                    );
                 }
                 serde_json::Value::Array(a) => {
-                    let idx: usize = seg.parse().map_err(|_| format!("指针段 '{seg}' 非数组下标"))?;
+                    let idx: usize = seg
+                        .parse()
+                        .map_err(|_| format!("指针段 '{seg}' 非数组下标"))?;
                     if idx >= a.len() {
                         return Err(format!("指针 '{pointer}' 越界({idx} ≥ {})", a.len()));
                     }
@@ -140,11 +164,13 @@ fn apply_value_at(project: &mut Project, pointer: &str, value: Value) -> Result<
             }
         } else {
             cur = match cur {
-                serde_json::Value::Object(m) => {
-                    m.get_mut(*seg).ok_or_else(|| format!("指针 '{pointer}' 缺键 '{seg}'"))?
-                }
+                serde_json::Value::Object(m) => m
+                    .get_mut(*seg)
+                    .ok_or_else(|| format!("指针 '{pointer}' 缺键 '{seg}'"))?,
                 serde_json::Value::Array(a) => {
-                    let idx: usize = seg.parse().map_err(|_| format!("指针段 '{seg}' 非数组下标"))?;
+                    let idx: usize = seg
+                        .parse()
+                        .map_err(|_| format!("指针段 '{seg}' 非数组下标"))?;
                     if idx >= a.len() {
                         return Err(format!("指针 '{pointer}' 越界({idx} ≥ {})", a.len()));
                     }
@@ -156,6 +182,74 @@ fn apply_value_at(project: &mut Project, pointer: &str, value: Value) -> Result<
     }
     *project = serde_json::from_value(v).map_err(|e| format!("回放反序列化失败: {e}"))?;
     Ok(())
+}
+
+/// 按 JSON Pointer 读 Project 当前值(undo/redo 前置校验用)。
+fn project_value_at(project: &Project, pointer: &str) -> Result<Value, String> {
+    let v = serde_json::to_value(project).map_err(|e| e.to_string())?;
+    let mut cur = &v;
+    for seg in pointer
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+    {
+        cur = match cur {
+            // 缺键视同 Null:与 before/after 对缺席字段的 Null 记法一致
+            // (如撤销 bgm_clear 时当前态无 /bgm 键,期望值恰为 Null)
+            serde_json::Value::Object(m) => match m.get(seg) {
+                Some(v) => v,
+                None => return Ok(serde_json::Value::Null),
+            },
+            serde_json::Value::Array(a) => {
+                let idx: usize = seg
+                    .parse()
+                    .map_err(|_| format!("指针段 '{seg}' 非数组下标"))?;
+                a.get(idx)
+                    .ok_or_else(|| format!("指针 '{pointer}' 越界({idx} ≥ {})", a.len()))?
+            }
+            _ => return Err(format!("指针 '{pointer}' 中段 '{seg}' 处不是容器")),
+        };
+    }
+    Ok(cur.clone())
+}
+
+/// Op 的 project.json 回写(undo/redo/replay 共用;BUG-06/A-03 稳定 id 寻址):
+/// - `op.target_id = Some(id)`(新格式):按 clip id 定位——结构漂移(数组重排等)
+///   免疫;下标只在 Op 记录瞬间用一次;
+/// - `op.target_id = None`(旧格式):JSON Pointer 下标寻址(旧日志零迁移);
+/// - `expect = Some(want)`:前置校验当前态 == want(undo 撤前校 after、redo 校
+///   before),不一致返回含 **CF-002** 的错误(拒绝盲写);replay 传 None。
+pub(super) fn write_project_op(
+    project: &mut Project,
+    op: &crate::oplog::Op,
+    value: Value,
+    expect: Option<&Value>,
+) -> Result<(), String> {
+    if let Some(id) = op.target_id.as_deref() {
+        let (ti, ci) = project
+            .find_clip(id)
+            .ok_or_else(|| format!("CF-002 目标 clip {id} 不存在(已被删除或 id 变更),拒绝盲写"))?;
+        let ptr = format!("/tracks/{ti}/clips/{ci}");
+        if let Some(want) = expect {
+            let cur = project_value_at(project, &ptr)?;
+            if cur != *want {
+                return Err(format!(
+                    "CF-002 撤销/重做基准不一致:clip {id} 当前态已偏离预期(外部改动或非 LIFO 历史),拒绝盲写"
+                ));
+            }
+        }
+        return apply_value_at(project, &ptr, value);
+    }
+    if let Some(want) = expect {
+        let cur = project_value_at(project, &op.target.path)?;
+        if cur != *want {
+            return Err(format!(
+                "CF-002 撤销/重做基准不一致:{} 当前态已偏离待回写 Op 的预期(外部改动或重放),拒绝盲写",
+                op.target.path
+            ));
+        }
+    }
+    apply_value_at(project, &op.target.path, value)
 }
 
 /// 便捷:构造测试样本工程。
@@ -181,5 +275,8 @@ pub fn sample_project() -> Project {
 
 /// 命令便捷构造(测试用)。
 pub fn patch(duration_ms: u64) -> ClipPatch {
-    ClipPatch { duration_ms: Some(duration_ms), ..Default::default() }
+    ClipPatch {
+        duration_ms: Some(duration_ms),
+        ..Default::default()
+    }
 }

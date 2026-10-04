@@ -44,7 +44,7 @@ pub(crate) fn static_resp(web: &Path, path: &str, if_none_match: Option<&str>) -
             status: "304 Not Modified",
             ctype: "text/plain".into(),
             extra: format!("ETag: {etag}\r\n"),
-            body: Vec::new(),
+            body: super::http::RespBody::Bytes(Vec::new()),
         };
     }
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -52,7 +52,7 @@ pub(crate) fn static_resp(web: &Path, path: &str, if_none_match: Option<&str>) -
         status: "200 OK",
         ctype: mime_of_static(ext).to_string(),
         extra: format!("ETag: {etag}\r\n"),
-        body: data,
+        body: super::http::RespBody::Bytes(data),
     }
 }
 
@@ -176,8 +176,8 @@ mod tests {
             let r = static_resp(&web, p, None);
             assert_eq!(r.status, "200 OK");
             assert_eq!(
-                r.body,
-                std::fs::read(web.join(f)).unwrap(),
+                r.body_bytes().unwrap(),
+                std::fs::read(web.join(f)).unwrap().as_slice(),
                 "{p} 内容必须与源文件一致"
             );
             assert!(r.extra.contains("ETag: "), "{p} 应带 ETag");
@@ -190,7 +190,7 @@ mod tests {
             Some(etag.trim().strip_prefix("ETag: ").unwrap()),
         );
         assert_eq!(r304.status, "304 Not Modified");
-        assert!(r304.body.is_empty());
+        assert!(r304.body_bytes().unwrap().is_empty());
         assert_eq!(
             static_resp(&web, "/assets/js/x.js", Some("\"dead.beef\"")).status,
             "200 OK"

@@ -445,8 +445,8 @@ impl Project {
     /// 反序列化 + schema v3 校验 + 关键帧语义裁决(契约优先:没有 schema 支撑的
     /// 字段不存在;关键帧白名单/互斥裁决见 [`crate::keyframes::validate_clip_keyframes`])。
     pub fn from_value(v: &Value) -> Result<Self, Vec<String>> {
-        let p: Project = serde_json::from_value(v.clone())
-            .map_err(|e| vec![format!("反序列化失败: {e}")])?;
+        let p: Project =
+            serde_json::from_value(v.clone()).map_err(|e| vec![format!("反序列化失败: {e}")])?;
         let errors = cutforge_schema::validate("project", v);
         if !errors.is_empty() {
             return Err(errors);
@@ -555,6 +555,33 @@ impl Project {
             n += 1;
         }
     }
+
+    /// 轨道有序不变量(BUG-05):每条轨的 clips 数组按 startMs **升序**。
+    /// debug 构建下断言(release 零成本);enforce_no_overlap 与二分插入依赖它。
+    /// 口径注意:三路合并写回的数组序是外部真相、本就不保证有序,故 engine 的
+    /// 断言用「不得**破坏**既有有序」的 before/after 对比(见 Engine::apply),
+    /// 本方法仅供确知状态来源为引擎产出时全量断言。
+    pub fn debug_assert_track_order(&self) {
+        for t in &self.tracks {
+            debug_assert!(
+                Self::track_order_ok(t),
+                "轨道 {} clips 必须按 startMs 升序: {:?}",
+                t.id,
+                t.clips
+                    .iter()
+                    .map(|c| (c.id.clone(), c.start_ms))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// 单轨 clips 是否按 startMs 升序(≤;同起点重叠已被 enforce_no_overlap 排除)。
+    pub fn track_order_ok(track: &Track) -> bool {
+        track
+            .clips
+            .windows(2)
+            .all(|w| w[0].start_ms <= w[1].start_ms)
+    }
 }
 
 /// v1→v2 迁移入口(委托 schema crate 的迁移器,再过一遍类型化模型)。
@@ -563,82 +590,10 @@ pub fn migrate_from_value(v: &Value) -> Result<Project, Vec<String>> {
     Project::from_value(&migrated)
 }
 
-/// 时间线恒速段(timeline 恒速段;册四 A4 T4.4 的**单一真相源**,册五 T5.1 扩
-/// speed 关键帧入口):
-/// `(start_ms, end_ms, mean_speed)` 三元组,`mean_speed` 为该段渲染用的常速
-/// (区间两端点速度的算术平均 = 线性插值 speed 函数在区间上的积分均值)。
-///
-/// 口径(投影与渲染共用本函数,红线 = 两边时长严格一致):
-/// - **speed 关键帧优先**(IR v3):clip.keyframes 含 speed 属性时,先经
-///   [`crate::keyframes::speed_keyframes_to_curve`] 合成为曲线(非线性缓动区间
-///   按求值器细分逼近),此后与本条 speedCurve 口径完全一致(与 speedCurve 互斥
-///   由校验器保证,此处不再判);
-/// - 无 speedCurve → 单段 `(0, duration_ms, speed.unwrap_or(1.0))`,与既有线性 speed 完全同形;
-/// - 有 speedCurve → 点按 atMs 升序(防御性排序),首点速度前延到 0、末点速度后延到
-///   durationMs(端点常速外延);相邻点之间 speed 函数线性插值,渲染按区间
-///   **均值常速**执行(每段一个 setpts,总时长与总源消耗都是分段积分的精确值);
-/// - 单点曲线 ≡ 常速;atMs 超出 [0,durationMs] 的点被钳到边界后并段。
-pub fn speed_segments(clip: &Clip) -> Vec<(u64, u64, f64)> {
-    let dur = clip.duration_ms;
-    if dur == 0 {
-        return Vec::new();
-    }
-    // speed 关键帧(IR v3):合成曲线后与 speedCurve 同路径(B 级分段常速逼近)
-    let speed_kf_curve = clip.keyframes.as_ref().and_then(|kfs| {
-        let pts: Vec<crate::keyframes::Keyframe> =
-            kfs.iter().filter(|k| k.property == "speed").cloned().collect();
-        if pts.is_empty() {
-            None
-        } else {
-            Some(crate::keyframes::speed_keyframes_to_curve(&pts))
-        }
-    });
-    let points = speed_kf_curve.as_ref().or(clip.speed_curve.as_ref());
-    let Some(points) = points else {
-        return vec![(0, dur, clip.speed.unwrap_or(1.0))];
-    };
-    // 防御性归一:排序(乱序输入),钳到 [0, dur](越界点钳边)
-    let mut pts: Vec<(u64, f64)> = points.iter().map(|p| (p.at_ms.min(dur), p.speed)).collect();
-    pts.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
-    if pts.is_empty() {
-        return vec![(0, dur, clip.speed.unwrap_or(1.0))];
-    }
-    // 端点外延成完整覆盖 [0, dur] 的节点序列:0→首点速度,dur→末点速度
-    let mut nodes: Vec<(u64, f64)> = Vec::with_capacity(pts.len() + 2);
-    if pts[0].0 > 0 {
-        nodes.push((0, pts[0].1));
-    }
-    nodes.extend(pts);
-    if nodes.last().map(|(t, _)| *t).unwrap_or(0) < dur {
-        let s = nodes.last().map(|(_, s)| *s).unwrap_or(1.0);
-        nodes.push((dur, s));
-    }
-    // 相邻节点成段;区间速度 = 线性插值 → 常速渲染取区间均值(积分精确)
-    let mut segs: Vec<(u64, u64, f64)> = Vec::new();
-    for w in nodes.windows(2) {
-        let (a, sa) = w[0];
-        let (b, sb) = w[1];
-        if b <= a {
-            continue; // 零长段(重复 atMs)跳过
-        }
-        let mean = (sa + sb) / 2.0;
-        match segs.last_mut() {
-            // 均值相等的相邻段并段(等速点不产生多余 setpts)
-            Some(last) if (last.2 - mean).abs() < f64::EPSILON => last.1 = b,
-            _ => segs.push((a, b, mean)),
-        }
-    }
-    segs
-}
-
-/// 片段的源域读取时长(ms,f64;调用方决定取整)= ∫ speed dt 的分段积分。
-/// 无曲线 = durationMs × speed(与既有语义逐位一致);freezeMs 定格在调用方裁剪。
-pub fn source_read_ms(clip: &Clip) -> f64 {
-    speed_segments(clip)
-        .iter()
-        .map(|(a, b, s)| (*b - *a) as f64 * s)
-        .sum()
-}
+// 时间线恒速段与源读积分(T4.4 单一真相源;实现在 clip_ops 模块,纯移动——
+// 行数红线 A1-3;本模块 `pub use` 保持 `crate::model::speed_segments` 等
+// 路径逐字不变,渲染/投影两侧零改动)。Clip::split_at / Clip::merge_with 同在。
+pub use crate::clip_ops::{SplitError, source_read_ms, source_read_ms_upto, speed_segments};
 
 #[cfg(test)]
 mod fx_roundtrip_tests {
@@ -709,7 +664,10 @@ mod tests {
         v.as_object_mut().unwrap().remove("schemaVersion");
         v.as_object_mut().unwrap().remove("backends");
         v["tracks"][0].as_object_mut().unwrap().remove("id");
-        v["tracks"][0]["clips"][0].as_object_mut().unwrap().remove("id");
+        v["tracks"][0]["clips"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("id");
         let p = migrate_from_value(&v).expect("迁移后必须合法");
         assert_eq!(p.schema_version, "3.0.0", "v1 迁移目标随 IR v3(T5.1)");
         assert_eq!(p.tracks[0].id, "V1");
@@ -728,7 +686,11 @@ mod tests {
         // 无曲线:单段,线性 speed 回退
         let c = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 4000, "speed": 2.0}));
         assert_eq!(speed_segments(&c), vec![(0, 4000, 2.0)]);
-        assert_eq!(source_read_ms(&c), 8000.0, "无曲线 = durationMs × speed(既有语义逐位一致)");
+        assert_eq!(
+            source_read_ms(&c),
+            8000.0,
+            "无曲线 = durationMs × speed(既有语义逐位一致)"
+        );
         // 无曲线无 speed:1.0
         let c = mk(json!({"id": "V1-001", "startMs": 0, "durationMs": 4000}));
         assert_eq!(speed_segments(&c), vec![(0, 4000, 1.0)]);
@@ -745,21 +707,32 @@ mod tests {
             "id": "V1-001", "startMs": 0, "durationMs": 2000, "src": "a.mp4",
             "speedCurve": [{"atMs": 0, "speed": 0.5}, {"atMs": 1000, "speed": 1.5}]
         }));
-        assert_eq!(speed_segments(&c), vec![(0, 1000, 1.0), (1000, 2000, 1.5)],
-            "区间渲染速度 = 两端点均值(线性插值的精确积分)");
+        assert_eq!(
+            speed_segments(&c),
+            vec![(0, 1000, 1.0), (1000, 2000, 1.5)],
+            "区间渲染速度 = 两端点均值(线性插值的精确积分)"
+        );
         assert_eq!(source_read_ms(&c), 1000.0 * 1.0 + 1000.0 * 1.5);
         // 等速相邻点并段;首点不在 0 → 首速前延到 0
         let c = mk(json!({
             "id": "V1-001", "startMs": 0, "durationMs": 3000, "src": "a.mp4",
             "speedCurve": [{"atMs": 1000, "speed": 2.0}]
         }));
-        assert_eq!(speed_segments(&c), vec![(0, 3000, 2.0)], "等速段并段+端速外延");
+        assert_eq!(
+            speed_segments(&c),
+            vec![(0, 3000, 2.0)],
+            "等速段并段+端速外延"
+        );
         // 越界 atMs 钳到 durationMs
         let c = mk(json!({
             "id": "V1-001", "startMs": 0, "durationMs": 2000, "src": "a.mp4",
             "speedCurve": [{"atMs": 0, "speed": 1.0}, {"atMs": 9999, "speed": 4.0}]
         }));
-        assert_eq!(speed_segments(&c), vec![(0, 2000, 2.5)], "越界点钳边,区间均值");
+        assert_eq!(
+            speed_segments(&c),
+            vec![(0, 2000, 2.5)],
+            "越界点钳边,区间均值"
+        );
     }
 
     /// 调整层轨(kind=adjust):parse 合法、轨道 id 可用 X 前缀;TrackKind::letter。
@@ -779,7 +752,11 @@ mod tests {
         let p = Project::from_value(&v).expect("adjust 轨必须合法");
         assert_eq!(p.tracks[1].kind, TrackKind::Adjust);
         assert_eq!(TrackKind::Adjust.letter(), 'X');
-        assert_eq!(p.next_track_id(TrackKind::Adjust), "X2", "X1 已存在,下一个 X2");
+        assert_eq!(
+            p.next_track_id(TrackKind::Adjust),
+            "X2",
+            "X1 已存在,下一个 X2"
+        );
         let _ = p.to_validated_value().unwrap();
     }
 }

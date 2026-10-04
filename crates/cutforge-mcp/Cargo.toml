@@ -11,6 +11,11 @@ serde_json = "1"
 cutforge-core = { path = "../cutforge-core" }
 cutforge-io = { path = "../cutforge-io" }
 cutforge-schema = { path = "../cutforge-schema" }
+# M2 架构注记(V2-W1 联合验收登记):本依赖边为 HEAD 基线存量——cutforge-mcp
+# 直接依赖 cutforge-render 做渲染编排(progress::resolve_render_bin 只做同目录/
+# PATH 可执行定位,渲染本体一律子进程 CLI 透传,不链其 Rust API);依赖边解耦
+# (编排面收敛到注册表/进程发现)由 A-01 dispatch 注册表化轮统一重构,本轮不
+# 强制;门禁豁免由主会话与 GATES 落。
 cutforge-render = { path = "../cutforge-render" }
 cutforge-script = { path = "../cutforge-script" }
 

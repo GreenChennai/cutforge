@@ -11,6 +11,8 @@ use cutforge_core::oplog::Actor;
 use serde_json::{Value, json};
 use std::io::Write as _;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 // ---------------- 连接纪律(T1.6/AC-1.7;决策 D-A1:纯 std 手工加固,ADR-0009) ----------------
@@ -30,6 +32,133 @@ pub(crate) const RESP_TOO_LARGE: &str =
 /// 401 响应(两通道共用同一份字面)。
 pub(crate) const RESP_UNAUTHORIZED: &str =
     "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+/// 503 响应(S-02 连接上限超限;Retry-After 提示客户端退避重试)。
+pub(crate) const RESP_UNAVAILABLE: &str = "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+// ---------------- 鉴权与解析共用件(BUG-10 / S-04 / BUG-11;两通道单一实现) ----------------
+
+/// 恒定时间等价(手写 XOR,纯 std):比较耗时与内容无关,不给时序侧信道。
+/// 长度不等直接 false——报文长度本身是公开信息,不构成泄露。
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// 最小 HTTP 头解析(S-04):请求行之后的头区 → (小写头名, 去空白值) 序列。
+/// 头名大小写规范化(HTTP/1.1 头名大小写不敏感);obs-fold 续行(值前导
+/// SP/HTAB 的行)不折叠,以 `obs_fold` 如实上报——鉴权面见到续行即拒绝(防走私)。
+pub(crate) struct HeadHeaders {
+    pub headers: Vec<(String, String)>,
+    pub obs_fold: bool,
+}
+
+pub(crate) fn parse_headers(head: &str) -> HeadHeaders {
+    let mut headers = Vec::new();
+    let mut obs_fold = false;
+    for line in head.lines().skip(1) {
+        if line.is_empty() {
+            break; // 头区结束(\r\n\r\n 的空行)
+        }
+        if line.starts_with(' ') || line.starts_with('\t') {
+            obs_fold = true;
+            continue;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            headers.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+        }
+    }
+    HeadHeaders { headers, obs_fold }
+}
+
+/// 取请求里呈现的 Bearer 值(BUG-10/S-04 校验面前置):
+/// 头名大小写不敏感、重复 Authorization 头拒绝(防走私)、obs-fold 续行拒绝。
+pub(crate) fn bearer_value(head: &str) -> Option<String> {
+    let p = parse_headers(head);
+    if p.obs_fold {
+        return None;
+    }
+    let mut it = p.headers.iter().filter(|(n, _)| n == "authorization");
+    match (it.next(), it.next()) {
+        (Some((_, v)), None) => {
+            let v = v.trim();
+            // scheme 大小写不敏感(RFC 7235):Bearer/bEARER 同权
+            if v.len() >= 7 && v[..7].eq_ignore_ascii_case("bearer ") {
+                Some(v[7..].trim().to_string())
+            } else {
+                None
+            }
+        }
+        _ => None, // 缺头或重复头 → 一律不通过
+    }
+}
+
+/// Bearer token 校验(BUG-10):值精确相等(恒定时间比较),不再整段子串匹配。
+pub(crate) fn check_auth(head: &str, token: &str) -> bool {
+    bearer_value(head).is_some_and(|got| constant_time_eq(got.as_bytes(), token.as_bytes()))
+}
+
+/// query 按 key 精确切分(S-04/BUG-11):split('&') → split_once('='),
+/// key 精确相等(`mytoken=` 不再误命中 `token=`);值统一走 pct_decode
+/// (与 /media 同一解码器,SSE root 的 CJK/空格路径由此修复)。
+pub(crate) fn query_param(query: &str, key: &str) -> Option<String> {
+    query.split('&').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k == key).then(|| pct_decode(v))
+    })
+}
+
+// ---------------- S-02 连接计数上限 ----------------
+
+/// 连接上限缺省值(可经 env CUTFORGE_HTTP_MAX_CONNS 配置;两通道同读)。
+pub(crate) const DEFAULT_MAX_CONNS: usize = 64;
+
+pub(crate) fn max_conns_from_env() -> usize {
+    std::env::var("CUTFORGE_HTTP_MAX_CONNS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(DEFAULT_MAX_CONNS)
+}
+
+/// 连接闸门(S-02):acquire 失败 = 已达上限,调用方回 503+Retry-After;
+/// 成功返回 RAII 守卫(持有计数器 Arc),连接结束自动释放名额——守卫可安全
+/// move 进连接线程,不与 accept 循环的生命周期绑定。
+pub(crate) struct ConnGate {
+    cur: Arc<AtomicUsize>,
+    max: usize,
+}
+
+pub(crate) struct ConnGuard(Arc<AtomicUsize>);
+
+impl Drop for ConnGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+impl ConnGate {
+    pub(crate) fn new(max: usize) -> Self {
+        Self {
+            cur: Arc::new(AtomicUsize::new(0)),
+            max,
+        }
+    }
+
+    pub(crate) fn acquire(&self) -> Option<ConnGuard> {
+        let prev = self.cur.fetch_add(1, Ordering::AcqRel);
+        if prev >= self.max {
+            self.cur.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(ConnGuard(Arc::clone(&self.cur)))
+    }
+}
 
 // 连接复用策略(明确化):本服务统一**短连接**——每个响应必带 `Connection: close`
 // 并在写毕后关闭 socket;唯一例外是 SSE 流(transport::events 的显式
@@ -136,21 +265,78 @@ pub(crate) fn read_request(stream: &mut std::net::TcpStream) -> Result<RawReq, s
 }
 
 /// HTTP 响应体(字节化:/media 需要回二进制,不再经 String 有损转换)。
+/// R-08:body 分两态——内存 JSON 体与文件流式体(恒定 64KB 缓冲 io::copy,
+/// 整文件/大区间不再 read_to_end 入内存)。
+pub(crate) enum RespBody {
+    Bytes(Vec<u8>),
+    Stream {
+        file: std::fs::File,
+        start: u64,
+        len: u64,
+    },
+}
+
 pub(crate) struct HttpResp {
     pub(crate) status: &'static str,
     pub(crate) ctype: String,
     /// 附加响应头(每行自带 \r\n,可为空)
     pub(crate) extra: String,
-    pub(crate) body: Vec<u8>,
+    pub(crate) body: RespBody,
+}
+
+impl HttpResp {
+    pub(crate) fn bytes(status: &'static str, ctype: &str, body: Vec<u8>) -> Self {
+        Self {
+            status,
+            ctype: ctype.into(),
+            extra: String::new(),
+            body: RespBody::Bytes(body),
+        }
+    }
+
+    pub(crate) fn body_len(&self) -> usize {
+        match &self.body {
+            RespBody::Bytes(b) => b.len(),
+            RespBody::Stream { len, .. } => *len as usize,
+        }
+    }
+
+    /// 内存体视图(Stream 体 = None)。
+    pub(crate) fn body_bytes(&self) -> Option<&[u8]> {
+        match &self.body {
+            RespBody::Bytes(b) => Some(b),
+            RespBody::Stream { .. } => None,
+        }
+    }
+}
+
+/// 流式转发读缓冲(R-08:恒定 64KB,与文件大小无关)。
+pub(crate) const STREAM_BUF: usize = 64 * 1024;
+
+/// 写响应(两通道单一写出口):head → body(Bytes 一次写;Stream 经
+/// BufReader(64KB)+ io::copy 流式转发,不整段入内存)。
+pub(crate) fn write_resp(stream: &mut std::net::TcpStream, resp: HttpResp) -> std::io::Result<()> {
+    use std::io::{Read as _, Seek as _};
+    let clen = resp.body_len();
+    write!(
+        stream,
+        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{}Connection: close\r\n\r\n",
+        resp.status, resp.ctype, clen, resp.extra
+    )?;
+    match resp.body {
+        RespBody::Bytes(b) => stream.write_all(&b)?,
+        RespBody::Stream { file, start, len } => {
+            let mut reader = std::io::BufReader::with_capacity(STREAM_BUF, file);
+            reader.seek(std::io::SeekFrom::Start(start))?;
+            let mut take = reader.take(len);
+            std::io::copy(&mut take, &mut *stream)?;
+        }
+    }
+    stream.flush()
 }
 
 pub(crate) fn resp_plain(status: &'static str, msg: &str) -> HttpResp {
-    HttpResp {
-        status,
-        ctype: "text/plain; charset=utf-8".into(),
-        extra: String::new(),
-        body: msg.as_bytes().to_vec(),
-    }
+    HttpResp::bytes(status, "text/plain; charset=utf-8", msg.as_bytes().to_vec())
 }
 
 /// 百分号解码(查询参数;encodeURIComponent 输出的 %XX 序列)。
@@ -196,7 +382,18 @@ pub(crate) fn mime_of(ext: &str) -> &'static str {
 /// 内嵌 HTTP 辅通道:仅监听 127.0.0.1,Bearer token 校验;每连接一线程
 /// (挂死连接只占它自己的线程,读超时后回收);GET /events 长轮询推外部改动事件,
 /// 带 `Accept: text/event-stream` 时升级为 SSE(transport::events,单一实现)。
+/// S-02:连接计数上限(缺省 64,env CUTFORGE_HTTP_MAX_CONNS 可配),超限 503。
 pub fn serve_http(port: u16, token: &str) -> i32 {
+    serve_http_with_limit(port, token, max_conns_from_env())
+}
+
+/// 测试钩子:以显式上限起辅通道(TC-SEC-040;生产路径走 serve_http 的 env 口径)。
+#[doc(hidden)]
+pub fn _serve_http_with_limit(port: u16, token: &str, max_conns: usize) -> i32 {
+    serve_http_with_limit(port, token, max_conns)
+}
+
+fn serve_http_with_limit(port: u16, token: &str, max_conns: usize) -> i32 {
     let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => l,
         Err(e) => {
@@ -205,13 +402,23 @@ pub fn serve_http(port: u16, token: &str) -> i32 {
         }
     };
     eprintln!(
-        "cutforge-mcp http on http://127.0.0.1:{port}/rpc (events: /events?root=..&since=N;SSE: Accept: text/event-stream)"
+        "cutforge-mcp http on http://127.0.0.1:{port}/rpc (events: /events?root=..&since=N;SSE: Accept: text/event-stream;max-conns={max_conns})"
     );
+    let gate = Arc::new(ConnGate::new(max_conns));
     for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
+        let Ok(mut stream) = stream else { continue };
+        // S-02:先占名额再 spawn;超限立即 503+Retry-After(连接不进读循环)
+        let Some(guard) = gate.acquire() else {
+            let _ = stream.write_all(RESP_UNAVAILABLE.as_bytes());
+            let _ = stream.flush();
+            continue;
+        };
         let token = token.to_string();
+        let gate = gate.clone();
         std::thread::spawn(move || {
             let _ = handle_http_conn(stream, &token);
+            drop(guard);
+            let _ = gate; // 名额随 guard 释放
         });
     }
     0
@@ -228,7 +435,9 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
         Err(super::ReadFail::Closed) => return Ok(()),
     };
     let first_line = req.first_line().to_string();
-    let authorized = req.head.contains(&format!("Authorization: Bearer {token}"));
+    // BUG-10/S-04:Bearer 值精确相等(恒定时间),头名大小写不敏感,
+    // 重复头/续行拒绝——不再对整段 head 做 contains 子串匹配
+    let authorized = check_auth(&req.head, token);
     let is_rpc = first_line.starts_with("POST /rpc");
     // 册七 T7.1:/api/v1 REST 面(ADR-0025);事件流别名并入既有 /events 分支(SSE 单一实现)
     let raw_path = first_line.split(' ').nth(1).unwrap_or("");
@@ -245,21 +454,16 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
             .header("accept")
             .is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"))
     {
-        // SSE:root 仍走查询参数(辅通道无绑定工程);起点语义同工作区通道
-        let query = api_query;
-        let root_p = query.split('&').find_map(|kv| {
-            let mut it = kv.split('=');
-            match (it.next(), it.next()) {
-                (Some("root"), Some(v)) => Some(v.to_string()),
-                _ => None,
-            }
-        });
-        return match root_p {
+        // SSE:root 仍走查询参数(辅通道无绑定工程);起点语义同工作区通道。
+        // BUG-11:root/since 统一经 query_param 精确切分 + pct_decode
+        // (CJK/空格路径此前拿字面 %XX 串当路径,事件永不到达)。
+        return match query_param(api_query, "root") {
             Some(r) => events::serve_sse(
                 &mut stream,
                 Path::new(&r),
-                query,
+                api_query,
                 req.header("last-event-id").as_deref(),
+                "",
             ),
             None => {
                 // T1.7 三面同码:事件面错误也带 ns(加法字段;code 取值不变)
@@ -291,28 +495,19 @@ fn handle_http_conn(mut stream: std::net::TcpStream, token: &str) -> std::io::Re
             None,
             Actor::agent("cutforge-mcp"),
         );
-        let body = String::from_utf8_lossy(&resp.body).into_owned();
+        let body = resp
+            .body_bytes()
+            .map(String::from_utf8_lossy)
+            .unwrap_or_default()
+            .into_owned();
         (resp.status, body)
     } else if is_events {
         // 长轮询:/events?root=<工程目录>&since=<seq>;≤1s 内有新事件立即返回。
         // A1-R2:此降级路径兼容旧壳,册二完成后移除(SSE 为新壳唯一事件面)。
-        let query = first_line
-            .split(' ')
-            .nth(1)
-            .unwrap_or("")
-            .split_once('?')
-            .map(|(_, q)| q)
-            .unwrap_or("");
-        let mut root_p = String::new();
-        let mut since: u64 = 0;
-        for kv in query.split('&') {
-            let mut it = kv.split('=');
-            match (it.next(), it.next()) {
-                (Some("root"), Some(v)) => root_p = v.to_string(),
-                (Some("since"), Some(v)) => since = v.parse().unwrap_or(0),
-                _ => {}
-            }
-        }
+        let root_p = query_param(api_query, "root").unwrap_or_default();
+        let since: u64 = query_param(api_query, "since")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
         if root_p.is_empty() {
             (
                 "200 OK",

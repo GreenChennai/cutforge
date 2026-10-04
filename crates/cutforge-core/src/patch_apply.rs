@@ -19,7 +19,11 @@ impl TrackPatch {
         };
         if let Some(v) = self.name {
             let old = track.name.replace(v.clone());
-            record("name", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            record(
+                "name",
+                old.map(Value::String).unwrap_or(Value::Null),
+                Value::String(v),
+            );
         }
         if let Some(v) = self.locked {
             let old = track.locked.replace(v);
@@ -43,14 +47,19 @@ impl TrackPatch {
         }
         if let Some(v) = self.color {
             let old = track.color.replace(v.clone());
-            record("color", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            record(
+                "color",
+                old.map(Value::String).unwrap_or(Value::Null),
+                Value::String(v),
+            );
         }
         if let Some(v) = self.eq {
             // 整组替换(册五 T5.3;数组在三路合并中整体为一个值)
             let old = track.eq.replace(v.clone());
             record(
                 "eq",
-                old.map(|b| serde_json::to_value(b).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|b| serde_json::to_value(b).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 serde_json::to_value(v).unwrap_or(Value::Null),
             );
         }
@@ -58,7 +67,8 @@ impl TrackPatch {
             let old = track.eq.take();
             record(
                 "eq",
-                old.map(|b| serde_json::to_value(b).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|b| serde_json::to_value(b).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 Value::Null,
             );
         }
@@ -66,7 +76,8 @@ impl TrackPatch {
             let old = track.dyn_.replace(v.clone());
             record(
                 "dyn",
-                old.map(|d| serde_json::to_value(d).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|d| serde_json::to_value(d).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 serde_json::to_value(v).unwrap_or(Value::Null),
             );
         }
@@ -74,7 +85,8 @@ impl TrackPatch {
             let old = track.dyn_.take();
             record(
                 "dyn",
-                old.map(|d| serde_json::to_value(d).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|d| serde_json::to_value(d).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 Value::Null,
             );
         }
@@ -146,7 +158,6 @@ impl BgmPatch {
     }
 }
 
-
 /// 从 patch 派生的字段级变更(指针片段 → before/after),用于生成叶级 Op。
 pub type FieldChange = (String, Value, Value);
 
@@ -181,9 +192,11 @@ impl ClipPatch {
         }
         if let Some(v) = self.speed_curve {
             let old = clip.speed_curve.replace(v.clone());
-            record("speedCurve",
-                   old.map(|ps| json_points(&ps)).unwrap_or(Value::Null),
-                   json_points(&v));
+            record(
+                "speedCurve",
+                old.map(|ps| json_points(&ps)).unwrap_or(Value::Null),
+                json_points(&v),
+            );
         }
         if let Some(v) = self.reverse {
             let old = clip.reverse;
@@ -197,12 +210,20 @@ impl ClipPatch {
         }
         if let Some(v) = self.crop {
             let old = clip.crop.replace(v);
-            record("crop", old.map(|c| serde_json::to_value(c).unwrap_or(Value::Null)).unwrap_or(Value::Null),
-                   serde_json::to_value(v).unwrap_or(Value::Null));
+            record(
+                "crop",
+                old.map(|c| serde_json::to_value(c).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
+                serde_json::to_value(v).unwrap_or(Value::Null),
+            );
         }
         if let Some(v) = self.flip {
             let old = clip.flip.replace(v.clone());
-            record("flip", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            record(
+                "flip",
+                old.map(Value::String).unwrap_or(Value::Null),
+                Value::String(v),
+            );
         }
         if let Some(v) = self.volume {
             let old = clip.volume;
@@ -211,7 +232,11 @@ impl ClipPatch {
         }
         if let Some(v) = self.denoise {
             let old = clip.denoise.replace(v.clone());
-            record("denoise", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            record(
+                "denoise",
+                old.map(Value::String).unwrap_or(Value::Null),
+                Value::String(v),
+            );
         }
         if let Some(v) = self.pitch {
             let old = clip.pitch;
@@ -231,14 +256,19 @@ impl ClipPatch {
         if let Some(v) = self.text {
             let old = clip.text.take();
             clip.text = Some(v.clone());
-            record("text", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+            record(
+                "text",
+                old.map(Value::String).unwrap_or(Value::Null),
+                Value::String(v),
+            );
         }
         if let Some(v) = self.text_style {
             // 整对象替换(册四 T4.7;与 crop 同口径原子操作)
             let old = clip.text_style.replace(v.clone());
             record(
                 "textStyle",
-                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 serde_json::to_value(v).unwrap_or(Value::Null),
             );
         }
@@ -246,7 +276,8 @@ impl ClipPatch {
             let old = clip.huazi.replace(v.clone());
             record(
                 "huazi",
-                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 serde_json::to_value(v).unwrap_or(Value::Null),
             );
         }
@@ -255,7 +286,8 @@ impl ClipPatch {
             let old = clip.huazi.take();
             record(
                 "huazi",
-                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|t| serde_json::to_value(t).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 Value::Null,
             );
         }
@@ -269,7 +301,11 @@ impl ClipPatch {
             let t = clip.transition.get_or_insert_with(Default::default);
             if let Some(v) = tp.type_ {
                 let old = t.type_.replace(v.clone());
-                record("transition/type", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+                record(
+                    "transition/type",
+                    old.map(Value::String).unwrap_or(Value::Null),
+                    Value::String(v),
+                );
             }
             if let Some(v) = tp.dur_ms {
                 let old = t.dur_ms.replace(v);
@@ -277,18 +313,30 @@ impl ClipPatch {
             }
             if let Some(v) = tp.reason {
                 let old = t.reason.replace(v.clone());
-                record("transition/reason", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+                record(
+                    "transition/reason",
+                    old.map(Value::String).unwrap_or(Value::Null),
+                    Value::String(v),
+                );
             }
             if let Some(v) = tp.fx {
                 let old = t.fx.replace(v.clone());
-                record("transition/fx", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+                record(
+                    "transition/fx",
+                    old.map(Value::String).unwrap_or(Value::Null),
+                    Value::String(v),
+                );
             }
         }
         if let Some(mp) = self.motion {
             let m = clip.motion.get_or_insert_with(Default::default);
             if let Some(v) = mp.in_ {
                 let old = m.in_.replace(v.clone());
-                record("motion/in", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+                record(
+                    "motion/in",
+                    old.map(Value::String).unwrap_or(Value::Null),
+                    Value::String(v),
+                );
             }
             if let Some(v) = mp.in_ms {
                 let old = m.in_ms.replace(v);
@@ -296,7 +344,11 @@ impl ClipPatch {
             }
             if let Some(v) = mp.out {
                 let old = m.out.replace(v.clone());
-                record("motion/out", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+                record(
+                    "motion/out",
+                    old.map(Value::String).unwrap_or(Value::Null),
+                    Value::String(v),
+                );
             }
             if let Some(v) = mp.out_ms {
                 let old = m.out_ms.replace(v);
@@ -304,11 +356,19 @@ impl ClipPatch {
             }
             if let Some(v) = mp.in_fx {
                 let old = m.in_fx.replace(v.clone());
-                record("motion/inFx", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+                record(
+                    "motion/inFx",
+                    old.map(Value::String).unwrap_or(Value::Null),
+                    Value::String(v),
+                );
             }
             if let Some(v) = mp.out_fx {
                 let old = m.out_fx.replace(v.clone());
-                record("motion/outFx", old.map(Value::String).unwrap_or(Value::Null), Value::String(v));
+                record(
+                    "motion/outFx",
+                    old.map(Value::String).unwrap_or(Value::Null),
+                    Value::String(v),
+                );
             }
         }
         if let Some(fx) = self.fx {
@@ -316,7 +376,8 @@ impl ClipPatch {
             let old = clip.fx.replace(fx.clone());
             record(
                 "fx",
-                old.map(|f| serde_json::to_value(f).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|f| serde_json::to_value(f).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 serde_json::to_value(fx).unwrap_or(Value::Null),
             );
         }
@@ -325,7 +386,8 @@ impl ClipPatch {
             let old = clip.keyframes.replace(v.clone());
             record(
                 "keyframes",
-                old.map(|ks| serde_json::to_value(ks).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|ks| serde_json::to_value(ks).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 serde_json::to_value(v).unwrap_or(Value::Null),
             );
         }
@@ -334,7 +396,8 @@ impl ClipPatch {
             let old = clip.grade.replace(v.clone());
             record(
                 "grade",
-                old.map(|g| serde_json::to_value(g).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|g| serde_json::to_value(g).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 serde_json::to_value(v).unwrap_or(Value::Null),
             );
         }
@@ -343,7 +406,8 @@ impl ClipPatch {
             let old = clip.grade.take();
             record(
                 "grade",
-                old.map(|g| serde_json::to_value(g).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|g| serde_json::to_value(g).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 Value::Null,
             );
         }
@@ -353,7 +417,8 @@ impl ClipPatch {
             let old = clip.compound.replace(v.clone());
             record(
                 "compound",
-                old.map(|c| serde_json::to_value(c).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+                old.map(|c| serde_json::to_value(c).unwrap_or(Value::Null))
+                    .unwrap_or(Value::Null),
                 serde_json::to_value(v).unwrap_or(Value::Null),
             );
         }
@@ -374,7 +439,9 @@ fn opt_json_bool(v: Option<bool>) -> Value {
 }
 
 fn json_f64(v: f64) -> Value {
-    serde_json::Number::from_f64(v).map(Value::Number).unwrap_or(Value::Null)
+    serde_json::Number::from_f64(v)
+        .map(Value::Number)
+        .unwrap_or(Value::Null)
 }
 
 fn opt_json_f64(v: Option<f64>) -> Value {
@@ -383,6 +450,9 @@ fn opt_json_f64(v: Option<f64>) -> Value {
 
 /// 速度曲线点集 → JSON 数组([{atMs, speed}, …];serde 形态与 Clip 落盘逐字一致)。
 fn json_points(v: &[SpeedPoint]) -> Value {
-    Value::Array(v.iter().map(|p| serde_json::to_value(p).unwrap_or(Value::Null)).collect())
+    Value::Array(
+        v.iter()
+            .map(|p| serde_json::to_value(p).unwrap_or(Value::Null))
+            .collect(),
+    )
 }
-

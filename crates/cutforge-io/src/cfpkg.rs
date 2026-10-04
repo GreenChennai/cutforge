@@ -21,8 +21,8 @@
 use crate::atomic::atomic_write;
 use crate::lock;
 use crate::paths::{self, LayoutKind};
-use crate::zipstore::{zip_read_all, zip_store, Entry};
-use serde_json::{json, Value};
+use crate::zipstore::{Entry, zip_read_all, zip_store};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -86,7 +86,11 @@ impl std::fmt::Display for PkgError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PkgError::NotAProject(p) => {
-                write!(f, "不是可打开的工程(三态布局皆无 project.json): {}", p.display())
+                write!(
+                    f,
+                    "不是可打开的工程(三态布局皆无 project.json): {}",
+                    p.display()
+                )
             }
             PkgError::InvalidPkg(m) => write!(f, "cfpkg 容器不合法: {m}"),
             PkgError::Conflict(m) => write!(f, "CONFLICT: {m}(整体拒绝,盘面未动)"),
@@ -119,7 +123,8 @@ fn safe_rel(name: &str) -> bool {
         && !name.contains('\\')
         && !name.contains(':')
         && !name.split('/').any(|seg| seg == ".." || seg.is_empty())
-        && name != "." && !name.ends_with('/')
+        && name != "."
+        && !name.ends_with('/')
 }
 
 /// 收集 project.json 里引用的全部素材相对路径(clips 含复合子时间线 + bgm.src)。
@@ -142,16 +147,22 @@ fn collect_media_refs(project: &Value) -> Vec<String> {
     if let Some(src) = project["bgm"]["src"].as_str().filter(|s| !s.is_empty()) {
         refs.insert(src.to_string());
     }
-    refs.into_iter().filter(|r| safe_rel(r) && !r.contains("://")).collect()
+    refs.into_iter()
+        .filter(|r| safe_rel(r) && !r.contains("://"))
+        .collect()
 }
 
 /// 读 .cutforge/oplog/*.jsonl 的最大 rev(Op.rev = 应用后修订号;无 OpLog/空 → 0)。
 fn read_rev(root: &Path) -> u64 {
     let dir = root.join(".cutforge/oplog");
-    let Ok(rd) = std::fs::read_dir(&dir) else { return 0 };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return 0;
+    };
     let mut rev = 0u64;
     for f in rd.flatten() {
-        let Ok(text) = std::fs::read_to_string(f.path()) else { continue };
+        let Ok(text) = std::fs::read_to_string(f.path()) else {
+            continue;
+        };
         for line in text.lines() {
             if let Ok(op) = serde_json::from_str::<Value>(line) {
                 rev = rev.max(op["rev"].as_u64().unwrap_or(0));
@@ -166,14 +177,18 @@ fn collect_dir_files(dir: &Path, cap: usize) -> Vec<(String, PathBuf)> {
     let mut out: Vec<(String, PathBuf)> = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
                 continue;
             }
-            let Ok(rel) = p.strip_prefix(dir) else { continue };
+            let Ok(rel) = p.strip_prefix(dir) else {
+                continue;
+            };
             let rel_s = rel.to_string_lossy().replace('\\', "/");
             if !safe_rel(&rel_s) || out.len() >= cap {
                 continue;
@@ -219,8 +234,14 @@ pub fn pack(
     let project_bytes = std::fs::read(paths::project_path(root))?;
     let project: Value = serde_json::from_slice(&project_bytes)
         .map_err(|e| PkgError::InvalidPkg(format!("project.json 不是合法 JSON: {e}")))?;
-    let name = project["slug"].as_str().unwrap_or("cutforge-project").to_string();
-    let schema_version = project["schemaVersion"].as_str().unwrap_or("3.0.0").to_string();
+    let name = project["slug"]
+        .as_str()
+        .unwrap_or("cutforge-project")
+        .to_string();
+    let schema_version = project["schemaVersion"]
+        .as_str()
+        .unwrap_or("3.0.0")
+        .to_string();
 
     // 持锁执行(锁内复验工程仍在;活进程持锁 → 拒绝,残留锁由 library_recover 接管)
     let _guard = lock::acquire(root, 30_000, 2).map_err(|e| PkgError::Locked(e.to_string()))?;
@@ -232,14 +253,22 @@ pub fn pack(
     // 1) 真相源:按盘面布局解析在位文件,一律以 v3 契约名入包
     let mut project_count = 0usize;
     for (fname, disk_path) in truth_sources(root) {
-        let Ok(bytes) = std::fs::read(&disk_path) else { continue };
-        entries.push(Entry { name: format!("project/{fname}"), data: bytes });
+        let Ok(bytes) = std::fs::read(&disk_path) else {
+            continue;
+        };
+        entries.push(Entry {
+            name: format!("project/{fname}"),
+            data: bytes,
+        });
         project_count += 1;
     }
     // 2) OpLog(append-only 原样随包)
     let oplog_files = collect_dir_files(&root.join(".cutforge/oplog"), 4096);
     for (rel, p) in &oplog_files {
-        entries.push(Entry { name: format!("oplog/{rel}"), data: std::fs::read(p)? });
+        entries.push(Entry {
+            name: format!("oplog/{rel}"),
+            data: std::fs::read(p)?,
+        });
     }
     // 3) 素材:按引用收集,条目名 = 工程内相对路径原样(解包原位还原,src 零改写)
     let mut missing: Vec<String> = Vec::new();
@@ -248,7 +277,10 @@ pub fn pack(
         for rel in collect_media_refs(&project) {
             let p = root.join(&rel);
             if p.is_file() {
-                entries.push(Entry { name: format!("media/{rel}"), data: std::fs::read(&p)? });
+                entries.push(Entry {
+                    name: format!("media/{rel}"),
+                    data: std::fs::read(&p)?,
+                });
                 media_count += 1;
             } else {
                 missing.push(rel);
@@ -260,7 +292,10 @@ pub fn pack(
     let mut exports_count = 0usize;
     if include_exports {
         for (rel, p) in collect_dir_files(&paths::output_dir(root), 4096) {
-            entries.push(Entry { name: format!("exports/{rel}"), data: std::fs::read(p)? });
+            entries.push(Entry {
+                name: format!("exports/{rel}"),
+                data: std::fs::read(p)?,
+            });
             exports_count += 1;
         }
     }
@@ -313,34 +348,44 @@ pub fn pack(
 /// 解包 `.cfpkg` 到**新工程目录**(目标必须不存在;真相源落 v3 契约位,media/oplog
 /// 原位还原)。清单校验:format/formatVersion/project 真相源齐备;条目名防 zip-slip。
 pub fn unpack(src: &Path, dest: &Path) -> Result<UnpackReport, PkgError> {
-    let zip = std::fs::read(src).map_err(|e| {
-        PkgError::InvalidPkg(format!("读取失败({}): {e}", src.display()))
-    })?;
+    let zip = std::fs::read(src)
+        .map_err(|e| PkgError::InvalidPkg(format!("读取失败({}): {e}", src.display())))?;
     let items = zip_read_all(&zip).map_err(|e| PkgError::InvalidPkg(e.to_string()))?;
     // 清单校验:先 manifest 后 project 真相源
-    let manifest_raw = items.iter().find(|e| e.name == "manifest.json")
+    let manifest_raw = items
+        .iter()
+        .find(|e| e.name == "manifest.json")
         .ok_or_else(|| PkgError::InvalidPkg("缺 manifest.json".into()))?;
     let manifest: Value = serde_json::from_slice(&manifest_raw.data)
         .map_err(|e| PkgError::InvalidPkg(format!("manifest.json 不是合法 JSON: {e}")))?;
     if manifest["format"].as_str() != Some(FORMAT) {
         return Err(PkgError::InvalidPkg(format!(
-            "format 必须为 \"{FORMAT}\"(实得 {:?})", manifest["format"].as_str())));
+            "format 必须为 \"{FORMAT}\"(实得 {:?})",
+            manifest["format"].as_str()
+        )));
     }
     if manifest["formatVersion"].as_u64() != Some(FORMAT_VERSION) {
         return Err(PkgError::InvalidPkg(format!(
             "formatVersion 必须为 {FORMAT_VERSION}(实得 {:?});高版本容器由新版工具解",
-            manifest["formatVersion"].as_u64())));
+            manifest["formatVersion"].as_u64()
+        )));
     }
     if !items.iter().any(|e| e.name == "project/project.json") {
-        return Err(PkgError::InvalidPkg("缺 project/project.json(容器必须含工程真相源)".into()));
+        return Err(PkgError::InvalidPkg(
+            "缺 project/project.json(容器必须含工程真相源)".into(),
+        ));
     }
     // 目标:不存在,或存在且为空目录(拒绝覆盖,otio_import/project_new 同纪律)
     if dest.exists() {
         let empty = dest.is_dir()
-            && std::fs::read_dir(dest).map(|mut rd| rd.next().is_none()).unwrap_or(false);
+            && std::fs::read_dir(dest)
+                .map(|mut rd| rd.next().is_none())
+                .unwrap_or(false);
         if !empty {
             return Err(PkgError::Conflict(format!(
-                "解包目标已存在: {}(拒绝覆盖;换目标或先清理)", dest.display())));
+                "解包目标已存在: {}(拒绝覆盖;换目标或先清理)",
+                dest.display()
+            )));
         }
     }
     // 条目落位(project/ → v3 契约位;media/ 原位还原;oplog/ → .cutforge/oplog/;
@@ -352,10 +397,16 @@ pub fn unpack(src: &Path, dest: &Path) -> Result<UnpackReport, PkgError> {
             continue;
         }
         let Some((prefix, rest)) = e.name.split_once('/') else {
-            return Err(PkgError::InvalidPkg(format!("条目 {} 不在已知前缀下", e.name)));
+            return Err(PkgError::InvalidPkg(format!(
+                "条目 {} 不在已知前缀下",
+                e.name
+            )));
         };
         if !safe_rel(rest) {
-            return Err(PkgError::InvalidPkg(format!("条目 {} 路径不合法(拒绝对外穿越)", e.name)));
+            return Err(PkgError::InvalidPkg(format!(
+                "条目 {} 路径不合法(拒绝对外穿越)",
+                e.name
+            )));
         }
         let dest_file = match prefix {
             "project" => match TRUTH_FILES.iter().find(|(f, _)| *f == rest) {
@@ -370,7 +421,8 @@ pub fn unpack(src: &Path, dest: &Path) -> Result<UnpackReport, PkgError> {
             "exports" => dest.join(paths::V3_EXPORTS).join(rest),
             other => {
                 return Err(PkgError::InvalidPkg(format!(
-                    "条目前缀 {other:?} 不在容器契约内(project/media/oplog/exports)")))
+                    "条目前缀 {other:?} 不在容器契约内(project/media/oplog/exports)"
+                )));
             }
         };
         if let Some(parent) = dest_file.parent() {
@@ -383,12 +435,20 @@ pub fn unpack(src: &Path, dest: &Path) -> Result<UnpackReport, PkgError> {
     Ok(UnpackReport {
         dest: dest.to_path_buf(),
         name: manifest["name"].as_str().unwrap_or_default().to_string(),
-        source_layout: manifest["sourceLayout"].as_str().unwrap_or_default().to_string(),
+        source_layout: manifest["sourceLayout"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
         files,
         media,
-        missing: manifest["missing"].as_array().map(|a| {
-            a.iter().filter_map(|v| v.as_str().map(String::from)).collect()
-        }).unwrap_or_default(),
+        missing: manifest["missing"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -440,8 +500,11 @@ mod tests {
         atomic::atomic_write(&root.join("project.json"), project.as_bytes()).unwrap();
         atomic::atomic_write(&root.join("media/a.mp4"), b"AAA").unwrap();
         atomic::atomic_write(&root.join("media/bgm.mp3"), b"BBB").unwrap();
-        atomic::atomic_write(&root.join(".cutforge/oplog/2026-09-30.jsonl"),
-            b"{\"op_id\":\"op1\",\"rev\":3}\n").unwrap();
+        atomic::atomic_write(
+            &root.join(".cutforge/oplog/2026-09-30.jsonl"),
+            b"{\"op_id\":\"op1\",\"rev\":3}\n",
+        )
+        .unwrap();
         atomic::atomic_write(&root.join("exports/final.mp4"), b"OUT").unwrap();
     }
 
@@ -456,18 +519,36 @@ mod tests {
         assert_eq!(r.schema_version, "3.0.0");
         assert_eq!(r.rev, 3);
         assert_eq!(r.source_layout, "v3");
-        assert_eq!(r.counts, (1, 1, 2, 0), "真相源1 + oplog1 + media2 + exports0");
+        assert_eq!(
+            r.counts,
+            (1, 1, 2, 0),
+            "真相源1 + oplog1 + media2 + exports0"
+        );
         assert!(r.missing.is_empty());
         assert!(r.out.is_file(), "缺省落点 <root>/<slug>.cfpkg");
         let items = read_pkg(&r.out).unwrap();
         let names: Vec<&str> = items.iter().map(|e| e.name.as_str()).collect();
-        for want in ["manifest.json", "project/project.json", "oplog/2026-09-30.jsonl",
-                     "media/media/a.mp4", "media/media/bgm.mp3"] {
+        for want in [
+            "manifest.json",
+            "project/project.json",
+            "oplog/2026-09-30.jsonl",
+            "media/media/a.mp4",
+            "media/media/bgm.mp3",
+        ] {
             assert!(names.contains(&want), "缺条目 {want}: {names:?}");
         }
-        assert!(!names.iter().any(|n| n.starts_with("exports/")), "exports 缺省不入包");
+        assert!(
+            !names.iter().any(|n| n.starts_with("exports/")),
+            "exports 缺省不入包"
+        );
         let m: Value = serde_json::from_slice(
-            &items.iter().find(|e| e.name == "manifest.json").unwrap().data).unwrap();
+            &items
+                .iter()
+                .find(|e| e.name == "manifest.json")
+                .unwrap()
+                .data,
+        )
+        .unwrap();
         assert_eq!(m["format"], json!("cfpkg"));
         assert_eq!(m["formatVersion"], json!(1));
         assert_eq!(m["includeExports"], json!(false));
@@ -492,19 +573,35 @@ mod tests {
         assert_eq!(r.source_layout, "v2");
         let items = read_pkg(&pkg).unwrap();
         let names: Vec<&str> = items.iter().map(|e| e.name.as_str()).collect();
-        assert!(names.contains(&"project/project.json"), "真相源上提到 v3 名:{names:?}");
+        assert!(
+            names.contains(&"project/project.json"),
+            "真相源上提到 v3 名:{names:?}"
+        );
         assert!(names.contains(&"project/wordline.json"));
-        assert!(names.contains(&"media/01_原始素材/x.mp4"), "素材按工程内相对路径入包");
+        assert!(
+            names.contains(&"media/01_原始素材/x.mp4"),
+            "素材按工程内相对路径入包"
+        );
         // 解包到新目录:v3 布局 + 素材原位
         let dest = fsutil::temp_dir("cfpkg-unpack-v2");
         let u = unpack(&pkg, &dest).unwrap();
         assert_eq!(u.name, "旧布局");
         assert_eq!(u.source_layout, "v2");
         assert_eq!(u.media, 1);
-        assert!(dest.join("project.json").is_file(), "真相源落 v3 契约位(根)");
+        assert!(
+            dest.join("project.json").is_file(),
+            "真相源落 v3 契约位(根)"
+        );
         assert!(dest.join("wordline.json").is_file());
-        assert!(dest.join("01_原始素材/x.mp4").is_file(), "素材原位还原(src 路径成立)");
-        assert_eq!(paths::detect_layout(&dest), LayoutKind::V3, "解包产物即 v3 布局");
+        assert!(
+            dest.join("01_原始素材/x.mp4").is_file(),
+            "素材原位还原(src 路径成立)"
+        );
+        assert_eq!(
+            paths::detect_layout(&dest),
+            LayoutKind::V3,
+            "解包产物即 v3 布局"
+        );
         // 解包工程可被 Workspace 打开(可独立起步)
         let ws = crate::Workspace::open(&dest).unwrap();
         assert_eq!(ws.rev(), 0);
@@ -525,7 +622,10 @@ mod tests {
         pack(&dest, Some(&pkg2), true, true).unwrap();
         let a = semantic_entries(&read_pkg(&pkg1).unwrap());
         let b = semantic_entries(&read_pkg(&pkg2).unwrap());
-        assert_eq!(a, b, "打包→解包→再打包必须语义等价(manifest 仅 createdAt 归一)");
+        assert_eq!(
+            a, b,
+            "打包→解包→再打包必须语义等价(manifest 仅 createdAt 归一)"
+        );
         fsutil::cleanup(&root);
         fsutil::cleanup(&dest);
     }
@@ -546,7 +646,13 @@ mod tests {
         assert_eq!(r.counts.2, 0);
         let items = read_pkg(&pkg).unwrap();
         let m: Value = serde_json::from_slice(
-            &items.iter().find(|e| e.name == "manifest.json").unwrap().data).unwrap();
+            &items
+                .iter()
+                .find(|e| e.name == "manifest.json")
+                .unwrap()
+                .data,
+        )
+        .unwrap();
         assert_eq!(m["missing"], json!(["media/gone.mp4"]));
         fsutil::cleanup(&root);
     }
@@ -569,40 +675,75 @@ mod tests {
         std::fs::create_dir_all(&empty).unwrap();
         assert!(unpack(&pkg, &empty).is_ok(), "存在但为空的目标放行");
         // 坏 manifest:格式错
-        let bad = zip_store(&[
-            Entry { name: "manifest.json".into(),
-                    data: b"{\"format\":\"other\",\"formatVersion\":1}".to_vec() },
-            Entry { name: "project/project.json".into(), data: b"{}".to_vec() },
-        ], 0);
+        let bad = zip_store(
+            &[
+                Entry {
+                    name: "manifest.json".into(),
+                    data: b"{\"format\":\"other\",\"formatVersion\":1}".to_vec(),
+                },
+                Entry {
+                    name: "project/project.json".into(),
+                    data: b"{}".to_vec(),
+                },
+            ],
+            0,
+        );
         let bad_path = root.join("bad.cfpkg");
         atomic::atomic_write(&bad_path, &bad).unwrap();
-        assert!(matches!(unpack(&bad_path, &dest.join("b1")), Err(PkgError::InvalidPkg(_))));
+        assert!(matches!(
+            unpack(&bad_path, &dest.join("b1")),
+            Err(PkgError::InvalidPkg(_))
+        ));
         // 缺 project 真相源
-        let no_proj = zip_store(&[
-            Entry { name: "manifest.json".into(),
-                    data: b"{\"format\":\"cfpkg\",\"formatVersion\":1}".to_vec() },
-        ], 0);
+        let no_proj = zip_store(
+            &[Entry {
+                name: "manifest.json".into(),
+                data: b"{\"format\":\"cfpkg\",\"formatVersion\":1}".to_vec(),
+            }],
+            0,
+        );
         atomic::atomic_write(&root.join("np.cfpkg"), &no_proj).unwrap();
-        assert!(matches!(unpack(&root.join("np.cfpkg"), &dest.join("b2")),
-                Err(PkgError::InvalidPkg(_))));
+        assert!(matches!(
+            unpack(&root.join("np.cfpkg"), &dest.join("b2")),
+            Err(PkgError::InvalidPkg(_))
+        ));
         // zip-slip:media/../evil.txt 与绝对/反斜杠条目名全部拒绝,盘面零落点
         for evil in ["media/../evil.txt", "media/C:/evil.txt", "media/\\evil.txt"] {
-            let slip = zip_store(&[
-                Entry { name: "manifest.json".into(),
-                        data: b"{\"format\":\"cfpkg\",\"formatVersion\":1}".to_vec() },
-                Entry { name: "project/project.json".into(), data: b"{}".to_vec() },
-                Entry { name: evil.into(), data: b"EVIL".to_vec() },
-            ], 0);
+            let slip = zip_store(
+                &[
+                    Entry {
+                        name: "manifest.json".into(),
+                        data: b"{\"format\":\"cfpkg\",\"formatVersion\":1}".to_vec(),
+                    },
+                    Entry {
+                        name: "project/project.json".into(),
+                        data: b"{}".to_vec(),
+                    },
+                    Entry {
+                        name: evil.into(),
+                        data: b"EVIL".to_vec(),
+                    },
+                ],
+                0,
+            );
             atomic::atomic_write(&root.join("slip.cfpkg"), &slip).unwrap();
             let target = dest.join(format!("slip-{}", evil.replace([':', '\\', '/', '.'], "_")));
             let err = unpack(&root.join("slip.cfpkg"), &target);
-            assert!(matches!(err, Err(PkgError::InvalidPkg(_))), "{evil} 必须拒绝:{err:?}");
-            assert!(!target.parent().unwrap().join("evil.txt").exists(), "穿越落点不得存在");
+            assert!(
+                matches!(err, Err(PkgError::InvalidPkg(_))),
+                "{evil} 必须拒绝:{err:?}"
+            );
+            assert!(
+                !target.parent().unwrap().join("evil.txt").exists(),
+                "穿越落点不得存在"
+            );
         }
         // 非 zip 输入拒收
         atomic::atomic_write(&root.join("x.bin"), b"not zip").unwrap();
-        assert!(matches!(unpack(&root.join("x.bin"), &dest.join("b3")),
-                Err(PkgError::InvalidPkg(_))));
+        assert!(matches!(
+            unpack(&root.join("x.bin"), &dest.join("b3")),
+            Err(PkgError::InvalidPkg(_))
+        ));
         fsutil::cleanup(&root);
         fsutil::cleanup(&dest);
     }
@@ -616,11 +757,17 @@ mod tests {
         pack(&root, Some(&pkg), false, false).unwrap();
         let zip = std::fs::read(&pkg).unwrap();
         assert_eq!(&zip[0..4], &[0x50, 0x4B, 0x03, 0x04]);
-        assert_eq!(&zip[zip.len() - 22..zip.len() - 18], &[0x50, 0x4B, 0x05, 0x06]);
+        assert_eq!(
+            &zip[zip.len() - 22..zip.len() - 18],
+            &[0x50, 0x4B, 0x05, 0x06]
+        );
         let items = zip_read_all(&zip).unwrap();
         assert!(items.iter().any(|e| e.name == "manifest.json"));
         assert!(items.iter().any(|e| e.name == "project/project.json"));
-        assert!(items.iter().all(|e| !e.name.starts_with("media/")), "includeMedia=false 不收素材");
+        assert!(
+            items.iter().all(|e| !e.name.starts_with("media/")),
+            "includeMedia=false 不收素材"
+        );
         fsutil::cleanup(&root);
     }
 }

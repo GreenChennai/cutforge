@@ -577,3 +577,293 @@ fn clip_update_huazi_clear_semantics() {
     assert_eq!(r["code"], json!("SCHEMA_INVALID"), "{r}");
     cutforge_io::fsutil::cleanup(&root);
 }
+
+// ==================== V2-W1 MCP 服务轮(BUG-19 media_thumbs / BUG-17 framePath / R-11 / R-14) ====================
+
+/// TC-MCP-THUMB-001(BUG-19):media_thumbs 一次请求多帧——4 个 atMs 一次返回
+/// 4 张缩略图(磁盘缓存未命中即生成);同参二调全部命中缓存,不再逐帧单发 IPC。
+#[test]
+fn media_thumbs_batch_and_cache() {
+    assert!(
+        crate::media_tools::ffmpeg_available(),
+        "ffmpeg 必须存在(媒体工具实测面)"
+    );
+    let root = std::env::temp_dir().join(format!("cf-thumbs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("01_原始素材")).unwrap();
+    std::fs::create_dir_all(root.join("05_时间线工程")).unwrap();
+    cutforge_io::atomic::atomic_write(
+        &root.join("05_时间线工程/project.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1, "schemaVersion": "2.0.0", "slug": "thumbs", "fps": 30,
+            "canvas": {"width": 320, "height": 240}, "tracks": []
+        }))
+        .unwrap()
+        .as_bytes(),
+    )
+    .unwrap();
+    let r = std::process::Command::new(crate::media_tools::ff_bin())
+        .args([
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x240:rate=30:duration=2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "01_原始素材/clip.mp4",
+        ])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(r.status.success(), "{}", String::from_utf8_lossy(&r.stderr));
+    let root_s = root.to_string_lossy().to_string();
+    let args = json!({
+        "root": root_s, "src": "01_原始素材/clip.mp4",
+        "atMs": [100, 500, 900, 1500],
+    });
+    let r1 = dispatch("media_thumbs", &args);
+    assert_eq!(r1["code"], json!("OK"), "{r1}");
+    let thumbs = r1["data"]["thumbs"]
+        .as_array()
+        .expect("必须返回 thumbs 数组");
+    assert_eq!(thumbs.len(), 4, "一次请求 4 帧必须返回 4 张: {thumbs:?}");
+    for (i, t) in thumbs.iter().enumerate() {
+        assert_eq!(t["atMs"], json!([100u64, 500, 900, 1500][i]));
+        assert_eq!(t["cached"], json!(false), "首调必须全 miss: {t}");
+        let f = t["file"].as_str().expect("必须带 file 相对路径");
+        assert!(root.join(f).is_file(), "产物必须真实落盘: {f}");
+    }
+    // 二调:同参全部磁盘缓存命中
+    let r2 = dispatch("media_thumbs", &args);
+    assert_eq!(r2["code"], json!("OK"), "{r2}");
+    for t in r2["data"]["thumbs"].as_array().unwrap() {
+        assert_eq!(t["cached"], json!(true), "二调必须全命中: {t}");
+    }
+    // 混合:命中 + 未命中同请求合并(一新一旧)
+    let r3 = dispatch(
+        "media_thumbs",
+        &json!({"root": root_s, "src": "01_原始素材/clip.mp4", "atMs": [500, 1200]}),
+    );
+    let thumbs3 = r3["data"]["thumbs"].as_array().unwrap();
+    assert_eq!(thumbs3.len(), 2);
+    assert_eq!(thumbs3[0]["cached"], json!(true));
+    assert_eq!(thumbs3[1]["cached"], json!(false));
+    cutforge_io::fsutil::cleanup(&root);
+}
+
+/// TC-MCP-CONTRACT-001(BUG-17):render_frame 成功响应必须显式携带
+/// `framePath`(工程内相对路径、正斜杠)——壳不再"任意层级扫 .png";
+/// 旧字段 path(绝对)/media(别名)同版本保留。
+#[test]
+fn render_frame_response_contract_frame_path() {
+    let abs =
+        std::path::PathBuf::from("D:/ws").join(".cutforge/render-cache/frame/abcdef0123456789.png");
+    let media = ".cutforge/render-cache/frame/abcdef0123456789.png";
+    let e = crate::progress::frame_success_envelope(
+        1200,
+        "png",
+        false,
+        "abcdef0123456789",
+        &abs,
+        media,
+    );
+    assert_eq!(e["ok"], json!(true));
+    assert_eq!(
+        e["data"]["framePath"],
+        json!(".cutforge/render-cache/frame/abcdef0123456789.png"),
+        "响应必须显式携带 framePath(工程内相对路径): {e}"
+    );
+    assert_eq!(
+        e["data"]["framePath"], e["data"]["media"],
+        "framePath 与旧别名 media 同值(兼容)"
+    );
+    assert!(
+        e["data"]["path"].as_str().is_some(),
+        "旧字段 path(绝对路径)保留一版: {e}"
+    );
+    assert!(
+        !e["data"]["framePath"].as_str().unwrap().contains('\\'),
+        "framePath 必须是正斜杠形态: {e}"
+    );
+    // schema 契约面:mcp-tools.json 的 render_frame 描述必须声明 framePath
+    let def = crate::registry::tool_def("render_frame").expect("render_frame 必须在注册表");
+    assert!(
+        def["description"].as_str().unwrap().contains("framePath"),
+        "契约描述必须声明 framePath 字段"
+    );
+}
+
+/// TC-MCP-QUEUE-001(R-11):渲染队列持久化——1 running + 2 queued 时重启,
+/// 重建后 running → interrupted(可重试),queued 原样;持久层为
+/// .cutforge/render-queue.jsonl(append-only)。
+#[test]
+fn render_queue_survives_restart() {
+    let root = cutforge_io::fsutil::temp_dir("mcp-queue-restart");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("05_时间线工程")).unwrap();
+    cutforge_io::atomic::atomic_write(&root.join("05_时间线工程/project.json"), br#"{"rev":1}"#)
+        .unwrap();
+    // 入队 3 个任务(不经 render_run_async 的渲染依赖门——单测只锁队列语义)
+    let ids: Vec<String> = (0..3)
+        .map(|i| crate::progress::enqueue_test_job(&root, None, false, vec![format!("--arg{i}")]))
+        .collect();
+    // 第二个转 running(如实记账)
+    crate::progress::mark_test_running(&ids[1]);
+    // 模拟重启:清空内存态 + 丢弃已加载标记
+    crate::progress::reset_queue_for_tests();
+    crate::progress::queue_reload(&root);
+    let list = crate::progress::render_queue_tool(
+        &root,
+        &json!({"root": root.to_string_lossy(), "action": "list"}),
+    );
+    assert_eq!(list["code"], json!("OK"), "{list}");
+    let jobs = list["data"]["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), 3, "重启后三个任务都必须在: {jobs:?}");
+    let by_id = |rid: &str| {
+        jobs.iter()
+            .find(|j| j["runId"].as_str() == Some(rid))
+            .unwrap()
+    };
+    assert_eq!(by_id(&ids[0])["state"], json!("queued"), "pending 原样恢复");
+    assert_eq!(
+        by_id(&ids[1])["state"],
+        json!("interrupted"),
+        "running → interrupted"
+    );
+    assert_eq!(by_id(&ids[2])["state"], json!("queued"), "pending 原样恢复");
+    // interrupted 可一键重试(重新入队)
+    let retry = crate::progress::render_queue_tool(
+        &root,
+        &json!({"root": root.to_string_lossy(), "action": "retry", "runId": ids[1]}),
+    );
+    assert_eq!(
+        retry["code"],
+        json!("OK"),
+        "interrupted 必须可重试: {retry}"
+    );
+    assert_eq!(retry["data"]["state"], json!("queued"));
+    // 持久层文件在位(append-only jsonl)
+    assert!(
+        root.join(".cutforge/render-queue.jsonl").is_file(),
+        "队列必须持久化到 .cutforge/render-queue.jsonl"
+    );
+    // 清队列防 worker 拾起夹具任务起真渲染(测试不依赖 worker)
+    crate::progress::reset_queue_for_tests();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// TC-PERF-IDEMP-001(R-14):幂等判定走常驻索引——10 万 request_id 构索后,
+/// 单次判定 O(1)(<1ms);索引构建一次 O(n)。
+#[test]
+fn idemp_index_lookup_is_constant_time() {
+    let ops: Vec<cutforge_core::oplog::Op> = (0..100_000u64)
+        .map(|i| cutforge_core::oplog::Op {
+            op_id: format!("op-{i}"),
+            ts: String::new(),
+            actor: cutforge_core::oplog::Actor::agent("t"),
+            target: cutforge_core::oplog::OpTarget {
+                file: "project.json".into(),
+                path: "/slug".into(),
+            },
+            op_kind: cutforge_core::oplog::OpKind::Set,
+            before: json!(null),
+            after: json!(i),
+            base_rev: format!("rev-{i}"),
+            rev: Some(i + 1),
+            auto: None,
+            target_id: None,
+            caused_by: None,
+            summary: "perf".into(),
+            request_id: (i % 2 == 0).then(|| format!("req-{i}")),
+        })
+        .collect();
+    let t0 = std::time::Instant::now();
+    let index = crate::resident::idem_index_from_ops(&ops);
+    let build = t0.elapsed();
+    assert!(
+        build.as_millis() < 2_000,
+        "10 万条索引构建应在秒级: {build:?}"
+    );
+    // 单次判定 <1ms(含未命中;旧路径 has_request_id 全扫 10 万条)
+    for probe in ["req-0", "req-99998", "req-1", "missing-rid"] {
+        let t1 = std::time::Instant::now();
+        let hit = index.contains(probe);
+        let el = t1.elapsed();
+        assert!(
+            el.as_millis() < 1,
+            "单次幂等判定必须 <1ms: {probe} = {el:?}"
+        );
+        assert_eq!(
+            hit,
+            probe != "missing-rid" && probe != "req-1",
+            "{probe} 判定错误"
+        );
+    }
+}
+
+/// TC-CORE-IDEMP-001(R-14):索引与 OpLog 全扫判重等价——真实工程写路径
+/// 产生的 request_id 全集,索引判定与 `has_request_id` 逐一一致;重启
+/// (缓存逐出后重建)后仍等价(compact 重建接口语义)。
+#[test]
+fn idemp_index_equivalent_to_full_scan() {
+    use std::path::Path;
+    let root = cutforge_io::tests_fixture("mcp-idemp-index").unwrap();
+    let root_s = root.to_string_lossy().to_string();
+    cutforge_io::fsutil::ensure(&root.join("01_原始素材")).unwrap();
+    cutforge_io::atomic::atomic_write(&root.join("01_原始素材/take1.mp4"), b"x").unwrap();
+    let rids = ["idx-req-1", "idx-req-2", "idx-req-3"];
+    for (i, rid) in rids.iter().enumerate() {
+        let r = dispatch(
+            "clip_add",
+            &json!({
+                "root": root_s, "trackId": "V1", "src": "01_原始素材/take1.mp4",
+                "startMs": 1_000_000 + 1000 * (i as u64), "durationMs": 500, "requestId": rid,
+            }),
+        );
+        assert_eq!(r["code"], json!("OK"), "{r}");
+    }
+    let ws = cutforge_io::Workspace::open(Path::new(&root_s)).unwrap();
+    let log = ws.engine().oplog();
+    // 同一 request_id 重复提交 → 引擎幂等回执
+    let dup = dispatch(
+        "clip_add",
+        &json!({
+            "root": root_s, "trackId": "V1", "src": "01_原始素材/take1.mp4",
+            "startMs": 999_000, "durationMs": 500, "requestId": "idx-req-1",
+        }),
+    );
+    assert_eq!(
+        dup["data"]["idempotent"],
+        json!(true),
+        "重复 requestId 必须幂等回执: {dup}"
+    );
+    // 常驻索引(增量维护)与全扫等价
+    crate::resident::_clear_for_tests();
+    let probe = |rid: &str| -> bool {
+        let seen = crate::resident::request_id_seen(&root_s, Path::new(&root_s), rid);
+        let scanned = log.has_request_id(rid);
+        assert_eq!(seen, scanned, "{rid}: 索引判定必须与 OpLog 全扫等价");
+        seen
+    };
+    for rid in rids {
+        assert!(probe(rid), "{rid} 必须命中");
+    }
+    assert!(!probe("idx-req-absent"), "未提交过的 id 不得命中");
+    // 模拟重启:逐出缓存 → 重建(指纹变化后索引随工作区重开重建)
+    crate::resident::_clear_for_tests();
+    let ws2 = cutforge_io::Workspace::open(Path::new(&root_s)).unwrap();
+    let rebuilt = crate::resident::idem_index_from_ops(ws2.engine().oplog().ops());
+    for rid in rids {
+        assert!(
+            rebuilt.contains(rid),
+            "重建后 {rid} 必须命中(compact 重建接口语义)"
+        );
+    }
+    assert!(!rebuilt.contains("idx-req-absent"));
+    cutforge_io::fsutil::cleanup(&root);
+}

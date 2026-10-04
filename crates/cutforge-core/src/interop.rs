@@ -17,14 +17,21 @@
 //! 时间精度 = 毫秒 ↔ 秒(f64,RationalTime rate=fps),round-trip 逐毫秒还原。
 
 use crate::model::{Clip, CompoundSpec, Marker, Project, TrackKind, Transition};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 
 /// fps 允许集(schema 同源;OTIO rate 落集外时取最近值并 WARN)。
 const FPS_ALLOWED: [u32; 5] = [24, 25, 30, 50, 60];
 /// 转场基础枚举(schema transition.type 同源;子集内类型原样映射)。
-const BASIC_TRANSITIONS: [&str; 7] =
-    ["fade", "wipeleft", "wipeup", "slideleft", "circleopen", "cut", "none"];
+const BASIC_TRANSITIONS: [&str; 7] = [
+    "fade",
+    "wipeleft",
+    "wipeup",
+    "slideleft",
+    "circleopen",
+    "cut",
+    "none",
+];
 
 fn rt(ms: u64, rate: u32) -> Value {
     json!({"OTIO_SCHEMA": "RationalTime.0", "rate": rate, "value": ms as f64 / 1000.0})
@@ -114,11 +121,13 @@ pub fn otio_export(project: &Project) -> (Value, Vec<String>) {
         .markers
         .iter()
         .flatten()
-        .map(|m: &Marker| json!({
-            "OTIO_SCHEMA": "Marker.1",
-            "name": m.label,
-            "marked_range": time_range(m.ms, 0, rate),
-        }))
+        .map(|m: &Marker| {
+            json!({
+                "OTIO_SCHEMA": "Marker.1",
+                "name": m.label,
+                "marked_range": time_range(m.ms, 0, rate),
+            })
+        })
         .collect();
     let timeline = json!({
         "OTIO_SCHEMA": "Timeline.1",
@@ -185,22 +194,28 @@ fn clip_export(c: &Clip, rate: u32, warns: &mut Vec<String>) -> Value {
             inner_children.push(clip_export(ic, rate, warns));
             cursor = cursor.max(ic.start_ms + ic.duration_ms);
         }
-        item.insert("children".into(), json!({
-            "OTIO_SCHEMA": "Stack.1",
-            "name": "compound",
-            "children": [{
-                "OTIO_SCHEMA": "Track.1",
-                "name": "compound_video",
-                "kind": "Video",
-                "children": inner_children,
-            }],
-        }));
+        item.insert(
+            "children".into(),
+            json!({
+                "OTIO_SCHEMA": "Stack.1",
+                "name": "compound",
+                "children": [{
+                    "OTIO_SCHEMA": "Track.1",
+                    "name": "compound_video",
+                    "kind": "Video",
+                    "children": inner_children,
+                }],
+            }),
+        );
     } else if let Some(src) = &c.src {
-        item.insert("media_reference".into(), json!({
-            "OTIO_SCHEMA": "ExternalReference.1",
-            "name": src,
-            "target_url": src,
-        }));
+        item.insert(
+            "media_reference".into(),
+            json!({
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "name": src,
+                "target_url": src,
+            }),
+        );
     } else {
         warns.push(format!(
             "clip {} 无 src 无 compound(疑似文本/占位片段),OTIO 导出略过(留痕不静默丢);",
@@ -223,7 +238,11 @@ pub fn otio_import(v: &Value) -> Result<(Project, Vec<String>), Vec<String>> {
             v.get("OTIO_SCHEMA").and_then(Value::as_str)
         )]);
     }
-    let slug = v.get("name").and_then(Value::as_str).unwrap_or("otio-import").to_string();
+    let slug = v
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("otio-import")
+        .to_string();
     let tracks = v
         .get("tracks")
         .ok_or_else(|| vec!["OTIO 缺 tracks(Stack)".into()])?;
@@ -246,7 +265,10 @@ pub fn otio_import(v: &Value) -> Result<(Project, Vec<String>), Vec<String>> {
             .to_string(),
         slug,
         fps: rate,
-        canvas: crate::model::Canvas { width: 1080, height: 1920 },
+        canvas: crate::model::Canvas {
+            width: 1080,
+            height: 1920,
+        },
         backends: vec![crate::model::Backend::Ffmpeg],
         notes: "notes.json".into(),
         tracks: Vec::new(),
@@ -256,19 +278,30 @@ pub fn otio_import(v: &Value) -> Result<(Project, Vec<String>), Vec<String>> {
         subtitle: None,
         join_crossfade_ms: None,
     };
-    if let Some(sv) = v.pointer("/metadata/cutforge/schemaVersion").and_then(Value::as_str) {
+    if let Some(sv) = v
+        .pointer("/metadata/cutforge/schemaVersion")
+        .and_then(Value::as_str)
+    {
         project.schema_version = sv.to_string();
     } else {
         project.schema_version = "3.0.0".into();
     }
     // markers(Stack.markers)
-    if let Some(ms) = tracks.get("markers").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+    if let Some(ms) = tracks
+        .get("markers")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+    {
         let mut out = Vec::new();
         for m in ms {
             if m.get("OTIO_SCHEMA").and_then(Value::as_str) != Some("Marker.1") {
                 continue;
             }
-            let label = m.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            let label = m
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let (start, _dur) = m
                 .get("marked_range")
                 .and_then(time_range_ms)
@@ -310,7 +343,12 @@ pub fn otio_import(v: &Value) -> Result<(Project, Vec<String>), Vec<String>> {
         let mut clips: Vec<Clip> = Vec::new();
         let mut pending_transition: Option<(String, u64)> = None;
         let mut clip_cursor = 0usize; // 子时间线递归时自增的虚拟序号(确定性 id 分配)
-        for item in tr.get("children").and_then(Value::as_array).map(|a| a.as_slice()).unwrap_or(&[]) {
+        for item in tr
+            .get("children")
+            .and_then(Value::as_array)
+            .map(|a| a.as_slice())
+            .unwrap_or(&[])
+        {
             match item.get("OTIO_SCHEMA").and_then(Value::as_str) {
                 Some("Gap.1") => {
                     if let Some((_s, dur)) = item.get("source_range").and_then(time_range_ms) {
@@ -318,7 +356,10 @@ pub fn otio_import(v: &Value) -> Result<(Project, Vec<String>), Vec<String>> {
                     }
                 }
                 Some("Transition.1") => {
-                    let ttype = item.get("transition_type").and_then(Value::as_str).unwrap_or("fade");
+                    let ttype = item
+                        .get("transition_type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("fade");
                     let dur = item
                         .pointer("/metadata/cutforge/durMs")
                         .and_then(Value::as_u64)
@@ -357,9 +398,7 @@ pub fn otio_import(v: &Value) -> Result<(Project, Vec<String>), Vec<String>> {
                     }
                 }
                 other => {
-                    warns.push(format!(
-                        "子集外轨内条目({other:?})跳过(留痕不静默丢);"
-                    ));
+                    warns.push(format!("子集外轨内条目({other:?})跳过(留痕不静默丢);"));
                 }
             }
         }
@@ -387,8 +426,12 @@ pub fn otio_import(v: &Value) -> Result<(Project, Vec<String>), Vec<String>> {
 
 fn track_id_valid(id: &str) -> bool {
     let mut ch = id.chars();
-    let (Some(c), rest) = (ch.next(), ch.as_str()) else { return false };
-    matches!(c, 'V' | 'A' | 'T' | 'X') && !rest.is_empty() && rest.chars().all(|d| d.is_ascii_digit())
+    let (Some(c), rest) = (ch.next(), ch.as_str()) else {
+        return false;
+    };
+    matches!(c, 'V' | 'A' | 'T' | 'X')
+        && !rest.is_empty()
+        && rest.chars().all(|d| d.is_ascii_digit())
 }
 
 fn next_track_id_for(project: &Project, kind: TrackKind) -> String {
@@ -464,15 +507,24 @@ fn clip_import(
     if let Some(stack) = item.get("children") {
         if depth >= 1 {
             warns.push("复合嵌套超深(子集上限两级),内层按普通片段略过(留痕);".into());
-        } else if let Some(inner_track) = stack
-            .get("children")
-            .and_then(Value::as_array)
-            .and_then(|a| a.iter().find(|t| t.get("kind").and_then(Value::as_str) == Some("Video")))
+        } else if let Some(inner_track) =
+            stack
+                .get("children")
+                .and_then(Value::as_array)
+                .and_then(|a| {
+                    a.iter()
+                        .find(|t| t.get("kind").and_then(Value::as_str) == Some("Video"))
+                })
         {
             let mut inner_cursor = 0u64;
             let mut inner_clips: Vec<Clip> = Vec::new();
             let mut pending: Option<(String, u64)> = None;
-            for ie in inner_track.get("children").and_then(Value::as_array).map(|a| a.as_slice()).unwrap_or(&[]) {
+            for ie in inner_track
+                .get("children")
+                .and_then(Value::as_array)
+                .map(|a| a.as_slice())
+                .unwrap_or(&[])
+            {
                 match ie.get("OTIO_SCHEMA").and_then(Value::as_str) {
                     Some("Gap.1") => {
                         if let Some((_s, dur)) = ie.get("source_range").and_then(time_range_ms) {
@@ -480,7 +532,10 @@ fn clip_import(
                         }
                     }
                     Some("Transition.1") => {
-                        let ttype = ie.get("transition_type").and_then(Value::as_str).unwrap_or("fade");
+                        let ttype = ie
+                            .get("transition_type")
+                            .and_then(Value::as_str)
+                            .unwrap_or("fade");
                         let dur = ie
                             .pointer("/metadata/cutforge/durMs")
                             .and_then(Value::as_u64)
@@ -514,15 +569,24 @@ fn clip_import(
             if inner_clips.is_empty() {
                 warns.push("嵌套 Stack 无 Video 子轨片段,复合壳按空略过(留痕);".into());
             } else {
-                clip.compound = Some(CompoundSpec { canvas: None, clips: inner_clips });
+                clip.compound = Some(CompoundSpec {
+                    canvas: None,
+                    clips: inner_clips,
+                });
             }
         } else {
             warns.push("嵌套 Stack 无 Video 子轨,略过(留痕不静默丢);".into());
         }
     } else if let Some(mr) = item.get("media_reference") {
-        clip.src = mr.get("target_url").and_then(Value::as_str).map(String::from);
+        clip.src = mr
+            .get("target_url")
+            .and_then(Value::as_str)
+            .map(String::from);
         if clip.src.is_none() {
-            warns.push(format!("clip {} 的 media_reference 缺 target_url(留痕);", clip.id));
+            warns.push(format!(
+                "clip {} 的 media_reference 缺 target_url(留痕);",
+                clip.id
+            ));
         }
     }
     (Some(clip), t_cursor + dur_ms.max(1), seq)
@@ -549,21 +613,44 @@ fn fresh_id(name: &str, track_id: &str, seq: &mut usize, used: &mut BTreeSet<Str
 /// 往返字段;外部 metadata 键不深扫=留痕一次,不逐叶爆)。
 fn subset_scan(v: &Value, path: &str, warns: &mut Vec<String>) {
     const KNOWN_SCHEMAS: [&str; 10] = [
-        "Timeline.1", "Stack.1", "Track.1", "Clip.1", "Gap.1", "Transition.1",
-        "Marker.1", "RationalTime.0", "TimeRange.1", "ExternalReference.1",
+        "Timeline.1",
+        "Stack.1",
+        "Track.1",
+        "Clip.1",
+        "Gap.1",
+        "Transition.1",
+        "Marker.1",
+        "RationalTime.0",
+        "TimeRange.1",
+        "ExternalReference.1",
     ];
     const KNOWN_KEYS: [&str; 18] = [
-        "OTIO_SCHEMA", "name", "kind", "children", "source_range", "media_reference",
-        "target_url", "transition_type", "markers", "global_start_time",
-        "start_time", "duration", "rate", "value", "in_offset", "out_offset",
-        "marked_range", "tracks",
+        "OTIO_SCHEMA",
+        "name",
+        "kind",
+        "children",
+        "source_range",
+        "media_reference",
+        "target_url",
+        "transition_type",
+        "markers",
+        "global_start_time",
+        "start_time",
+        "duration",
+        "rate",
+        "value",
+        "in_offset",
+        "out_offset",
+        "marked_range",
+        "tracks",
     ];
     match v {
         Value::Object(m) => {
             if let Some(s) = m.get("OTIO_SCHEMA").and_then(Value::as_str)
-                && !KNOWN_SCHEMAS.contains(&s) {
-                    warns.push(format!("子集外 OTIO_SCHEMA {s} @{path}(留痕不静默丢);"));
-                }
+                && !KNOWN_SCHEMAS.contains(&s)
+            {
+                warns.push(format!("子集外 OTIO_SCHEMA {s} @{path}(留痕不静默丢);"));
+            }
             for (k, val) in m {
                 if k == "metadata" {
                     continue;
@@ -595,12 +682,10 @@ pub fn otio_semantic_eq(a: &Value, b: &Value) -> bool {
         (Value::Array(aa), Value::Array(ab)) => {
             aa.len() == ab.len() && aa.iter().zip(ab).all(|(x, y)| otio_semantic_eq(x, y))
         }
-        (Value::Number(x), Value::Number(y)) => {
-            match (x.as_f64(), y.as_f64()) {
-                (Some(x), Some(y)) => (x - y).abs() < 1e-9,
-                _ => x == y,
-            }
-        }
+        (Value::Number(x), Value::Number(y)) => match (x.as_f64(), y.as_f64()) {
+            (Some(x), Some(y)) => (x - y).abs() < 1e-9,
+            _ => x == y,
+        },
         _ => a == b,
     }
 }
@@ -652,7 +737,10 @@ pub fn edl_export(project: &Project) -> String {
     for t in &project.tracks {
         if t.kind != TrackKind::Video {
             let kind = t.kind.letter();
-            out.push_str(&format!("* SKIPPED TRACK: {} (track {} not in CMX3600 subset)\n", t.id, kind));
+            out.push_str(&format!(
+                "* SKIPPED TRACK: {} (track {} not in CMX3600 subset)\n",
+                t.id, kind
+            ));
         }
     }
     out.push_str("FCM: NON-DROP FRAME\n\n");

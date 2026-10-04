@@ -9,7 +9,7 @@
    "response": {
     "code": "OK",
     "data": {
-     "bytes": 10700,
+     "bytes": 10167,
      "format": "otio",
      "media": "06_成片输出/parity-main.otio",
      "out": "06_成片输出/parity-main.otio",
@@ -31,7 +31,7 @@
    "response": {
     "code": "OK",
     "data": {
-     "bytes": 10700,
+     "bytes": 10167,
      "format": "otio",
      "media": "06_成片输出/roundtrip.otio",
      "out": "06_成片输出/roundtrip.otio",

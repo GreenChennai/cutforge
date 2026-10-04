@@ -47,14 +47,18 @@ mod workspace_svc;
 
 // ---- 公开 API:路径与拆分前完全一致(main.rs、cutforge-cli、tests/ 零改动) ----
 pub use dispatch::{dispatch, dispatch_with_actor, handle_rpc, handle_rpc_as};
-pub use plugin::{authorize, plugin_actor, validate_manifest};
+pub use plugin::{
+    DEFAULT_PROCESS_LIMITS, PluginError, ProcessLimits, authorize, authorize_call,
+    check_filesystem_access, disable_plugin, is_plugin_disabled, plugin_actor,
+    process_spawn_command, validate_manifest,
+};
 pub use progress::{build_render_extra, render_cutforge_sync, resolve_render_bin};
 pub use registry::{
     CAPABILITY_MATRIX_JSON, CODE_NS, CODES, MCP_TOOLS_JSON, UI_FIELDS_JSON, code_namespace,
     registry, tool_names,
 };
 pub use session::new_token;
-pub use transport::http::serve_http;
+pub use transport::http::{_serve_http_with_limit, serve_http};
 pub use transport::stdio::serve_stdio;
 pub use workspace_svc::{
     default_web_dir, pick_project_interactive, resolve_root_arg, serve_workspace,

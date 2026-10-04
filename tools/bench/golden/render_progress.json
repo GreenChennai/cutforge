@@ -13,7 +13,7 @@
      "lines": [
       "{\"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"probe\"}",
       "{\"cacheHits\": 0, \"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"segments\": 9, \"step\": \"segment\"}",
-      "{\"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"compose-video\", \"warnings\": [\"clip V1-002 转场降级硬切:xfade 链要求全部边界相接且有转场(时间线空隙/无转场边界会丢段)\", \"clip V1-004 转场降级硬切:xfade 链要求全部边界相接且有转场(时间线空隙/无转场边界会丢段)\"]}",
+      "{\"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"compose-video\", \"warnings\": [\"clip V1-002 转场降级硬切:xfade 链要求全部边界相接且有转场(时间线空隙/无转场边界会丢段)\"]}",
       "{\"count\": 0, \"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"overlay\"}",
       "{\"count\": 0, \"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"adjust\"}",
       "{\"cacheHit\": false, \"elapsedMs\": \"<ELAPSED>\", \"ok\": true, \"step\": \"mix\"}",

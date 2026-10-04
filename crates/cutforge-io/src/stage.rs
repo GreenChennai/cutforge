@@ -66,9 +66,16 @@ pub fn impact_for(rel: &str) -> Option<StageImpact> {
     // artboard 卡片:S4 动画卡消费 → 创作素材 rebuild(artboard 子目录名保留英文)
     let artboard_prefixes = [
         format!("{}/{}/", crate::paths::ASSETS, crate::paths::ARTBOARD),
-        format!("{}/{}/", crate::paths::LEGACY_ASSETS, crate::paths::ARTBOARD),
+        format!(
+            "{}/{}/",
+            crate::paths::LEGACY_ASSETS,
+            crate::paths::ARTBOARD
+        ),
     ];
-    if artboard_prefixes.iter().any(|p| norm.starts_with(p.as_str())) {
+    if artboard_prefixes
+        .iter()
+        .any(|p| norm.starts_with(p.as_str()))
+    {
         return Some(StageImpact {
             first_dirty: "S4".into(),
             dirty: downstream(4),
@@ -101,22 +108,40 @@ mod tests {
         // 新布局(0.5 中文目录)
         let imp = impact_for(crate::paths::PROJECT_REL).expect("project.json 必须有影响");
         assert_eq!(imp.first_dirty, "S3");
-        assert!(!imp.dirty.iter().any(|s| s == "S0" || s == "S1" || s == "S2"), "上游不得标脏");
+        assert!(
+            !imp.dirty
+                .iter()
+                .any(|s| s == "S0" || s == "S1" || s == "S2"),
+            "上游不得标脏"
+        );
         assert_eq!(imp.dirty.len(), 9, "S3..S11 共 9 个阶段");
         assert_eq!(imp.dirty.first().unwrap(), "S3");
         assert_eq!(imp.dirty.last().unwrap(), "S11");
         assert!(imp.hint.contains("05_时间线工程/rebuild.py"));
         // 旧布局(0.4.x 英文目录)同样标脏(兼容伺候旧工程)
-        let legacy = impact_for(crate::paths::LEGACY_PROJECT_REL).expect("旧布局 project.json 必须有影响");
+        let legacy =
+            impact_for(crate::paths::LEGACY_PROJECT_REL).expect("旧布局 project.json 必须有影响");
         assert_eq!(legacy.first_dirty, "S3");
-        assert!(legacy.hint.contains("05_时间线工程/rebuild.py"), "提示串一律指新目录");
+        assert!(
+            legacy.hint.contains("05_时间线工程/rebuild.py"),
+            "提示串一律指新目录"
+        );
     }
 
     #[test]
     fn subtitle_ass_marks_only_s8() {
-        let imp = impact_for(&format!("{}/subtitles.ass", crate::paths::OUTPUT)).expect("subtitles.ass 必须有影响");
-        assert_eq!(imp.dirty, vec!["S8".to_string()], "S8 护栏:只重烧,不碰 IR 阶段");
-        assert!(!imp.dirty.iter().any(|s| s == "S3" || s == "S7" || s == "S9"));
+        let imp = impact_for(&format!("{}/subtitles.ass", crate::paths::OUTPUT))
+            .expect("subtitles.ass 必须有影响");
+        assert_eq!(
+            imp.dirty,
+            vec!["S8".to_string()],
+            "S8 护栏:只重烧,不碰 IR 阶段"
+        );
+        assert!(
+            !imp.dirty
+                .iter()
+                .any(|s| s == "S3" || s == "S7" || s == "S9")
+        );
         assert!(imp.hint.contains("06_成片输出/rebuild.py"));
         let legacy = impact_for("06_output/subtitles.ass").unwrap();
         assert_eq!(legacy.dirty, vec!["S8".to_string()], "旧布局同口径");
@@ -130,7 +155,8 @@ mod tests {
         let legacy_cutlist = impact_for("04_cut/cutlist.applied.json").unwrap();
         assert_eq!(legacy_cutlist.first_dirty, "S2", "旧布局同口径");
 
-        let card = impact_for(&format!("{}/artboard/cards/kc01.mp4", crate::paths::ASSETS)).unwrap();
+        let card =
+            impact_for(&format!("{}/artboard/cards/kc01.mp4", crate::paths::ASSETS)).unwrap();
         assert_eq!(card.first_dirty, "S4");
         assert!(card.hint.contains("03_创作素材/artboard/rebuild.py"));
         let legacy_card = impact_for("03_assets/artboard/cards/kc01.mp4").unwrap();
@@ -143,9 +169,15 @@ mod tests {
     #[test]
     fn unknown_file_is_neutral() {
         assert!(impact_for(&format!("{}/brief.md", crate::paths::BRIEF)).is_none());
-        assert!(impact_for("00_brief/brief.md").is_none(), "旧布局简报同样不标脏");
+        assert!(
+            impact_for("00_brief/brief.md").is_none(),
+            "旧布局简报同样不标脏"
+        );
         assert!(impact_for(".cutforge/rev").is_none());
-        assert!(impact_for(&format!("{}/final_x_916.mp4", crate::paths::OUTPUT)).is_none(), "成片产物不标脏");
+        assert!(
+            impact_for(&format!("{}/final_x_916.mp4", crate::paths::OUTPUT)).is_none(),
+            "成片产物不标脏"
+        );
         assert!(impact_for("06_output/final_x_916.mp4").is_none());
         assert!(impact_for("01_materials/a.mp4").is_none());
         assert!(impact_for("01_原始素材/a.mp4").is_none());

@@ -46,7 +46,11 @@ pub enum MigrateError {
 impl std::fmt::Display for MigrateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MigrateError::NotAProject(p) => write!(f, "不是可打开的工程(三态布局皆无 project.json): {}", p.display()),
+            MigrateError::NotAProject(p) => write!(
+                f,
+                "不是可打开的工程(三态布局皆无 project.json): {}",
+                p.display()
+            ),
             MigrateError::Conflict(m) => write!(f, "CONFLICT: {m}(整体拒绝,盘面未动)"),
             MigrateError::Locked(m) => write!(f, "工程被其他进程锁定: {m}"),
             MigrateError::Io(e) => write!(f, "{e}"),
@@ -88,7 +92,11 @@ pub fn migrate_to_v3(root: &Path) -> Result<MigrateReport, MigrateError> {
         return Err(MigrateError::NotAProject(root.to_path_buf()));
     }
     if layout == LayoutKind::V3 {
-        return Ok(MigrateReport { from: "v3", idempotent: true, ..Default::default() });
+        return Ok(MigrateReport {
+            from: "v3",
+            idempotent: true,
+            ..Default::default()
+        });
     }
     let (timeline_rel, cut_rel, materials_rel, output_rel) = source_dirs(layout);
 
@@ -118,7 +126,10 @@ pub fn migrate_to_v3(root: &Path) -> Result<MigrateReport, MigrateError> {
         }
     }
     // 3) 素材目录 → media/、成片输出目录 → exports/(整目录改名)
-    for (src_rel, target_rel) in [(materials_rel, paths::V3_MEDIA), (output_rel, paths::V3_EXPORTS)] {
+    for (src_rel, target_rel) in [
+        (materials_rel, paths::V3_MEDIA),
+        (output_rel, paths::V3_EXPORTS),
+    ] {
         if root.join(src_rel).is_dir() {
             plan.push((root.join(src_rel), root.join(target_rel)));
             moved.push((src_rel.to_string(), target_rel.to_string()));
@@ -134,16 +145,22 @@ pub fn migrate_to_v3(root: &Path) -> Result<MigrateReport, MigrateError> {
     }
 
     // ---- 持锁执行(活进程持锁 → 拒绝;崩溃残留锁由 stale 接管) ----
-    let _guard = lock::acquire(root, 30_000, 2)
-        .map_err(|e| MigrateError::Locked(e.to_string()))?;
+    let _guard = lock::acquire(root, 30_000, 2).map_err(|e| MigrateError::Locked(e.to_string()))?;
     // 锁内复验(持锁等待期间盘面可能被他人改动)
     for (_, target) in &plan {
         if target.exists() {
-            return Err(MigrateError::Conflict(format!("迁移目标已存在: {}", target.display())));
+            return Err(MigrateError::Conflict(format!(
+                "迁移目标已存在: {}",
+                target.display()
+            )));
         }
     }
-    let mut report =
-        MigrateReport { from: layout_label(layout), idempotent: false, moved, ..Default::default() };
+    let mut report = MigrateReport {
+        from: layout_label(layout),
+        idempotent: false,
+        moved,
+        ..Default::default()
+    };
     for (src, target) in plan {
         move_path(&src, &target)?;
     }
@@ -199,20 +216,25 @@ fn copy_recursive(src: &Path, target: &Path) -> io::Result<()> {
 }
 
 fn is_empty_dir(dir: &Path) -> bool {
-    std::fs::read_dir(dir).map(|mut rd| rd.next().is_none()).unwrap_or(false)
+    std::fs::read_dir(dir)
+        .map(|mut rd| rd.next().is_none())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{atomic, fsutil, Workspace};
+    use crate::{Workspace, atomic, fsutil};
 
     fn make_v2(root: &Path) {
         fsutil::ensure(&root.join(paths::TIMELINE)).unwrap();
         fsutil::ensure(&root.join(paths::CUT)).unwrap();
         fsutil::ensure(&root.join(paths::MATERIALS)).unwrap();
         fsutil::ensure(&root.join(paths::OUTPUT)).unwrap();
-        let minimal = format!("{{\"version\":1,\"schemaVersion\":\"3.0.0\",\"slug\":\"{}\",\"fps\":30,\"canvas\":{{\"width\":1080,\"height\":1920}},\"backends\":[\"ffmpeg\"],\"tracks\":[]}}", "迁客体");
+        let minimal = format!(
+            "{{\"version\":1,\"schemaVersion\":\"3.0.0\",\"slug\":\"{}\",\"fps\":30,\"canvas\":{{\"width\":1080,\"height\":1920}},\"backends\":[\"ffmpeg\"],\"tracks\":[]}}",
+            "迁客体"
+        );
         atomic::atomic_write(&root.join(paths::PROJECT_REL), minimal.as_bytes()).unwrap();
         atomic::atomic_write(&root.join(paths::WORDLINE_REL), b"{}").unwrap();
         atomic::atomic_write(&root.join(paths::CUTLIST_REL), b"{}").unwrap();
@@ -241,8 +263,11 @@ mod tests {
         assert!(r2.idempotent);
         assert!(r2.moved.is_empty());
         // 内容零丢失:project.json 字节原样(迁移前后逐字节一致)
-        assert_eq!(std::fs::read(root.join(paths::V3_PROJECT_REL)).unwrap(), before,
-            "迁移前后 project.json 必须逐字节一致");
+        assert_eq!(
+            std::fs::read(root.join(paths::V3_PROJECT_REL)).unwrap(),
+            before,
+            "迁移前后 project.json 必须逐字节一致"
+        );
         fsutil::cleanup(&root);
     }
 
@@ -273,7 +298,10 @@ mod tests {
         assert_eq!(ws.rev(), 0);
         // 非工程目录 → NotAProject
         let empty = fsutil::temp_dir("migrate-empty");
-        assert!(matches!(migrate_to_v3(&empty), Err(MigrateError::NotAProject(_))));
+        assert!(matches!(
+            migrate_to_v3(&empty),
+            Err(MigrateError::NotAProject(_))
+        ));
         fsutil::cleanup(&root);
         fsutil::cleanup(&empty);
     }

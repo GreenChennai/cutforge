@@ -221,12 +221,12 @@ fn protocol_conformance() {
     //  project_unpackage(写,.cfpkg 打包/解包)→ 78;T7.5/T7.2 增
     //  preview_plan/session_report/plugin_validate(查询)+ apply_plan/note_reply
     //  (写,AI 协作面与插件面)→ 83;I1 增 preview_zone_render(区间半分辨率
-    //  预渲,编排)→ 84)
+    //  预渲,编排)→ 84;V2-W1 增 media_thumbs(批量缩略图,编排)→ 85)
     let names = cutforge_mcp::tool_names();
     assert_eq!(
         names.len(),
-        84,
-        "B7 口径:工具数以 schemas/mcp-tools.json 为准(I1 增 preview_zone_render 区间预渲)"
+        85,
+        "B7 口径:工具数以 schemas/mcp-tools.json 为准(V2-W1 增 media_thumbs 批量缩略图)"
     );
     for t in cutforge_mcp::registry() {
         assert!(t["name"].is_string() && t["description"].is_string());
@@ -237,7 +237,7 @@ fn protocol_conformance() {
             t["name"]
         );
     }
-    // kind 口径:21 查询 + 42 写 + 21 编排(与 _doc 同句;I1 83→84)
+    // kind 口径:21 查询 + 42 写 + 22 编排(与 _doc 同句;V2-W1 增 media_thumbs 84→85)
     let mut kinds = std::collections::BTreeMap::new();
     for t in cutforge_mcp::registry() {
         *kinds
@@ -246,7 +246,7 @@ fn protocol_conformance() {
     }
     assert_eq!(kinds.get("query"), Some(&21), "查询 21:{kinds:?}");
     assert_eq!(kinds.get("write"), Some(&42), "写 42:{kinds:?}");
-    assert_eq!(kinds.get("orchestrate"), Some(&21), "编排 21:{kinds:?}");
+    assert_eq!(kinds.get("orchestrate"), Some(&22), "编排 22:{kinds:?}");
 
     // M4-1 单注册表双通道:注册表与 dispatch **逐一相等**——每个注册工具都必须有
     // 实现分支,不得出现"已注册但未实现"。统一以缺 root 空参探针:所有工具(capability_matrix
@@ -883,7 +883,29 @@ fn library_migrate_recover_full_chain() {
     );
     assert_eq!(r["code"], json!("OK"), "{r}");
     std::fs::create_dir_all(p.join(".cutforge")).unwrap();
-    std::fs::write(p.join(".cutforge/lock"), b"pid=4194303 ts=1").unwrap();
+    // R-02 同源判据:锁龄 ≥30s(ts 拨旧)+ pid 死 + 心跳过期(mtime 拨旧)
+    let stale_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .saturating_sub(120_000);
+    std::fs::write(
+        p.join(".cutforge/lock"),
+        format!("pid=1 boot= ts={stale_ts}").as_bytes(),
+    )
+    .unwrap();
+    {
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(p.join(".cutforge/lock"))
+            .unwrap();
+        f.set_modified(
+            std::time::SystemTime::now()
+                .checked_sub(std::time::Duration::from_millis(120_000))
+                .unwrap(),
+        )
+        .unwrap();
+    }
     let r = call("library_recover", json!({"root": lib_s, "action": "list"}));
     assert_eq!(r["code"], json!("OK"), "{r}");
     let stale = r["data"]["stale"].as_array().unwrap();

@@ -105,7 +105,11 @@ pub fn color_to_ass(input: &str, default: &str) -> String {
         if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
             return None;
         }
-        let (rgb, aa) = if hex.len() == 8 { (&hex[..6], &hex[6..]) } else { (hex, "FF") };
+        let (rgb, aa) = if hex.len() == 8 {
+            (&hex[..6], &hex[6..])
+        } else {
+            (hex, "FF")
+        };
         let rr = &rgb[0..2];
         let gg = &rgb[2..4];
         let bb = &rgb[4..6];
@@ -157,9 +161,15 @@ mod tests {
     #[test]
     fn align_nine_grid_maps_to_ass_numbers() {
         for (s, n) in [
-            ("topLeft", 7), ("topCenter", 8), ("topRight", 9),
-            ("middleLeft", 4), ("center", 5), ("middleRight", 6),
-            ("bottomLeft", 1), ("bottomCenter", 2), ("bottomRight", 3),
+            ("topLeft", 7),
+            ("topCenter", 8),
+            ("topRight", 9),
+            ("middleLeft", 4),
+            ("center", 5),
+            ("middleRight", 6),
+            ("bottomLeft", 1),
+            ("bottomCenter", 2),
+            ("bottomRight", 3),
         ] {
             assert_eq!(ts(json!({"align": s})).align_num(), n, "{s}");
         }
@@ -169,13 +179,25 @@ mod tests {
 
     #[test]
     fn color_conversion_is_deterministic_ass_bgr() {
-        assert_eq!(color_to_ass("#FF0000", "#FFFFFF"), "&H000000FF", "RRGGBB→BGR: 红 #FF0000(alpha 00 不透明)");
+        assert_eq!(
+            color_to_ass("#FF0000", "#FFFFFF"),
+            "&H000000FF",
+            "RRGGBB→BGR: 红 #FF0000(alpha 00 不透明)"
+        );
         assert_eq!(color_to_ass("#00FF00", "#FFFFFF"), "&H0000FF00");
         assert_eq!(color_to_ass("#0000FF", "#FFFFFF"), "&H00FF0000");
         // 8 位带 alpha:AA = 不透明度(CSS 风)→ ASS alpha 取反:80 → 7F
         assert_eq!(color_to_ass("#00000080", "#FFFFFF"), "&H7F000000");
-        assert_eq!(color_to_ass("#000000FF", "#FFFFFF"), "&H00000000", "FF 不透明 → ASS 00");
-        assert_eq!(color_to_ass("#00000000", "#FFFFFF"), "&HFF000000", "00 全透 → ASS FF");
+        assert_eq!(
+            color_to_ass("#000000FF", "#FFFFFF"),
+            "&H00000000",
+            "FF 不透明 → ASS 00"
+        );
+        assert_eq!(
+            color_to_ass("#00000000", "#FFFFFF"),
+            "&HFF000000",
+            "00 全透 → ASS FF"
+        );
         // 大小写归一为大写(确定性)
         assert_eq!(color_to_ass("#ff8800", "#FFFFFF"), "&H000088FF");
         // 非法回落 default(防御;schema pattern 先拒)
@@ -188,7 +210,8 @@ mod tests {
     fn huazi_and_font_spec_serde() {
         let h: Huazi = serde_json::from_value(json!({
             "template": "hz.pop", "params": {"stepMs": 90}
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(h.template, "hz.pop");
         assert_eq!(h.params.as_ref().unwrap()["stepMs"], json!(90));
         let f: FontSpec = serde_json::from_value(json!({"family": "Arial"})).unwrap();
@@ -203,10 +226,18 @@ mod tests {
     fn clip_text_audio_fields_roundtrip_no_loss() {
         let base = json!({"id": "T1-001", "startMs": 0, "durationMs": 2000, "text": "你好"});
         let c: crate::model::Clip = serde_json::from_value(base.clone()).unwrap();
-        assert!(c.text_style.is_none() && c.huazi.is_none() && c.font.is_none()
-            && c.denoise.is_none() && c.pitch.is_none());
+        assert!(
+            c.text_style.is_none()
+                && c.huazi.is_none()
+                && c.font.is_none()
+                && c.denoise.is_none()
+                && c.pitch.is_none()
+        );
         let back = serde_json::to_value(&c).unwrap();
-        assert!(back.get("textStyle").is_none() && back.get("denoise").is_none(), "缺省不得臆造");
+        assert!(
+            back.get("textStyle").is_none() && back.get("denoise").is_none(),
+            "缺省不得臆造"
+        );
         let full = json!({
             "id": "T1-001", "startMs": 0, "durationMs": 2000, "text": "你好",
             "textStyle": {"fontFamily": "黑体", "fontSize": 64, "color": "#FFFFFF",

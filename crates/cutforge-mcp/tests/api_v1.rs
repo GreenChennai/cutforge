@@ -204,8 +204,8 @@ fn api_v1_rest_surface_end_to_end() {
     assert_eq!(code, 200, "{env}");
     let n = env["data"]["tools"].as_array().unwrap().len();
     assert_eq!(
-        n, 84,
-        "GET /api/v1/tools = 注册表全集(单一真相源;I1 增 preview_zone_render 83→84): {n}"
+        n, 85,
+        "GET /api/v1/tools = 注册表全集(单一真相源;V2-W1 增 media_thumbs 84→85): {n}"
     );
 
     // ---- 3) 事件流别名:长轮询降级面老字段齐(SSE 同一实现) ----

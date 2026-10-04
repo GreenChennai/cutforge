@@ -19,6 +19,12 @@
 //! (`atomic::append_line`),副本侧追加会经共享 inode **穿透写回真工程**
 //! (G2 实证:真 oplog 出现预演 Op、真 rev 被推高);rev 虽走临时文件+改名,
 //! 同列排除以保"副本一旦建出即与真工程盘面完全独立"的硬性质。
+//!
+//! 写路径纪律收口(check-write-paths M2,唯一落盘点):整拷贝级只对
+//! [`COPY_INLINE_MAX`] 内的小文件读入后经 `atomic::atomic_write` 落盘
+//! (真相源/工程 JSON 均为 KB 级);超过阈值(GB 级媒体)不整拷,直接落
+//! 空占位——与第三级"路径校验可过、媒体探测诚实报错,预演错误面可见"
+//! 的既有语义一致,且内存有界。空占位同走 `atomic::atomic_write`。
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -34,6 +40,10 @@ const SKIP_DIRS: [&str; 5] = [
     "_内部状态/backup",
     "_state/backup",
 ];
+
+/// 整拷贝内联上限:副本回退级只内联复制该大小以下的文件(真相源/工程 JSON 均
+/// 为 KB 级;超过即 GB 级媒体,落空占位走"探测诚实报错"语义,内存有界)。
+const COPY_INLINE_MAX: u64 = 8 * 1024 * 1024;
 
 /// 副本内跳过文件:真工程的锁与会话簿记绝不进副本。
 fn skipped_file(rel: &Path) -> bool {
@@ -59,7 +69,10 @@ fn skipped_dir(rel: &Path) -> bool {
 /// 目录名:`.cf-scratch-<pid>-<纳秒>`(工程父目录下,同卷 → 硬链接必成)。
 pub fn make_scratch_copy(root: &Path) -> io::Result<PathBuf> {
     if !crate::paths::has_project(root) {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "工程不存在(缺 project.json)"));
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "工程不存在(缺 project.json)",
+        ));
     }
     let dir = ai_scratch_root(root)?;
     // 防撞车:同名残留(上次进程崩溃)→ 先清再建
@@ -73,7 +86,11 @@ pub fn ai_scratch_root(root: &Path) -> io::Result<PathBuf> {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     std::process::id().hash(&mut h);
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos().hash(&mut h);
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .hash(&mut h);
     let name = format!(".cf-scratch-{:016x}", h.finish());
     let base = match root.parent() {
         Some(p) if p.is_dir() => p.to_path_buf(),
@@ -108,15 +125,18 @@ fn copy_tree(src_root: &Path, dst_root: &Path, rel: &Path) -> io::Result<()> {
         return Ok(());
     }
     std::fs::create_dir_all(dst.parent().unwrap_or(&dst))?;
-    // 三级回退:硬链接 → 整拷贝 → 空占位;append-only 面(oplog/rev)跳过硬链接
+    // 三级回退:硬链接 → 整拷贝(小文件内联)→ 空占位;append-only 面(oplog/rev)
+    // 跳过硬链接;两级落盘均走唯一落盘点 atomic::atomic_write(check-write-paths M2)
     if !force_copy_file(rel) && std::fs::hard_link(&src, &dst).is_ok() {
         return Ok(());
     }
-    if std::fs::copy(&src, &dst).is_ok() {
-        return Ok(());
+    if meta.len() <= COPY_INLINE_MAX
+        && let Ok(bytes) = std::fs::read(&src)
+    {
+        return crate::atomic::atomic_write(&dst, &bytes);
     }
-    std::fs::File::create(&dst)?;
-    Ok(())
+    // 大文件(跨卷兜底)或读取失败:空占位——媒体探测诚实报错,错误面可见
+    crate::atomic::atomic_write(&dst, &[])
 }
 
 #[cfg(test)]
@@ -149,12 +169,19 @@ mod tests {
         // 副本可独立打开并写入(硬链接不传回真工程)
         let mut ws = crate::Workspace::open_exclusive(&dir).unwrap();
         let rec = ws
-            .apply(clip_update(0.5), Actor::agent("scratch-test"), ApplyOpts::default())
+            .apply(
+                clip_update(0.5),
+                Actor::agent("scratch-test"),
+                ApplyOpts::default(),
+            )
             .unwrap();
         assert_eq!(rec.rev, 1);
         drop(ws);
         // 真工程逐字节不变 + rev 不变
-        assert_eq!(std::fs::read(root.join(crate::paths::PROJECT_REL)).unwrap(), project);
+        assert_eq!(
+            std::fs::read(root.join(crate::paths::PROJECT_REL)).unwrap(),
+            project
+        );
         remove_scratch(&dir);
         assert!(!dir.exists(), "副本清理后必须消失");
         // 真工程仍可打开(rev 未动)
@@ -178,10 +205,16 @@ mod tests {
         crate::fsutil::ensure(&root.join(crate::paths::TIMELINE)).unwrap();
         let sample =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/regression/talking-head");
-        crate::fsutil::copy_file(&sample.join("project.json"), &root.join(crate::paths::PROJECT_REL))
-            .unwrap();
-        crate::fsutil::copy_file(&sample.join("notes.json"), &root.join(crate::paths::NOTES_REL))
-            .unwrap();
+        crate::fsutil::copy_file(
+            &sample.join("project.json"),
+            &root.join(crate::paths::PROJECT_REL),
+        )
+        .unwrap();
+        crate::fsutil::copy_file(
+            &sample.join("notes.json"),
+            &root.join(crate::paths::NOTES_REL),
+        )
+        .unwrap();
 
         // 种子写:真工程先产真实 OpLog(rev=1、oplog/<日>.jsonl 在盘)——
         // 这是穿透场景的前提(真 oplog 文件在盘且会被硬链接)
@@ -202,14 +235,27 @@ mod tests {
                 (name, std::fs::read(e.path()).unwrap())
             })
             .collect();
-        assert!(!oplog_files.is_empty(), "种子写后真工程必须有 oplog 文件(本测试前提)");
+        assert!(
+            !oplog_files.is_empty(),
+            "种子写后真工程必须有 oplog 文件(本测试前提)"
+        );
 
         // 副本上连续写两笔(模拟预演 plan 的逐项 dry-run:副本 rev 推进、oplog 追加)
         let dir = make_scratch_copy(&root).unwrap();
         let mut ws = crate::Workspace::open_exclusive(&dir).unwrap();
         assert_eq!(ws.rev(), 1, "副本继承真工程 rev");
-        ws.apply(clip_update(0.5), Actor::agent("scratch-preview"), ApplyOpts::default()).unwrap();
-        ws.apply(clip_update(0.6), Actor::agent("scratch-preview"), ApplyOpts::default()).unwrap();
+        ws.apply(
+            clip_update(0.5),
+            Actor::agent("scratch-preview"),
+            ApplyOpts::default(),
+        )
+        .unwrap();
+        ws.apply(
+            clip_update(0.6),
+            Actor::agent("scratch-preview"),
+            ApplyOpts::default(),
+        )
+        .unwrap();
         assert_eq!(ws.rev(), 3, "副本侧 rev 独立推进");
         drop(ws);
         remove_scratch(&dir);
@@ -234,7 +280,10 @@ mod tests {
             .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
             .filter(|n| n.starts_with(".cf-scratch"))
             .collect();
-        assert!(residue.is_empty(), "副本清理后工程父目录不得有 .cf-scratch 残留: {residue:?}");
+        assert!(
+            residue.is_empty(),
+            "副本清理后工程父目录不得有 .cf-scratch 残留: {residue:?}"
+        );
         // 真工程仍可打开且 rev 不变(oplog 对账不吞穿透 Op 的最终证明)
         let ws2 = crate::Workspace::open(Path::new(&root.to_string_lossy().to_string())).unwrap();
         assert_eq!(ws2.rev(), 1);

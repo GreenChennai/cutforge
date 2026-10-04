@@ -39,14 +39,19 @@ impl MediaInfo {
 /// E5-2/B13 同口径:env CUTFORGE_FFPROBE 优先,缺省按 PATH 名。
 fn ffprobe_bin() -> String {
     if let Some(v) = std::env::var_os("CUTFORGE_FFPROBE")
-        && !v.is_empty() {
-            return v.to_string_lossy().into_owned();
-        }
+        && !v.is_empty()
+    {
+        return v.to_string_lossy().into_owned();
+    }
     "ffprobe".to_string()
 }
 
 pub fn ffprobe_available() -> bool {
-    Command::new(ffprobe_bin()).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new(ffprobe_bin())
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// 进程存活判定(崩溃恢复,册六 T6.1):锁文件里的 pid 是否还活着。
@@ -72,11 +77,56 @@ pub fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// 进程启动时间(R-02:Windows pid 复用风险的联合判定依据)。
+/// 返回进程启动时刻的平台规范化字符串;两次查询同一活进程结果一致、
+/// pid 复用后必然不同。取不到(权限/平台差异)→ None(判定退化为仅 pid)。
+///
+/// Windows 走 `wmic process where processid=… get creationdate /value`
+/// (tasklist 无启动时间列);unix 读 `/proc/<pid>/stat` 第 22 字段
+/// (starttime,boot 后时钟滴答,纯文件系统零进程派生)。
+pub fn pid_start_time(pid: u32) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let out = Command::new("wmic")
+            .args([
+                "process",
+                "where",
+                &format!("processid={pid}"),
+                "get",
+                "creationdate",
+                "/format:value",
+            ])
+            .output()
+            .ok()?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        stdout
+            .lines()
+            .find_map(|l| {
+                l.strip_prefix("CreationDate=")
+                    .map(|v| str::trim(v).to_owned())
+            })
+            .filter(|s| !s.is_empty())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        let after_exec = stat.rsplit_once(')').map(|(_, rest)| rest).unwrap_or(&stat);
+        after_exec.split_whitespace().nth(19).map(str::to_owned) // 第 22 字段(去掉 pid 与 comm 后第 19 个)
+    }
+}
+
 pub fn probe(path: &Path) -> io::Result<MediaInfo> {
     // -show_streams 与 -show_format 同批输出:B12 接线后 media_probe 需要分辨率
     // 与音轨存在性(来自 streams),时长仍统一取 format.duration(单一口径)。
     let out = Command::new(ffprobe_bin())
-        .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams"])
+        .args([
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+        ])
         .arg(path)
         .output()?;
     if !out.status.success() {
@@ -110,7 +160,10 @@ mod tests {
         crate::atomic::atomic_write(&here, b"x").ok();
         match probe(&here) {
             Ok(_) => panic!("非媒体文件不应成功"),
-            Err(e) => assert!(e.to_string().contains("ffprobe"), "错误须来自 ffprobe 语义: {e}"),
+            Err(e) => assert!(
+                e.to_string().contains("ffprobe"),
+                "错误须来自 ffprobe 语义: {e}"
+            ),
         }
     }
 }

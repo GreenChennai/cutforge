@@ -38,7 +38,7 @@ pub(crate) fn produces_rev_mutation(name: &str) -> bool {
             | "media_probe" | "media_browse" | "render_probe" | "stage_status"
             | "clip_copy"
             // 册四 A4 T4.1/T4.8:派生物缓存与纯计算工具(产物非 IR,不升 rev)
-            | "media_peaks" | "media_thumbnail" | "media_proxy" | "audio_beats"
+            | "media_peaks" | "media_thumbnail" | "media_thumbs" | "media_proxy" | "audio_beats"
             // 册五 T5.2/T5.3/T5.6:LUT 落库/示波器数据/响度计/编码探测(非 IR,不升 rev)
             | "lut_import" | "scope_data" | "audio_loudness" | "encode_probe"
             // 册五 T5.4/T5.5:多机位同步(纯计算)/字幕导出/OTIO 导出(派生物)/

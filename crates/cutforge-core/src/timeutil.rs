@@ -6,7 +6,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 当前时刻的 RFC3339(UTC,毫秒精度,`Z` 结尾)。
 pub fn now_rfc3339() -> String {
-    let d = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let d = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     format_unix_ms(d.as_millis() as u64)
 }
 
@@ -25,7 +27,6 @@ pub fn format_unix_ms(ms: u64) -> String {
     )
 }
 
-
 /// 当前 UTC 紧凑日期 `YYYYMMDD`(oplog 按天切分的文件名;全仓唯一日期算法出口)。
 pub fn now_date_compact() -> String {
     now_rfc3339()[..10].replace('-', "")
@@ -34,7 +35,11 @@ pub fn now_date_compact() -> String {
 /// 当前 UTC 紧凑日期时间 `YYYYMMDD-HHMMSS`(备份目录名;同上唯一出口)。
 pub fn now_datetime_compact() -> String {
     let s = now_rfc3339();
-    format!("{}-{}", s[..10].replace('-', ""), s[11..19].replace(':', ""))
+    format!(
+        "{}-{}",
+        s[..10].replace('-', ""),
+        s[11..19].replace(':', "")
+    )
 }
 
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
@@ -58,20 +63,32 @@ mod tests {
     fn formats_known_epoch() {
         assert_eq!(format_unix_ms(0), "1970-01-01T00:00:00.000Z");
         // 2026-09-17T00:00:00Z = 1789603200
-        assert_eq!(format_unix_ms(1_789_603_200_000), "2026-09-17T00:00:00.000Z");
-        assert_eq!(format_unix_ms(1_789_603_200_123), "2026-09-17T00:00:00.123Z");
+        assert_eq!(
+            format_unix_ms(1_789_603_200_000),
+            "2026-09-17T00:00:00.000Z"
+        );
+        assert_eq!(
+            format_unix_ms(1_789_603_200_123),
+            "2026-09-17T00:00:00.123Z"
+        );
     }
 
     #[test]
     fn leap_day() {
         // 2024-02-29T12:00:00Z = 1709208000
-        assert_eq!(format_unix_ms(1_709_208_000_000), "2024-02-29T12:00:00.000Z");
+        assert_eq!(
+            format_unix_ms(1_709_208_000_000),
+            "2024-02-29T12:00:00.000Z"
+        );
     }
 
     #[test]
     fn compact_variants() {
         assert_eq!(
-            { let s = format_unix_ms(1_789_603_200_123); s[..10].replace('-', "") + "-" + &s[11..19].replace(':', "") },
+            {
+                let s = format_unix_ms(1_789_603_200_123);
+                s[..10].replace('-', "") + "-" + &s[11..19].replace(':', "")
+            },
             "20260917-000000"
         );
         let d = now_date_compact();

@@ -142,7 +142,10 @@ pub fn truths_for(root: &Path) -> &'static [(&'static str, &'static str)] {
 
 /// 按盘面布局解析逻辑文件名(如 "cutlist.json")的相对路径;未知名 → None。
 pub fn truth_rel_on_disk(root: &Path, name: &str) -> Option<&'static str> {
-    truths_for(root).iter().find(|(n, _)| *n == name).map(|(_, r)| *r)
+    truths_for(root)
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, r)| *r)
 }
 
 /// 盘面现存文件双布局解析:优先新;新缺失且旧在 → 旧;都不在 → 新(错误信息指向契约位)。
@@ -228,10 +231,18 @@ mod tests {
             (LEGACY_CUT, LEGACY_CUTLIST_REL),
             (LEGACY_CUT, LEGACY_CUTLIST_APPLIED_REL),
         ] {
-            assert!(rel.starts_with(&format!("{dir}/")), "{rel} 必须落在 {dir} 下");
+            assert!(
+                rel.starts_with(&format!("{dir}/")),
+                "{rel} 必须落在 {dir} 下"
+            );
         }
         // V3:真相源文件名平铺在工程根(相对路径 = 文件名本身,无目录前缀)
-        for rel in [V3_PROJECT_REL, V3_WORDLINE_REL, V3_CUTLIST_REL, V3_CUTLIST_APPLIED_REL] {
+        for rel in [
+            V3_PROJECT_REL,
+            V3_WORDLINE_REL,
+            V3_CUTLIST_REL,
+            V3_CUTLIST_APPLIED_REL,
+        ] {
             assert!(!rel.contains('/'), "V3 相对路径 {rel} 必须平铺在工程根");
         }
     }
@@ -285,7 +296,10 @@ mod tests {
         // 目录解析只在旧目录真实在盘时才回退旧目录
         assert_eq!(resolve_dir(&root, OUTPUT, LEGACY_OUTPUT), root.join(OUTPUT));
         fsutil::ensure(&root.join(LEGACY_OUTPUT)).unwrap();
-        assert_eq!(resolve_dir(&root, OUTPUT, LEGACY_OUTPUT), root.join(LEGACY_OUTPUT));
+        assert_eq!(
+            resolve_dir(&root, OUTPUT, LEGACY_OUTPUT),
+            root.join(LEGACY_OUTPUT)
+        );
 
         // V1 与 V2 并存(理论上不该发生)时以 V2 为准
         fsutil::ensure(&root.join(TIMELINE)).unwrap();
@@ -311,7 +325,10 @@ mod tests {
         assert_eq!(project_path(&root), root.join(V3_PROJECT_REL));
         assert_eq!(project_rel_on_disk(&root), V3_PROJECT_REL);
         assert_eq!(truths_for(&root).len(), 3);
-        assert_eq!(truth_rel_on_disk(&root, "cutlist.json"), Some(V3_CUTLIST_REL));
+        assert_eq!(
+            truth_rel_on_disk(&root, "cutlist.json"),
+            Some(V3_CUTLIST_REL)
+        );
         assert_eq!(truth_rel_on_disk(&root, "无此文件"), None);
         // 导出面:V3 → exports
         assert_eq!(output_dir(&root), root.join(V3_EXPORTS));

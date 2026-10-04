@@ -58,7 +58,7 @@ fn resp_json(status: &'static str, v: Value) -> HttpResp {
         status,
         ctype: "application/json".into(),
         extra: String::new(),
-        body: v.to_string().into_bytes(),
+        body: super::http::RespBody::Bytes(v.to_string().into_bytes()),
     }
 }
 
@@ -284,7 +284,7 @@ mod tests {
             Actor::agent("t"),
         );
         assert_eq!(r.status, "200 OK");
-        let env: Value = serde_json::from_slice(&r.body).unwrap();
+        let env: Value = serde_json::from_slice(r.body_bytes().unwrap()).unwrap();
         assert_eq!(env["ok"], json!(true));
         // 未知工具 → 404 + INTERNAL(未知工具语义)
         let r = handle_api_v1(
@@ -319,7 +319,7 @@ mod tests {
             Actor::agent("t"),
         );
         assert_eq!(r.status, "400 Bad Request");
-        let env: Value = serde_json::from_slice(&r.body).unwrap();
+        let env: Value = serde_json::from_slice(r.body_bytes().unwrap()).unwrap();
         assert_eq!(env["code"], json!("SCHEMA_INVALID"));
     }
 }

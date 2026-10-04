@@ -4,7 +4,7 @@ crates/cutforge-cli/src/lib.rs
 crates/cutforge-cli/src/main.rs
 crates/cutforge-core/src/anchor.rs
 crates/cutforge-core/src/command.rs
-crates/cutforge-core/src/engine.rs
+crates/cutforge-core/src/engine/mod.rs
 crates/cutforge-core/src/lib.rs
 crates/cutforge-core/src/merge.rs
 crates/cutforge-core/src/model.rs

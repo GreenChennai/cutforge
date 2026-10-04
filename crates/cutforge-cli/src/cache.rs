@@ -10,8 +10,8 @@
 //!
 //! 删除一律走 cutforge_io::atomic::remove(check-write-paths M2-4 纪律)。
 
-use crate::{emit, Args};
-use serde_json::{json, Value};
+use crate::{Args, emit};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// 渲染缓存根(相对工程目录;与 cutforge-render 侧同契约)。
@@ -77,12 +77,17 @@ fn walk_files(root: &Path) -> Vec<(PathBuf, u64)> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.file_name().is_some_and(|n| n.to_string_lossy() != INDEX_FILE) {
+            } else if p
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy() != INDEX_FILE)
+            {
                 let size = e.metadata().map(|m| m.len()).unwrap_or(0);
                 out.push((p, size));
             }
@@ -127,7 +132,8 @@ fn info(cache_dir: &Path) -> Result<Value, String> {
             "bytes": es.iter().map(|e| e.size).sum::<u64>(),
         }));
     }
-    let indexed: std::collections::HashSet<&str> = entries.iter().map(|e| e.file.as_str()).collect();
+    let indexed: std::collections::HashSet<&str> =
+        entries.iter().map(|e| e.file.as_str()).collect();
     let mut orphan_files = 0usize;
     let mut orphan_bytes = 0u64;
     for (p, size) in walk_files(cache_dir) {
@@ -151,7 +157,8 @@ fn gc(cache_dir: &Path, capacity_bytes: u64) -> Result<Value, String> {
     let now = now_secs();
     let mut entries = load_entries(cache_dir);
     entries.retain(|e| cache_dir.join(&e.file).is_file());
-    let indexed: std::collections::HashSet<&str> = entries.iter().map(|e| e.file.as_str()).collect();
+    let indexed: std::collections::HashSet<&str> =
+        entries.iter().map(|e| e.file.as_str()).collect();
     let mut removed = 0usize;
     let mut freed = 0u64;
     // 第一刀:超龄孤儿(旧版固定文件名遗留 / tmp 超龄件)
@@ -218,10 +225,22 @@ fn clear(cache_dir: &Path) -> Result<Value, String> {
 /// (动作与工程目录先后顺序不敏感)。
 pub fn run(a: &Args) -> i32 {
     const USAGE: &str = "用法: cache <工程目录> {info|gc|clear} [--max-gb N] [--all]";
-    let action = a.positional.iter().find(|p| matches!(p.as_str(), "info" | "gc" | "clear"));
-    let root = a.positional.iter().find(|p| !matches!(p.as_str(), "info" | "gc" | "clear"));
+    let action = a
+        .positional
+        .iter()
+        .find(|p| matches!(p.as_str(), "info" | "gc" | "clear"));
+    let root = a
+        .positional
+        .iter()
+        .find(|p| !matches!(p.as_str(), "info" | "gc" | "clear"));
     let (Some(action), Some(root)) = (action, root) else {
-        return emit(a.json, false, "PRECONDITION_FAILED", USAGE, serde_json::json!({}));
+        return emit(
+            a.json,
+            false,
+            "PRECONDITION_FAILED",
+            USAGE,
+            serde_json::json!({}),
+        );
     };
     let cache_dir = Path::new(root).join(CACHE_ROOT);
     match action.as_str() {
@@ -233,7 +252,13 @@ pub fn run(a: &Args) -> i32 {
             let capacity = match a.flags.get("max-gb").map(|s| s.parse::<f64>()) {
                 Some(Ok(gb)) if gb >= 0.0 => (gb * 1024.0 * 1024.0 * 1024.0) as u64,
                 Some(Ok(_)) | Some(Err(_)) => {
-                    return emit(a.json, false, "PRECONDITION_FAILED", "--max-gb 需非负数字", serde_json::json!({}))
+                    return emit(
+                        a.json,
+                        false,
+                        "PRECONDITION_FAILED",
+                        "--max-gb 需非负数字",
+                        serde_json::json!({}),
+                    );
                 }
                 None => DEFAULT_CAPACITY_BYTES,
             };
@@ -268,7 +293,8 @@ mod tests {
     struct TempRoot(PathBuf);
     impl TempRoot {
         fn new(tag: &str) -> TempRoot {
-            let dir = std::env::temp_dir().join(format!("cf-cli-cache-{tag}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("cf-cli-cache-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(dir.join("seg")).unwrap();
             std::fs::create_dir_all(dir.join("mix")).unwrap();
@@ -310,8 +336,18 @@ mod tests {
         let doc = info(&root.0).unwrap();
         let layers = doc["layers"].as_array().unwrap();
         let seg = layers.iter().find(|l| l["layer"] == "seg").unwrap();
-        assert_eq!((seg["entries"].as_u64().unwrap(), seg["bytes"].as_u64().unwrap()), (2, 30));
-        assert_eq!(doc["orphans"]["files"].as_u64().unwrap(), 1, "旧版遗留应记为孤儿");
+        assert_eq!(
+            (
+                seg["entries"].as_u64().unwrap(),
+                seg["bytes"].as_u64().unwrap()
+            ),
+            (2, 30)
+        );
+        assert_eq!(
+            doc["orphans"]["files"].as_u64().unwrap(),
+            1,
+            "旧版遗留应记为孤儿"
+        );
         assert_eq!(doc["totalBytes"].as_u64().unwrap(), 60);
     }
 

@@ -75,13 +75,22 @@ pub fn resolve(project: &Project, anchor: &Anchor) -> Option<String> {
 pub fn relocate(project: &Project, anchor: &Anchor, nearest_ms: u64) -> Relocation {
     match anchor.kind {
         AnchorKind::Time | AnchorKind::Word => {
-            return Relocation { state: AnchorState::Resolved, anchor: anchor.clone(), orphan_reason: None };
+            return Relocation {
+                state: AnchorState::Resolved,
+                anchor: anchor.clone(),
+                orphan_reason: None,
+            };
         }
         AnchorKind::Track => {
             if let Some(id) = anchor.ref_.as_deref()
-                && project.find_track(id).is_some() {
-                    return Relocation { state: AnchorState::Resolved, anchor: anchor.clone(), orphan_reason: None };
-                }
+                && project.find_track(id).is_some()
+            {
+                return Relocation {
+                    state: AnchorState::Resolved,
+                    anchor: anchor.clone(),
+                    orphan_reason: None,
+                };
+            }
             return Relocation {
                 state: AnchorState::Orphan,
                 anchor: anchor.clone(),
@@ -101,8 +110,14 @@ pub fn relocate(project: &Project, anchor: &Anchor, nearest_ms: u64) -> Relocati
     if let Some((ti, ci)) = project.find_clip(&id) {
         let clip = &project.tracks[ti].clips[ci];
         let mut relocated = anchor.clone();
-        relocated.t_ms = anchor.t_ms.clamp(clip.start_ms, clip.start_ms + clip.duration_ms);
-        return Relocation { state: AnchorState::Relocated, anchor: relocated, orphan_reason: None };
+        relocated.t_ms = anchor
+            .t_ms
+            .clamp(clip.start_ms, clip.start_ms + clip.duration_ms);
+        return Relocation {
+            state: AnchorState::Relocated,
+            anchor: relocated,
+            orphan_reason: None,
+        };
     }
     // 规则 2:id 消失,找 ≤nearest_ms 的最近片段重挂(片段区间内距离记 0)
     let mut best: Option<(u64, (usize, usize))> = None;
@@ -111,7 +126,9 @@ pub fn relocate(project: &Project, anchor: &Anchor, nearest_ms: u64) -> Relocati
             let end = c.start_ms + c.duration_ms;
             let dist = if anchor.t_ms < c.start_ms {
                 c.start_ms - anchor.t_ms
-            } else { anchor.t_ms.saturating_sub(end) };
+            } else {
+                anchor.t_ms.saturating_sub(end)
+            };
             if dist <= nearest_ms && best.map(|(d, _)| dist < d).unwrap_or(true) {
                 best = Some((dist, (ti, ci)));
             }
@@ -121,8 +138,14 @@ pub fn relocate(project: &Project, anchor: &Anchor, nearest_ms: u64) -> Relocati
         let clip = &project.tracks[ti].clips[ci];
         let mut relocated = anchor.clone();
         relocated.ref_ = Some(clip.id.clone());
-        relocated.t_ms = anchor.t_ms.clamp(clip.start_ms, clip.start_ms + clip.duration_ms);
-        return Relocation { state: AnchorState::Relocated, anchor: relocated, orphan_reason: None };
+        relocated.t_ms = anchor
+            .t_ms
+            .clamp(clip.start_ms, clip.start_ms + clip.duration_ms);
+        return Relocation {
+            state: AnchorState::Relocated,
+            anchor: relocated,
+            orphan_reason: None,
+        };
     }
     // 规则 3:orphan(显式保留,不删除)
     Relocation {
@@ -140,11 +163,26 @@ mod tests {
     #[test]
     fn resolve_clip_track_time() {
         let p = sample_project();
-        let a = Anchor { kind: AnchorKind::Clip, ref_: Some("V1-002".into()), t_ms: 9000, span: None };
+        let a = Anchor {
+            kind: AnchorKind::Clip,
+            ref_: Some("V1-002".into()),
+            t_ms: 9000,
+            span: None,
+        };
         assert_eq!(resolve(&p, &a), Some("/tracks/0/clips/1".into()));
-        let t = Anchor { kind: AnchorKind::Track, ref_: Some("A1".into()), t_ms: 0, span: None };
+        let t = Anchor {
+            kind: AnchorKind::Track,
+            ref_: Some("A1".into()),
+            t_ms: 0,
+            span: None,
+        };
         assert_eq!(resolve(&p, &t), Some("/tracks/1".into()));
-        let time = Anchor { kind: AnchorKind::Time, ref_: None, t_ms: 12340, span: None };
+        let time = Anchor {
+            kind: AnchorKind::Time,
+            ref_: None,
+            t_ms: 12340,
+            span: None,
+        };
         assert_eq!(resolve(&p, &time), None);
     }
 
@@ -153,7 +191,12 @@ mod tests {
         let mut p = sample_project();
         // V1-002 整体后移 1000ms(模拟 AI 改了上游时长)
         p.tracks[0].clips[1].start_ms = 9400;
-        let anchor = Anchor { kind: AnchorKind::Clip, ref_: Some("V1-002".into()), t_ms: 9000, span: None };
+        let anchor = Anchor {
+            kind: AnchorKind::Clip,
+            ref_: Some("V1-002".into()),
+            t_ms: 9000,
+            span: None,
+        };
         let r = relocate(&p, &anchor, DEFAULT_NEAREST_MS);
         assert_eq!(r.state, AnchorState::Relocated);
         assert_eq!(r.anchor.ref_.as_deref(), Some("V1-002"));
@@ -164,13 +207,27 @@ mod tests {
     fn relocate_rehangs_to_nearest_then_orphans() {
         let mut p = sample_project();
         p.tracks[0].clips.remove(1); // V1-002 消失(V1-001 = 0..8400,A1 = 8400..8800)
-        let near = Anchor { kind: AnchorKind::Clip, ref_: Some("V1-002".into()), t_ms: 8600, span: None };
+        let near = Anchor {
+            kind: AnchorKind::Clip,
+            ref_: Some("V1-002".into()),
+            t_ms: 8600,
+            span: None,
+        };
         let r = relocate(&p, &near, DEFAULT_NEAREST_MS);
         assert_eq!(r.state, AnchorState::Relocated);
-        assert_eq!(r.anchor.ref_.as_deref(), Some("A1-001"), "8600ms 距 A1[8400..8800] 距离 0,重挂最近");
+        assert_eq!(
+            r.anchor.ref_.as_deref(),
+            Some("A1-001"),
+            "8600ms 距 A1[8400..8800] 距离 0,重挂最近"
+        );
         assert_eq!(r.anchor.t_ms, 8600);
         // 20000ms 处(全部片段之后)500ms 内无任何片段 → orphan(显式保留)
-        let far = Anchor { kind: AnchorKind::Clip, ref_: Some("V1-002".into()), t_ms: 20000, span: None };
+        let far = Anchor {
+            kind: AnchorKind::Clip,
+            ref_: Some("V1-002".into()),
+            t_ms: 20000,
+            span: None,
+        };
         let r2 = relocate(&p, &far, DEFAULT_NEAREST_MS);
         assert_eq!(r2.state, AnchorState::Orphan);
         assert!(r2.orphan_reason.unwrap().contains("V1-002"));

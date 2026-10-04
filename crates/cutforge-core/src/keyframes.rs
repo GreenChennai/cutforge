@@ -8,14 +8,12 @@
 //!
 //! 属性白名单(ADR-0018 分级映射表):`position.x`/`position.y`/`scale`/`rotation`/
 //! `opacity`/`volume`/`speed`/`fx.<fxId>.<param>`。未知 property 整组 SCHEMA_INVALID
-//! (防静默丢);fx 参数键按 fx-catalog 注册表校验,`static` 三态打关键帧诚实拒绝;
-//! speed 关键帧与 speedCurve 互斥(同给 SCHEMA_INVALID)。
-//!
-//! 本模块不启动进程、不做 IO;全部纯函数,同输入确定性(浮点全用 total_cmp/有限迭代)。
+//! (防静默丢);fx 参数键按 fx-catalog 校验,static 三态打点诚实拒绝;speed 关键帧
+//! 与 speedCurve 互斥;per-property 值域见 VALUE_RANGES(BUG-09)。
+//! 本模块不启动进程、不做 IO;全部纯函数(浮点 total_cmp/有限迭代,同输入确定)。
 
 use crate::model::{Clip, SpeedPoint};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// 单条关键帧(对应 schema clip.keyframes 元素;timeMs 相对片段起点的播放域毫秒;
 /// interp 描述本帧→下一帧的缓动;bezier 为 CSS cubic-bezier 同构四参数)。
@@ -42,7 +40,13 @@ fn default_interp() -> String {
 
 impl Keyframe {
     pub fn new(property: &str, time_ms: u64, value: f64) -> Self {
-        Keyframe { property: property.into(), time_ms, value, interp: "linear".into(), bezier: None }
+        Keyframe {
+            property: property.into(),
+            time_ms,
+            value,
+            interp: "linear".into(),
+            bezier: None,
+        }
     }
 }
 
@@ -85,9 +89,12 @@ pub fn bezier_progress(cp: [f64; 4], x: f64) -> f64 {
         return 1.0;
     }
     // Bx(u) = 3u(1-u)²x1 + 3u²(1-u)x2 + u³;牛顿法求 Bx(u)=x
-    let bx = |u: f64| 3.0 * u * (1.0 - u) * (1.0 - u) * x1 + 3.0 * u * u * (1.0 - u) * x2 + u * u * u;
+    let bx =
+        |u: f64| 3.0 * u * (1.0 - u) * (1.0 - u) * x1 + 3.0 * u * u * (1.0 - u) * x2 + u * u * u;
     let dbx = |u: f64| {
-        3.0 * (1.0 - u) * (1.0 - u) * x1 + 6.0 * u * (1.0 - u) * (x2 - x1) + 3.0 * u * u * (1.0 - x2)
+        3.0 * (1.0 - u) * (1.0 - u) * x1
+            + 6.0 * u * (1.0 - u) * (x2 - x1)
+            + 3.0 * u * u * (1.0 - x2)
     };
     let mut u = clamp01(x);
     for _ in 0..12 {
@@ -140,7 +147,11 @@ pub fn eval_group(kfs: &[&Keyframe], interp_of: impl Fn(&Keyframe) -> Interp, t_
         let (a, b) = (w[0], w[1]);
         let (t0, t1) = (a.time_ms as f64, b.time_ms as f64);
         if t_ms >= t0 && t_ms <= t1 {
-            let progress = if t1 > t0 { (t_ms - t0) / (t1 - t0) } else { 1.0 };
+            let progress = if t1 > t0 {
+                (t_ms - t0) / (t1 - t0)
+            } else {
+                1.0
+            };
             return match interp_of(a) {
                 Interp::Hold => a.value,
                 Interp::Linear => a.value + (b.value - a.value) * progress,
@@ -162,7 +173,8 @@ pub fn group_by_property(kfs: &[Keyframe]) -> Vec<(String, Vec<Keyframe>)> {
     order
         .into_iter()
         .map(|p| {
-            let mut group: Vec<Keyframe> = kfs.iter().filter(|k| k.property == p).cloned().collect();
+            let mut group: Vec<Keyframe> =
+                kfs.iter().filter(|k| k.property == p).cloned().collect();
             group.sort_by(|a, b| a.time_ms.cmp(&b.time_ms).then(a.value.total_cmp(&b.value)));
             (p, group)
         })
@@ -175,7 +187,11 @@ pub fn eval_property(clip: &Clip, property: &str, t_ms: f64) -> Option<f64> {
     let groups = group_by_property(kfs);
     let (_, group) = groups.into_iter().find(|(p, _)| p == property)?;
     let refs: Vec<&Keyframe> = group.iter().collect();
-    Some(eval_group(&refs, |k| parse_interp(&k.interp, k.bezier), t_ms))
+    Some(eval_group(
+        &refs,
+        |k| parse_interp(&k.interp, k.bezier),
+        t_ms,
+    ))
 }
 
 /// 采样投影(壳曲线编辑器绘制用;壳零插值——只画本函数产出的点集):
@@ -185,7 +201,9 @@ pub fn sample_property(clip: &Clip, property: &str, step_ms: u64) -> Vec<(u64, f
     let kfs = clip.keyframes.as_ref();
     let Some(kfs) = kfs else { return Vec::new() };
     let groups = group_by_property(kfs);
-    let Some((_, group)) = groups.iter().find(|(p, _)| p == property) else { return Vec::new() };
+    let Some((_, group)) = groups.iter().find(|(p, _)| p == property) else {
+        return Vec::new();
+    };
     let mut times: Vec<u64> = Vec::new();
     let mut t = 0u64;
     while t <= clip.duration_ms {
@@ -200,69 +218,51 @@ pub fn sample_property(clip: &Clip, property: &str, step_ms: u64) -> Vec<(u64, f
     let refs: Vec<&Keyframe> = group.iter().collect();
     times
         .into_iter()
-        .map(|tt| (tt, eval_group(&refs, |k| parse_interp(&k.interp, k.bezier), tt as f64)))
+        .map(|tt| {
+            (
+                tt,
+                eval_group(&refs, |k| parse_interp(&k.interp, k.bezier), tt as f64),
+            )
+        })
         .collect()
 }
 
 // ---------------- 白名单裁决(ADR-0018 决策 4:fx 三态注册表) ----------------
 
-/// fx 参数时间轴能力三态(ADR-0018;注册表未标注即视为 static)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FxTimeline {
-    /// T 标记滤镜:sendcmd 命令序列直达。
-    Sendcmd,
-    /// 分段子段重建滤镜串(分段边界 = 关键帧)。
-    Segment,
-    /// 不可动画:打点诚实拒绝。
-    Static,
-}
-
-impl FxTimeline {
-    pub fn parse(s: Option<&str>) -> Self {
-        match s {
-            Some("sendcmd") => FxTimeline::Sendcmd,
-            Some("segment") => FxTimeline::Segment,
-            _ => FxTimeline::Static,
-        }
-    }
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            FxTimeline::Sendcmd => "sendcmd",
-            FxTimeline::Segment => "segment",
-            FxTimeline::Static => "static",
-        }
-    }
-}
-
-/// fx 目录(schemas/fx-catalog.json;编译期嵌入,与 cutforge-render 同源文件——
-/// core 只读 params 的 timeline 标注做裁决,渲染面在 render 侧)。
-pub const FX_CATALOG_SOURCE: &str = include_str!("../../../schemas/fx-catalog.json");
-
-fn fx_catalog() -> &'static Value {
-    use std::sync::OnceLock;
-    static DOC: OnceLock<Value> = OnceLock::new();
-    DOC.get_or_init(|| serde_json::from_str(FX_CATALOG_SOURCE).expect("fx-catalog.json 必须合法"))
-}
-
-/// fx.<fxId>.<param> 键裁决:(fxId 是否注册, 参数是否声明, 时间轴三态)。
-pub fn fx_param_timeline(fx_id: &str, param: &str) -> (bool, bool, FxTimeline) {
-    let doc = fx_catalog();
-    let Some(entry) = doc["fx"].as_array().and_then(|a| a.iter().find(|f| f["id"].as_str() == Some(fx_id)))
-    else {
-        return (false, false, FxTimeline::Static);
-    };
-    let Some(p) = entry["params"]
-        .as_array()
-        .and_then(|a| a.iter().find(|p| p["name"].as_str() == Some(param)))
-    else {
-        return (true, false, FxTimeline::Static);
-    };
-    (true, true, FxTimeline::parse(p["timeline"].as_str()))
-}
+// fx 目录裁决(实现在 fx_registry 模块,纯移动——行数红线 A1-3;pub use 保路径不变)。
+pub use crate::fx_registry::{FX_CATALOG_SOURCE, FxTimeline, fx_param_timeline};
 
 /// 固定白名单属性(fx 键除外)。
-pub const FIXED_PROPERTIES: [&str; 7] =
-    ["position.x", "position.y", "scale", "rotation", "opacity", "volume", "speed"];
+pub const FIXED_PROPERTIES: [&str; 7] = [
+    "position.x",
+    "position.y",
+    "scale",
+    "rotation",
+    "opacity",
+    "volume",
+    "speed",
+];
+
+/// per-property 值域表(BUG-09):越界整组 SCHEMA_INVALID(speed=0 直达 setpts
+/// 除零)。fx.* 值域由 fx-catalog 负责(职责分离);position/scale 暂无自然界不设。
+pub const VALUE_RANGES: &[(&str, f64, f64)] = &[
+    ("speed", 0.01, 100.0),
+    ("opacity", 0.0, 1.0),
+    ("volume", 0.0, 32.0),
+    ("rotation", -3600.0, 3600.0),
+];
+
+/// 单帧值域裁决:越界返回含机读标记 ValueOutOfRange 的错误串。
+fn value_out_of_range(k: &Keyframe) -> Option<String> {
+    let (_, lo, hi) = VALUE_RANGES.iter().find(|(p, _, _)| *p == k.property)?;
+    if k.value.is_finite() && *lo <= k.value && k.value <= *hi {
+        return None;
+    }
+    Some(format!(
+        "keyframes[{}/{}]: 值越界(ValueOutOfRange): {} 值 {} 不在 [{lo}, {hi}]",
+        k.property, k.time_ms, k.property, k.value
+    ))
+}
 
 /// 单 clip 关键帧语义校验(SCHEMA_INVALID 裁决;错误列表非空 = 拒):
 /// 1. property 白名单(未知整组拒;fx 键按注册表,未注册/static 诚实拒);
@@ -270,14 +270,19 @@ pub const FIXED_PROPERTIES: [&str; 7] =
 /// 4. speed 关键帧与 speedCurve 互斥(报错信息说明,ADR-0018 B 级单机制)。
 pub fn validate_clip_keyframes(clip: &Clip) -> Vec<String> {
     let mut errs = Vec::new();
-    let Some(kfs) = &clip.keyframes else { return errs };
+    let Some(kfs) = &clip.keyframes else {
+        return errs;
+    };
     for k in kfs {
         if let Some(fx) = k.property.strip_prefix("fx.") {
             // fxId 本身含点(catalog id = "fx.grain" 等)→ 以最后一个点分隔参数键
             let (fx_id, param) = match fx.rsplit_once('.') {
                 Some(v) => v,
                 None => {
-                    errs.push(format!("keyframes.property({}) 非法 fx 键(fx.<fxId>.<param>)", k.property));
+                    errs.push(format!(
+                        "keyframes.property({}) 非法 fx 键(fx.<fxId>.<param>)",
+                        k.property
+                    ));
                     continue;
                 }
             };
@@ -309,6 +314,10 @@ pub fn validate_clip_keyframes(clip: &Clip) -> Vec<String> {
                 "keyframes[{}/{}]: interp=bezier 必须携带 bezier 四参数控制柄",
                 k.property, k.time_ms
             ));
+        }
+        // per-property 值域(BUG-09):speed/opacity/volume/rotation 越界整组拒
+        if let Some(e) = value_out_of_range(k) {
+            errs.push(e);
         }
     }
     // 同属性时间严格递增(按**书写次序**裁决;求值端 group_by_property 的防御性
@@ -347,24 +356,37 @@ pub fn speed_keyframes_to_curve(kfs: &[Keyframe]) -> Vec<SpeedPoint> {
     let mut pts: Vec<SpeedPoint> = Vec::new();
     for w in kfs.windows(2) {
         let (a, b) = (&w[0], &w[1]);
-        pts.push(SpeedPoint { at_ms: a.time_ms, speed: a.value });
+        pts.push(SpeedPoint {
+            at_ms: a.time_ms,
+            speed: a.value,
+        });
         match parse_interp(&a.interp, a.bezier) {
             // hold:常速点对,步进量化到 1ms(同刻双点会被 speed_segments 的
             // (at,speed) 排序打乱方向;1ms 远小于帧粒度,分段积分仍精确)
-            Interp::Hold => pts.push(SpeedPoint { at_ms: b.time_ms.saturating_sub(1), speed: a.value }),
+            Interp::Hold => pts.push(SpeedPoint {
+                at_ms: b.time_ms.saturating_sub(1),
+                speed: a.value,
+            }),
             Interp::Linear => {}
             Interp::Bezier(_) => {
                 // 缓动/贝塞尔:区间内等分采样(不含端点;端点由各自帧次推入)
                 for i in 1..SUBDIV {
-                    let t = a.time_ms as f64 + (b.time_ms - a.time_ms) as f64 * (i as f64 / SUBDIV as f64);
+                    let t = a.time_ms as f64
+                        + (b.time_ms - a.time_ms) as f64 * (i as f64 / SUBDIV as f64);
                     let v = eval_group(&[a, b], |k| parse_interp(&k.interp, k.bezier), t);
-                    pts.push(SpeedPoint { at_ms: t.round() as u64, speed: v });
+                    pts.push(SpeedPoint {
+                        at_ms: t.round() as u64,
+                        speed: v,
+                    });
                 }
             }
         }
     }
     if let Some(last) = kfs.last() {
-        pts.push(SpeedPoint { at_ms: last.time_ms, speed: last.value });
+        pts.push(SpeedPoint {
+            at_ms: last.time_ms,
+            speed: last.value,
+        });
     }
     pts
 }
@@ -372,7 +394,7 @@ pub fn speed_keyframes_to_curve(kfs: &[Keyframe]) -> Vec<SpeedPoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     fn kf(prop: &str, t: u64, v: f64) -> Keyframe {
         Keyframe::new(prop, t, v)
@@ -394,8 +416,15 @@ mod tests {
         assert_eq!(parse_interp("easeIn", None), Interp::Bezier(EASE_IN));
         assert_eq!(parse_interp("easeOut", None), Interp::Bezier(EASE_OUT));
         assert_eq!(parse_interp("easeInOut", None), Interp::Bezier(EASE_IN_OUT));
-        assert_eq!(parse_interp("bezier", Some([0.25, 0.1, 0.25, 1.0])), Interp::Bezier([0.25, 0.1, 0.25, 1.0]));
-        assert_eq!(parse_interp("bezier", None), Interp::Linear, "bezier 无参数回落 linear(校验层另行拒)");
+        assert_eq!(
+            parse_interp("bezier", Some([0.25, 0.1, 0.25, 1.0])),
+            Interp::Bezier([0.25, 0.1, 0.25, 1.0])
+        );
+        assert_eq!(
+            parse_interp("bezier", None),
+            Interp::Linear,
+            "bezier 无参数回落 linear(校验层另行拒)"
+        );
     }
 
     #[test]
@@ -418,7 +447,10 @@ mod tests {
             prev = v;
         }
         // 确定性:同输入两次逐位一致
-        assert_eq!(bezier_progress([0.1, 0.7, 0.3, 0.9], 0.37), bezier_progress([0.1, 0.7, 0.3, 0.9], 0.37));
+        assert_eq!(
+            bezier_progress([0.1, 0.7, 0.3, 0.9], 0.37),
+            bezier_progress([0.1, 0.7, 0.3, 0.9], 0.37)
+        );
         // 直线控制柄 (x1=y1, x2=y2) ≡ 线性
         let lin = bezier_progress([0.25, 0.25, 0.75, 0.75], 0.3);
         assert!((lin - 0.3).abs() < 1e-6, "对角控制柄 ≡ 线性: {lin}");
@@ -470,7 +502,8 @@ mod tests {
         let mk = |interp: &str| {
             let mut first = json!({"property": "opacity", "timeMs": 0, "value": 0.0});
             first["interp"] = json!(interp);
-            let c = clip_with(json!([first, {"property": "opacity", "timeMs": 1000, "value": 1.0}]));
+            let c =
+                clip_with(json!([first, {"property": "opacity", "timeMs": 1000, "value": 1.0}]));
             eval_property(&c, "opacity", 500.0).unwrap()
         };
         let lin = mk("linear");
@@ -505,8 +538,16 @@ mod tests {
         ]));
         assert_eq!(eval_property(&c, "position.x", 1000.0), Some(0.6));
         assert_eq!(eval_property(&c, "rotation", 1000.0), Some(45.0));
-        assert_eq!(eval_property(&c, "fx.fx.grain.strength", 1000.0), Some(25.0));
-        assert_eq!(eval_property(&c, "volume", 0.0), None, "未打点属性为 None(不臆造)");    }
+        assert_eq!(
+            eval_property(&c, "fx.fx.grain.strength", 1000.0),
+            Some(25.0)
+        );
+        assert_eq!(
+            eval_property(&c, "volume", 0.0),
+            None,
+            "未打点属性为 None(不臆造)"
+        );
+    }
 
     #[test]
     fn eval_no_keyframes_is_none() {
@@ -514,7 +555,9 @@ mod tests {
             {"property": "opacity", "timeMs": 0, "value": 1.0}
         ]));
         assert_eq!(eval_property(&c, "opacity", 0.0), Some(1.0));
-        let none: Clip = serde_json::from_value(json!({"id": "V1-001", "startMs": 0, "durationMs": 1000})).unwrap();
+        let none: Clip =
+            serde_json::from_value(json!({"id": "V1-001", "startMs": 0, "durationMs": 1000}))
+                .unwrap();
         assert_eq!(eval_property(&none, "opacity", 0.0), None);
     }
 
@@ -529,7 +572,10 @@ mod tests {
             {"property": "opacity", "timeMs": 0, "value": 0.0},
             {"property": "opacity", "timeMs": 1000, "value": 1.0}
         ]));
-        assert_eq!(eval_property(&a, "opacity", 400.0), eval_property(&b, "opacity", 400.0));
+        assert_eq!(
+            eval_property(&a, "opacity", 400.0),
+            eval_property(&b, "opacity", 400.0)
+        );
     }
 
     // ---- 采样投影 ----
@@ -543,7 +589,10 @@ mod tests {
         ]));
         let s = sample_property(&c, "position.x", 100);
         // 网格 0,100,200,… ∪ 关键帧 0,150,2000;150 在网格点之间必被含
-        assert!(s.iter().any(|(t, _)| *t == 150), "关键帧时刻必须入样本: {s:?}");
+        assert!(
+            s.iter().any(|(t, _)| *t == 150),
+            "关键帧时刻必须入样本: {s:?}"
+        );
         assert!(s.iter().any(|(t, _)| *t == 2000), "末关键帧(=时长)入样本");
         assert_eq!(s.first().unwrap().0, 0);
         // 单调且首尾对齐时长
@@ -553,7 +602,10 @@ mod tests {
         assert!((at150 - 0.6).abs() < 1e-12);
         let at100 = s.iter().find(|(t, _)| *t == 100).unwrap().1;
         let direct = eval_property(&c, "position.x", 100.0).unwrap();
-        assert!((at100 - direct).abs() < 1e-12, "网格样本值必须 = 求值器同点输出");
+        assert!(
+            (at100 - direct).abs() < 1e-12,
+            "网格样本值必须 = 求值器同点输出"
+        );
     }
 
     #[test]
@@ -570,12 +622,21 @@ mod tests {
             {"property": "crop", "timeMs": 0, "value": 1.0}
         ]));
         let errs = validate_clip_keyframes(&c);
-        assert!(errs.iter().any(|e| e.contains("crop") && e.contains("白名单")), "{errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("crop") && e.contains("白名单")),
+            "{errs:?}"
+        );
         let c = clip_with(json!([
             {"property": "opacity", "timeMs": 0, "value": 0.0},
             {"property": "opacity", "timeMs": 1000, "value": 1.0, "interp": "bezier"}
         ]));
-        assert!(validate_clip_keyframes(&c).iter().any(|e| e.contains("bezier 必须携带")), "缺控制柄必拒");
+        assert!(
+            validate_clip_keyframes(&c)
+                .iter()
+                .any(|e| e.contains("bezier 必须携带")),
+            "缺控制柄必拒"
+        );
         let ok = clip_with(json!([
             {"property": "opacity", "timeMs": 0, "value": 0.0},
             {"property": "opacity", "timeMs": 1000, "value": 1.0, "interp": "bezier", "bezier": [0.3, 0.0, 0.7, 1.0]}
@@ -594,14 +655,27 @@ mod tests {
         assert!(errs.is_empty(), "sendcmd 态参数可打点: {errs:?}");
         // 未注册 fxId
         let c = clip_with(json!([{"property": "fx.fx.幽灵.strength", "timeMs": 0, "value": 1.0}]));
-        assert!(validate_clip_keyframes(&c).iter().any(|e| e.contains("未注册")), "{:?}", validate_clip_keyframes(&c));
+        assert!(
+            validate_clip_keyframes(&c)
+                .iter()
+                .any(|e| e.contains("未注册")),
+            "{:?}",
+            validate_clip_keyframes(&c)
+        );
         // 未声明参数
         let c = clip_with(json!([{"property": "fx.fx.grain.无此参", "timeMs": 0, "value": 1.0}]));
-        assert!(validate_clip_keyframes(&c).iter().any(|e| e.contains("无参数")));
-        // static 态(shake.amplitude 注册表标注 static)诚实拒绝
-        let c = clip_with(json!([{"property": "fx.fx.shake.amplitude", "timeMs": 0, "value": 6.0}]));
         assert!(
-            validate_clip_keyframes(&c).iter().any(|e| e.contains("static")),
+            validate_clip_keyframes(&c)
+                .iter()
+                .any(|e| e.contains("无参数"))
+        );
+        // static 态(shake.amplitude 注册表标注 static)诚实拒绝
+        let c =
+            clip_with(json!([{"property": "fx.fx.shake.amplitude", "timeMs": 0, "value": 6.0}]));
+        assert!(
+            validate_clip_keyframes(&c)
+                .iter()
+                .any(|e| e.contains("static")),
             "static 参数打点必须诚实拒绝: {:?}",
             validate_clip_keyframes(&c)
         );
@@ -614,7 +688,9 @@ mod tests {
             {"property": "opacity", "timeMs": 1000, "value": 0.8}
         ]));
         assert!(
-            validate_clip_keyframes(&c).iter().any(|e| e.contains("严格递增")),
+            validate_clip_keyframes(&c)
+                .iter()
+                .any(|e| e.contains("严格递增")),
             "重复 timeMs 必拒: {:?}",
             validate_clip_keyframes(&c)
         );
@@ -623,7 +699,11 @@ mod tests {
             {"property": "opacity", "timeMs": 2000, "value": 0.8},
             {"property": "opacity", "timeMs": 1000, "value": 0.5}
         ]));
-        assert!(validate_clip_keyframes(&c).iter().any(|e| e.contains("严格递增")));
+        assert!(
+            validate_clip_keyframes(&c)
+                .iter()
+                .any(|e| e.contains("严格递增"))
+        );
     }
 
     #[test]
@@ -633,9 +713,77 @@ mod tests {
             {"property": "speed", "timeMs": 1000, "value": 2.0}
         ]));
         assert!(validate_clip_keyframes(&c).is_empty());
-        c.speed_curve = Some(vec![SpeedPoint { at_ms: 0, speed: 1.0 }]);
+        c.speed_curve = Some(vec![SpeedPoint {
+            at_ms: 0,
+            speed: 1.0,
+        }]);
         let errs = validate_clip_keyframes(&c);
-        assert!(errs.iter().any(|e| e.contains("互斥") && e.contains("speedCurve")), "{errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("互斥") && e.contains("speedCurve")),
+            "{errs:?}"
+        );
+    }
+
+    // ---- per-property 值域(BUG-09;TC-CORE-KF-001~004) ----
+
+    /// TC-CORE-KF-001(BUG-09):speed 关键帧值 0 拒绝(0 直达渲染 setpts 除零)。
+    #[test]
+    fn tc_core_kf_001_speed_zero_rejected() {
+        let c = clip_with(json!([
+            {"property": "speed", "timeMs": 0, "value": 0.0},
+            {"property": "speed", "timeMs": 1000, "value": 2.0}
+        ]));
+        let errs = validate_clip_keyframes(&c);
+        assert!(
+            errs.iter().any(|e| e.contains("ValueOutOfRange")),
+            "{errs:?}"
+        );
+    }
+
+    /// TC-CORE-KF-002(BUG-09):speed 负值拒绝。
+    #[test]
+    fn tc_core_kf_002_speed_negative_rejected() {
+        let c = clip_with(json!([
+            {"property": "speed", "timeMs": 0, "value": -1.0}, {"property": "speed", "timeMs": 1000, "value": 2.0}
+        ]));
+        let errs = validate_clip_keyframes(&c);
+        assert!(
+            errs.iter().any(|e| e.contains("ValueOutOfRange")),
+            "{errs:?}"
+        );
+    }
+
+    /// TC-CORE-KF-003(BUG-09):opacity 越界(>1)拒绝。
+    #[test]
+    fn tc_core_kf_003_opacity_out_of_range_rejected() {
+        let c = clip_with(json!([
+            {"property": "opacity", "timeMs": 0, "value": 1.5},
+            {"property": "opacity", "timeMs": 1000, "value": 1.0}
+        ]));
+        let errs = validate_clip_keyframes(&c);
+        assert!(
+            errs.iter().any(|e| e.contains("ValueOutOfRange")),
+            "{errs:?}"
+        );
+    }
+
+    /// TC-CORE-KF-004(BUG-09):合法值全表回归(不误拒)。
+    #[test]
+    fn tc_core_kf_004_legal_values_pass() {
+        let c = clip_with(json!([
+            {"property": "speed", "timeMs": 0, "value": 0.01},
+            {"property": "speed", "timeMs": 400, "value": 100.0},
+            {"property": "opacity", "timeMs": 800, "value": 1.0},
+            {"property": "volume", "timeMs": 1200, "value": 32.0},
+            {"property": "rotation", "timeMs": 1600, "value": 3600.0},
+            {"property": "rotation", "timeMs": 2000, "value": -3600.0}
+        ]));
+        assert!(
+            validate_clip_keyframes(&c).is_empty(),
+            "边界内合法值不得误拒: {:?}",
+            validate_clip_keyframes(&c)
+        );
     }
 
     // ---- speed 关键帧 → 曲线展开(B 级分段) ----
@@ -643,7 +791,19 @@ mod tests {
     #[test]
     fn speed_keyframes_expand_linear_directly() {
         let pts = speed_keyframes_to_curve(&[kf("speed", 0, 1.0), kf("speed", 1000, 3.0)]);
-        assert_eq!(pts, vec![SpeedPoint { at_ms: 0, speed: 1.0 }, SpeedPoint { at_ms: 1000, speed: 3.0 }]);
+        assert_eq!(
+            pts,
+            vec![
+                SpeedPoint {
+                    at_ms: 0,
+                    speed: 1.0
+                },
+                SpeedPoint {
+                    at_ms: 1000,
+                    speed: 3.0
+                }
+            ]
+        );
     }
 
     #[test]
@@ -653,7 +813,14 @@ mod tests {
         a.interp = "hold".into();
         let pts = speed_keyframes_to_curve(&[a, kf("speed", 1000, 1.0)]);
         assert_eq!(pts.len(), 3, "hold 区间落常速点对: {pts:?}");
-        assert_eq!(pts[1], SpeedPoint { at_ms: 999, speed: 2.0 }, "步进量化到 1ms");
+        assert_eq!(
+            pts[1],
+            SpeedPoint {
+                at_ms: 999,
+                speed: 2.0
+            },
+            "步进量化到 1ms"
+        );
         // 经单一真相源:主体 [0,999)@2.0 + [1000,外延)@1.0;中间 1ms 步进段
         // (均值 1.5)为 hold 阶跃的量化边界(远小于帧粒度,积分影响 ~0)
         let c = clip_with(json!([
@@ -675,7 +842,10 @@ mod tests {
         // 4 段逼近:区间内 3 个采样点 + 两端点 = 5 点;首段速度 < 线性均值(慢启动)
         assert!(pts.len() >= 5, "缓动段必须细分逼近: {pts:?}");
         let seg1_mean = (pts[0].speed + pts[1].speed) / 2.0;
-        assert!(seg1_mean < 1.125 + 1e-9, "easeIn 首段均值应低于线性 1.125: {seg1_mean}");
+        assert!(
+            seg1_mean < 1.125 + 1e-9,
+            "easeIn 首段均值应低于线性 1.125: {seg1_mean}"
+        );
         // 采样值 = 求值器同点输出(单源纪律)
         let direct = eval_group(&[&a, &b], |k| parse_interp(&k.interp, k.bezier), 250.0);
         assert!((pts[1].speed - direct).abs() < 1e-9, "细分点必须来自求值器");
@@ -698,7 +868,9 @@ mod tests {
         let c2: Clip = serde_json::from_value(back).unwrap();
         assert_eq!(c, c2, "serde 往返无静默丢弃");
         // 无关键帧 clip:字段不臆造
-        let none: Clip = serde_json::from_value(json!({"id": "V1-001", "startMs": 0, "durationMs": 1000})).unwrap();
+        let none: Clip =
+            serde_json::from_value(json!({"id": "V1-001", "startMs": 0, "durationMs": 1000}))
+                .unwrap();
         let back = serde_json::to_value(&none).unwrap();
         assert!(back.get("keyframes").is_none(), "缺省字段不得臆造");
     }
@@ -716,20 +888,32 @@ mod tests {
             Keyframe::new("position.x", 0, 0.5),
             Keyframe::new("position.x", 1000, 0.7),
         ];
-        let rec = eng.apply(
-            Command::ClipUpdate {
-                clip_id: "V1-001".into(),
-                patch: ClipPatch { keyframes: Some(kfs.clone()), ..Default::default() },
-            },
-            Actor::agent("kf-test"),
-            ApplyOpts::default(),
-        )
-        .unwrap();
+        let rec = eng
+            .apply(
+                Command::ClipUpdate {
+                    clip_id: "V1-001".into(),
+                    patch: ClipPatch {
+                        keyframes: Some(kfs.clone()),
+                        ..Default::default()
+                    },
+                },
+                Actor::agent("kf-test"),
+                ApplyOpts::default(),
+            )
+            .unwrap();
         assert_eq!(rec.op_ids.len(), 1, "单 Op");
         let op = &eng.oplog().ops()[0];
         assert_eq!(op.target.path, "/tracks/0/clips/0");
-        assert_eq!(op.after["keyframes"].as_array().unwrap().len(), 2, "after 携带整组");
-        assert_eq!(op.before["keyframes"], serde_json::Value::Null, "before = 原缺席");
+        assert_eq!(
+            op.after["keyframes"].as_array().unwrap().len(),
+            2,
+            "after 携带整组"
+        );
+        assert_eq!(
+            op.before["keyframes"],
+            serde_json::Value::Null,
+            "before = 原缺席"
+        );
         // undo 恢复
         eng.undo(Actor::agent("kf-test")).unwrap();
         let clip = eng.project().tracks[0].clips[0].clone();
@@ -744,12 +928,18 @@ mod tests {
         let r = eng.apply(
             Command::ClipUpdate {
                 clip_id: "V1-001".into(),
-                patch: ClipPatch { keyframes: Some(bad), ..Default::default() },
+                patch: ClipPatch {
+                    keyframes: Some(bad),
+                    ..Default::default()
+                },
             },
             Actor::agent("kf-test"),
             ApplyOpts::default(),
         );
-        assert!(matches!(r, Err(crate::engine::Reject::SchemaInvalid(_))), "static 参数必须拒: {r:?}");
+        assert!(
+            matches!(r, Err(crate::engine::Reject::SchemaInvalid(_))),
+            "static 参数必须拒: {r:?}"
+        );
         assert_eq!(eng.project(), &before, "拒绝必须回滚");
         assert_eq!(eng.rev(), 3, "拒绝不得升 rev(apply 1 + undo 2 + redo 3)");
         // 互斥:speed 关键帧与 speedCurve 同给 → 拒
@@ -758,7 +948,10 @@ mod tests {
             Command::ClipUpdate {
                 clip_id: "V1-001".into(),
                 patch: ClipPatch {
-                    speed_curve: Some(vec![crate::model::SpeedPoint { at_ms: 0, speed: 1.0 }]),
+                    speed_curve: Some(vec![crate::model::SpeedPoint {
+                        at_ms: 0,
+                        speed: 1.0,
+                    }]),
                     ..Default::default()
                 },
             },
@@ -770,13 +963,19 @@ mod tests {
             Command::ClipUpdate {
                 clip_id: "V1-001".into(),
                 patch: ClipPatch {
-                    keyframes: Some(vec![Keyframe::new("speed", 0, 1.0), Keyframe::new("speed", 500, 2.0)]),
+                    keyframes: Some(vec![
+                        Keyframe::new("speed", 0, 1.0),
+                        Keyframe::new("speed", 500, 2.0),
+                    ]),
                     ..Default::default()
                 },
             },
             Actor::agent("kf-test"),
             ApplyOpts::default(),
         );
-        assert!(matches!(r, Err(crate::engine::Reject::SchemaInvalid(_))), "互斥必须拒: {r:?}");
+        assert!(
+            matches!(r, Err(crate::engine::Reject::SchemaInvalid(_))),
+            "互斥必须拒: {r:?}"
+        );
     }
 }

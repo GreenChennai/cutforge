@@ -1,5 +1,6 @@
 //! Workspace 打开/装载:盘面 → 内存。
-//! 布局判定(0.5 中文目录/0.4.x 英文目录)、OpLog 恢复、rev 对账、notes 装载、文件态初始化。
+//! 布局判定(0.5 中文目录/0.4.x 英文目录)、OpLog 恢复(含 R-03 半行截断
+//! 显式修复)、rev 对账与 R-04 差异自愈(ReconciledOp)、notes 装载、文件态初始化。
 
 use std::collections::BTreeMap;
 use std::io;
@@ -8,34 +9,58 @@ use std::path::{Path, PathBuf};
 use cutforge_core::engine::Engine;
 use cutforge_core::model::Project;
 use cutforge_core::notes::NotesStore;
-use cutforge_core::oplog::{Op, OpLog};
 
 use super::{Layout, Workspace};
 use crate::paths::NOTES_REL;
+use crate::repair::{self, RepairReport};
 
 impl Workspace {
-    /// 打开工程目录(只读语义安全;写操作走 `open_exclusive` 或依赖方法内临时锁)。
+    /// 打开工程目录(只读语义安全:检测到损坏面只**报告**不落盘;
+    /// 修复动作只发生在写通道打开 `open_exclusive`/`open_for_write` 的锁内)。
     pub fn open(root: &Path) -> io::Result<Self> {
-        let (engine, persisted, notes, meta_bypass, files, synced_disk, layout) = Self::load(root)?;
+        let (engine, persisted, notes, meta_bypass, files, synced_disk, layout, repair) =
+            Self::load(root, false)?;
         Ok(Self {
-            root: root.to_path_buf(), engine, persisted, notes,
-            notes_dirty: false, meta_bypass, files, layout, lock: None, synced_disk,
+            root: root.to_path_buf(),
+            engine,
+            persisted,
+            notes,
+            notes_dirty: false,
+            meta_bypass,
+            files,
+            layout,
+            lock: None,
+            synced_disk,
+            repair,
         })
     }
 
     /// 独占打开:锁覆盖 open→apply→persist 全程(P0-5:跨进程并发写不再丢更新)。
     /// MCP 写通道与 CLI 变更子命令一律走本入口。
+    /// 装载期发现 oplog 半行截断 / 记账 rev 缺口 → 锁内显式修复模式(R-03/R-04)。
     pub fn open_exclusive(root: &Path) -> io::Result<Self> {
         let guard = crate::lock::acquire(root, 30_000, 20)?;
-        let (engine, persisted, notes, meta_bypass, files, synced_disk, layout) = Self::load(root)?;
+        let (engine, persisted, notes, meta_bypass, files, synced_disk, layout, repair) =
+            Self::load(root, true)?;
         let mut ws = Self {
-            root: root.to_path_buf(), engine, persisted, notes,
-            notes_dirty: false, meta_bypass, files, layout, lock: Some(guard), synced_disk,
+            root: root.to_path_buf(),
+            engine,
+            persisted,
+            notes,
+            notes_dirty: false,
+            meta_bypass,
+            files,
+            layout,
+            lock: Some(guard),
+            synced_disk,
+            repair,
         };
         // 迁移升级:盘面为旧形态(v1/缺 id)时,独占打开即落规范形,
         // 使后续外部改动检测与守护合并都以 v2 规范形为基准。
         let view = ws.engine.query(cutforge_core::engine::Query::ProjectView);
-        let cutforge_core::engine::Answer::Project(ref v) = view else { unreachable!() };
+        let cutforge_core::engine::Answer::Project(ref v) = view else {
+            unreachable!()
+        };
         if Some(v) != ws.synced_disk.as_ref() {
             ws.persist()?;
         }
@@ -47,23 +72,50 @@ impl Workspace {
     /// 既有纪律同一口径)。锁外装载的安全性由写前同步兜底:`check_window_drift`
     /// /`sync_with_disk` 在锁内以装载视图为基准检测外部改动(漂移即三路合并/停写)。
     /// 与 `open_exclusive` 等价的迁移升级语义:盘面为旧形态(v1/缺 id)时,
-    /// 锁内立即落规范形,使外部改动检测与守护合并都以 v2 规范形为基准。
+    /// 锁内立即落规范形。装载期修复(R-03/R-04)同样在锁内完成后才交还锁。
     pub fn open_for_write(root: &Path) -> io::Result<Self> {
-        let mut ws = Self::open(root)?;
         let guard = crate::lock::acquire(root, 30_000, 20)?;
+        let (engine, persisted, notes, meta_bypass, files, synced_disk, layout, repair) =
+            Self::load(root, true)?;
+        let mut ws = Self {
+            root: root.to_path_buf(),
+            engine,
+            persisted,
+            notes,
+            notes_dirty: false,
+            meta_bypass,
+            files,
+            layout,
+            lock: Some(guard),
+            synced_disk,
+            repair,
+        };
         let view = ws.engine.query(cutforge_core::engine::Query::ProjectView);
-        let cutforge_core::engine::Answer::Project(ref v) = view else { unreachable!() };
+        let cutforge_core::engine::Answer::Project(ref v) = view else {
+            unreachable!()
+        };
         if Some(v) != ws.synced_disk.as_ref() {
             ws.persist()?;
         }
-        drop(guard);
+        // 回归常驻形态:迁移/修复完成即交还全程锁,写入走方法内临时补锁
+        ws.lock = None;
         Ok(ws)
     }
 
     #[allow(clippy::type_complexity)]
     pub(super) fn load(
         root: &Path,
-    ) -> io::Result<(Engine, usize, NotesStore, Option<serde_json::Value>, BTreeMap<String, serde_json::Value>, Option<serde_json::Value>, Layout)> {
+        repair: bool,
+    ) -> io::Result<(
+        Engine,
+        usize,
+        NotesStore,
+        Option<serde_json::Value>,
+        BTreeMap<String, serde_json::Value>,
+        Option<serde_json::Value>,
+        Layout,
+        Option<RepairReport>,
+    )> {
         // 盘面布局判定(0.5 中文目录为准;0.4.x 英文目录工程兼容读写、原地保留)
         let layout = Layout::detect(root);
         let project_path = root.join(layout.project_rel);
@@ -76,39 +128,70 @@ impl Workspace {
         let meta_bypass = value.as_object_mut().and_then(|o| o.remove("_meta"));
         let project = Project::from_value(&value)
             .or_else(|_| cutforge_core::model::migrate_from_value(&value))
-            .map_err(|errs| io::Error::other(format!("project.json 未通过 v2 契约: {}", errs.join("; "))))?;
+            .map_err(|errs| {
+                io::Error::other(format!("project.json 未通过 v2 契约: {}", errs.join("; ")))
+            })?;
 
-        // OpLog 恢复(按天分文件,文件名升序 = 时间升序)
-        let mut log = OpLog::new();
-        let oplog_dir = root.join(".cutforge/oplog");
-        if let Ok(entries) = std::fs::read_dir(&oplog_dir) {
-            let mut files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "jsonl")).collect();
-            files.sort();
-            for file in files {
-                let content = std::fs::read_to_string(&file)?;
-                for line in content.lines().filter(|l| !l.trim().is_empty()) {
-                    match serde_json::from_str::<Op>(line) {
-                        Ok(op) => {
-                            log.push_loaded(op);
-                        }
-                        Err(e) => {
-                            // 半行(上次写入中断):截断处之后不再可信,停止加载
-                            eprintln!("oplog 半行(截断恢复): {file:?}: {e}");
-                            break;
-                        }
-                    }
-                }
+        // OpLog 恢复(R-03):扫描全部分片;半行截断只中断当前分片(§2.3 措辞
+        // 修正:后续分片照常装载),截断点与分片名结构化记录,绝不静默。
+        let scanned = repair::scan_oplog(root);
+        let mut log = scanned.log;
+
+        // 记账 rev(先读;差异自愈与丢失数都以它为基准)
+        let rev_path = root.join(".cutforge/rev");
+        let disk_rev = std::fs::read_to_string(&rev_path)
+            .ok()
+            .and_then(|t| t.trim().parse::<u64>().ok());
+
+        // R-03 丢失操作数:记账已到 disk_rev,而最后完整 Op 只到 last_complete_rev
+        let last_complete_rev = log.last_rev().unwrap_or(0);
+        let lost_ops = disk_rev.unwrap_or(0).saturating_sub(last_complete_rev);
+
+        // R-03 显式修复模式(写通道 + 锁内才落盘;只读 open 只报告不落盘):
+        // 备份 .cutforge/ → recovery-{ts}/ → 物理截断到最后完整 Op。
+        let mut report = RepairReport {
+            root: root.to_path_buf(),
+            truncated_files: scanned.truncated_files,
+            lost_ops,
+            reconciled_revs: Vec::new(),
+            backup_path: None,
+            ts: cutforge_core::timeutil::now_rfc3339(),
+        };
+        if repair && !report.truncated_files.is_empty() {
+            match repair::backup_state_dir(root) {
+                Ok(p) => report.backup_path = Some(p),
+                Err(e) => eprintln!("[cutforge-io][warn] 修复前备份失败(修复继续,备份缺位): {e}"),
+            }
+            for (file, good_end) in &scanned.truncation_points {
+                let data = std::fs::read(file).unwrap_or_default();
+                // 截到最后完整 Op(字节终点;原子写 = 唯一落盘点)
+                crate::atomic::atomic_write(file, &data[..(*good_end as usize)])?;
             }
         }
 
-        // rev 对账:文件 rev < oplog rev → 上次写入中断,以 oplog 为准修复
-        let rev_path = root.join(".cutforge/rev");
+        // R-04 差异自愈:记账 rev > oplog max rev(先文件后记账的崩溃窗口)→
+        // 补记 ReconciledOp 屏障(undo 到此处明确拒绝),用户可见(报告 + warn)。
+        if let Some(d) = disk_rev
+            && d > last_complete_rev
+            && repair
+        {
+            let oplog_dir = root.join(".cutforge/oplog");
+            let oplog_file = oplog_dir.join(format!(
+                "{}.jsonl",
+                cutforge_core::timeutil::now_date_compact()
+            ));
+            let op = repair::reconciled_op(d, last_complete_rev, log.next_op_id());
+            let line = serde_json::to_string(&op)?;
+            crate::atomic::append_lines(&oplog_file, &[format!("{line}\n")])?;
+            log.push_loaded(op);
+            report.reconciled_revs.push(d);
+        }
+
+        // rev 对账:以 oplog(含补记)与记账文件的最大值为准
         let mut rev = log.last_rev().unwrap_or(0);
-        if let Ok(text) = std::fs::read_to_string(&rev_path)
-            && let Ok(disk_rev) = text.trim().parse::<u64>()
-                && disk_rev > rev {
-                    rev = disk_rev;
-                }
+        if let Some(d) = disk_rev {
+            rev = rev.max(d);
+        }
         let (undo_stack, redo_stack) = cutforge_core::engine::rebuild_stacks(log.ops());
         let persisted = log.len();
 
@@ -117,8 +200,12 @@ impl Workspace {
             Ok(text) => {
                 let v: serde_json::Value = serde_json::from_str(&text)
                     .map_err(|e| io::Error::other(format!("notes.json 非法 JSON: {e}")))?;
-                let store = NotesStore::from_value(&v)
-                    .map_err(|errs| io::Error::other(format!("CF-005 SCHEMA_DRIFT(notes.json): {}", errs.join("; "))))?;
+                let store = NotesStore::from_value(&v).map_err(|errs| {
+                    io::Error::other(format!(
+                        "CF-005 SCHEMA_DRIFT(notes.json): {}",
+                        errs.join("; ")
+                    ))
+                })?;
                 (store, v)
             }
             Err(_) => {
@@ -132,24 +219,47 @@ impl Workspace {
         let mut file_states: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         for (name, rel) in layout.truths {
             if let Ok(text) = std::fs::read_to_string(root.join(rel))
-                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                    file_states.insert(name.to_string(), v);
-                }
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
+            {
+                file_states.insert(name.to_string(), v);
+            }
         }
         file_states.insert("notes.json".to_string(), notes_value);
 
-        let engine = Engine::restore_with_stacks(project, log, rev, undo_stack, redo_stack, file_states)
-            .map_err(|errs| io::Error::other(errs.join("; ")))?;
+        let engine =
+            Engine::restore_with_stacks(project, log, rev, undo_stack, redo_stack, file_states)
+                .map_err(|errs| io::Error::other(errs.join("; ")))?;
 
         // 最近落盘值快照(落盘 diff 用)
         let mut files = BTreeMap::new();
         for (name, rel) in layout.truths {
             if let Ok(text) = std::fs::read_to_string(root.join(rel))
-                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                    files.insert(name.to_string(), v);
-                }
+                && let Ok(v) = serde_json::from_str::<serde_json::Value>(&text)
+            {
+                files.insert(name.to_string(), v);
+            }
         }
-        Ok((engine, persisted, notes, meta_bypass, files, value.clone().into(), layout))
+
+        // R-03/R-04:修复报告落盘 + stderr warn(绝不静默的第二/第三出口)
+        let report = if report.has_actions() {
+            if repair {
+                repair::persist_report(root, &report);
+                eprintln!("[cutforge-io][warn] {}", report.summary());
+            }
+            Some(report)
+        } else {
+            None
+        };
+        Ok((
+            engine,
+            persisted,
+            notes,
+            meta_bypass,
+            files,
+            value.clone().into(),
+            layout,
+            report,
+        ))
     }
 }
 
@@ -162,9 +272,21 @@ pub fn tests_fixture(tag: &str) -> io::Result<PathBuf> {
     let root = crate::fsutil::temp_dir(tag);
     crate::fsutil::ensure(&root.join(crate::paths::TIMELINE))?;
     crate::fsutil::ensure(&root.join(crate::paths::CUT))?;
-    crate::fsutil::copy_file(&sample.join("project.json"), &root.join(crate::paths::PROJECT_REL))?;
-    crate::fsutil::copy_file(&sample.join("wordline.json"), &root.join(crate::paths::WORDLINE_REL))?;
-    crate::fsutil::copy_file(&sample.join("cutlist.json"), &root.join(crate::paths::CUTLIST_REL))?;
-    crate::fsutil::copy_file(&sample.join("notes.json"), &root.join(crate::paths::NOTES_REL))?;
+    crate::fsutil::copy_file(
+        &sample.join("project.json"),
+        &root.join(crate::paths::PROJECT_REL),
+    )?;
+    crate::fsutil::copy_file(
+        &sample.join("wordline.json"),
+        &root.join(crate::paths::WORDLINE_REL),
+    )?;
+    crate::fsutil::copy_file(
+        &sample.join("cutlist.json"),
+        &root.join(crate::paths::CUTLIST_REL),
+    )?;
+    crate::fsutil::copy_file(
+        &sample.join("notes.json"),
+        &root.join(crate::paths::NOTES_REL),
+    )?;
     Ok(root)
 }

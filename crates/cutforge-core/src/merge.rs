@@ -6,7 +6,7 @@
 //! 同一张判定表,两侧都插入新元素时按各自 id 并存(表第 8 行)。
 //! 结构级冲突一律交人/AI 裁决,禁止"最后写入者获胜"。
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictCode {
@@ -56,7 +56,13 @@ pub fn three_way_merge(base: &Value, disk: &Value, local: &Value) -> MergeOutcom
     }
 }
 
-fn merge_node(base: &Value, disk: &Value, local: &Value, ptr: &str, out: &mut Vec<Conflict>) -> Value {
+fn merge_node(
+    base: &Value,
+    disk: &Value,
+    local: &Value,
+    ptr: &str,
+    out: &mut Vec<Conflict>,
+) -> Value {
     // 表 4 行:两侧变成同值 → 幂等合并
     if disk == local {
         return disk.clone();
@@ -165,17 +171,35 @@ fn merge_object(
 /// 数组元素是否都带字符串 `id`(clips/items 的形态)。
 fn arrays_are_id_keyed(b: &[Value], d: &[Value], l: &[Value]) -> bool {
     fn ok(a: &[Value]) -> bool {
-        a.is_empty() || a.iter().all(|v| v.get("id").map(Value::is_string).unwrap_or(false))
+        a.is_empty()
+            || a.iter()
+                .all(|v| v.get("id").map(Value::is_string).unwrap_or(false))
     }
     ok(b) && ok(d) && ok(l)
 }
 
 fn id_map(a: &[Value]) -> std::collections::BTreeMap<String, &Value> {
     a.iter()
-        .filter_map(|v| v.get("id").and_then(Value::as_str).map(|s| (s.to_string(), v)))
+        .filter_map(|v| {
+            v.get("id")
+                .and_then(Value::as_str)
+                .map(|s| (s.to_string(), v))
+        })
         .collect()
 }
 
+fn id_seq(a: &[Value]) -> Vec<String> {
+    a.iter()
+        .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+        .collect()
+}
+
+/// 序集合相同(允许顺序不同;id 唯一,长度即代表集合)。
+fn same_id_set(a: &[String], b: &[String]) -> bool {
+    a.len() == b.len() && a.iter().all(|i| b.contains(i))
+}
+
+#[allow(clippy::too_many_lines)]
 fn merge_id_array(
     b: &[Value],
     d: &[Value],
@@ -184,10 +208,19 @@ fn merge_id_array(
     out: &mut Vec<Conflict>,
 ) -> Vec<Value> {
     let (bm, dm, lm) = (id_map(b), id_map(d), id_map(l));
+    // BUG-08 序敏感(BUG 清单 §4):id_map 三路 diff 只看内容不看位置,单侧纯重排
+    // (调整轨道内顺序/图层序)会被静默丢弃。序规则:纯重排 = id 集合与祖先相同、
+    // 仅顺序不同;单侧重排保留其序,双侧改成不同序 → CF-003(顺序即合成语义)。
+    let (b_seq, d_seq, l_seq) = (id_seq(b), id_seq(d), id_seq(l));
+    let disk_reorder = d_seq != b_seq && same_id_set(&d_seq, &b_seq);
+    let local_reorder = l_seq != b_seq && same_id_set(&l_seq, &b_seq);
+    let reorder_conflict = disk_reorder && local_reorder && d_seq != l_seq;
     let mut result: Vec<Value> = Vec::new();
     // 先按磁盘顺序吸收:存在/修改/删除
     for el in d {
-        let Some(id) = el.get("id").and_then(Value::as_str) else { continue };
+        let Some(id) = el.get("id").and_then(Value::as_str) else {
+            continue;
+        };
         match (bm.get(id), lm.get(id)) {
             (Some(_), Some(_)) => {
                 // 三方都在:递归合并该元素
@@ -245,6 +278,47 @@ fn merge_id_array(
             }
         }
     }
+    if reorder_conflict {
+        out.push(Conflict {
+            code: ConflictCode::DupId,
+            pointer: ptr.to_string(),
+            base: Some(Value::Array(b_seq.iter().map(|i| json!(i)).collect())),
+            disk: Some(Value::Array(d_seq.iter().map(|i| json!(i)).collect())),
+            local: Some(Value::Array(l_seq.iter().map(|i| json!(i)).collect())),
+        });
+        // 冲突占位仍按磁盘序返回(最终以人/AI 裁决为准,不会被采纳)
+        return result;
+    }
+    if local_reorder {
+        // 单侧(本地)纯重排:结果按本地序重排;结果中本地不认识的元素
+        // (磁盘侧新增/祖先无)按现序附后——内容合并结果不变,只定序
+        let present: Vec<String> = result
+            .iter()
+            .filter_map(|v| v.get("id").and_then(Value::as_str).map(String::from))
+            .collect();
+        let mut order: Vec<String> = l_seq
+            .iter()
+            .filter(|i| present.contains(i))
+            .cloned()
+            .collect();
+        for id in &present {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+        let by_id: std::collections::BTreeMap<String, Value> = result
+            .drain(..)
+            .filter_map(|v| {
+                let id = v.get("id").and_then(Value::as_str)?.to_string();
+                Some((id, v))
+            })
+            .collect();
+        for id in &order {
+            if let Some(v) = by_id.get(id) {
+                result.push(v.clone());
+            }
+        }
+    }
     result
 }
 
@@ -287,20 +361,36 @@ mod tests {
             _ => panic!(),
         }
         // 行6: 一侧删除另一侧未动 → 删除
-        match three_way_merge(&json!({"a": 1, "b": 2}), &json!({"a": 1}), &json!({"a": 1, "b": 2})) {
+        match three_way_merge(
+            &json!({"a": 1, "b": 2}),
+            &json!({"a": 1}),
+            &json!({"a": 1, "b": 2}),
+        ) {
             MergeOutcome::Merged(v) => assert!(v.get("b").is_none()),
             _ => panic!(),
         }
-        match three_way_merge(&json!({"a": 1, "b": 2}), &json!({"a": 1, "b": 2}), &json!({"a": 1})) {
+        match three_way_merge(
+            &json!({"a": 1, "b": 2}),
+            &json!({"a": 1, "b": 2}),
+            &json!({"a": 1}),
+        ) {
             MergeOutcome::Merged(v) => assert!(v.get("b").is_none()),
             _ => panic!(),
         }
         // 行7: 一侧删除另一侧修改 → CF-002
-        match three_way_merge(&json!({"a": 1, "b": 2}), &json!({"a": 1}), &json!({"a": 1, "b": 3})) {
+        match three_way_merge(
+            &json!({"a": 1, "b": 2}),
+            &json!({"a": 1}),
+            &json!({"a": 1, "b": 3}),
+        ) {
             MergeOutcome::Conflicts(c) => assert_eq!(c[0].code.code(), "CF-002"),
             _ => panic!(),
         }
-        match three_way_merge(&json!({"a": 1, "b": 2}), &json!({"a": 1, "b": 7}), &json!({"a": 1})) {
+        match three_way_merge(
+            &json!({"a": 1, "b": 2}),
+            &json!({"a": 1, "b": 7}),
+            &json!({"a": 1}),
+        ) {
             MergeOutcome::Conflicts(c) => assert_eq!(c[0].code.code(), "CF-002"),
             _ => panic!(),
         }
@@ -346,17 +436,26 @@ mod tests {
 
     #[test]
     fn clip_array_mixed_ops_merge() {
-        let mk = |id: &str, start: u64, dur: u64| json!({"id": id, "startMs": start, "durationMs": dur});
+        let mk =
+            |id: &str, start: u64, dur: u64| json!({"id": id, "startMs": start, "durationMs": dur});
         let base = json!([mk("V1-001", 0, 100), mk("V1-002", 100, 100)]);
         // 磁盘(AI):改 V1-001 时长 + 删 V1-002(本地未动) + 新增 V1-003
         let disk = json!([mk("V1-001", 0, 90), mk("V1-003", 90, 50)]);
         // 本地(用户):V1-001 未动 + V1-002 未动(磁盘删除生效,表 6)+ 本地新增 V1-004
-        let local = json!([mk("V1-001", 0, 100), mk("V1-002", 100, 100), mk("V1-004", 200, 30)]);
+        let local = json!([
+            mk("V1-001", 0, 100),
+            mk("V1-002", 100, 100),
+            mk("V1-004", 200, 30)
+        ]);
         match three_way_merge(&base, &disk, &local) {
             MergeOutcome::Merged(v) => {
                 let a = v.as_array().unwrap();
                 let ids: Vec<&str> = a.iter().map(|e| e["id"].as_str().unwrap()).collect();
-                assert_eq!(ids, vec!["V1-001", "V1-003", "V1-004"], "V1-001 合并时长、V1-002 删除生效、两个新增并存");
+                assert_eq!(
+                    ids,
+                    vec!["V1-001", "V1-003", "V1-004"],
+                    "V1-001 合并时长、V1-002 删除生效、两个新增并存"
+                );
                 assert_eq!(a[0]["durationMs"], json!(90));
             }
             MergeOutcome::Conflicts(c) => panic!("不得冲突: {c:?}"),
@@ -466,7 +565,11 @@ mod tests {
         match three_way_merge(&base, &disk, &local) {
             MergeOutcome::Merged(v) => {
                 let c = &v.as_array().unwrap()[0];
-                assert_eq!(c["keyframes"].as_array().unwrap().len(), 2, "磁盘侧 keyframes 并入");
+                assert_eq!(
+                    c["keyframes"].as_array().unwrap().len(),
+                    2,
+                    "磁盘侧 keyframes 并入"
+                );
                 assert_eq!(c["keyframes"][0]["property"], json!("position.x"));
                 assert_eq!(c["rotation"], json!(90.0), "本地侧字段并入");
                 assert_eq!(c.get("opacity"), None, "未设置的字段不得臆造");
@@ -485,7 +588,10 @@ mod tests {
         // 双侧同值 → 幂等合并(表 4 行)
         match three_way_merge(&base, &disk, &disk.clone()) {
             MergeOutcome::Merged(v) => {
-                assert_eq!(v.as_array().unwrap()[0]["keyframes"][1]["value"], json!(0.7));
+                assert_eq!(
+                    v.as_array().unwrap()[0]["keyframes"][1]["value"],
+                    json!(0.7)
+                );
             }
             MergeOutcome::Conflicts(c) => panic!("双侧同值不得冲突: {c:?}"),
         }
@@ -501,7 +607,79 @@ mod tests {
         });
         let p: crate::model::Project = serde_json::from_value(doc).unwrap();
         let back = p.to_validated_value().unwrap();
-        assert_eq!(back["tracks"][0]["clips"][0]["keyframes"].as_array().unwrap().len(), 2, "合并产物读写不丢");
+        assert_eq!(
+            back["tracks"][0]["clips"][0]["keyframes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2,
+            "合并产物读写不丢"
+        );
+    }
+
+    /// TC-CORE-MERGE-010(BUG-08 序敏感):单侧纯重排必须保留其序——磁盘改了
+    /// 内容(A 时长)但未动序,本地纯重排 [C,A,B] → 合并结果 = 本地序 + 磁盘内容。
+    /// 现状:id_map 三路 diff 位置不参与,重排静默丢失(结果落磁盘序)。
+    #[test]
+    fn tc_core_merge_010_single_side_pure_reorder_preserved() {
+        let mk = |id: &str, dur: u64| json!({"id": id, "startMs": 0, "durationMs": dur});
+        let base = json!([mk("A", 100), mk("B", 100), mk("C", 100)]);
+        // 磁盘(AI):改 A 时长,序不变
+        let disk = json!([mk("A", 90), mk("B", 100), mk("C", 100)]);
+        // 本地(用户):纯重排 [C,A,B],内容未动
+        let local = json!([mk("C", 100), mk("A", 100), mk("B", 100)]);
+        match three_way_merge(&base, &disk, &local) {
+            MergeOutcome::Merged(v) => {
+                let ids: Vec<&str> = v
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| e["id"].as_str().unwrap())
+                    .collect();
+                assert_eq!(ids, vec!["C", "A", "B"], "单侧纯重排必须保留本地序: {v}");
+                let a = v
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|e| e["id"] == "A")
+                    .unwrap();
+                assert_eq!(a["durationMs"], json!(90), "磁盘侧内容修改并入: {a}");
+            }
+            MergeOutcome::Conflicts(c) => panic!("单侧重排+异字段修改不得冲突: {c:?}"),
+        }
+    }
+
+    /// TC-CORE-MERGE-011(BUG-08 序敏感):双侧改成**不同**序 → CF-003 冲突
+    /// (顺序即合成语义,禁止静默取一侧)。
+    #[test]
+    fn tc_core_merge_011_both_side_different_reorders_conflict() {
+        let mk = |id: &str| json!({"id": id, "startMs": 0, "durationMs": 100});
+        let base = json!([mk("A"), mk("B"), mk("C")]);
+        let disk = json!([mk("B"), mk("A"), mk("C")]);
+        let local = json!([mk("C"), mk("B"), mk("A")]);
+        match three_way_merge(&base, &disk, &local) {
+            MergeOutcome::Conflicts(c) => {
+                assert!(
+                    c.iter().any(|x| x.code.code() == "CF-003"),
+                    "双侧异序必须 CF-003: {c:?}"
+                );
+            }
+            MergeOutcome::Merged(v) => panic!("双侧不同重排不得静默合并: {v}"),
+        }
+        // 双侧重排成**同一**序 → 幂等合并(表 4 行精神)
+        let local_same = json!([mk("B"), mk("A"), mk("C")]);
+        match three_way_merge(&base, &disk, &local_same) {
+            MergeOutcome::Merged(v) => {
+                let ids: Vec<&str> = v
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| e["id"].as_str().unwrap())
+                    .collect();
+                assert_eq!(ids, vec!["B", "A", "C"], "双侧同序幂等合并: {v}");
+            }
+            MergeOutcome::Conflicts(c) => panic!("双侧同序不得冲突: {c:?}"),
+        }
     }
 
     /// 册五 T5.4:compound 字段的三路合并承接——compound.clips 是带 id 的对象数组,
@@ -509,24 +687,35 @@ mod tests {
     /// 同叶异值 CF-001 指针精确到 compound/clips[id]/叶;合并产物读写不丢。
     #[test]
     fn compound_merge_roundtrip() {
-        let mk = |compound: Value, extra: Value| json!([{
-            "id": "V1-001", "startMs": 0, "durationMs": 2000,
-            "compound": compound, "extra_key": extra,
-        }]);
-        let base = mk(json!({"clips": [
-            {"id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000},
-            {"id": "V1-002", "src": "blue.mp4", "startMs": 1000, "durationMs": 1000}
-        ]}), json!(1));
+        let mk = |compound: Value, extra: Value| {
+            json!([{
+                "id": "V1-001", "startMs": 0, "durationMs": 2000,
+                "compound": compound, "extra_key": extra,
+            }])
+        };
+        let base = mk(
+            json!({"clips": [
+                {"id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000},
+                {"id": "V1-002", "src": "blue.mp4", "startMs": 1000, "durationMs": 1000}
+            ]}),
+            json!(1),
+        );
         // 磁盘(AI)改内层 V1-002 的 src;本地(用户)改内层 V1-001 的 durationMs
         // → 不同叶零冲突并存(复合内层经 id 数组递归合并)
-        let disk = mk(json!({"clips": [
-            {"id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000},
-            {"id": "V1-002", "src": "navy.mp4", "startMs": 1000, "durationMs": 1000}
-        ]}), json!(1));
-        let local = mk(json!({"clips": [
-            {"id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1200},
-            {"id": "V1-002", "src": "blue.mp4", "startMs": 1000, "durationMs": 1000}
-        ]}), json!(1));
+        let disk = mk(
+            json!({"clips": [
+                {"id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000},
+                {"id": "V1-002", "src": "navy.mp4", "startMs": 1000, "durationMs": 1000}
+            ]}),
+            json!(1),
+        );
+        let local = mk(
+            json!({"clips": [
+                {"id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1200},
+                {"id": "V1-002", "src": "blue.mp4", "startMs": 1000, "durationMs": 1000}
+            ]}),
+            json!(1),
+        );
         match three_way_merge(&base, &disk, &local) {
             MergeOutcome::Merged(v) => {
                 let inner = v[0]["compound"]["clips"].as_array().unwrap();
@@ -536,10 +725,13 @@ mod tests {
             MergeOutcome::Conflicts(c) => panic!("不同叶不得冲突: {c:?}"),
         }
         // 同叶异值 → CF-001 精确到内层叶路径
-        let local2 = mk(json!({"clips": [
-            {"id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000},
-            {"id": "V1-002", "src": "sky.mp4", "startMs": 1000, "durationMs": 1000}
-        ]}), json!(1));
+        let local2 = mk(
+            json!({"clips": [
+                {"id": "V1-001", "src": "red.mp4", "startMs": 0, "durationMs": 1000},
+                {"id": "V1-002", "src": "sky.mp4", "startMs": 1000, "durationMs": 1000}
+            ]}),
+            json!(1),
+        );
         match three_way_merge(&base, &disk, &local2) {
             MergeOutcome::Conflicts(c) => {
                 assert_eq!(c[0].code.code(), "CF-001");
@@ -559,6 +751,9 @@ mod tests {
         });
         let p: crate::model::Project = serde_json::from_value(doc).unwrap();
         // durationMs 1200 与 V1-002 startMs 1000 → 内层重叠,模型校验必须拒绝(诚实面)
-        assert!(p.to_validated_value().is_err(), "内层重叠合并产物必须被语义校验拦下");
+        assert!(
+            p.to_validated_value().is_err(),
+            "内层重叠合并产物必须被语义校验拦下"
+        );
     }
 }

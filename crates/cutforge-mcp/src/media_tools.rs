@@ -216,7 +216,60 @@ fn peaks_hit(_root: &Path, src: &str, level: &str, buckets: u32, rel: &str, hit:
     )
 }
 
-// ---------------- 缩略图(T4.1-12) ----------------
+// ---------------- 缩略图(T4.1-12;BUG-19 批量面 media_thumbs) ----------------
+
+/// 单帧缩略图生成(单一实现,media_thumbnail 与 media_thumbs 共用):
+/// 磁盘缓存命中零 ffmpeg;未命中起 ffmpeg 抽帧。返回 (相对路径, cached)。
+fn thumb_generate(
+    root: &Path,
+    abs: &Path,
+    src: &str,
+    mtime: u64,
+    size: u64,
+    at_ms: u64,
+    width: u32,
+) -> Result<(String, bool), String> {
+    let rel = cutforge_io::mediacache::thumb_rel(src, mtime, size, at_ms, width);
+    let out = root.join(&rel);
+    if out.is_file() {
+        return Ok((rel, true));
+    }
+    if !ffmpeg_available() {
+        return Err("ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)".into());
+    }
+    if let Some(dir) = out.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let r = std::process::Command::new(ff_bin())
+        .args([
+            "-y",
+            "-v",
+            "error",
+            "-ss",
+            &format!("{:.3}", at_ms as f64 / 1000.0),
+            "-i",
+            &abs.to_string_lossy(),
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!("scale={width}:-2"),
+            "-f",
+            "image2",
+            &out.to_string_lossy(),
+        ])
+        .output();
+    match r {
+        Ok(o) if o.status.success() && out.is_file() => Ok((rel, false)),
+        Ok(o) => Err(format!(
+            "抽帧失败(素材无视频流或 atMs 越界): {}",
+            String::from_utf8_lossy(&o.stderr)
+                .chars()
+                .take(200)
+                .collect::<String>()
+        )),
+        Err(e) => Err(format!("ffmpeg 启动失败: {e}")),
+    }
+}
 
 /// media_thumbnail 工具面:素材路径(+atMs/width)→ PNG 缩略图(缓存命中零 ffmpeg)。
 pub fn media_thumbnail_tool(root: &Path, args: &Value) -> Value {
@@ -255,61 +308,78 @@ pub fn media_thumbnail_tool(root: &Path, args: &Value) -> Value {
             dur / 10
         }
     };
-    let rel = cutforge_io::mediacache::thumb_rel(src, mtime, size, at_ms, width);
-    let out = root.join(&rel);
-    if out.is_file() {
-        return thumb_hit(src, at_ms, width, &rel, true);
+    match thumb_generate(root, &abs, src, mtime, size, at_ms, width) {
+        Ok((rel, hit)) => thumb_hit(src, at_ms, width, &rel, hit),
+        Err(m) => envelope(false, "DEP_MISSING", &m, json!({})),
     }
-    if !ffmpeg_available() {
+}
+
+/// media_thumbs 工具面(BUG-19):{root, src, atMs[], width} 一次返回多帧——
+/// 逐帧查磁盘缓存(命中直接合并,零 ffmpeg),未命中才起抽帧;单帧失败不拖垮
+/// 整批(该帧条目带 error 字段),返回保持请求顺序(壳按下标对位)。
+pub fn media_thumbs_tool(root: &Path, args: &Value) -> Value {
+    let Some(src) = args["src"].as_str() else {
         return envelope(
             false,
-            "DEP_MISSING",
-            "ffmpeg 不可用(安装 ffmpeg 或设 CUTFORGE_FFMPEG)",
+            "PRECONDITION_FAILED",
+            "缺 src(工程内相对路径)",
+            json!({}),
+        );
+    };
+    let Some(ats_raw) = args["atMs"].as_array() else {
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            "缺 atMs(毫秒数组,如 [0,500,1000])",
+            json!({}),
+        );
+    };
+    let ats: Vec<u64> = ats_raw.iter().filter_map(|v| v.as_u64()).collect();
+    if ats.is_empty() {
+        return envelope(false, "PRECONDITION_FAILED", "atMs 数组为空", json!({}));
+    }
+    if ats.len() > 64 {
+        return envelope(
+            false,
+            "PRECONDITION_FAILED",
+            &format!("atMs 过多({};单次 ≤64,分批调用)", ats.len()),
             json!({}),
         );
     }
-    if let Some(dir) = out.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let r = std::process::Command::new(ff_bin())
-        .args([
-            "-y",
-            "-v",
-            "error",
-            "-ss",
-            &format!("{:.3}", at_ms as f64 / 1000.0),
-            "-i",
-            &abs.to_string_lossy(),
-            "-frames:v",
-            "1",
-            "-vf",
-            &format!("scale={width}:-2"),
-            "-f",
-            "image2",
-            &out.to_string_lossy(),
-        ])
-        .output();
-    match r {
-        Ok(o) if o.status.success() && out.is_file() => thumb_hit(src, at_ms, width, &rel, false),
-        Ok(o) => envelope(
-            false,
-            "DEP_MISSING",
-            &format!(
-                "抽帧失败(素材无视频流或 atMs 越界): {}",
-                String::from_utf8_lossy(&o.stderr)
-                    .chars()
-                    .take(200)
-                    .collect::<String>()
-            ),
-            json!({}),
-        ),
-        Err(e) => envelope(
-            false,
-            "DEP_MISSING",
-            &format!("ffmpeg 启动失败: {e}"),
-            json!({}),
-        ),
-    }
+    let width = args["width"].as_u64().unwrap_or(320).clamp(64, 1280) as u32;
+    let abs = match resolve_within_root(root, src) {
+        Ok(p) => p,
+        Err(msg) => {
+            return envelope(
+                false,
+                "PRECONDITION_FAILED",
+                &format!("路径不合法({src}): {msg}"),
+                json!({}),
+            );
+        }
+    };
+    let Some((mtime, size)) = cutforge_io::mediacache::source_stamp(&abs) else {
+        return envelope(false, "NO_CONFIG", &format!("素材不可读: {src}"), json!({}));
+    };
+    let thumbs: Vec<Value> = ats
+        .iter()
+        .map(
+            |&at| match thumb_generate(root, &abs, src, mtime, size, at, width) {
+                Ok((rel, hit)) => json!({
+                    "atMs": at, "file": rel, "media": rel,
+                    "cached": hit, "format": "png",
+                }),
+                Err(m) => json!({"atMs": at, "error": m}),
+            },
+        )
+        .collect();
+    let hits = thumbs.iter().filter(|t| t["cached"] == json!(true)).count();
+    envelope(
+        true,
+        "OK",
+        &format!("批量缩略图({hits} 命中 / {} 总数)", thumbs.len()),
+        json!({"src": src, "width": width, "thumbs": thumbs}),
+    )
 }
 
 fn thumb_hit(src: &str, at_ms: u64, width: u32, rel: &str, hit: bool) -> Value {

@@ -27,17 +27,29 @@ pub struct Actor {
 
 impl Actor {
     pub fn agent(id: &str) -> Self {
-        Self { kind: ActorKind::Agent, id: id.into() }
+        Self {
+            kind: ActorKind::Agent,
+            id: id.into(),
+        }
     }
     pub fn user(id: &str) -> Self {
-        Self { kind: ActorKind::User, id: id.into() }
+        Self {
+            kind: ActorKind::User,
+            id: id.into(),
+        }
     }
     pub fn script(id: &str) -> Self {
-        Self { kind: ActorKind::Script, id: id.into() }
+        Self {
+            kind: ActorKind::Script,
+            id: id.into(),
+        }
     }
     /// 插件 actor(册七 T7.2):id = manifest 的插件 id(权限裁决后的如实归因)。
     pub fn plugin(id: &str) -> Self {
-        Self { kind: ActorKind::Plugin, id: id.into() }
+        Self {
+            kind: ActorKind::Plugin,
+            id: id.into(),
+        }
     }
 }
 
@@ -80,6 +92,11 @@ pub struct Op {
     /// 本 Op 应用后的工程修订号(单调递增)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<u64>,
+    /// 稳定 id 寻址(BUG-06/A-03):target.path 为 clip 对象指针时记录片段 id,
+    /// 撤销/重做/回放经 find_clip 定位,对下标漂移免疫。**新增字段 serde default
+    /// + skip_serializing_if**(旧日志缺省 None → 指针寻址,零迁移)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
     /// 自动登记类变更(锚点重定位等系统簿记):进审计链但**不入撤销栈**,
     /// 撤销深度因此等于真实用户手势数(ADR-0001)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -145,10 +162,14 @@ impl OpLog {
         if self.seen.contains(&op.op_id) {
             return false;
         }
-        if let Some(n) = op.op_id.strip_prefix("op-").and_then(|s| s.parse::<u64>().ok())
-            && n >= self.next_op {
-                self.next_op = n + 1;
-            }
+        if let Some(n) = op
+            .op_id
+            .strip_prefix("op-")
+            .and_then(|s| s.parse::<u64>().ok())
+            && n >= self.next_op
+        {
+            self.next_op = n + 1;
+        }
         self.seen.insert(op.op_id.clone());
         self.ops.push(op);
         true
@@ -156,7 +177,9 @@ impl OpLog {
 
     /// 是否已有该 request_id 的 Op(非幂等写操作的去重键)。
     pub fn has_request_id(&self, rid: &str) -> bool {
-        self.ops.iter().any(|o| o.request_id.as_deref() == Some(rid))
+        self.ops
+            .iter()
+            .any(|o| o.request_id.as_deref() == Some(rid))
     }
 
     /// tail 查询:rev > since 的 Op,可按 actor.kind 过滤(AI 感知用户改动/反之)。
@@ -183,13 +206,20 @@ mod tests {
         Op {
             op_id: id.into(),
             ts: String::new(),
-            actor: Actor { kind, id: "t".into() },
-            target: OpTarget { file: "project.json".into(), path: "/slug".into() },
+            actor: Actor {
+                kind,
+                id: "t".into(),
+            },
+            target: OpTarget {
+                file: "project.json".into(),
+                path: "/slug".into(),
+            },
             op_kind: OpKind::Set,
             before: json!("旧"),
             after: json!("新"),
             base_rev: format!("rev-{rev}"),
             rev: Some(rev + 1),
+            target_id: None,
             caused_by: None,
             summary: "测试".into(),
             request_id: None,
@@ -209,7 +239,11 @@ mod tests {
     #[test]
     fn request_id_and_tail_filters() {
         let mut log = OpLog::new();
-        let mut op = mk(&format_op_id(log.next_op_id().parse::<u64>().unwrap_or(0)), 0, ActorKind::Agent);
+        let mut op = mk(
+            &format_op_id(log.next_op_id().parse::<u64>().unwrap_or(0)),
+            0,
+            ActorKind::Agent,
+        );
         op.op_id = "op-0".into();
         op.request_id = Some("req-1".into());
         log.push(op).unwrap();
@@ -224,5 +258,4 @@ mod tests {
         assert_eq!(log.tail(Some(1), Some(ActorKind::Agent)).len(), 0);
         assert_eq!(log.last_rev(), Some(2));
     }
-
 }

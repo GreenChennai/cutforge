@@ -175,11 +175,14 @@ pub fn zip_read_all(buf: &[u8]) -> Result<Vec<ZipEntry>, ZipError> {
         let crc = u32_at(buf, p + 16).ok_or_else(|| ZipError("中央目录截断".into()))?;
         let size = u32_at(buf, p + 24).ok_or_else(|| ZipError("中央目录截断".into()))? as usize;
         let name_len = u16_at(buf, p + 28).ok_or_else(|| ZipError("中央目录截断".into()))? as usize;
-        let extra_len = u16_at(buf, p + 30).ok_or_else(|| ZipError("中央目录截断".into()))? as usize;
-        let comment_len = u16_at(buf, p + 32).ok_or_else(|| ZipError("中央目录截断".into()))? as usize;
+        let extra_len =
+            u16_at(buf, p + 30).ok_or_else(|| ZipError("中央目录截断".into()))? as usize;
+        let comment_len =
+            u16_at(buf, p + 32).ok_or_else(|| ZipError("中央目录截断".into()))? as usize;
         let lho = u32_at(buf, p + 42).ok_or_else(|| ZipError("中央目录截断".into()))? as usize;
         let name = String::from_utf8_lossy(
-            buf.get(p + 46..p + 46 + name_len).ok_or_else(|| ZipError("中央目录条目名越界".into()))?,
+            buf.get(p + 46..p + 46 + name_len)
+                .ok_or_else(|| ZipError("中央目录条目名越界".into()))?,
         )
         .into_owned();
         // 本地文件头:PK\x03\x04;名字/extra 长度以本地头为准(与中央目录应一致)
@@ -237,8 +240,14 @@ mod tests {
     #[test]
     fn zip_store_roundtrip_structure() {
         let entries = vec![
-            Entry { name: "doctor.json".into(), data: b"{\"ok\":true}".to_vec() },
-            Entry { name: "logs/session.json".into(), data: "会话中文内容".as_bytes().to_vec() },
+            Entry {
+                name: "doctor.json".into(),
+                data: b"{\"ok\":true}".to_vec(),
+            },
+            Entry {
+                name: "logs/session.json".into(),
+                data: "会话中文内容".as_bytes().to_vec(),
+            },
         ];
         let zip = zip_store(&entries, 1_790_745_600);
         assert_eq!(&zip[0..4], &[0x50, 0x4B, 0x03, 0x04], "本地头签名");
@@ -251,7 +260,10 @@ mod tests {
         let cd_off = u32::from_le_bytes(eocd[16..20].try_into().unwrap());
         assert_eq!(cd_size + cd_off, zip.len() as u32 - 22, "中央目录紧贴 EOCD");
         // 中央目录签名在位
-        assert_eq!(&zip[cd_off as usize..cd_off as usize + 4], &[0x50, 0x4B, 0x01, 0x02]);
+        assert_eq!(
+            &zip[cd_off as usize..cd_off as usize + 4],
+            &[0x50, 0x4B, 0x01, 0x02]
+        );
         // 逐条目:本地头里的 CRC 与重算一致;store 形两长度相等
         let mut pos = 0usize;
         for e in &entries {
@@ -274,9 +286,18 @@ mod tests {
     #[test]
     fn zip_read_all_roundtrip_and_tamper() {
         let entries = vec![
-            Entry { name: "manifest.json".into(), data: b"{\"format\":\"cfpkg\"}".to_vec() },
-            Entry { name: "project/project.json".into(), data: "中文工程".as_bytes().to_vec() },
-            Entry { name: "media/素材/a.mp4".into(), data: vec![0u8; 1024] },
+            Entry {
+                name: "manifest.json".into(),
+                data: b"{\"format\":\"cfpkg\"}".to_vec(),
+            },
+            Entry {
+                name: "project/project.json".into(),
+                data: "中文工程".as_bytes().to_vec(),
+            },
+            Entry {
+                name: "media/素材/a.mp4".into(),
+                data: vec![0u8; 1024],
+            },
         ];
         let zip = zip_store(&entries, 1_790_726_400);
         let back = zip_read_all(&zip).unwrap();

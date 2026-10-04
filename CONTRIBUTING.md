@@ -29,6 +29,28 @@
 6. **内核纯净**：`cutforge-core` 不碰文件系统、不调 ffmpeg、不认识剪映；所有写操作必须经命令通道（Op），不存在旁路。
 7. **合规红线**：不得修改 `LICENSE-OPENCUT.MIT`；不得以 `OpenCut`/`opencut` 命名任何产品、仓库、包、域名；不得复制上游源代码（只读参考策略见仓库 `docs/` 的计划书附录 C）。
 
+## 门禁工程纪律（审查报告 v2 §8.2，违反即被拒）
+
+1. **宣称即证据**：任何「门禁全绿 / 巨石清零 / 已支持」的结论，必须附**可复现命令 + 退出码 + 关键输出**；无证据的宣称一律视为未完成，写回待办。不得宣称未实测通过的门禁为通过（G-2 教训：A8 曾宣称「巨石清零」而 crates/ 实存多个 >800 行文件，已订正）。
+2. **门禁要有反面测试**：每条门禁配一个「注入缺陷应红灯」的负例，否则门禁自身腐化无人知。现含 `TC-GATE-001/002/003`，统一入口：
+
+   ```bash
+   python tools/gates/negative_tests.py --json   # 退出码 0 = 被测门禁均能正确红灯
+   ```
+
+3. **门禁扫描面显式化**：每个门禁在本文档登记「扫描面 / 排除项 / 覆盖目录」，`apps/` 与 `crates/` 分开列，杜绝「以为扫了其实没扫」：
+
+   | 门禁 | 扫描面 | 排除项 | 口径与分级 |
+   |---|---|---|---|
+   | `rust-line-limit`（A1） | `crates/**/*.rs`（非测试） | `tests/` 目录、`target/` | ≤800 行，**阻断**（现存超限清单见 A8 订正段，拆分进行中） |
+   | `desktop-line-limit`（A1，G-1） | `apps/desktop/src/**/*.rs` | `ui/` 目录 | ≤600 行（桌面壳独立口径），**报告模式**；A-02 拆分落地后转阻断 |
+   | `js-line-limit`（A2–A7） | `apps/web/**/*.js` + `index.html` | `min.*` 产物 | js ≤400 / html ≤120，**阻断** |
+   | `desktop-box-leak`（A1，TC-GATE-002） | `apps/desktop/src/**/*.rs` | `ui/` 目录 | `Box::leak` = 0，**报告模式**；BUG-18 清零后转阻断 |
+   | `desktop-color-purity`（A1，TC-GATE-003） | `apps/desktop/src/**/*.rs` | `ui/`（未来 `ui/theme.rs` 为唯一定义点） | 裸色值（hsl/rgb/#RRGGBB）= 0，**报告模式**；A-08 落地后转阻断 |
+   | `check_changelog`（M2，G-4） | PR diff：`crates/*/src/**` + `apps/*/src/**` ↔ `CHANGELOG.md` | — | **警告级**（CI 传 PR base sha）；Unreleased 约定跑满一个迭代且无误报后转红线 |
+   | `check-write-paths`（M2，已进 CI） | 全仓写入收口 `atomic.rs` | — | 旁路写入 = 0，**阻断** |
+   | `check_license`（M0，G-5/BUG-15） | `LICENSE` / `LICENSE-OPENCUT.MIT` / `NOTICE.md` / README 措辞 / `CORE-FILES` | — | 三件套要素 + 清单条目存在性，**阻断**（反面测试 TC-GATE-001） |
+
 ## 门禁与验收
 
 提交前在本地跑通对应里程碑门禁：

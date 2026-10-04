@@ -13,13 +13,16 @@ impl Workspace {
     /// 不可自动合并 → 冲突落盘并停写(4.7:任何写入发生之前停止)。
     pub(super) fn pre_write_sync(&mut self) -> io::Result<()> {
         if !self.conflict_list()?.is_empty() {
-            return Err(io::Error::other("CONFLICT: 存在未裁决冲突(.cutforge/conflicts/),停写直至裁决"));
+            return Err(io::Error::other(
+                "CONFLICT: 存在未裁决冲突(.cutforge/conflicts/),停写直至裁决",
+            ));
         }
         match self.sync_with_disk() {
             Ok(_) => Ok(()),
             Err(conflicts) => Err(io::Error::other(format!(
                 "CONFLICT: 外部改动与本地不可自动合并({} 项),已落 .cutforge/conflicts/",
-                conflicts.len()))),
+                conflicts.len()
+            ))),
         }
     }
 
@@ -37,7 +40,9 @@ impl Workspace {
                     code: ConflictCode::FieldConflict,
                     pointer: "$".into(),
                     base: None,
-                    disk: Some(serde_json::Value::String(format!("CF-005 SCHEMA_DRIFT: {e}"))),
+                    disk: Some(serde_json::Value::String(format!(
+                        "CF-005 SCHEMA_DRIFT: {e}"
+                    ))),
                     local: None,
                 };
                 let id = self.persist_conflict(&c);
@@ -55,7 +60,8 @@ impl Workspace {
             cutforge_core::engine::Answer::Project(v) => v,
             _ => unreachable!(),
         };
-        let base = self.load_base()
+        let base = self
+            .load_base()
             .or_else(|| self.synced_disk.clone())
             .unwrap_or_else(|| local.clone());
         match cutforge_core::merge::three_way_merge(&base, &disk, &local) {
@@ -64,13 +70,16 @@ impl Workspace {
                     return Ok(false);
                 }
                 self.adopt_merged(v).map_err(|e| {
-                    vec![(format!("cf-adopt-{}", self.engine.rev()), Conflict {
-                        code: ConflictCode::FieldConflict,
-                        pointer: "$".into(),
-                        base: None,
-                        disk: None,
-                        local: Some(serde_json::Value::String(e.to_string())),
-                    })]
+                    vec![(
+                        format!("cf-adopt-{}", self.engine.rev()),
+                        Conflict {
+                            code: ConflictCode::FieldConflict,
+                            pointer: "$".into(),
+                            base: None,
+                            disk: None,
+                            local: Some(serde_json::Value::String(e.to_string())),
+                        },
+                    )]
                 })?;
                 Ok(true)
             }
@@ -87,14 +96,23 @@ impl Workspace {
     /// 采纳合并结果:保留 OpLog/rev/撤销栈/文件态的历史连续性(不得重置 rev)。
     pub(super) fn adopt_merged(&mut self, v: serde_json::Value) -> io::Result<()> {
         let project = Project::from_value(&v).map_err(|errs| {
-            io::Error::other(format!("CF-005 SCHEMA_DRIFT(合并结果): {}", errs.join("; ")))
+            io::Error::other(format!(
+                "CF-005 SCHEMA_DRIFT(合并结果): {}",
+                errs.join("; ")
+            ))
         })?;
         let log = self.engine.oplog().clone();
         let (undo_stack, redo_stack) = cutforge_core::engine::rebuild_stacks(log.ops());
         let file_states = self.engine.file_states().clone();
-        let new_engine =
-            Engine::restore_with_stacks(project, log, self.engine.rev(), undo_stack, redo_stack, file_states)
-                .map_err(|errs| io::Error::other(errs.join("; ")))?;
+        let new_engine = Engine::restore_with_stacks(
+            project,
+            log,
+            self.engine.rev(),
+            undo_stack,
+            redo_stack,
+            file_states,
+        )
+        .map_err(|errs| io::Error::other(errs.join("; ")))?;
         self.engine = new_engine;
         self.persisted = self.engine.oplog().len();
         self.persist()?;

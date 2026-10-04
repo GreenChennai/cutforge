@@ -101,6 +101,10 @@
    "minimum": 1,
    "description": "本 Op 应用后的工程修订号(单调递增);写入器在步骤 7 分配"
   },
+  "targetId": {
+   "type": "string",
+   "description": "可选:稳定 id 寻址(BUG-06/A-03)。target.path 为 clip 对象指针时记录片段 id,撤销/重做/回放经 find_clip 定位,对下标漂移免疫;缺省=旧指针寻址格式(零迁移)"
+  },
   "auto": {
    "enum": [
     true

@@ -38,9 +38,10 @@ pub fn valid_name(name: &str) -> bool {
 /// 库根解析:env `CUTFORGE_PROJECTS` → `%USERPROFILE%\CutForge\Projects` → HOME 回退。
 pub fn library_root() -> PathBuf {
     if let Some(v) = std::env::var_os("CUTFORGE_PROJECTS")
-        && !v.is_empty() {
-            return PathBuf::from(v);
-        }
+        && !v.is_empty()
+    {
+        return PathBuf::from(v);
+    }
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
         return PathBuf::from(home).join("CutForge").join("Projects");
     }
@@ -93,25 +94,49 @@ impl LibraryCard {
 }
 
 fn dir_m(path: &Path) -> Option<u128> {
-    Some(path.metadata().ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis())
+    Some(
+        path.metadata()
+            .ok()?
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_millis(),
+    )
 }
 
 /// 读一个工程目录的卡片元数据(project.json 轻量派生,不做完整契约校验)。
 fn card_for(path: PathBuf, name: String, archived: bool) -> LibraryCard {
     let mut card = LibraryCard {
-        name, path, archived, valid: false, slug: None, fps: None, canvas: None,
-        clip_count: None, duration_ms: None, rev: None, modified_at_ms: None,
-        thumbnail_path: None, locked: false,
+        name,
+        path,
+        archived,
+        valid: false,
+        slug: None,
+        fps: None,
+        canvas: None,
+        clip_count: None,
+        duration_ms: None,
+        rev: None,
+        modified_at_ms: None,
+        thumbnail_path: None,
+        locked: false,
     };
     let project_file = paths::project_path(&card.path);
     card.modified_at_ms = dir_m(&project_file);
     card.locked = lock_held(&card.path);
-    let Ok(text) = std::fs::read_to_string(&project_file) else { return card };
-    let Ok(v) = serde_json::from_str::<Value>(&text) else { return card };
+    let Ok(text) = std::fs::read_to_string(&project_file) else {
+        return card;
+    };
+    let Ok(v) = serde_json::from_str::<Value>(&text) else {
+        return card;
+    };
     card.slug = v["slug"].as_str().map(String::from);
     card.fps = v["fps"].as_u64().map(|n| n as u32);
     card.canvas = match (&v["canvas"]["width"], &v["canvas"]["height"]) {
-        (Value::Number(w), Value::Number(h)) => Some((w.as_u64().unwrap_or(0), h.as_u64().unwrap_or(0))),
+        (Value::Number(w), Value::Number(h)) => {
+            Some((w.as_u64().unwrap_or(0), h.as_u64().unwrap_or(0)))
+        }
         _ => None,
     };
     if let Some(tracks) = v["tracks"].as_array() {
@@ -121,7 +146,8 @@ fn card_for(path: PathBuf, name: String, archived: bool) -> LibraryCard {
         for t in tracks {
             for c in t["clips"].as_array().unwrap_or(&empty) {
                 clips += 1;
-                let end = c["startMs"].as_u64().unwrap_or(0) + c["durationMs"].as_u64().unwrap_or(0);
+                let end =
+                    c["startMs"].as_u64().unwrap_or(0) + c["durationMs"].as_u64().unwrap_or(0);
                 max_end = max_end.max(end);
             }
         }
@@ -136,15 +162,21 @@ fn card_for(path: PathBuf, name: String, archived: bool) -> LibraryCard {
     if let Ok(rd) = std::fs::read_dir(&thumb_dir) {
         let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
         for e in rd.flatten() {
-            let ext = e.path().extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase();
+            let ext = e
+                .path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
             if !matches!(ext.as_str(), "png" | "jpg" | "jpeg") {
                 continue;
             }
             if let Ok(meta) = e.metadata()
                 && let Ok(mt) = meta.modified()
-                && best.as_ref().is_none_or(|(t, _)| mt > *t) {
-                    best = Some((mt, e.path()));
-                }
+                && best.as_ref().is_none_or(|(t, _)| mt > *t)
+            {
+                best = Some((mt, e.path()));
+            }
         }
         card.thumbnail_path = best.map(|(_, p)| p);
     }
@@ -158,8 +190,12 @@ pub fn lock_held(project: &Path) -> bool {
     if !lock.is_file() {
         return false;
     }
-    let Ok(text) = std::fs::read_to_string(&lock) else { return true };
-    let pid = text.split_whitespace().find_map(|t| t.strip_prefix("pid=").and_then(|v| v.parse::<u32>().ok()));
+    let Ok(text) = std::fs::read_to_string(&lock) else {
+        return true;
+    };
+    let pid = text
+        .split_whitespace()
+        .find_map(|t| t.strip_prefix("pid=").and_then(|v| v.parse::<u32>().ok()));
     match pid {
         Some(p) => crate::probe::pid_alive(p),
         None => true,
@@ -167,16 +203,28 @@ pub fn lock_held(project: &Path) -> bool {
 }
 
 /// 列库内工程(顶层一层;归档区按需并入;query 过滤 name/slug 子串,大小写不敏感)。
-pub fn list(library: &Path, query: Option<&str>, include_archived: bool) -> io::Result<Vec<LibraryCard>> {
+pub fn list(
+    library: &Path,
+    query: Option<&str>,
+    include_archived: bool,
+) -> io::Result<Vec<LibraryCard>> {
     let mut cards = Vec::new();
-    for (dir, archived) in [(library.to_path_buf(), false), (library.join(ARCHIVES_DIR), true)] {
+    for (dir, archived) in [
+        (library.to_path_buf(), false),
+        (library.join(ARCHIVES_DIR), true),
+    ] {
         if archived && !include_archived {
             continue;
         }
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
-            if !p.is_dir() || p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.')) {
+            if !p.is_dir()
+                || p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+            {
                 continue;
             }
             let name = e.file_name().to_string_lossy().into_owned();
@@ -189,10 +237,18 @@ pub fn list(library: &Path, query: Option<&str>, include_archived: bool) -> io::
     if let Some(q) = query {
         let q = q.to_lowercase();
         cards.retain(|c| {
-            c.name.to_lowercase().contains(&q) || c.slug.as_deref().is_some_and(|s| s.to_lowercase().contains(&q))
+            c.name.to_lowercase().contains(&q)
+                || c.slug
+                    .as_deref()
+                    .is_some_and(|s| s.to_lowercase().contains(&q))
         });
     }
-    cards.sort_by(|a, b| b.modified_at_ms.unwrap_or(0).cmp(&a.modified_at_ms.unwrap_or(0)).then(a.name.cmp(&b.name)));
+    cards.sort_by(|a, b| {
+        b.modified_at_ms
+            .unwrap_or(0)
+            .cmp(&a.modified_at_ms.unwrap_or(0))
+            .then(a.name.cmp(&b.name))
+    });
     Ok(cards)
 }
 
@@ -236,15 +292,27 @@ pub struct LibraryNewSpec<'a> {
 /// 新建工程到库(与 scaffold 单一实现;layout 显式给定,缺省面见 ADR-0021 决策 4)。
 pub fn new_project(library: &Path, spec: LibraryNewSpec<'_>) -> io::Result<PathBuf> {
     if !valid_name(spec.name) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("非法工程名: {}", spec.name)));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("非法工程名: {}", spec.name),
+        ));
     }
     let root = library.join(spec.name);
     if root.exists() {
-        return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("库内已存在: {}", spec.name)));
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("库内已存在: {}", spec.name),
+        ));
     }
     fsutil::ensure(library)?;
     crate::scaffold::scaffold_project_layout(
-        &root, spec.slug, spec.fps, spec.width, spec.height, spec.kinds, spec.layout,
+        &root,
+        spec.slug,
+        spec.fps,
+        spec.width,
+        spec.height,
+        spec.kinds,
+        spec.layout,
     )?;
     Ok(root) // 库条目语义:返回工程根(scaffold 返回工程文件路径)
 }
@@ -280,8 +348,15 @@ fn copy_tree(dir: &Path, dest_root: &Path, src_root: &Path) -> io::Result<()> {
         let rel_str = rel.to_string_lossy().replace('\\', "/");
         // 复制排除面:活锁 + 可重建的重型派生物(渲染缓存/代理/缩略图/波形/示波器)
         if rel_str == ".cutforge/lock"
-            || [".cutforge/render-cache", ".cutforge/proxy", ".cutforge/thumb-cache", ".cutforge/peaks-cache", ".cutforge/scope-cache"]
-                .iter().any(|d| rel_str == *d || rel_str.starts_with(&format!("{d}/")))
+            || [
+                ".cutforge/render-cache",
+                ".cutforge/proxy",
+                ".cutforge/thumb-cache",
+                ".cutforge/peaks-cache",
+                ".cutforge/scope-cache",
+            ]
+            .iter()
+            .any(|d| rel_str == *d || rel_str.starts_with(&format!("{d}/")))
         {
             continue;
         }
@@ -363,7 +438,11 @@ pub struct CfprojSnapshot {
 /// 导出 `.cfproj`(library_manage action=export_cfproj 的单一实现):
 /// JSON `{kind,version,name,root,rev,createdAt}`;`out` 缺省 = `<库根>/<名>.cfproj`。
 /// 写入走 atomic 唯一落盘点(描述文件也是落盘,不旁路)。
-pub fn export_cfproj(library: &Path, name: &str, out: Option<&Path>) -> Result<CfprojSnapshot, String> {
+pub fn export_cfproj(
+    library: &Path,
+    name: &str,
+    out: Option<&Path>,
+) -> Result<CfprojSnapshot, String> {
     if !valid_name(name) {
         return Err(format!("非法工程名: {name}"));
     }
@@ -394,7 +473,12 @@ pub fn export_cfproj(library: &Path, name: &str, out: Option<&Path>) -> Result<C
     let bytes = serde_json::to_vec_pretty(&doc).map_err(|e| e.to_string())?;
     crate::atomic::atomic_write(&out_path, &bytes)
         .map_err(|e| format!("写入失败({}): {e}", out_path.display()))?;
-    Ok(CfprojSnapshot { path: out_path, name: slug, root: project, rev })
+    Ok(CfprojSnapshot {
+        path: out_path,
+        name: slug,
+        root: project,
+        rev,
+    })
 }
 
 /// 解析 `.cfproj` → 工程根(`serve <x.cfproj>` 关联打开的单一实现):
@@ -405,16 +489,27 @@ pub fn parse_cfproj(path: &Path) -> Result<PathBuf, String> {
     let v: Value = serde_json::from_str(&text)
         .map_err(|e| format!("cfproj 非法 JSON({}): {e}", path.display()))?;
     if v["kind"].as_str() != Some(CFPROJ_KIND) {
-        return Err(format!("cfproj kind 不匹配(期望 {CFPROJ_KIND}): {}", path.display()));
+        return Err(format!(
+            "cfproj kind 不匹配(期望 {CFPROJ_KIND}): {}",
+            path.display()
+        ));
     }
-    let root_s = v["root"].as_str().filter(|s| !s.is_empty())
+    let root_s = v["root"]
+        .as_str()
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| format!("cfproj 缺 root: {}", path.display()))?;
     let root = PathBuf::from(root_s);
-    let root = if root.is_absolute() { root } else { path.parent().unwrap_or(Path::new(".")).join(root) };
+    let root = if root.is_absolute() {
+        root
+    } else {
+        path.parent().unwrap_or(Path::new(".")).join(root)
+    };
     if !paths::has_project(&root) {
         return Err(format!(
             "cfproj 指向的工程不可识别(工程被移动/删除?): {} → {}",
-            path.display(), root.display()));
+            path.display(),
+            root.display()
+        ));
     }
     Ok(root)
 }
@@ -431,8 +526,12 @@ mod tests {
     use crate::paths::V3_PROJECT_REL;
 
     fn make_project(dir: &Path, slug: &str) {
-        let kinds = [cutforge_core::model::TrackKind::Video, cutforge_core::model::TrackKind::Audio];
-        crate::scaffold::scaffold_project_layout(dir, slug, 30, 1080, 1920, &kinds, LayoutKind::V2).unwrap();
+        let kinds = [
+            cutforge_core::model::TrackKind::Video,
+            cutforge_core::model::TrackKind::Audio,
+        ];
+        crate::scaffold::scaffold_project_layout(dir, slug, 30, 1080, 1920, &kinds, LayoutKind::V2)
+            .unwrap();
     }
 
     #[test]
@@ -451,7 +550,11 @@ mod tests {
         // root 相对路径:按描述文件所在目录解释
         let rel = serde_json::json!({"kind": CFPROJ_KIND, "version": 1, "name": "工程甲", "root": "工程甲"});
         let rel_path = lib.join("rel.cfproj");
-        write_atomic(&rel_path, serde_json::to_vec_pretty(&rel).unwrap().as_slice()).unwrap();
+        write_atomic(
+            &rel_path,
+            serde_json::to_vec_pretty(&rel).unwrap().as_slice(),
+        )
+        .unwrap();
         assert_eq!(parse_cfproj(&rel_path).unwrap(), p);
         // kind 不匹配 / 缺 root / 工程已移走:三种失效面都给可读错误
         let bad_kind = lib.join("bad-kind.cfproj");
@@ -461,8 +564,15 @@ mod tests {
         write_atomic(&no_root, b"{\"kind\":\"cutforge-project\"}").unwrap();
         assert!(parse_cfproj(&no_root).is_err());
         let moved = lib.join("moved.cfproj");
-        write_atomic(&moved,
-            serde_json::to_vec_pretty(&serde_json::json!({"kind": CFPROJ_KIND, "root": lib.join("无此")})).unwrap().as_slice()).unwrap();
+        write_atomic(
+            &moved,
+            serde_json::to_vec_pretty(
+                &serde_json::json!({"kind": CFPROJ_KIND, "root": lib.join("无此")}),
+            )
+            .unwrap()
+            .as_slice(),
+        )
+        .unwrap();
         let err = parse_cfproj(&moved).unwrap_err();
         assert!(err.contains("不可识别"), "工程消失要如实说: {err}");
         // 非法工程名 / 工程不存在
@@ -481,15 +591,32 @@ mod tests {
         let lib = fsutil::temp_dir("library-ops");
         // new
         let spec = |name: &'static str| LibraryNewSpec {
-            name, layout: LayoutKind::V2, slug: name, fps: 30, width: 1080, height: 1920,
-            kinds: &[cutforge_core::model::TrackKind::Video, cutforge_core::model::TrackKind::Audio],
+            name,
+            layout: LayoutKind::V2,
+            slug: name,
+            fps: 30,
+            width: 1080,
+            height: 1920,
+            kinds: &[
+                cutforge_core::model::TrackKind::Video,
+                cutforge_core::model::TrackKind::Audio,
+            ],
         };
         let p = new_project(&lib, spec("工程甲")).unwrap();
         assert!(p.join(paths::PROJECT_REL).is_file());
         // 重名拒绝
         assert!(new_project(&lib, spec("工程甲")).is_err());
         // 非法名拒绝
-        assert!(new_project(&lib, LibraryNewSpec { name: "../逃逸", ..spec("x") }).is_err());
+        assert!(
+            new_project(
+                &lib,
+                LibraryNewSpec {
+                    name: "../逃逸",
+                    ..spec("x")
+                }
+            )
+            .is_err()
+        );
         // list(卡片元数据)
         let cards = list(&lib, None, false).unwrap();
         assert_eq!(cards.len(), 1);
@@ -511,8 +638,18 @@ mod tests {
         assert_eq!(list(&lib, Some("工程"), false).unwrap().len(), 2);
         // archive / unarchive
         archive(&lib, "工程丙").unwrap();
-        assert!(lib.join(ARCHIVES_DIR).join("工程丙").join(paths::PROJECT_REL).is_file());
-        assert!(list(&lib, None, false).unwrap().iter().all(|c| c.name != "工程丙"));
+        assert!(
+            lib.join(ARCHIVES_DIR)
+                .join("工程丙")
+                .join(paths::PROJECT_REL)
+                .is_file()
+        );
+        assert!(
+            list(&lib, None, false)
+                .unwrap()
+                .iter()
+                .all(|c| c.name != "工程丙")
+        );
         let archived = list(&lib, None, true).unwrap();
         assert!(archived.iter().any(|c| c.name == "工程丙" && c.archived));
         unarchive(&lib, "工程丙").unwrap();
@@ -530,9 +667,19 @@ mod tests {
         let lib = fsutil::temp_dir("library-lock");
         let root = lib.join("p");
         make_project(&root, "p");
-        // 崩溃残留锁(pid 已死)不阻塞移动;活锁阻塞
+        // 崩溃残留锁(pid 已死 + 心跳过期:mtime 拨旧)不阻塞移动;活锁阻塞
         fsutil::ensure(&root.join(".cutforge")).unwrap();
-        write_atomic(&root.join(".cutforge/lock"), b"pid=4194303 ts=1").unwrap();
+        let stale_lock = root.join(".cutforge/lock");
+        write_atomic(&stale_lock, b"pid=4194303 boot= ts=1").unwrap();
+        // 作用域内拨旧 mtime;句柄必须先 Drop(Windows:未关句柄会挡住目录 rename)
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&stale_lock)
+                .unwrap();
+            f.set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2))
+                .unwrap();
+        }
         assert!(!lock_held(&root), "死 pid 残留锁不算活锁");
         rename(&lib, "p", "p2").unwrap();
         // 活锁:本进程 pid(guard 绑定存活到测试结束)
@@ -551,7 +698,8 @@ mod tests {
         let lib = fsutil::temp_dir("library-card");
         // V3 工程
         let p = lib.join("v3p");
-        crate::scaffold::scaffold_project_layout(&p, "扁平卡", 25, 1920, 1080, &[], LayoutKind::V3).unwrap();
+        crate::scaffold::scaffold_project_layout(&p, "扁平卡", 25, 1920, 1080, &[], LayoutKind::V3)
+            .unwrap();
         let cards = list(&lib, None, false).unwrap();
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].fps, Some(25));

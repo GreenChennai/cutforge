@@ -17,7 +17,10 @@ pub enum Query {
     /// 时间线概览:(clip_id, start_ms, end_ms, track_id)。
     Timeline,
     /// OpLog tail。
-    OpLogTail { since_rev: Option<u64>, actor_kind: Option<crate::oplog::ActorKind> },
+    OpLogTail {
+        since_rev: Option<u64>,
+        actor_kind: Option<crate::oplog::ActorKind>,
+    },
     /// 当前 rev。
     Rev,
 }
@@ -36,28 +39,43 @@ impl Engine {
     /// 查询接口:纯投影。
     pub fn query(&self, q: Query) -> Answer {
         match q {
-            Query::ProjectView => Answer::Project(
-                serde_json::to_value(&self.project).unwrap_or(Value::Null),
-            ),
-            Query::Clip { id } => Answer::Clip(
-                self.project.find_clip(&id).map(|(ti, ci)| {
-                    serde_json::to_value(&self.project.tracks[ti].clips[ci]).unwrap_or(Value::Null)
-                }),
-            ),
-            Query::Track { id } => Answer::Track(
-                self.project.find_track(&id)
-                    .map(|ti| serde_json::to_value(&self.project.tracks[ti]).unwrap_or(Value::Null)),
-            ),
-            Query::Timeline => Answer::Timeline(
-                self.project.tracks.iter().flat_map(|t| {
-                    t.clips.iter().map(move |c| {
-                        (c.id.clone(), c.start_ms, c.start_ms + c.duration_ms, t.id.clone())
-                    })
-                }).collect(),
-            ),
-            Query::OpLogTail { since_rev, actor_kind } => {
-                Answer::Ops(self.log.tail(since_rev, actor_kind).into_iter().cloned().collect())
+            Query::ProjectView => {
+                Answer::Project(serde_json::to_value(&self.project).unwrap_or(Value::Null))
             }
+            Query::Clip { id } => Answer::Clip(self.project.find_clip(&id).map(|(ti, ci)| {
+                serde_json::to_value(&self.project.tracks[ti].clips[ci]).unwrap_or(Value::Null)
+            })),
+            Query::Track { id } => {
+                Answer::Track(self.project.find_track(&id).map(|ti| {
+                    serde_json::to_value(&self.project.tracks[ti]).unwrap_or(Value::Null)
+                }))
+            }
+            Query::Timeline => Answer::Timeline(
+                self.project
+                    .tracks
+                    .iter()
+                    .flat_map(|t| {
+                        t.clips.iter().map(move |c| {
+                            (
+                                c.id.clone(),
+                                c.start_ms,
+                                c.start_ms + c.duration_ms,
+                                t.id.clone(),
+                            )
+                        })
+                    })
+                    .collect(),
+            ),
+            Query::OpLogTail {
+                since_rev,
+                actor_kind,
+            } => Answer::Ops(
+                self.log
+                    .tail(since_rev, actor_kind)
+                    .into_iter()
+                    .cloned()
+                    .collect(),
+            ),
             Query::Rev => Answer::Rev(self.rev),
         }
     }
@@ -80,7 +98,13 @@ pub fn canonical_json(v: &Value) -> String {
             keys.sort();
             let inner: Vec<String> = keys
                 .into_iter()
-                .map(|k| format!("{}:{}", serde_json::to_string(k).unwrap(), canonical_json(&m[k])))
+                .map(|k| {
+                    format!(
+                        "{}:{}",
+                        serde_json::to_string(k).unwrap(),
+                        canonical_json(&m[k])
+                    )
+                })
                 .collect();
             format!("{{{}}}", inner.join(","))
         }
@@ -102,16 +126,36 @@ mod tests {
     #[test]
     fn oplog_tail_filters() {
         let mut eng = Engine::new(sample_project()).unwrap();
-        eng.apply(Command::ClipDelete { clip_id: "A1-001".into() }, Actor::user("用户"), ApplyOpts::default()).unwrap();
-        eng.apply(Command::ClipDelete { clip_id: "V1-002".into() }, Actor::agent("AI"), ApplyOpts::default()).unwrap();
-        match eng.query(Query::OpLogTail { since_rev: Some(0), actor_kind: Some(ActorKind::Agent) }) {
+        eng.apply(
+            Command::ClipDelete {
+                clip_id: "A1-001".into(),
+            },
+            Actor::user("用户"),
+            ApplyOpts::default(),
+        )
+        .unwrap();
+        eng.apply(
+            Command::ClipDelete {
+                clip_id: "V1-002".into(),
+            },
+            Actor::agent("AI"),
+            ApplyOpts::default(),
+        )
+        .unwrap();
+        match eng.query(Query::OpLogTail {
+            since_rev: Some(0),
+            actor_kind: Some(ActorKind::Agent),
+        }) {
             Answer::Ops(ops) => {
                 assert_eq!(ops.len(), 1);
                 assert_eq!(ops[0].actor.id, "AI");
             }
             other => panic!("意外: {other:?}"),
         }
-        match eng.query(Query::OpLogTail { since_rev: None, actor_kind: None }) {
+        match eng.query(Query::OpLogTail {
+            since_rev: None,
+            actor_kind: None,
+        }) {
             Answer::Ops(ops) => assert_eq!(ops.len(), 2),
             other => panic!("意外: {other:?}"),
         }

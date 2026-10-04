@@ -139,20 +139,29 @@ fn shell_purity_scan(repo: &Path, apps_web: &Path, wasm_src: &Path) -> Vec<Viola
     // JS 壳面:apps/web 全量(R4 legacy 豁免已随 legacy/ 删除收口,无目录豁免)
     let mut stack = vec![apps_web.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in rd.flatten() {
             let p = entry.path();
             if p.is_dir() {
                 stack.push(p);
                 continue;
             }
-            if !p.extension().is_some_and(|x| x == "js" || x == "html" || x == "css") {
+            if !p
+                .extension()
+                .is_some_and(|x| x == "js" || x == "html" || x == "css")
+            {
                 continue;
             }
-            if p.file_name().is_some_and(|n| n.to_string_lossy().contains("min.")) {
+            if p.file_name()
+                .is_some_and(|n| n.to_string_lossy().contains("min."))
+            {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
             let rel = p
                 .strip_prefix(apps_web)
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
@@ -190,10 +199,15 @@ fn shell_purity_scan(repo: &Path, apps_web: &Path, wasm_src: &Path) -> Vec<Viola
         }
     }
     // wasm 绑定:禁文件系统(RS 侧,沿 v1 原样)
-    let rs_pats: Vec<String> = vec![["std", "fs"].join("::"), ["fs", "read_to_string"].join("::")];
+    let rs_pats: Vec<String> = vec![
+        ["std", "fs"].join("::"),
+        ["fs", "read_to_string"].join("::"),
+    ];
     let mut stack = vec![wasm_src.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in rd.flatten() {
             let p = entry.path();
             if p.is_dir() {
@@ -203,10 +217,17 @@ fn shell_purity_scan(repo: &Path, apps_web: &Path, wasm_src: &Path) -> Vec<Viola
             if !p.extension().is_some_and(|x| x == "rs") {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
             for line in text.lines() {
                 if rs_pats.iter().any(|pat| line.contains(pat.as_str())) {
-                    violations.push(vio(&p, repo, line, "R0 wasm 侧禁文件系统(一切 IO 经宿主桥)"));
+                    violations.push(vio(
+                        &p,
+                        repo,
+                        line,
+                        "R0 wasm 侧禁文件系统(一切 IO 经宿主桥)",
+                    ));
                     break;
                 }
             }
@@ -218,7 +239,11 @@ fn shell_purity_scan(repo: &Path, apps_web: &Path, wasm_src: &Path) -> Vec<Viola
 /// M5-5/A2 判定器入口(v2):壳不持有真相——语义禁令 + 投影只读 + 禁裸 fetch。
 pub fn check_shell_purity(json: bool) -> i32 {
     let root = crate::repo_root();
-    let violations = shell_purity_scan(&root, &root.join("apps/web"), &root.join("crates/cutforge-wasm/src"));
+    let violations = shell_purity_scan(
+        &root,
+        &root.join("apps/web"),
+        &root.join("crates/cutforge-wasm/src"),
+    );
     let items: Vec<serde_json::Value> = violations
         .iter()
         .map(|v| json!({"file": v.file, "line": v.line, "rule": v.rule}))
@@ -249,7 +274,9 @@ pub fn check_shell_purity(json: bool) -> i32 {
 /// 行内流式写调用(Write trait 方法)的接收者是否网络流/进程 stdio(类型定性,见模块头规则)。
 /// needle 由调用方以拼接构造传入(沿 v1 惯例):判定器源码内不出现完整调用字面量,防自匹配。
 fn is_stream_write(line: &str, stream_call: &str, streams: &BTreeSet<String>) -> bool {
-    let Some(pos) = line.find(stream_call) else { return false };
+    let Some(pos) = line.find(stream_call) else {
+        return false;
+    };
     let before = &line[..pos];
     let recv: String = before
         .chars()
@@ -272,7 +299,10 @@ fn let_binding_name(line: &str) -> Option<String> {
     let pos = line.find("let ")?;
     let rest = line[pos + 4..].trim_start();
     let rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
-    let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
     if name.is_empty() { None } else { Some(name) }
 }
 
@@ -310,7 +340,10 @@ fn for_incoming_name(line: &str) -> Option<String> {
     }
     let pos = line.find("for ")?;
     let rest = line[pos + 4..].trim_start();
-    let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
     if name.is_empty() { None } else { Some(name) }
 }
 
@@ -403,7 +436,9 @@ fn write_paths_scan(crates_dir: &Path) -> (Vec<(String, usize)>, usize) {
     let mut sanctioned = 0usize;
     let mut stack = vec![crates_dir.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in rd.flatten() {
             let p = entry.path();
             if p.is_dir() {
@@ -415,7 +450,9 @@ fn write_paths_scan(crates_dir: &Path) -> (Vec<(String, usize)>, usize) {
             }
             // 测试上下文豁免(上下文规则):tests/ 目录段 = integration 测试夹具
             let in_tests_dir = p.components().any(|c| c.as_os_str() == "tests");
-            let Ok(text) = std::fs::read_to_string(&p) else { continue };
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
             let in_test = if in_tests_dir {
                 vec![true; text.lines().count()]
             } else {
@@ -429,7 +466,8 @@ fn write_paths_scan(crates_dir: &Path) -> (Vec<(String, usize)>, usize) {
                     continue; // 单元测试夹具临时文件(#[cfg(test)] 区块),合法
                 }
                 let flagged = disk_pats.iter().any(|pat| line.contains(pat.as_str()))
-                    || (line.contains(&stream_call) && !is_stream_write(line, &stream_call, &streams));
+                    || (line.contains(&stream_call)
+                        && !is_stream_write(line, &stream_call, &streams));
                 if flagged {
                     if is_atomic {
                         sanctioned += 1;
@@ -469,7 +507,13 @@ pub fn check_write_paths(json: bool) -> i32 {
                  全部 API 字面量表见判定器 disk_pats 与头注释)",
     });
     if sanctioned > 0 && violations.is_empty() {
-        crate::emit(json, true, "OK", "写入路径唯一:仅 atomic.rs 落盘,旁路写入 = 0", data)
+        crate::emit(
+            json,
+            true,
+            "OK",
+            "写入路径唯一:仅 atomic.rs 落盘,旁路写入 = 0",
+            data,
+        )
     } else {
         crate::emit(
             json,
@@ -490,7 +534,8 @@ mod tests {
     struct TempRoot(PathBuf);
     impl TempRoot {
         fn new(tag: &str) -> TempRoot {
-            let dir = std::env::temp_dir().join(format!("cf-cli-gates-{tag}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("cf-cli-gates-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             TempRoot(dir)
@@ -512,10 +557,22 @@ mod tests {
     #[test]
     fn purity_v2_green_on_clean_tree() {
         let root = TempRoot::new("pg");
-        write(&root.0, "apps/web/js/core/api.js", "const r = await fetch(path);\n");
-        write(&root.0, "apps/web/js/core/projector.js", "timelineStore.set({ clips });\nprojectStore.set(p);\n");
+        write(
+            &root.0,
+            "apps/web/js/core/api.js",
+            "const r = await fetch(path);\n",
+        );
+        write(
+            &root.0,
+            "apps/web/js/core/projector.js",
+            "timelineStore.set({ clips });\nprojectStore.set(p);\n",
+        );
         write(&root.0, "apps/web/js/panels/x.js", "export const x = 1;\n");
-        let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
+        let v = shell_purity_scan(
+            &root.0,
+            &root.0.join("apps/web"),
+            &root.0.join("crates/wasm"),
+        );
         assert!(v.is_empty(), "净树必须全绿: {v:?}");
     }
 
@@ -523,8 +580,16 @@ mod tests {
     #[test]
     fn purity_v2_no_directory_exemption() {
         let root = TempRoot::new("pn");
-        write(&root.0, "apps/web/legacy/app.js", "await fetch(\"/rpc\");\nconst t = startMs + 1;\n");
-        let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
+        write(
+            &root.0,
+            "apps/web/legacy/app.js",
+            "await fetch(\"/rpc\");\nconst t = startMs + 1;\n",
+        );
+        let v = shell_purity_scan(
+            &root.0,
+            &root.0.join("apps/web"),
+            &root.0.join("crates/wasm"),
+        );
         assert_eq!(v.len(), 2, "legacy 目录内违规必须照抓(R4 已收口): {v:?}");
         assert!(v.iter().any(|x| x.rule.contains("R3")), "{v:?}");
         assert!(v.iter().any(|x| x.rule.contains("R1")), "{v:?}");
@@ -534,33 +599,85 @@ mod tests {
     #[test]
     fn purity_v2_catches_injected_violations() {
         let root = TempRoot::new("pi");
-        write(&root.0, "apps/web/js/panels/x.js", "const r = fetch(\"/rpc\");\n");
-        write(&root.0, "apps/web/js/render/bad.js", "timelineStore.set({ clips: [] });\n");
-        write(&root.0, "apps/web/js/ui/alias.js", "import { projectStore as ps } from \"../core/store.js\";\n");
-        write(&root.0, "apps/web/js/ui/sem.js", "import { spawn } from \"node:child_process\";\n");
+        write(
+            &root.0,
+            "apps/web/js/panels/x.js",
+            "const r = fetch(\"/rpc\");\n",
+        );
+        write(
+            &root.0,
+            "apps/web/js/render/bad.js",
+            "timelineStore.set({ clips: [] });\n",
+        );
+        write(
+            &root.0,
+            "apps/web/js/ui/alias.js",
+            "import { projectStore as ps } from \"../core/store.js\";\n",
+        );
+        write(
+            &root.0,
+            "apps/web/js/ui/sem.js",
+            "import { spawn } from \"node:child_process\";\n",
+        );
         // 词边界:prefetch( 不算裸 fetch;window.fetch( 算
-        write(&root.0, "apps/web/js/ui/wb.js", "el.prefetch(url);\nconst r = window.fetch(\"/x\");\n");
-        let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
+        write(
+            &root.0,
+            "apps/web/js/ui/wb.js",
+            "el.prefetch(url);\nconst r = window.fetch(\"/x\");\n",
+        );
+        let v = shell_purity_scan(
+            &root.0,
+            &root.0.join("apps/web"),
+            &root.0.join("crates/wasm"),
+        );
         let rules: Vec<&str> = v.iter().map(|x| x.rule).collect();
         assert_eq!(v.len(), 5, "{v:?}");
-        assert_eq!(rules.iter().filter(|r| r.contains("R3")).count(), 2, "{v:?}");
-        assert_eq!(rules.iter().filter(|r| r.contains("R2")).count(), 2, "{v:?}");
-        assert_eq!(rules.iter().filter(|r| r.contains("R1")).count(), 1, "{v:?}");
+        assert_eq!(
+            rules.iter().filter(|r| r.contains("R3")).count(),
+            2,
+            "{v:?}"
+        );
+        assert_eq!(
+            rules.iter().filter(|r| r.contains("R2")).count(),
+            2,
+            "{v:?}"
+        );
+        assert_eq!(
+            rules.iter().filter(|r| r.contains("R1")).count(),
+            1,
+            "{v:?}"
+        );
     }
 
     /// R5 色值扫描净树全绿:token 定义点/icons 登记点豁免生效(legacy 整树豁免已随 R4 收口移除)。
     #[test]
     fn color_v3_green_on_token_only_tree() {
         let root = TempRoot::new("cg");
-        write(&root.0, "apps/web/css/tokens.css", ":root { --c: #4da3ff; --m: rgba(0, 0, 0, .5); }\n");
-        write(&root.0, "apps/web/css/components/x.css", ".x { color: var(--c); border: 1px solid var(--m); }\n");
-        write(&root.0, "apps/web/assets/icons.js", "const fill = \"currentColor\";\n");
+        write(
+            &root.0,
+            "apps/web/css/tokens.css",
+            ":root { --c: #4da3ff; --m: rgba(0, 0, 0, .5); }\n",
+        );
+        write(
+            &root.0,
+            "apps/web/css/components/x.css",
+            ".x { color: var(--c); border: 1px solid var(--m); }\n",
+        );
+        write(
+            &root.0,
+            "apps/web/assets/icons.js",
+            "const fill = \"currentColor\";\n",
+        );
         write(
             &root.0,
             "apps/web/js/render/theme.js",
             "export function cssVar(name) {\n  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();\n}\n",
         );
-        let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
+        let v = shell_purity_scan(
+            &root.0,
+            &root.0.join("apps/web"),
+            &root.0.join("crates/wasm"),
+        );
         assert!(v.is_empty(), "R5 净树必须全绿(豁免登记点生效): {v:?}");
     }
 
@@ -568,11 +685,31 @@ mod tests {
     #[test]
     fn color_v3_catches_injected_color_literals() {
         let root = TempRoot::new("ci");
-        write(&root.0, "apps/web/css/components/bad.css", ".bad { color: #ff0000; }\n");
-        write(&root.0, "apps/web/js/panels/bad.js", "ctx.fillStyle = \"rgba(0, 0, 0, .5)\";\n");
-        write(&root.0, "apps/web/index.html", "<div style=\"color: #abc\">x</div>\n");
-        write(&root.0, "apps/web/css/components/ok.css", ".ok { color: var(--c); border-color: var(--line); }\n");
-        let v = shell_purity_scan(&root.0, &root.0.join("apps/web"), &root.0.join("crates/wasm"));
+        write(
+            &root.0,
+            "apps/web/css/components/bad.css",
+            ".bad { color: #ff0000; }\n",
+        );
+        write(
+            &root.0,
+            "apps/web/js/panels/bad.js",
+            "ctx.fillStyle = \"rgba(0, 0, 0, .5)\";\n",
+        );
+        write(
+            &root.0,
+            "apps/web/index.html",
+            "<div style=\"color: #abc\">x</div>\n",
+        );
+        write(
+            &root.0,
+            "apps/web/css/components/ok.css",
+            ".ok { color: var(--c); border-color: var(--line); }\n",
+        );
+        let v = shell_purity_scan(
+            &root.0,
+            &root.0.join("apps/web"),
+            &root.0.join("crates/wasm"),
+        );
         assert_eq!(v.len(), 3, "注入三处必须各计一处: {v:?}");
         assert!(v.iter().all(|x| x.rule.contains("R5")), "{v:?}");
     }
@@ -580,7 +717,13 @@ mod tests {
     /// R5 判定器单元口径:十六进制段长 3/4/6/8 才算色值;id 选择器/锚点/HTML 实体不误报。
     #[test]
     fn color_literal_detector_boundaries() {
-        for hit in ["color: #fff;", "#fffa00", "outline: #abcd;", "rgba(0,0,0,.5)", "url(x) hsl(1)"] {
+        for hit in [
+            "color: #fff;",
+            "#fffa00",
+            "outline: #abcd;",
+            "rgba(0,0,0,.5)",
+            "url(x) hsl(1)",
+        ] {
             assert!(color_literal_hit(hit), "必须命中: {hit}");
         }
         for miss in [
@@ -609,7 +752,11 @@ mod tests {
             "use std::net::TcpStream;\nfn h(mut stream: TcpStream) { stream.write_all(b\"hi\")?; }\n\
              let mut s = TcpStream::connect(addr)?;\ns.write_all(b\"x\")?;\nio::stdout().write_all(b\"y\")?;\n",
         );
-        write(&root.0, "crates/m/tests/fixture.rs", "std::fs::write(p, b\"x\").unwrap();\n");
+        write(
+            &root.0,
+            "crates/m/tests/fixture.rs",
+            "std::fs::write(p, b\"x\").unwrap();\n",
+        );
         write(
             &root.0,
             "crates/m/src/inner.rs",
@@ -617,7 +764,10 @@ mod tests {
         );
         let (v, sanctioned) = write_paths_scan(&root.0.join("crates"));
         assert!(v.is_empty(), "合法场景必须零违规: {v:?}");
-        assert_eq!(sanctioned, 2, "atomic 盘面获取+write_all 各计 1: {sanctioned}");
+        assert_eq!(
+            sanctioned, 2,
+            "atomic 盘面获取+write_all 各计 1: {sanctioned}"
+        );
     }
 
     /// 注入必抓:非流接收者的 write_all 与裸盘面写;File::options 补录进获取面。

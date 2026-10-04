@@ -7,8 +7,8 @@ use cutforge_core::engine::ApplyOpts;
 use cutforge_core::notes::NoteAuthor;
 use cutforge_core::oplog::{Actor, OpKind};
 
-use super::bases::BASES_REL;
 use super::Workspace;
+use super::bases::BASES_REL;
 use crate::paths::{CUTLIST_REL, NOTES_REL, PROJECT_REL};
 use crate::{atomic, fsutil, paths, tests_fixture};
 
@@ -21,20 +21,30 @@ mod tests {
         let mut ws = Workspace::open_exclusive(&root).unwrap();
         assert_eq!(ws.rev(), 0);
         // v1 样本经迁移后可正常应用命令
-        let r = ws.apply(
-            Command::ClipUpdate {
-                clip_id: "V1-001".into(),
-                patch: cutforge_core::command::ClipPatch { duration_ms: Some(8000), ..Default::default() },
-            },
-            Actor::agent("io-test"),
-            ApplyOpts::default(),
-        )
-        .unwrap();
+        let r = ws
+            .apply(
+                Command::ClipUpdate {
+                    clip_id: "V1-001".into(),
+                    patch: cutforge_core::command::ClipPatch {
+                        duration_ms: Some(8000),
+                        ..Default::default()
+                    },
+                },
+                Actor::agent("io-test"),
+                ApplyOpts::default(),
+            )
+            .unwrap();
         assert_eq!(r.rev, 1);
         assert_eq!(ws.rev(), 1);
         // 落盘验证:project.json/rev/oplog 都存在
         assert!(root.join(".cutforge/rev").exists());
-        assert!(root.join(".cutforge/oplog").read_dir().unwrap().next().is_some());
+        assert!(
+            root.join(".cutforge/oplog")
+                .read_dir()
+                .unwrap()
+                .next()
+                .is_some()
+        );
         fsutil::cleanup(&root);
     }
 
@@ -46,7 +56,10 @@ mod tests {
             ws.apply(
                 Command::ClipUpdate {
                     clip_id: "V1-001".into(),
-                    patch: cutforge_core::command::ClipPatch { duration_ms: Some(8000), ..Default::default() },
+                    patch: cutforge_core::command::ClipPatch {
+                        duration_ms: Some(8000),
+                        ..Default::default()
+                    },
                 },
                 Actor::user("人"),
                 ApplyOpts::default(),
@@ -73,17 +86,34 @@ mod tests {
         let mut ws = Workspace::open_exclusive(&root).unwrap();
         let anchor = cutforge_core::anchor::Anchor {
             kind: cutforge_core::anchor::AnchorKind::Clip,
-            ref_: Some("V1-001".into()), t_ms: 4000, span: None,
+            ref_: Some("V1-001".into()),
+            t_ms: 4000,
+            span: None,
         };
-        ws.notes_add(anchor, "这里语速太快".into(), NoteAuthor::User, vec![], Actor::user("人"), None).unwrap();
+        ws.notes_add(
+            anchor,
+            "这里语速太快".into(),
+            NoteAuthor::User,
+            vec![],
+            Actor::user("人"),
+            None,
+        )
+        .unwrap();
         let after_add: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(root.join(NOTES_REL)).unwrap()).unwrap();
-        assert_eq!(after_add["items"].as_array().unwrap().len(), 3, "新标注必须落盘");
+        assert_eq!(
+            after_add["items"].as_array().unwrap().len(),
+            3,
+            "新标注必须落盘"
+        );
         ws.undo(Actor::user("人")).unwrap();
         let notes_after: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(root.join(NOTES_REL)).unwrap()).unwrap();
         let before: serde_json::Value = serde_json::from_str(&notes_before).unwrap();
-        assert_eq!(notes_after, before, "undo 后 notes.json 必须还原到 notes_add 之前");
+        assert_eq!(
+            notes_after, before,
+            "undo 后 notes.json 必须还原到 notes_add 之前"
+        );
         fsutil::cleanup(&root);
     }
 
@@ -98,16 +128,30 @@ mod tests {
         let mut after = before.clone();
         after["cuts"][0]["action"] = serde_json::json!("review");
         ws.record_change(
-            "cutlist.json", "/", before.clone(), after,
-            OpKind::Set, Actor::script("m8-1"),
-            ApplyOpts { summary: Some("cut_apply 测试".into()), ..Default::default() },
-        ).unwrap();
+            "cutlist.json",
+            "/",
+            before.clone(),
+            after,
+            OpKind::Set,
+            Actor::script("m8-1"),
+            ApplyOpts {
+                summary: Some("cut_apply 测试".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let mid: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join(CUTLIST_REL)).unwrap()).unwrap();
-        assert_eq!(mid["cuts"][0]["action"], serde_json::json!("review"), "编辑必须真实落盘");
+            serde_json::from_str(&std::fs::read_to_string(root.join(CUTLIST_REL)).unwrap())
+                .unwrap();
+        assert_eq!(
+            mid["cuts"][0]["action"],
+            serde_json::json!("review"),
+            "编辑必须真实落盘"
+        );
         ws.undo(Actor::user("人")).unwrap();
         let restored: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join(CUTLIST_REL)).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(root.join(CUTLIST_REL)).unwrap())
+                .unwrap();
         assert_eq!(restored, before, "undo 后 cutlist.json 必须还原");
         fsutil::cleanup(&root);
     }
@@ -121,34 +165,44 @@ mod tests {
         let root_s = root.to_string_lossy().to_string();
         let n = 5;
         let barrier = std::sync::Arc::new(Barrier::new(2));
-        let handles: Vec<_> = ["并发-A", "并发-B"].into_iter().map(|who| {
-            let barrier = barrier.clone();
-            let root_s = root_s.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                for i in 0..n {
-                    let mut ws = Workspace::open_exclusive(Path::new(&root_s)).unwrap();
-                    ws.apply(
-                        Command::ClipUpdate {
-                            clip_id: "V1-001".into(),
-                            patch: cutforge_core::command::ClipPatch {
-                                duration_ms: Some(7000 - (who.len() * 10 + i) as u64),
-                                ..Default::default()
+        let handles: Vec<_> = [("并发-A", 7000u64), ("并发-B", 7700)]
+            .into_iter()
+            .map(|(who, base)| {
+                let barrier = barrier.clone();
+                let root_s = root_s.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for i in 0..n {
+                        let mut ws = Workspace::open_exclusive(Path::new(&root_s)).unwrap();
+                        ws.apply(
+                            Command::ClipUpdate {
+                                clip_id: "V1-001".into(),
+                                patch: cutforge_core::command::ClipPatch {
+                                    // 两线程值域必须不相交:who.len() 是字节长度
+                                    // (两个名字同长),同值交错会命中幂等短路而少记账。
+                                    duration_ms: Some(base - i as u64),
+                                    ..Default::default()
+                                },
                             },
-                        },
-                        Actor::agent(who),
-                        ApplyOpts::default(),
-                    ).unwrap();
-                }
+                            Actor::agent(who),
+                            ApplyOpts::default(),
+                        )
+                        .unwrap();
+                    }
+                })
             })
-        }).collect::<Vec<_>>();
+            .collect::<Vec<_>>();
         for h in handles {
             h.join().unwrap();
         }
         let ws = Workspace::open(&root).unwrap();
         assert_eq!(ws.rev(), 2 * n as u64, "rev 必须 = 2N(零丢更新)");
         assert_eq!(ws.engine().oplog().len(), 2 * n, "OpLog 必须 = 2N");
-        let disk_rev: u64 = std::fs::read_to_string(root.join(".cutforge/rev")).unwrap().trim().parse().unwrap();
+        let disk_rev: u64 = std::fs::read_to_string(root.join(".cutforge/rev"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         assert_eq!(disk_rev, 2 * n as u64, "盘面 rev 与 OpLog 不得分叉");
         fsutil::cleanup(&root);
     }
@@ -157,12 +211,15 @@ mod tests {
     /// 夹具由 tools/gen_real_ir_fixture.py 调 CutFlow rs_ir.py 生成(计划书 D2)。
     #[test]
     fn open_real_cutflow_ir_with_meta_roundtrip() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/real_ir/project.json");
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/real_ir/project.json");
         let text = std::fs::read_to_string(&fixture)
             .expect("缺 tests/fixtures/real_ir/project.json:先跑 tools/gen_real_ir_fixture.py");
         let original_meta: serde_json::Value = {
             let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-            v.get("_meta").cloned().expect("夹具必须含顶层 _meta(CutFlow 真实 IR 的判别特征)")
+            v.get("_meta")
+                .cloned()
+                .expect("夹具必须含顶层 _meta(CutFlow 真实 IR 的判别特征)")
         };
         let root = fsutil::temp_dir("ws-real-ir");
         fsutil::ensure(&root.join(paths::TIMELINE)).unwrap();
@@ -173,7 +230,10 @@ mod tests {
             ws.apply(
                 Command::ClipUpdate {
                     clip_id: "V1-001".into(),
-                    patch: cutforge_core::command::ClipPatch { duration_ms: Some(3000), ..Default::default() },
+                    patch: cutforge_core::command::ClipPatch {
+                        duration_ms: Some(3000),
+                        ..Default::default()
+                    },
                 },
                 Actor::agent("m8-2"),
                 ApplyOpts::default(),
@@ -185,7 +245,8 @@ mod tests {
         assert_eq!(ws2.rev(), 1);
         let _ = ws2; // 打开即证明 roundtrip 后文件仍合法
         let disk: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join(PROJECT_REL)).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(root.join(PROJECT_REL)).unwrap())
+                .unwrap();
         assert_eq!(disk["_meta"], original_meta, "cutforge 写回不得丢/改 _meta");
         fsutil::cleanup(&root);
     }
@@ -218,25 +279,38 @@ mod m9_tests {
             w.apply(
                 Command::ClipUpdate {
                     clip_id: "V1-002".into(),
-                    patch: cutforge_core::command::ClipPatch { duration_ms: Some(6000), ..Default::default() },
+                    patch: cutforge_core::command::ClipPatch {
+                        duration_ms: Some(6000),
+                        ..Default::default()
+                    },
                 },
                 Actor::user("u"),
                 ApplyOpts::default(),
-            ).unwrap();
+            )
+            .unwrap();
         }
-        assert!(root.join(BASES_REL).join("1.json").exists(), "persist 必须留 baseRev 快照");
+        assert!(
+            root.join(BASES_REL).join("1.json").exists(),
+            "persist 必须留 baseRev 快照"
+        );
 
         // 本会话:长活工作区,本地待写 V1-002 startMs→9000(尚未落盘)
         let mut ws = Workspace::open_exclusive(&root).unwrap();
         ws.pre_write_sync().unwrap();
-        let receipt = ws.engine.apply(
-            Command::ClipUpdate {
-                clip_id: "V1-002".into(),
-                patch: cutforge_core::command::ClipPatch { start_ms: Some(9000), ..Default::default() },
-            },
-            Actor::agent("m9"),
-            ApplyOpts::default(),
-        ).unwrap();
+        let receipt = ws
+            .engine
+            .apply(
+                Command::ClipUpdate {
+                    clip_id: "V1-002".into(),
+                    patch: cutforge_core::command::ClipPatch {
+                        start_ms: Some(9000),
+                        ..Default::default()
+                    },
+                },
+                Actor::agent("m9"),
+                ApplyOpts::default(),
+            )
+            .unwrap();
         assert_eq!(receipt.rev, 2);
 
         // 写入窗口内:外部写者改同一字段 → startMs=9500
@@ -246,19 +320,30 @@ mod m9_tests {
 
         // persist 必须检出漂移 → CF-001 → 本地待写弃用
         let err = ws.persist().unwrap_err();
-        assert!(err.to_string().starts_with("CONFLICT"), "必须报 CONFLICT: {err}");
-        assert_eq!(read_project(&root)["tracks"][0]["clips"][1]["startMs"], serde_json::json!(9500),
-            "外部改动获胜,本地不得静默覆盖");
+        assert!(
+            err.to_string().starts_with("CONFLICT"),
+            "必须报 CONFLICT: {err}"
+        );
+        assert_eq!(
+            read_project(&root)["tracks"][0]["clips"][1]["startMs"],
+            serde_json::json!(9500),
+            "外部改动获胜,本地不得静默覆盖"
+        );
         assert_eq!(ws.rev(), 1, "弃用待写后 rev 回到磁盘真相");
         let conflicts = ws.conflict_list().unwrap();
-        assert!(!conflicts.is_empty() && conflicts.iter().all(|(_, c)| c.code.code() == "CF-001"),
-            "必须落 CF-001: {conflicts:?}");
+        assert!(
+            !conflicts.is_empty() && conflicts.iter().all(|(_, c)| c.code.code() == "CF-001"),
+            "必须落 CF-001: {conflicts:?}"
+        );
 
         // 停写:冲突未裁决前一切写拒绝
         let blocked = ws.apply(
             Command::ClipUpdate {
                 clip_id: "V1-001".into(),
-                patch: cutforge_core::command::ClipPatch { duration_ms: Some(7000), ..Default::default() },
+                patch: cutforge_core::command::ClipPatch {
+                    duration_ms: Some(7000),
+                    ..Default::default()
+                },
             },
             Actor::agent("m9"),
             ApplyOpts::default(),
@@ -273,21 +358,35 @@ mod m9_tests {
         let root = tests_fixture("ws-automerge").unwrap();
         let mut ws = Workspace::open_exclusive(&root).unwrap();
         ws.pre_write_sync().unwrap();
-        let _ = ws.engine.apply(
-            Command::ClipUpdate {
-                clip_id: "V1-002".into(),
-                patch: cutforge_core::command::ClipPatch { start_ms: Some(9000), ..Default::default() },
-            },
-            Actor::agent("m9"),
-            ApplyOpts::default(),
-        ).unwrap();
+        let _ = ws
+            .engine
+            .apply(
+                Command::ClipUpdate {
+                    clip_id: "V1-002".into(),
+                    patch: cutforge_core::command::ClipPatch {
+                        start_ms: Some(9000),
+                        ..Default::default()
+                    },
+                },
+                Actor::agent("m9"),
+                ApplyOpts::default(),
+            )
+            .unwrap();
         let mut v = read_project(&root);
         v["slug"] = serde_json::json!("renamed-外部");
         write_project(&root, &v);
         ws.persist().unwrap();
         let disk = read_project(&root);
-        assert_eq!(disk["slug"], serde_json::json!("renamed-外部"), "外部改动必须存活");
-        assert_eq!(disk["tracks"][0]["clips"][1]["startMs"], serde_json::json!(9000), "本地改动必须存活");
+        assert_eq!(
+            disk["slug"],
+            serde_json::json!("renamed-外部"),
+            "外部改动必须存活"
+        );
+        assert_eq!(
+            disk["tracks"][0]["clips"][1]["startMs"],
+            serde_json::json!(9000),
+            "本地改动必须存活"
+        );
         fsutil::cleanup(&root);
     }
 
@@ -307,11 +406,15 @@ mod m9_tests {
                 },
                 Actor::agent("m9"),
                 ApplyOpts::default(),
-            ).unwrap();
+            )
+            .unwrap();
         }
         let count = std::fs::read_dir(root.join(BASES_REL)).unwrap().count();
         assert!(count <= 32, "LRU 上限 32,实际 {count}");
-        assert!(root.join(BASES_REL).join("40.json").exists(), "最新快照必须在");
+        assert!(
+            root.join(BASES_REL).join("40.json").exists(),
+            "最新快照必须在"
+        );
         fsutil::cleanup(&root);
     }
 
@@ -326,7 +429,8 @@ mod m9_tests {
         v["slug"] = serde_json::json!("daemon-visible");
         write_project(&root, &v);
         let t0 = std::time::Instant::now();
-        let seq = hub.wait_since(since, std::time::Duration::from_millis(1500))
+        let seq = hub
+            .wait_since(since, std::time::Duration::from_millis(1500))
             .expect("外部改动必须 ≤1s 可见(1.5s 容差含 CI 抖动)");
         assert!(seq > since);
         println!("外部改动可见耗时: {:?}", t0.elapsed());

@@ -10,7 +10,7 @@
 //! 写路径纪律:可写性探测只经 cutforge_io::atomic(唯一落盘点,check-write-paths 口径),
 //! 目录创建用 create_dir_all(不在旁路写入扫描面内)。
 
-use crate::{emit, Args};
+use crate::{Args, emit};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -31,21 +31,40 @@ struct Check {
 
 impl Check {
     fn pass(name: &'static str, detail: String) -> Check {
-        Check { name, ok: true, detail, fix: String::new() }
+        Check {
+            name,
+            ok: true,
+            detail,
+            fix: String::new(),
+        }
     }
     fn fail(name: &'static str, detail: String, fix: String) -> Check {
-        Check { name, ok: false, detail, fix }
+        Check {
+            name,
+            ok: false,
+            detail,
+            fix,
+        }
     }
 }
 
 /// ① 工程可识别(目录契约 0.5:05_时间线工程/project.json,兼容旧 05_ir/)。
 fn check_project(root: &Path) -> Check {
     if cutforge_io::paths::has_project(root) {
-        return Check::pass("project", format!("工程可识别: {}", cutforge_io::paths::project_path(root).display()));
+        return Check::pass(
+            "project",
+            format!(
+                "工程可识别: {}",
+                cutforge_io::paths::project_path(root).display()
+            ),
+        );
     }
     Check::fail(
         "project",
-        format!("不是 CutForge 工程(缺 05_时间线工程/project.json,兼容旧 05_ir/): {}", root.display()),
+        format!(
+            "不是 CutForge 工程(缺 05_时间线工程/project.json,兼容旧 05_ir/): {}",
+            root.display()
+        ),
         format!("cutforge-cli new \"{}\"", root.display()),
     )
 }
@@ -56,7 +75,11 @@ fn bin_available(bin: &str, env_key: &str) -> bool {
     if via_env {
         return true;
     }
-    std::process::Command::new(bin).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    std::process::Command::new(bin)
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// ② ffmpeg / ffprobe 可用(渲染与素材探测的外部依赖;CUTFORGE_FFMPEG/CUTFORGE_FFPROBE 优先)。
@@ -65,7 +88,14 @@ fn bin_available(bin: &str, env_key: &str) -> bool {
 fn check_bin(name: &'static str, bin: &str, env_key: &str) -> Check {
     if bin_available(bin, env_key) {
         let via_env = std::env::var_os(env_key).is_some_and(|v| !v.is_empty());
-        return Check::pass(name, if via_env { format!("env {env_key}") } else { "PATH 可见".into() });
+        return Check::pass(
+            name,
+            if via_env {
+                format!("env {env_key}")
+            } else {
+                "PATH 可见".into()
+            },
+        );
     }
     Check::fail(
         name,
@@ -79,7 +109,11 @@ fn check_bin(name: &'static str, bin: &str, env_key: &str) -> Check {
 
 /// ③(T1.7 新增)web 资源完整性:web 目录下 index.html/app.js/style.css 缺一不可。
 fn check_web(root: &Path, web_dir: &Path) -> Check {
-    let missing: Vec<&str> = WEB_FILES.iter().filter(|f| !web_dir.join(f).is_file()).copied().collect();
+    let missing: Vec<&str> = WEB_FILES
+        .iter()
+        .filter(|f| !web_dir.join(f).is_file())
+        .copied()
+        .collect();
     if missing.is_empty() {
         return Check::pass("web", format!("web 资源齐备: {}", web_dir.display()));
     }
@@ -94,32 +128,52 @@ fn check_web(root: &Path, web_dir: &Path) -> Check {
     } else {
         format!("set CUTFORGE_WEB=\"<含 {} 的目录>\"", WEB_FILES.join("/"))
     };
-    Check::fail("web", format!("web 资源缺失({}): {}", missing.join(", "), web_dir.display()), fix)
+    Check::fail(
+        "web",
+        format!(
+            "web 资源缺失({}): {}",
+            missing.join(", "),
+            web_dir.display()
+        ),
+        fix,
+    )
 }
 
 /// ④(T1.7 新增)缓存目录可写:`.cutforge/render-cache` 父目录可写性。
 /// 探测 = 建目录 + 经 atomic.rs 写删探针文件(唯一落盘点纪律;真实落盘,不做只读位猜测)。
 fn check_cache_writable(root: &Path) -> Check {
     if !root.is_dir() {
-        return Check::fail("cache", "工程目录不存在,缓存目录无从谈起".into(), check_project(root).fix);
+        return Check::fail(
+            "cache",
+            "工程目录不存在,缓存目录无从谈起".into(),
+            check_project(root).fix,
+        );
     }
     let cache_dir = root.join(".cutforge/render-cache");
     if let Err(e) = std::fs::create_dir_all(&cache_dir) {
         return Check::fail(
             "cache",
             format!("缓存目录不可建({}): {e}", cache_dir.display()),
-            format!("icacls \"{}\" /grant \"%USERNAME%\":F", root.join(".cutforge").display()),
+            format!(
+                "icacls \"{}\" /grant \"%USERNAME%\":F",
+                root.join(".cutforge").display()
+            ),
         );
     }
     let probe = cache_dir.join(".doctor-probe");
-    let write = cutforge_io::atomic::atomic_write(&probe, b"ok").map_err(|e| e.to_string())
+    let write = cutforge_io::atomic::atomic_write(&probe, b"ok")
+        .map_err(|e| e.to_string())
         .and_then(|()| cutforge_io::atomic::remove(&probe).map_err(|e| e.to_string()));
     match write {
         Ok(()) => Check::pass("cache", format!("缓存目录可写: {}", cache_dir.display())),
         Err(e) => Check::fail(
             "cache",
             format!("缓存目录不可写({}): {e}", cache_dir.display()),
-            format!("attrib -r \"{}\" ;或 icacls \"{}\" /grant \"%USERNAME%\":F", cache_dir.display(), cache_dir.display()),
+            format!(
+                "attrib -r \"{}\" ;或 icacls \"{}\" /grant \"%USERNAME%\":F",
+                cache_dir.display(),
+                cache_dir.display()
+            ),
         ),
     }
 }
@@ -152,31 +206,47 @@ fn check_port(root: &Path, port: u16) -> Check {
 /// --bundle 诊断包(册六 T6.4):单文件 zip = doctor.json + environment.txt +
 /// 会话/摘要/rev 快照(在位才收,单件 512KB 上限;工程真相源 project.json 一并快照——
 /// 「导出失败」类问题的最小取证面)。返回 (落点, 字节数, 条目数)。
-fn write_bundle(root: &Path, data: &serde_json::Value, out: Option<&String>) -> Result<(PathBuf, usize, usize), String> {
+fn write_bundle(
+    root: &Path,
+    data: &serde_json::Value,
+    out: Option<&String>,
+) -> Result<(PathBuf, usize, usize), String> {
     let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let out_path = match out.filter(|s| !s.is_empty()) {
         Some(p) => PathBuf::from(p),
         None => root.join(format!(".cutforge/doctor-bundle-{secs}.zip")),
     };
-    let doctor_doc = json!({"generatedAt": cutforge_core::timeutil::now_rfc3339(), "diagnosis": data});
+    let doctor_doc =
+        json!({"generatedAt": cutforge_core::timeutil::now_rfc3339(), "diagnosis": data});
     let mut entries = vec![
         crate::bundle::Entry {
             name: "doctor.json".into(),
             data: serde_json::to_vec_pretty(&doctor_doc).map_err(|e| e.to_string())?,
         },
-        crate::bundle::Entry { name: "environment.txt".into(), data: crate::bundle::environment_text(root).into_bytes() },
+        crate::bundle::Entry {
+            name: "environment.txt".into(),
+            data: crate::bundle::environment_text(root).into_bytes(),
+        },
     ];
     // 日志与快照面:在位才收(诊断不虚构);单件上限 512KB(oplog 尾巴足够定位问题)
     const CAP: u64 = 512 * 1024;
     for (name, path) in [
         ("session.json", root.join(".cutforge/session")),
-        ("session-summary.json", root.join(".cutforge/session-summary.json")),
+        (
+            "session-summary.json",
+            root.join(".cutforge/session-summary.json"),
+        ),
         ("rev.txt", root.join(".cutforge/rev")),
         ("project.json", cutforge_io::paths::project_path(root)),
     ] {
         if let Some(bytes) = read_capped(&path, CAP) {
-            entries.push(crate::bundle::Entry { name: name.into(), data: bytes });
+            entries.push(crate::bundle::Entry {
+                name: name.into(),
+                data: bytes,
+            });
         }
     }
     let n = entries.len();
@@ -201,8 +271,16 @@ pub fn run(a: &Args) -> i32 {
         return emit(a.json, false, "PRECONDITION_FAILED", USAGE, json!({}));
     };
     let root = PathBuf::from(&root_s);
-    let web = a.flags.get("web").map(PathBuf::from).unwrap_or_else(cutforge_mcp::default_web_dir);
-    let port = a.flags.get("port").and_then(|s| s.parse::<u16>().ok()).unwrap_or(DEFAULT_PORT);
+    let web = a
+        .flags
+        .get("web")
+        .map(PathBuf::from)
+        .unwrap_or_else(cutforge_mcp::default_web_dir);
+    let port = a
+        .flags
+        .get("port")
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(DEFAULT_PORT);
     let checks = vec![
         check_project(&root),
         check_bin("ffmpeg", "ffmpeg", "CUTFORGE_FFMPEG"),
@@ -235,24 +313,48 @@ pub fn run(a: &Args) -> i32 {
     });
     // --bundle(T6.4):诊断包随任一结论落盘(诊断面即取证面;失败项也能打包带修)
     let bundle_note = match a.flags.get("bundle") {
-        Some(_) => match write_bundle(&root, &data, a.flags.get("bundle")) {
-            Ok((path, bytes, n)) => {
-                let note = format!(";诊断包: {}({bytes} B,{n} 件)", path.display());
-                if let Some(obj) = data.as_object_mut() {
-                    obj.insert("bundle".into(), json!({"path": path.display().to_string(), "bytes": bytes, "entries": n}));
+        Some(_) => {
+            match write_bundle(&root, &data, a.flags.get("bundle")) {
+                Ok((path, bytes, n)) => {
+                    let note = format!(";诊断包: {}({bytes} B,{n} 件)", path.display());
+                    if let Some(obj) = data.as_object_mut() {
+                        obj.insert("bundle".into(), json!({"path": path.display().to_string(), "bytes": bytes, "entries": n}));
+                    }
+                    note
                 }
-                note
+                Err(e) => {
+                    return emit(
+                        a.json,
+                        false,
+                        "INTERNAL",
+                        &format!("诊断包失败: {e}"),
+                        json!({}),
+                    );
+                }
             }
-            Err(e) => return emit(a.json, false, "INTERNAL", &format!("诊断包失败: {e}"), json!({})),
-        },
+        }
         None => String::new(),
     };
     let tail_msg = |m: &str| -> String { format!("{m}{bundle_note}") };
     if passed == checks.len() {
-        emit(a.json, true, "OK", &tail_msg(&format!("工程环境诊断:{passed}/{} 项通过", checks.len())), data)
+        emit(
+            a.json,
+            true,
+            "OK",
+            &tail_msg(&format!("工程环境诊断:{passed}/{} 项通过", checks.len())),
+            data,
+        )
     } else {
-        emit(a.json, false, "DOCTOR_FAILED",
-            &tail_msg(&format!("工程环境诊断:{passed}/{} 项通过(失败项见 checks[].fix,均可复制执行)", checks.len())), data)
+        emit(
+            a.json,
+            false,
+            "DOCTOR_FAILED",
+            &tail_msg(&format!(
+                "工程环境诊断:{passed}/{} 项通过(失败项见 checks[].fix,均可复制执行)",
+                checks.len()
+            )),
+            data,
+        )
     }
 }
 
@@ -264,7 +366,8 @@ mod tests {
     struct TempRoot(PathBuf);
     impl TempRoot {
         fn new(tag: &str) -> TempRoot {
-            let dir = std::env::temp_dir().join(format!("cf-cli-doctor-{tag}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("cf-cli-doctor-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             TempRoot(dir)
@@ -308,8 +411,16 @@ mod tests {
         std::fs::write(root.0.join("index.html"), b"<html>").unwrap();
         let c = check_web(&root.0, &root.0);
         assert!(!c.ok, "缺 app.js/style.css 应失败: {}", c.detail);
-        assert!(c.detail.contains("app.js") && c.detail.contains("style.css"), "缺失清单要逐个点名: {}", c.detail);
-        assert!(c.fix.contains("--web") || c.fix.contains("CUTFORGE_WEB"), "修复命令要可执行: {}", c.fix);
+        assert!(
+            c.detail.contains("app.js") && c.detail.contains("style.css"),
+            "缺失清单要逐个点名: {}",
+            c.detail
+        );
+        assert!(
+            c.fix.contains("--web") || c.fix.contains("CUTFORGE_WEB"),
+            "修复命令要可执行: {}",
+            c.fix
+        );
         for f in WEB_FILES {
             std::fs::write(root.0.join(f), b"x").unwrap();
         }
@@ -321,7 +432,10 @@ mod tests {
     fn cache_check_probes_writability() {
         let root = TempRoot::new("cache");
         assert!(check_cache_writable(&root.0).ok, "正常目录应可写");
-        assert!(root.0.join(".cutforge/render-cache").is_dir(), "探测应建齐缓存目录");
+        assert!(
+            root.0.join(".cutforge/render-cache").is_dir(),
+            "探测应建齐缓存目录"
+        );
         // 不存在的工程根:失败、给修复,且不得把工程根连带创建出来
         let missing = root.0.join("无此工程");
         let c = check_cache_writable(&missing);
@@ -340,11 +454,22 @@ mod tests {
         let guard = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
         let c = check_port(&root.0, port);
         assert!(!c.ok, "被占端口应失败: {}", c.detail);
-        assert!(c.fix.contains(&format!("findstr :{port}")), "修复命令要含排查命令: {}", c.fix);
-        assert!(c.fix.contains("--port"), "修复命令要含换端口建议: {}", c.fix);
+        assert!(
+            c.fix.contains(&format!("findstr :{port}")),
+            "修复命令要含排查命令: {}",
+            c.fix
+        );
+        assert!(
+            c.fix.contains("--port"),
+            "修复命令要含换端口建议: {}",
+            c.fix
+        );
         // 放手即空闲:通过
         drop(guard);
-        assert!(check_port(&root.0, port).ok, "释放后同端口应转为空闲: {port}");
+        assert!(
+            check_port(&root.0, port).ok,
+            "释放后同端口应转为空闲: {port}"
+        );
     }
 
     /// project 检查:空目录 → 失败且修复命令是可复制的 new。
@@ -353,7 +478,15 @@ mod tests {
         let root = TempRoot::new("project");
         let c = check_project(&root.0);
         assert!(!c.ok);
-        assert!(c.fix.starts_with("cutforge-cli new"), "修复命令要可复制执行: {}", c.fix);
-        assert!(c.fix.contains(&root.0.display().to_string()), "修复命令要带具体目录: {}", c.fix);
+        assert!(
+            c.fix.starts_with("cutforge-cli new"),
+            "修复命令要可复制执行: {}",
+            c.fix
+        );
+        assert!(
+            c.fix.contains(&root.0.display().to_string()),
+            "修复命令要带具体目录: {}",
+            c.fix
+        );
     }
 }

@@ -15,13 +15,13 @@
 pub(crate) mod apply;
 pub(crate) mod bases;
 pub(crate) mod conflicts;
+#[cfg(test)]
+mod inline_tests;
 pub(crate) mod notes;
 pub(crate) mod open;
 pub(crate) mod persist;
 pub(crate) mod query;
 pub(crate) mod sync;
-#[cfg(test)]
-mod inline_tests;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -49,6 +49,8 @@ pub struct Workspace {
     lock: Option<lock::LockGuard>,
     /// 最近一次与磁盘同步时的 project 视图(去 `_meta`;写入窗口漂移检测的基准)。
     synced_disk: Option<serde_json::Value>,
+    /// 打开装载期的修复报告(R-03 半行截断 / R-04 差异自愈;无修复 = None)。
+    repair: Option<crate::repair::RepairReport>,
 }
 
 /// 盘面布局(打开时判定一次,整个生命周期一致):
@@ -80,13 +82,17 @@ impl Layout {
 }
 
 /// Reject → io::Error 映射(写路径各步骤共用)。
-fn reject_to_io(r: cutforge_core::engine::Reject) -> io::Error {    use cutforge_core::engine::Reject::*;
+fn reject_to_io(r: cutforge_core::engine::Reject) -> io::Error {
+    use cutforge_core::engine::Reject::*;
     let (kind, msg) = match r {
         PreconditionFailed { expected, actual } => (
             io::ErrorKind::InvalidInput,
             format!("PRECONDITION_FAILED: 基于 rev-{expected} 的写入已失效(当前 rev-{actual})"),
         ),
-        SchemaInvalid(errs) => (io::ErrorKind::InvalidInput, format!("SCHEMA_INVALID: {}", errs.join("; "))),
+        SchemaInvalid(errs) => (
+            io::ErrorKind::InvalidInput,
+            format!("SCHEMA_INVALID: {}", errs.join("; ")),
+        ),
         InvariantViolation(m) => (io::ErrorKind::InvalidInput, format!("GUARD_FAILED: {m}")),
         NothingToUndo => (io::ErrorKind::InvalidInput, "NOTHING_TO_UNDO".into()),
         NothingToRedo => (io::ErrorKind::InvalidInput, "NOTHING_TO_REDO".into()),

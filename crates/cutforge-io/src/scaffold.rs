@@ -54,10 +54,22 @@ pub fn new_project_value(
     for kind in track_kinds {
         // 同类多轨:序号按 kind 计数递增(V1/V2…),与 Project::next_track_id 规则一致
         let (letter, c) = match kind {
-            K::Video => { count_v += 1; ('V', count_v) }
-            K::Audio => { count_a += 1; ('A', count_a) }
-            K::Text => { count_t += 1; ('T', count_t) }
-            K::Adjust => { count_x += 1; ('X', count_x) }
+            K::Video => {
+                count_v += 1;
+                ('V', count_v)
+            }
+            K::Audio => {
+                count_a += 1;
+                ('A', count_a)
+            }
+            K::Text => {
+                count_t += 1;
+                ('T', count_t)
+            }
+            K::Adjust => {
+                count_x += 1;
+                ('X', count_x)
+            }
         };
         let id = format!("{letter}{c}");
         tracks.push(serde_json::json!({"id": id, "kind": match kind {
@@ -106,8 +118,8 @@ pub fn scaffold_project_layout(
     track_kinds: &[cutforge_core::model::TrackKind],
     layout: LayoutKind,
 ) -> std::io::Result<std::path::PathBuf> {
-    let v = new_project_value(slug, fps, width, height, track_kinds)
-        .map_err(std::io::Error::other)?;
+    let v =
+        new_project_value(slug, fps, width, height, track_kinds).map_err(std::io::Error::other)?;
     let (project_rel, stage_dir) = match layout {
         LayoutKind::V2 => (PROJECT_REL, Some(root.join(crate::paths::TIMELINE))),
         LayoutKind::V3 => (V3_PROJECT_REL, None),
@@ -116,7 +128,7 @@ pub fn scaffold_project_layout(
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
                 "legacy(0.4.x 英文目录)布局只兼容读写,不作为新建产物",
-            ))
+            ));
         }
     };
     let project_path = root.join(project_rel);
@@ -168,15 +180,31 @@ mod tests {
         let kinds = [TrackKind::Video];
         scaffold_project(&root, "a", 30, 1080, 1920, &kinds).unwrap();
         let err = scaffold_project(&root, "a", 30, 1080, 1920, &kinds).unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "已存在必须拒绝覆盖");
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::AlreadyExists,
+            "已存在必须拒绝覆盖"
+        );
         // fps/画幅越界 → 模板即拒绝(不发盘);ADR-0015 边界:64/66/7678/7680 合法,63/65/7681 拒
         assert!(new_project_value("a", 90, 1080, 1920, &kinds).is_err());
-        assert!(new_project_value("a", 30, 63, 480, &kinds).is_err(), "低于下界 64 拒");
-        assert!(new_project_value("a", 30, 7681, 480, &kinds).is_err(), "超上界 7680 拒");
-        assert!(new_project_value("a", 30, 65, 480, &kinds).is_err(), "奇数拒");
+        assert!(
+            new_project_value("a", 30, 63, 480, &kinds).is_err(),
+            "低于下界 64 拒"
+        );
+        assert!(
+            new_project_value("a", 30, 7681, 480, &kinds).is_err(),
+            "超上界 7680 拒"
+        );
+        assert!(
+            new_project_value("a", 30, 65, 480, &kinds).is_err(),
+            "奇数拒"
+        );
         for ok_dim in [64u32, 66, 7678, 7680, 1440, 2160] {
             assert!(canvas_dim_allowed(ok_dim), "边界内偶数 {ok_dim} 必须合法");
-            assert!(new_project_value("a", 30, ok_dim, 1080, &kinds).is_ok(), "{ok_dim}x1080 必须可建");
+            assert!(
+                new_project_value("a", 30, ok_dim, 1080, &kinds).is_ok(),
+                "{ok_dim}x1080 必须可建"
+            );
         }
         fsutil::cleanup(&root);
     }
@@ -184,9 +212,17 @@ mod tests {
     #[test]
     fn empty_tracks_is_valid_minimal_ir() {
         let v = new_project_value("最小", 25, 1920, 1080, &[]).unwrap();
-        assert_eq!(v["tracks"].as_array().unwrap().len(), 0, "tracks 可为空数组");
+        assert_eq!(
+            v["tracks"].as_array().unwrap().len(),
+            0,
+            "tracks 可为空数组"
+        );
         let p = Project::from_value(&v).unwrap();
-        assert_eq!(p.next_track_id(TrackKind::Video), "V1", "空工程第一条视频轨 = V1");
+        assert_eq!(
+            p.next_track_id(TrackKind::Video),
+            "V1",
+            "空工程第一条视频轨 = V1"
+        );
     }
 
     /// V3 显式新建(册六 ADR-0021):根 project.json + media/ + exports/;
@@ -195,26 +231,50 @@ mod tests {
     fn v3_layout_scaffold_and_roundtrip() {
         let root = fsutil::temp_dir("scaffold-v3");
         let kinds = [TrackKind::Video, TrackKind::Audio];
-        let path = scaffold_project_layout(&root, "扁平工程", 30, 1080, 1920, &kinds, LayoutKind::V3)
-            .unwrap();
+        let path =
+            scaffold_project_layout(&root, "扁平工程", 30, 1080, 1920, &kinds, LayoutKind::V3)
+                .unwrap();
         assert_eq!(path, root.join(crate::paths::V3_PROJECT_REL));
-        assert!(root.join(crate::paths::V3_MEDIA).is_dir(), "V3 必须建 media/");
-        assert!(root.join(crate::paths::V3_EXPORTS).is_dir(), "V3 必须建 exports/");
-        assert!(!root.join(crate::paths::TIMELINE).exists(), "V3 不得再造阶段目录");
+        assert!(
+            root.join(crate::paths::V3_MEDIA).is_dir(),
+            "V3 必须建 media/"
+        );
+        assert!(
+            root.join(crate::paths::V3_EXPORTS).is_dir(),
+            "V3 必须建 exports/"
+        );
+        assert!(
+            !root.join(crate::paths::TIMELINE).exists(),
+            "V3 不得再造阶段目录"
+        );
         assert_eq!(crate::paths::detect_layout(&root), LayoutKind::V3);
         // V3 工程可被 Workspace 打开、可写、写回原地
         let mut ws = crate::Workspace::open_exclusive(&root).unwrap();
         ws.apply(
-            cutforge_core::command::Command::TrackAdd { kind: TrackKind::Text, request_id: None },
+            cutforge_core::command::Command::TrackAdd {
+                kind: TrackKind::Text,
+                request_id: None,
+            },
             cutforge_core::oplog::Actor::agent("scaffold-v3"),
             Default::default(),
         )
         .unwrap();
-        assert!(root.join(crate::paths::V3_PROJECT_REL).is_file(), "写回必须原地");
+        assert!(
+            root.join(crate::paths::V3_PROJECT_REL).is_file(),
+            "写回必须原地"
+        );
         assert!(!root.join(crate::paths::PROJECT_REL).exists());
         // V1 不是合法新建产物
-        let err = scaffold_project_layout(&root.join("x"), "a", 30, 1080, 1920, &kinds, LayoutKind::Legacy)
-            .unwrap_err();
+        let err = scaffold_project_layout(
+            &root.join("x"),
+            "a",
+            30,
+            1080,
+            1920,
+            &kinds,
+            LayoutKind::Legacy,
+        )
+        .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
         fsutil::cleanup(&root);
     }

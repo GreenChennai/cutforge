@@ -44,14 +44,30 @@ pub fn environment_text(root: &Path) -> String {
         ("ffprobe", "ffprobe", "CUTFORGE_FFPROBE"),
     ] {
         let via_env = std::env::var_os(key).is_some_and(|v| !v.is_empty());
-        let version = std::process::Command::new(bin).arg("-version").output().ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string())
+        let version = std::process::Command::new(bin)
+            .arg("-version")
+            .output()
+            .ok()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
             .unwrap_or_else(|| "不可用".into());
         let _ = writeln!(s, "{label}: {version}(env {key}: {via_env})");
     }
     let _ = writeln!(s, "── 相关环境变量(有则记值,无则记缺) ──");
-    for key in ["CUTFORGE_FFMPEG", "CUTFORGE_FFPROBE", "CUTFORGE_WEB", "CUTFORGE_PROJECTS",
-                "CUTFORGE_MEDIA", "CUTFORGE_RENDER", "CUTFORGE_SNAPSHOT_INTERVAL_MS"] {
+    for key in [
+        "CUTFORGE_FFMPEG",
+        "CUTFORGE_FFPROBE",
+        "CUTFORGE_WEB",
+        "CUTFORGE_PROJECTS",
+        "CUTFORGE_MEDIA",
+        "CUTFORGE_RENDER",
+        "CUTFORGE_SNAPSHOT_INTERVAL_MS",
+    ] {
         match std::env::var_os(key) {
             Some(v) => {
                 let _ = writeln!(s, "{key} = {}", v.to_string_lossy());
@@ -63,7 +79,15 @@ pub fn environment_text(root: &Path) -> String {
     }
     // 外部管线变量只记**在位性**不记值(诊断包可能外发,别把机器路径带出去)
     for key in ["CUTFLOW_REPO", "CUTFLOW_CONFIG"] {
-        let _ = writeln!(s, "{key} = {}", if std::env::var_os(key).is_some() { "(在位,值略)" } else { "(未设)" });
+        let _ = writeln!(
+            s,
+            "{key} = {}",
+            if std::env::var_os(key).is_some() {
+                "(在位,值略)"
+            } else {
+                "(未设)"
+            }
+        );
     }
     s
 }
@@ -79,10 +103,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("cf-bundle-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let out = dir.join("doctor-bundle-test.zip");
-        let n = write_bundle(&out, vec![
-            Entry { name: "doctor.json".into(), data: b"{\"ok\":true}".to_vec() },
-            Entry { name: "environment.txt".into(), data: environment_text(&dir).into_bytes() },
-        ]).unwrap();
+        let n = write_bundle(
+            &out,
+            vec![
+                Entry {
+                    name: "doctor.json".into(),
+                    data: b"{\"ok\":true}".to_vec(),
+                },
+                Entry {
+                    name: "environment.txt".into(),
+                    data: environment_text(&dir).into_bytes(),
+                },
+            ],
+        )
+        .unwrap();
         assert!(n > 0);
         let zip = std::fs::read(&out).unwrap();
         assert_eq!(&zip[0..4], &[0x50, 0x4B, 0x03, 0x04]);

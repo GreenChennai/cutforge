@@ -46,7 +46,11 @@ pub fn source_stamp(path: &Path) -> Option<(u64, u64)> {
 /// 代理落点(相对工程目录):`.cutforge/proxy/<key>.mp4`(key 只含素材身份,
 /// 不含分辨率——代理分辨率恒为源的一半,规格变化走渲染器版本换代)。
 pub fn proxy_rel(rel: &str, mtime_secs: u64, size: u64) -> String {
-    format!("{}/{}.mp4", PROXY_DIR, media_key("proxy", rel, mtime_secs, size, &[]))
+    format!(
+        "{}/{}.mp4",
+        PROXY_DIR,
+        media_key("proxy", rel, mtime_secs, size, &[])
+    )
 }
 
 /// 代理在位查找:返回代理相对路径(仅当文件真实存在;渲染端 use_proxy 消费)。
@@ -62,7 +66,13 @@ pub fn thumb_rel(rel: &str, mtime_secs: u64, size: u64, at_ms: u64, width: u32) 
     format!(
         "{}/{}.png",
         THUMB_DIR,
-        media_key("thumb", rel, mtime_secs, size, &[&at_ms.to_string(), &width.to_string()])
+        media_key(
+            "thumb",
+            rel,
+            mtime_secs,
+            size,
+            &[&at_ms.to_string(), &width.to_string()]
+        )
     )
 }
 
@@ -87,11 +97,31 @@ mod tests {
         assert_eq!(a, b, "同输入同键(确定性)");
         assert_eq!(a.len(), 16);
         // 任一维度变化 → 键变("改素材即 miss"的机械保证)
-        assert_ne!(a, media_key("thumb", "01_素材/a.mp4", 1001, 123, &["500", "320"]), "mtime 变");
-        assert_ne!(a, media_key("thumb", "01_素材/a.mp4", 1000, 124, &["500", "320"]), "size 变");
-        assert_ne!(a, media_key("thumb", "01_素材/b.mp4", 1000, 123, &["500", "320"]), "路径变");
-        assert_ne!(a, media_key("thumb", "01_素材/a.mp4", 1000, 123, &["600", "320"]), "atMs 变");
-        assert_ne!(a, media_key("proxy", "01_素材/a.mp4", 1000, 123, &["500", "320"]), "用途前缀隔离");
+        assert_ne!(
+            a,
+            media_key("thumb", "01_素材/a.mp4", 1001, 123, &["500", "320"]),
+            "mtime 变"
+        );
+        assert_ne!(
+            a,
+            media_key("thumb", "01_素材/a.mp4", 1000, 124, &["500", "320"]),
+            "size 变"
+        );
+        assert_ne!(
+            a,
+            media_key("thumb", "01_素材/b.mp4", 1000, 123, &["500", "320"]),
+            "路径变"
+        );
+        assert_ne!(
+            a,
+            media_key("thumb", "01_素材/a.mp4", 1000, 123, &["600", "320"]),
+            "atMs 变"
+        );
+        assert_ne!(
+            a,
+            media_key("proxy", "01_素材/a.mp4", 1000, 123, &["500", "320"]),
+            "用途前缀隔离"
+        );
     }
 
     #[test]
@@ -100,9 +130,15 @@ mod tests {
         assert!(p.starts_with(".cutforge/proxy/"), "{p}");
         assert!(p.ends_with(".mp4"));
         let t = thumb_rel("01_素材/a.mp4", 7, 9, 500, 320);
-        assert!(t.starts_with(".cutforge/thumb-cache/") && t.ends_with(".png"), "{t}");
+        assert!(
+            t.starts_with(".cutforge/thumb-cache/") && t.ends_with(".png"),
+            "{t}"
+        );
         let k = peaks_rel("01_素材/a.mp3", 7, 9, 2000);
-        assert!(k.starts_with(".cutforge/peaks-cache/") && k.ends_with(".json"), "{k}");
+        assert!(
+            k.starts_with(".cutforge/peaks-cache/") && k.ends_with(".json"),
+            "{k}"
+        );
     }
 
     #[test]

@@ -119,6 +119,8 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
         // 册四 T4.1/T4.8 媒体池/音频工具(派生物缓存与纯计算,不改工程 IR 不持锁)
         "media_peaks" => return crate::media_tools::media_peaks_tool(&ws_root, args),
         "media_thumbnail" => return crate::media_tools::media_thumbnail_tool(&ws_root, args),
+        // BUG-19:批量缩略图(一次请求多帧,磁盘缓存命中合并;壳侧 4N 次 IPC → 1 次)
+        "media_thumbs" => return crate::media_tools::media_thumbs_tool(&ws_root, args),
         "media_proxy" => return crate::media_tools::media_proxy_tool(&ws_root, args),
         "audio_beats" => return crate::media_tools::audio_beats_tool(&ws_root, args),
         // 册五 T5.2/T5.3/T5.6:调色 LUT/示波器/响度计/编码探测(同口径免锁)
@@ -162,6 +164,20 @@ pub fn dispatch_with_actor(name: &str, args: &Value, actor: Actor) -> Value {
     // 常驻同步守护(M9-2):外部改动 ≤1s 可见;常驻缓存(T1.8)指纹一致即复用。
     // 查询类只读零锁;写类 open_for_write + apply 内临时全程锁,合并/停写语义原样。
     let readonly = is_readonly_tool(name);
+    // R-14:幂等 O(1) 预检——常驻索引在指纹复核窗口内与 OpLog 全集一致,命中即
+    // 短路为与引擎幂等路径同形的回执(免开工作区锁/免全量扫描);未命中一律
+    // 放行,引擎内 has_request_id 全量判定仍是正确性底线。
+    if !readonly
+        && let Some(rid) = args["requestId"].as_str()
+        && let Some(rev) = crate::resident::idempotent_precheck(root_str, &ws_root, rid)
+    {
+        return envelope(
+            true,
+            "OK",
+            "已应用",
+            json!({"opIds": [], "rev": rev, "idempotent": true}),
+        );
+    }
     crate::resident::with_resident(root_str, &ws_root, readonly, |ws| {
         dispatch_on_ws(name, args, actor, root_str, &ws_root, ws)
     })

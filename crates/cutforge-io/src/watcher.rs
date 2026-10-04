@@ -39,6 +39,14 @@ fn ignored(rel: &Path) -> bool {
     if s.contains(".cutforge/oplog/") || s.ends_with(".cutforge/lock") {
         return true;
     }
+    // R-03 修复模式的备份目录 / 修复报告 / R-13 自动快照:恢复面与派生物,
+    // 不是编辑变更,不得惊动编辑器(亦不含 project.json 真相源本体)。
+    if s.contains(".cutforge/recovery-")
+        || s.starts_with(".cutforge/snapshots/")
+        || s == ".cutforge/repair-report.json"
+    {
+        return true;
+    }
     if OUTPUT_DIRS.iter().any(|d| s.starts_with(&format!("{d}/"))) {
         return true;
     }
@@ -58,14 +66,20 @@ fn ignored(rel: &Path) -> bool {
 
 fn mtime_ms(m: &std::fs::Metadata) -> u64 {
     use std::time::UNIX_EPOCH;
-    m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0)
+    m.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn scan(root: &Path) -> Snapshot {
     let mut snap = Snapshot::new();
     walk(root, root, &mut snap);
     fn walk(root: &Path, dir: &Path, out: &mut Snapshot) {
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for entry in rd.flatten() {
             let p = entry.path();
             let Ok(meta) = entry.metadata() else { continue };
@@ -88,14 +102,43 @@ pub struct Watcher {
     root: PathBuf,
     last: Snapshot,
     pub debounce: Duration,
+    /// 当前轮询间隔(R-10:空闲指数退避,发现变更回落;观察点供测试与守护共用)。
+    cur_interval: Duration,
+    /// 退避下限(有变更回落的基准间隔)。
+    min_interval: Duration,
+    /// 退避上限(空闲最长等待)。
+    max_interval: Duration,
 }
+
+/// 活跃同步守护线程数(R-10 观察点,doc-hidden 测试与运维面):
+/// 守护线程持 `Weak` 引用,工作区全部强引用丢弃后线程退出并在此回落。
+#[doc(hidden)]
+pub fn sync_daemon_count() -> usize {
+    DAEMONS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+static DAEMONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 impl Watcher {
     pub fn new(root: &Path, debounce_ms: u64) -> Self {
-        Self { root: root.to_path_buf(), last: scan(root), debounce: Duration::from_millis(debounce_ms) }
+        Self {
+            root: root.to_path_buf(),
+            last: scan(root),
+            debounce: Duration::from_millis(debounce_ms),
+            cur_interval: Duration::from_millis(debounce_ms),
+            min_interval: Duration::from_millis(debounce_ms),
+            max_interval: Duration::from_millis(4000),
+        }
+    }
+
+    /// 当前轮询间隔(守护线程按此 sleep;空闲指数退避、变更回落)。
+    pub fn current_interval(&self) -> Duration {
+        self.cur_interval
     }
 
     /// 对比并产出事件(建议调用间隔 ≥ debounce)。
+    /// R-10:空闲(零事件)时间隔指数退避(×2,封顶 4s),发现变更回落基准——
+    /// 大素材库的轮询 CPU 从"每 250ms 全树一扫"降为空闲期最长 4s 一扫。
     pub fn poll(&mut self) -> Vec<FileEvent> {
         let cur = scan(&self.root);
         let mut events = Vec::new();
@@ -116,9 +159,19 @@ impl Watcher {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
+        if events.is_empty() {
+            let doubled = self.cur_interval * 2;
+            self.cur_interval = doubled.min(self.max_interval).max(self.min_interval);
+        } else {
+            self.cur_interval = self.min_interval;
+        }
         events
             .into_iter()
-            .map(|(rel, kind)| FileEvent { path: self.root.join(rel), kind, ts_ms: ts })
+            .map(|(rel, kind)| FileEvent {
+                path: self.root.join(rel),
+                kind,
+                ts_ms: ts,
+            })
             .collect()
     }
 }
@@ -133,7 +186,10 @@ pub struct SyncHub {
 
 impl SyncHub {
     fn new() -> Self {
-        Self { seq: std::sync::Mutex::new(0), cv: std::sync::Condvar::new() }
+        Self {
+            seq: std::sync::Mutex::new(0),
+            cv: std::sync::Condvar::new(),
+        }
     }
 
     pub fn current(&self) -> u64 {
@@ -165,27 +221,49 @@ impl SyncHub {
     }
 }
 
-/// 每个工程根一个守护线程(进程级注册表,重复调用返回既有 Hub)。
+/// 每个工程根一个守护线程(R-10 重构):
+/// - 注册表持 **Weak** 引用:外部全部强引用(Arc<SyncHub>)丢弃后,守护线程
+///   下一周期 `upgrade` 失败 → 移除注册表条目并退出(不再"每 root 一线程永不退出");
+/// - 轮询间隔自适应:空闲指数退避 250ms→4s(`Watcher::poll` 维护),变更回落。
+///
 /// 线程职责:轮询 → project.json 外部可见变更 → 锁内 merge_from_disk → bump。
 /// 约束(M8-R5):只做短临界区读合并,绝不在此线程做长时间写。
 pub fn ensure_sync_daemon(root: &Path) -> std::sync::Arc<SyncHub> {
     use std::collections::BTreeMap;
-    use std::sync::{Arc, Mutex, OnceLock};
-    static REGISTRY: OnceLock<Mutex<BTreeMap<PathBuf, Arc<SyncHub>>>> = OnceLock::new();
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    static REGISTRY: OnceLock<Mutex<BTreeMap<PathBuf, Weak<SyncHub>>>> = OnceLock::new();
     let reg = REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new()));
     let mut map = reg.lock().unwrap();
-    if let Some(hub) = map.get(root) {
+    if let Some(weak) = map.get(root)
+        && let Some(hub) = weak.upgrade()
+    {
         return hub.clone();
     }
+    // 清掉已死条目(线程退出时也会自清;此处兜底竞态)
+    map.remove(root);
     let hub = Arc::new(SyncHub::new());
-    map.insert(root.to_path_buf(), hub.clone());
+    map.insert(root.to_path_buf(), Arc::downgrade(&hub));
     let thread_root = root.to_path_buf();
-    let thread_hub = hub.clone();
+    let thread_hub: Weak<SyncHub> = Arc::downgrade(&hub);
+    DAEMONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     std::thread::spawn(move || {
         let mut watcher = Watcher::new(&thread_root, 250);
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(250));
+            // R-10:持 Weak 引用工作——外部强引用全部丢弃 → 本线程退出并自清注册表
+            let Some(hub) = thread_hub.upgrade() else {
+                if let Ok(mut map) = REGISTRY.get_or_init(|| Mutex::new(BTreeMap::new())).lock() {
+                    // 只移除仍指向自己的条目(期间 root 若被重新拉起,新条目不动)
+                    let ours = map.get(&thread_root).is_some_and(|w| w.ptr_eq(&thread_hub));
+                    if ours {
+                        map.remove(&thread_root);
+                    }
+                }
+                DAEMONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                return;
+            };
+            std::thread::sleep(watcher.current_interval());
             let events = watcher.poll();
+            drop(hub); // 慢操作前交还强引用,不阻塞外部 Drop 的退出判定
             let project_touched = events
                 .iter()
                 .any(|e| e.path.file_name().is_some_and(|n| n == "project.json"));
@@ -206,7 +284,9 @@ pub fn ensure_sync_daemon(root: &Path) -> std::sync::Arc<SyncHub> {
                     let _ = ws.merge_from_disk();
                 }
             }
-            thread_hub.bump();
+            if let Some(hub) = thread_hub.upgrade() {
+                hub.bump();
+            }
         }
     });
     hub
@@ -232,16 +312,27 @@ mod tests {
         crate::atomic::atomic_write(&root.join(".cutforge/oplog/20260918.jsonl"), b"{}\n").unwrap();
         crate::atomic::atomic_write(&root.join(paths::TIMELINE).join("tmp.tmp"), b"x").unwrap();
         // O7/RT-5:CutFlow 记账文件必须被忽略(rs_run 每阶段都会写,不是编辑变更)
-        crate::atomic::atomic_write(&root.join(paths::TIMELINE).join("pipeline.json"), b"{}").unwrap();
+        crate::atomic::atomic_write(&root.join(paths::TIMELINE).join("pipeline.json"), b"{}")
+            .unwrap();
         fsutil::ensure(&root.join(paths::STATE)).unwrap();
         crate::atomic::atomic_write(&root.join(paths::STATE).join("S3.json"), b"{}").unwrap();
         // 旧布局(0.4.x)同名记账/产物/备份同样忽略
-        crate::atomic::atomic_write(&root.join(paths::LEGACY_TIMELINE).join("pipeline.json"), b"{}").unwrap();
-        crate::atomic::atomic_write(&root.join(paths::LEGACY_STATE).join("S4.json"), b"{}").unwrap();
-        crate::atomic::atomic_write(&root.join(paths::LEGACY_OUTPUT).join("final_x.mp4"), b"x").unwrap();
+        crate::atomic::atomic_write(
+            &root.join(paths::LEGACY_TIMELINE).join("pipeline.json"),
+            b"{}",
+        )
+        .unwrap();
+        crate::atomic::atomic_write(&root.join(paths::LEGACY_STATE).join("S4.json"), b"{}")
+            .unwrap();
+        crate::atomic::atomic_write(&root.join(paths::LEGACY_OUTPUT).join("final_x.mp4"), b"x")
+            .unwrap();
         crate::atomic::atomic_write(&root.join(paths::OUTPUT).join("final_x.mp4"), b"x").unwrap();
         let ev = w.poll();
-        assert_eq!(ev.len(), 1, "oplog/*.tmp/CutFlow 记账文件(新旧布局)/产物必须被忽略: {ev:?}");
+        assert_eq!(
+            ev.len(),
+            1,
+            "oplog/*.tmp/CutFlow 记账文件(新旧布局)/产物必须被忽略: {ev:?}"
+        );
         assert_eq!(ev[0].kind, EventKind::Modified);
         assert!(ev[0].path.ends_with("project.json"));
 
@@ -250,6 +341,54 @@ mod tests {
         let ev = w.poll();
         assert_eq!(ev.len(), 1, "只有 project.json 的 Removed: {ev:?}");
         assert_eq!(ev[0].kind, EventKind::Removed);
+        fsutil::cleanup(&root);
+    }
+
+    /// R-10 本地口径实测(TC-IO-WATCH-001 的机制验证,手动运行):
+    /// 合成 5k 文件素材树,测单次全树扫描耗时 + 空闲期轮询频率(退避 vs 固定)。
+    /// 运行:`cargo test -p cutforge-io -j 2 watch_local_bench -- --ignored --nocapture`
+    #[test]
+    #[ignore = "本地口径实测(手动;造 5k 文件 + 8s 空闲期,不进 CI)"]
+    fn watch_local_bench_scan_cost_and_idle_poll_count() {
+        use std::time::{Duration, Instant};
+        let root = fsutil::temp_dir("cutforge-watch-bench");
+        let tree = root.join("01_原始素材");
+        fsutil::ensure(&tree).unwrap();
+        // 5k 小文件(测试豁免区,直接 fs::write;每文件一次元数据改动)
+        let t0 = Instant::now();
+        for i in 0..5_000u32 {
+            let sub = tree.join(format!("d{}", i / 50));
+            if i % 50 == 0 {
+                fsutil::ensure(&sub).unwrap();
+            }
+            std::fs::write(
+                sub.join(format!("clip_{i:05}.json")),
+                format!("{{\"i\":{i}}}"),
+            )
+            .unwrap();
+        }
+        println!("造 5k 文件耗时: {:?}(每文件一次落盘)", t0.elapsed());
+        // 首扫(全树 walk + 快照)
+        let t1 = Instant::now();
+        let mut w = Watcher::new(&root, 250);
+        let scan_cost = t1.elapsed();
+        assert!(w.poll().is_empty(), "初扫无事件");
+        println!("单次全树扫描(5k 文件): {scan_cost:?}");
+        // 空闲 8s:退避后的轮询次数(对照:固定 250ms = 32 次)
+        let mut polls = 0usize;
+        let mut slept = Duration::ZERO;
+        let t2 = Instant::now();
+        while slept < Duration::from_secs(8) {
+            std::thread::sleep(w.current_interval());
+            slept += w.current_interval();
+            let _ = w.poll();
+            polls += 1;
+        }
+        println!(
+            "空闲 8s 轮询次数: {polls}(退避;固定 250ms 为 32)实测墙钟: {:?}",
+            t2.elapsed()
+        );
+        assert!(polls < 16, "退避必须把空闲轮询频率至少砍半: {polls}");
         fsutil::cleanup(&root);
     }
 }

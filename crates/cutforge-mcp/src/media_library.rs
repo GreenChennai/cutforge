@@ -357,20 +357,10 @@ pub fn media_import_tool(root: &Path, args: &Value) -> Value {
             }
         }
     }
-    // 原子落盘:tmp + rename(目录级唯一落盘点纪律;大文件先 tmp 后原子换名)
-    let tmp = root.join(format!(
-        ".cutforge/import-tmp-{}-{}",
-        std::process::id(),
-        file_name
-    ));
-    if let Some(dir) = tmp.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Err(e) = std::fs::write(&tmp, &payload) {
-        return envelope(false, "INTERNAL", &format!("导入暂存失败: {e}"), json!({}));
-    }
-    if let Err(e) = cutforge_io::atomic::rename(&tmp, &target) {
-        let _ = cutforge_io::atomic::remove(&tmp);
+    // 原子落盘:atomic.rs 唯一落盘点纪律(M2 收口:原手写盘面写 API 暂存属
+    // HEAD 存量旁路,现走 atomic_write——其内部自带同目录 tmp + rename,不再
+    // 自建 import-tmp 暂存面)
+    if let Err(e) = cutforge_io::atomic::atomic_write(&target, &payload) {
         return envelope(false, "INTERNAL", &format!("导入落盘失败: {e}"), json!({}));
     }
     let bytes = payload.len() as u64;

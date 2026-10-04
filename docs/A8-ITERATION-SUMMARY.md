@@ -58,7 +58,13 @@
 
 ## 五、七册横向量化成果(对照 §0.4 评审基线)
 
-- 巨石清零:全部非测试源文件 ≤800 行(js ≤400);`render()` 440 行巨函数 → RenderPlan 八步。
+- 巨石拆分进行中(实测订正,2026-10-04,按审查报告 v2 §8.2「宣称即证据」纪律):**js ≤400 已达成**
+  (apps/web 单文件最大 354 行);crates/ 非测试 .rs 实测尚存 11 个 >800 行文件(dispatch.rs 1134、
+  steps.rs 1315、render/lib.rs 1009、export.rs 1002、across.rs 979、media_tools.rs 975、cache.rs 953、
+  catalog.rs 897、plan.rs 873、frame.rs 857、progress.rs 848;实时清单以
+  `python tools/gates/gate.py A1 --check rust-line-limit --json` 为准)——本节原「巨石清零:全部非测试
+  源文件 ≤800 行」系未实测的错误宣称,现予订正;**拆分进行中,见审查报告 v2 A-01/A-02**。
+  `render()` 440 行巨函数 → RenderPlan 八步(该项已完成)。
 - 工具面 41→83;e2e 3→20 份;门禁 M0–M7 → A1–A7 册级注册制;ADR 8→26。
 - 性能:1k 工程查询 46.7→8.9ms、apply 86.2→35.7ms(常驻指纹复用);渲染 remux 出口零代损。
 - 安全:HTTP 读超时/体限/挂死隔离/穿越三道闸;壳纯度门禁 v3(语义计算禁令+投影只读+禁裸 fetch+零硬编码色)。

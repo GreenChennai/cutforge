@@ -22,11 +22,11 @@
        "deviation": "1",
        "inputI": "-15",
        "inputLra": "11.5",
-       "inputThresh": "-25.5",
-       "inputTp": "-11.5",
+       "inputThresh": "-25",
+       "inputTp": "-11",
        "src": "06_成片输出/final_cutforge_parity-main_854x480.mp4",
        "target": "-14",
-       "within1LU": false
+       "within1LU": true
       },
       "message": "响度测量",
       "ns": "ok",

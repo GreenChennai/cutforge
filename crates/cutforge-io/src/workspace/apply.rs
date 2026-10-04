@@ -24,7 +24,7 @@ use cutforge_core::command::Command;
 use cutforge_core::engine::{ApplyOpts, OpReceipt};
 use cutforge_core::oplog::{Actor, OpKind};
 
-use super::{reject_to_io, Workspace};
+use super::{Workspace, reject_to_io};
 use crate::lock;
 
 impl Workspace {
@@ -106,7 +106,12 @@ impl Workspace {
     /// 步骤 3:Engine::apply——baseRev 前置校验 → 变更 → schema+重叠不变量
     /// (失败回滚引擎快照,拒绝码 Reject 映射 io::Error);
     /// before==after 幂等短路:不升 rev、不产 Op,回执 `idempotent=true`。
-    fn step3_engine_apply(&mut self, cmd: Command, actor: Actor, opts: ApplyOpts) -> io::Result<OpReceipt> {
+    fn step3_engine_apply(
+        &mut self,
+        cmd: Command,
+        actor: Actor,
+        opts: ApplyOpts,
+    ) -> io::Result<OpReceipt> {
         self.engine.apply(cmd, actor, opts).map_err(reject_to_io)
     }
 

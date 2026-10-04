@@ -24,7 +24,11 @@ pub struct CompoundSpec {
 impl CompoundSpec {
     /// 子时间线总时长(ms)= max(startMs+durationMs);渲染/打包共用同一口径。
     pub fn duration_ms(&self) -> u64 {
-        self.clips.iter().map(|c| c.start_ms + c.duration_ms).max().unwrap_or(0)
+        self.clips
+            .iter()
+            .map(|c| c.start_ms + c.duration_ms)
+            .max()
+            .unwrap_or(0)
     }
 
     /// 子时间线语义校验(册五 T5.4):升序、两两不重叠且首尾相接(单轨 concat
@@ -92,7 +96,10 @@ mod tests {
         assert_eq!(cp.canvas, None, "canvas 可省略");
         let back = p.to_validated_value().unwrap();
         assert_eq!(
-            back["tracks"][0]["clips"][0]["compound"]["clips"].as_array().unwrap().len(),
+            back["tracks"][0]["clips"][0]["compound"]["clips"]
+                .as_array()
+                .unwrap()
+                .len(),
             2,
             "compound 子 clips 读写一轮不丢"
         );
@@ -108,7 +115,10 @@ mod tests {
              ]}}
         ]));
         let errs = crate::model::Project::from_value(&v).unwrap_err();
-        assert!(errs.iter().any(|e| e.contains("嵌套超深")), "三层必须被拒: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.contains("嵌套超深")),
+            "三层必须被拒: {errs:?}"
+        );
     }
 
     /// 子时间线单轨语义:重叠/有间隙均拒绝(升序排序后首尾相接判定)。
@@ -127,6 +137,9 @@ mod tests {
             {"id": "V1-002", "src": "b.mp4", "startMs": 1500, "durationMs": 1000}
         ]));
         let errs = crate::model::Project::from_value(&v).unwrap_err();
-        assert!(errs.iter().any(|e| e.contains("子时间线有间隙")), "{errs:?}");
+        assert!(
+            errs.iter().any(|e| e.contains("子时间线有间隙")),
+            "{errs:?}"
+        );
     }
 }

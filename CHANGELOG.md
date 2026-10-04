@@ -21,6 +21,57 @@
 
 ### 新增
 
+- **V2-W1 内核数据正确性轮(工单 docs/tickets/V2-W1-KERNEL-data-correctness.md,审查报告 v2 §4)**:
+  **BUG-01/02(P0)**——切分 sourceIn 改走 `source_read_ms` 单一真相源(变速/倒放/曲线
+  分段积分),新建深模块 `clip_ops.rs`(`Clip::split_at`:关键帧 rebase、fade/transition
+  归属),ClipSplit/ClipSplitAll/track_split_at 三处私有换算删除;**BUG-03(P0)**——
+  Roll/Slide 负 sourceIn 拒绝式守卫 + schema `sourceInMs` 24h 上界;**BUG-04**——Merge
+  语义连续性(同 src/同速/sourceIn 相接 ±1ms)+ `Clip::merge_with`(split→merge 逐字节
+  往返不变量);**BUG-05**——跨轨移动保 id + 目标轨 partition_point 有序插入 + 轨道有序
+  debug_assert(插入族全量有序化);**BUG-06**——undo 稳定 id 寻址(Op 增可选 targetId,
+  旧日志零迁移)+ project 级前置校验(不一致报 CF-002);**BUG-07**——replay rev 链校验
+  (断链/乱序/重号报 RevGap,缺 rev 顺推兼容);**BUG-08**——三路合并序敏感(单侧纯重排
+  保留、双侧异序 CF-003);**BUG-09**——关键帧 per-property 值域表。24 个 TC 用例先红
+  后绿,`cutforge-core` 150 测试全绿;schemas/oplog.schema.json 补可选 `targetId`。
+- **V2-W1 io 耐久性轮(工单 docs/tickets/V2-W1-IO-durability.md)**:
+  **R-01(P0)**——atomic_write 父目录 fsync + append_line sync_data + `append_lines`
+  组提交(批量 100 Op 108ms→2ms);**R-02(P0)**——锁接管三重前置链(锁龄≥30s + pid/启动
+  时间不存活 + 心跳过期),持锁方 5s 心跳,recover 判据同源;**R-03**——oplog 半行截断
+  显式修复模式(自动备份 recovery-* + 截断到最后完整 Op + RepairReport 三出口不静默);
+  **R-04**——记账缺失差异自愈(ReconciledOp 屏障,undo 到此明确拒绝);**R-05**——oplog
+  指纹升级(首/末行 rev + 末行 FNV);**R-10**——watcher 空闲指数退避 + Weak 线程退出;
+  **R-13①**——快照缺省开(5min/LRU10,env 可关);**BUG-12**——备份目录名三段式防同秒
+  互覆 + 50 代保留清理。
+- **V2-W1 门禁纪律轮(工单 docs/tickets/V2-W1-GATES-discipline.md)**:
+  gate.py 1609 行单体拆为 `tools/gates/` 包(m0-m7/a1-a7/common,行为零变化:结构
+  SHA256 diff 为空 + 22/23 检查逐字节一致);CORE-FILES 存在性校验(反面测试 TC-GATE-001
+  真实退出码 2)与条目订正;`check_changelog`(G-4 警告级)与 `check_desktop_line_limit`
+  (G-1 报告模式)落地;CI 增 `clippy-gates`(-D warnings 全仓)与 `kernel-gates`
+  (`gate.py M2`)两 job,A1 行数红线与 bench 阈值启用条件见 gate.yml 注释;§8.2 三纪律
+  入 CONTRIBUTING.md;A8/README「巨石清零」不实宣称订正为实测口径;桌面壳纯度/Box::leak/
+  行数三个观察项扫描器落地(TC-GATE-002/003)。
+- **V2-W1 MCP 安全与服务质量轮(工单 docs/tickets/V2-W1-MCP-security-service.md,审查报告 v2 §3/§4/§5/§6)**:
+  **安全**——BUG-10 Bearer 值精确相等 + 手写 XOR 恒定时间比较(垃圾后缀/头名大小写/
+  重复头/续行四案全部收敛);S-04 最小 HTTP 头解析器(`parse_headers`/`bearer_value`/
+  `query_param` 两通道单一实现,query 按 key 精确切分,`mytoken=` 不再误命中);
+  S-01 `/session` 改发一次性短期凭据(5 分钟/单次/绑会话 id,主 token 不再进任何
+  响应体与会话文件;`POST /session/exchange` 兑换会话 token;会话文件 Unix 0600;
+  URL `?token=` 兼容一版并带 `Deprecation` 响应头);S-02 连接计数上限 64
+  (env `CUTFORGE_HTTP_MAX_CONNS`),超限 503+`Retry-After`;S-03 插件强制层
+  (声明 `filesystem` 白名单外路径访问 → `PluginError::PermissionViolation` 运行时
+  拒绝 + 插件禁用 + `authorize_call` 参数面裁决;process 插件 Unix `sh -c ulimit`
+  包裹,Windows Job Objects 留待)。
+  **服务质量**——R-08 `/media` 流式转发(`io::copy` 恒定 64KB,整文件/大区间不再
+  read_to_end;单 Range clamp 256MB,显式超限 416);R-09 resident 锁 per-project 化
+  (外层 map 短锁 + 各工程 `Arc<Mutex>`,慢工程不再队头阻塞他工程);R-11 渲染队列
+  持久化 `.cutforge/render-queue.jsonl`(append-only + 压实,重启重建 running→
+  interrupted 可重试、pending 原样);R-14 幂等 `HashSet<RequestId>` 常驻索引
+  (随 OpLog 增量维护/重开重建,dispatch 写预检 O(1),10 万 Op 判定 <1ms);
+  BUG-11 SSE root 查询参数 `pct_decode`(CJK/空格路径订阅事件可达)。
+  **工具契约**——BUG-17 `render_frame` 响应显式 `framePath`(工程内相对路径,
+  壳直读取帧,旧 `path`/`media` 保留一版);BUG-19 新工具 `media_thumbs`
+  ({root, src, atMs[], width} 一次多帧,磁盘缓存命中合并;**85 工具 = 21 查询+
+  42 写+22 编排**)。
 - **I1 播放引擎批次(docs/upstream/05 十轮总纲第一轮,硬骨头 B1/B4 部分)**:
   **内核 `preview_zone_render`**——时间线区间半分辨率预渲(fast 档进键,内容寻址
   `.cutforge/preview-cache/`,首渲/命中双路径实测;84 工具 = 21 查询+42 写+21 编排);

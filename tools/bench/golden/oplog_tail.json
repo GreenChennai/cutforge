@@ -155,14 +155,6 @@
            "volume": 0.85
           },
           {
-           "durationMs": 2000,
-           "id": "V1-003",
-           "sourceInMs": 2250,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 10400,
-           "volume": 1.0
-          },
-          {
            "durationMs": 3200,
            "id": "V1-002",
            "sourceInMs": 1000,
@@ -179,12 +171,15 @@
            "id": "V1-004",
            "sourceInMs": 4200,
            "src": "01_原始素材/take1.mp4",
-           "startMs": 5000,
-           "transition": {
-            "durMs": 300.0,
-            "reason": "topic",
-            "type": "fade"
-           }
+           "startMs": 5000
+          },
+          {
+           "durationMs": 2000,
+           "id": "V1-003",
+           "sourceInMs": 2250,
+           "src": "01_原始素材/take1.mp4",
+           "startMs": 10400,
+           "volume": 1.0
           },
           {
            "durationMs": 2000,
@@ -248,6 +243,16 @@
         {
          "clips": [
           {
+           "durationMs": 900,
+           "id": "T1-002",
+           "startMs": 0,
+           "text": "新文本",
+           "textStyle": {
+            "color": "#FFFFFF",
+            "fontSize": 64.0
+           }
+          },
+          {
            "durationMs": 2000,
            "id": "T1-001",
            "overlay": {
@@ -260,16 +265,6 @@
            "src": "01_原始素材/take1.mp4",
            "startMs": 1000,
            "volume": 0.0
-          },
-          {
-           "durationMs": 900,
-           "id": "T1-002",
-           "startMs": 0,
-           "text": "新文本",
-           "textStyle": {
-            "color": "#FFFFFF",
-            "fontSize": 64.0
-           }
           },
           {
            "durationMs": 1000,
@@ -375,14 +370,6 @@
            "volume": 0.85
           },
           {
-           "durationMs": 2000,
-           "id": "V1-003",
-           "sourceInMs": 2250,
-           "src": "01_原始素材/take1.mp4",
-           "startMs": 10400,
-           "volume": 1.0
-          },
-          {
            "durationMs": 3200,
            "id": "V1-002",
            "sourceInMs": 1000,
@@ -399,12 +386,15 @@
            "id": "V1-004",
            "sourceInMs": 4200,
            "src": "01_原始素材/take1.mp4",
-           "startMs": 5000,
-           "transition": {
-            "durMs": 300.0,
-            "reason": "topic",
-            "type": "fade"
-           }
+           "startMs": 5000
+          },
+          {
+           "durationMs": 2000,
+           "id": "V1-003",
+           "sourceInMs": 2250,
+           "src": "01_原始素材/take1.mp4",
+           "startMs": 10400,
+           "volume": 1.0
           },
           {
            "durationMs": 2000,
@@ -468,6 +458,16 @@
         {
          "clips": [
           {
+           "durationMs": 900,
+           "id": "T1-002",
+           "startMs": 0,
+           "text": "新文本",
+           "textStyle": {
+            "color": "#FFFFFF",
+            "fontSize": 64.0
+           }
+          },
+          {
            "durationMs": 2000,
            "id": "T1-001",
            "overlay": {
@@ -480,16 +480,6 @@
            "src": "01_原始素材/take1.mp4",
            "startMs": 1000,
            "volume": 0.0
-          },
-          {
-           "durationMs": 900,
-           "id": "T1-002",
-           "startMs": 0,
-           "text": "新文本",
-           "textStyle": {
-            "color": "#FFFFFF",
-            "fontSize": 64.0
-           }
           },
           {
            "durationMs": 1000,

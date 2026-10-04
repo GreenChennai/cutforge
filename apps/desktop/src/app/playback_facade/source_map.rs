@@ -252,10 +252,20 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// 平台原生的绝对路径样例(Windows 盘符 / Unix 根;全部正斜杠书写,
+    /// Windows Path 解析同样接受,避免测试内出现分隔符字面量耦合)。
+    fn abs_sample() -> PathBuf {
+        if cfg!(windows) {
+            PathBuf::from("C:/cutforge-abs/a.mp4")
+        } else {
+            PathBuf::from("/tmp/cutforge-abs/a.mp4")
+        }
+    }
+
     fn direct_src() -> EngineSource {
         EngineSource::Direct {
             clip_id: "c1".into(),
-            src: PathBuf::from("D:/media/a.mp4"),
+            src: abs_sample(),
             clip_start_ms: 1000,
             clip_end_ms: 5000,
             source_in: 2000.0,
@@ -361,10 +371,13 @@ mod tests {
             "id": "c9", "track": "V1", "trackKind": "video", "src": "media/a.mp4",
             "startMs": 1000, "endMs": 5000, "sourceInMs": 2000, "speed": 2.0
         }]));
-        let root = Path::new("D:/proj");
-        let ds = resolve_direct_source(&snap, root, 3000).expect("命中片段");
+        // 工程根用平台原生绝对路径(temp_dir 各平台恒绝对)
+        let root = std::env::temp_dir().join("cutforge-srcmap-golden");
+        let ds = resolve_direct_source(&snap, &root, 3000).expect("命中片段");
         assert_eq!(ds.clip_id, "c9");
-        assert_eq!(ds.src, PathBuf::from("D:/proj/media/a.mp4"));
+        // 相对 src 挂根:词法 join 后即绝对路径
+        assert_eq!(ds.src, root.join("media/a.mp4"));
+        assert!(ds.src.is_absolute());
         assert_eq!((ds.clip_start_ms, ds.clip_end_ms), (1000, 5000));
         assert!((ds.source_in - 2000.0).abs() < 1e-9);
         // media_in = 2000 + (3000−1000)×2 = 6000;media_out = 2000 + 4000×2 = 10000
@@ -374,12 +387,16 @@ mod tests {
 
     #[test]
     fn resolve_direct_source_absolute_src_stays_absolute() {
+        let src = abs_sample();
         let snap = snap_with_clips(json!([{
-            "id": "c1", "trackKind": "video", "src": "D:/abs/a.mp4",
+            "id": "c1", "trackKind": "video", "src": src.to_string_lossy(),
             "startMs": 0, "endMs": 4000
         }]));
-        let ds = resolve_direct_source(&snap, Path::new("D:/proj"), 0).unwrap();
-        assert_eq!(ds.src, PathBuf::from("D:/abs/a.mp4"));
+        let ds =
+            resolve_direct_source(&snap, std::path::Path::new("/cutforge-any-root"), 0).unwrap();
+        // 绝对 src 原样保绝对(不挂工程根)
+        assert_eq!(ds.src, src);
+        assert!(ds.src.is_absolute());
         // sourceInMs 缺省 0:media_out = 4000
         assert!((ds.media_out - 4000.0).abs() < 1e-9);
     }
@@ -402,24 +419,34 @@ mod tests {
 
     #[test]
     fn matches_engine_fieldwise_and_zone_mismatch() {
+        // live 源从一次真实解析反构(src 来自 resolve 产物):
+        // 测试聚焦「逐字段对账」语义,不耦合路径拼写
         let snap = snap_with_clips(json!([{
-            "id": "c9", "trackKind": "video", "src": "D:/proj/media/a.mp4",
+            "id": "c9", "trackKind": "video", "src": "media/a.mp4",
             "startMs": 1000, "endMs": 5000, "sourceInMs": 2000, "speed": 2.0
         }]));
-        let ds = resolve_direct_source(&snap, Path::new("D:/proj"), 3000).unwrap();
+        let root = std::env::temp_dir().join("cutforge-srcmap-matches");
+        let ds = resolve_direct_source(&snap, &root, 3000).unwrap();
         let live = EngineSource::Direct {
-            clip_id: "c9".into(),
-            src: PathBuf::from("D:/proj/media/a.mp4"),
-            clip_start_ms: 1000,
-            clip_end_ms: 5000,
-            source_in: 2000.0,
-            media_in: 6000.0,
-            media_out: 10000.0,
-            clip_speed: 2.0,
+            clip_id: ds.clip_id.clone(),
+            src: ds.src.clone(),
+            clip_start_ms: ds.clip_start_ms,
+            clip_end_ms: ds.clip_end_ms,
+            source_in: ds.source_in,
+            media_in: ds.media_in,
+            media_out: ds.media_out,
+            clip_speed: ds.clip_speed,
         };
         assert!(ds.matches_engine(&live));
+        // 任一字段漂移(片段被 trim/移动)→ 失配
+        let mut drifted = live.clone();
+        if let EngineSource::Direct { clip_start_ms, .. } = &mut drifted {
+            *clip_start_ms += 1;
+        }
+        assert!(!ds.matches_engine(&drifted));
+        // zone 源恒与 Direct 失配
         let zone = EngineSource::Zone {
-            file: PathBuf::from("z.mp4"),
+            file: root.join("z.mp4"),
             start_ms: 0,
             end_ms: 1,
         };

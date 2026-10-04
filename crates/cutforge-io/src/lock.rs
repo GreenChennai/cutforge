@@ -305,14 +305,37 @@ mod tests {
         drop(_g);
         let _g2 = acquire(&dir, 60_000, 1).expect("释放后可再获取");
         drop(_g2);
-        // 残留死锁(pid 死 + 锁龄造旧 + mtime 拨旧 = 心跳过期)→ 接管
+        // 残留死锁(pid 死 + 锁龄造旧 + mtime 拨旧 = 心跳过期)→ 接管。
+        // 死 pid 必须两平台都"不存在":pid=1 在 Linux 是 init(恒活),不得用。
+        let dead = crate::probe::definitely_dead_pid();
         let stale = now_ms() - 120_000;
-        crate::atomic::atomic_write(&lock_path, format!("pid=1 boot= ts={stale}").as_bytes())
-            .unwrap();
+        crate::atomic::atomic_write(
+            &lock_path,
+            format!("pid={dead} boot= ts={stale}").as_bytes(),
+        )
+        .unwrap();
         set_mtime_old(&lock_path, 120_000);
+        assert!(
+            can_takeover_of_file(&lock_path),
+            "测试前提:伪造现场必须满足接管链(pid={dead} 探测为死 + 锁龄超 + 心跳过期)"
+        );
         let _g3 = acquire(&dir, 60_000, 0).expect("过期锁应被接管");
         drop(_g3);
         fsutil::cleanup(&dir);
+    }
+
+    /// 测试观察面:对盘上锁文件跑一遍真实接管前置链(真实 pid 探测)。
+    fn can_takeover_of_file(lock_path: &Path) -> bool {
+        LockMeta::read(lock_path)
+            .map(|meta| {
+                can_takeover(&meta, now_ms(), 30_000, HEARTBEAT_WINDOW_MS, &|pid: u32| {
+                    (
+                        crate::probe::pid_alive(pid),
+                        crate::probe::pid_start_time(pid),
+                    )
+                })
+            })
+            .unwrap_or(false)
     }
 
     fn set_mtime_old(p: &Path, ms_ago: u64) {
@@ -325,16 +348,25 @@ mod tests {
         .unwrap();
     }
 
-    /// R-02 心跳活性:持锁 ≥6s(超过一个心跳周期)后,锁文件 mtime 必被刷新
-    /// (接近当下,而非创建时刻)。
+    /// R-02 心跳活性:持锁超过一个心跳周期后,锁文件 mtime 必被刷新
+    /// (接近当下,而非创建时刻)。轮询等待(慢 CI 上心跳线程可能被饿死数秒,
+    /// 固定 sleep 断言会 flake):最多等 2 个心跳周期。
     #[test]
     fn heartbeat_refreshes_lock_mtime() {
         let dir = fsutil::temp_dir("cutforge-lock-hb");
         let g = acquire(&dir, 60_000, 0).expect("获取");
         let lock_path = dir.join(".cutforge/lock");
         let created = LockMeta::read(&lock_path).unwrap().mtime_ms.unwrap();
-        std::thread::sleep(Duration::from_millis(HEARTBEAT_INTERVAL_MS + 1_500));
-        let fresh = LockMeta::read(&lock_path).unwrap().mtime_ms.unwrap();
+        let deadline =
+            std::time::Instant::now() + Duration::from_millis(HEARTBEAT_INTERVAL_MS * 2 + 1_000);
+        let mut fresh = created;
+        while std::time::Instant::now() < deadline {
+            fresh = LockMeta::read(&lock_path).unwrap().mtime_ms.unwrap();
+            if fresh > created {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
         assert!(
             fresh > created && now_ms().saturating_sub(fresh) < HEARTBEAT_WINDOW_MS,
             "心跳必须刷新 mtime: created={created} fresh={fresh} now={}",

@@ -287,6 +287,9 @@ impl Engine {
                 let (ti, ci) = p
                     .find_clip(&clip_id)
                     .ok_or(Reject::UnknownClip(clip_id.clone()))?;
+                // Op 面保持 clip 对象指针(撤销/回放经 target_id 稳定寻址,对数组
+                // 重排与外部漂移免疫);数组序由 write_project_op 写回后归位重排,
+                // 与 mutate 内的重插同规则(BUG-05 补口)。
                 let path = clip_pointer(ti, ci);
                 let before = serde_json::to_value(&p.tracks[ti].clips[ci]).unwrap();
                 let mut clip = p.tracks[ti].clips[ci].clone();
@@ -300,8 +303,17 @@ impl Engine {
                         .collect::<Vec<_>>()
                         .join(", ")
                 };
+                let old_start = p.tracks[ti].clips[ci].start_ms;
                 p.tracks[ti].clips[ci] = clip;
+                // after 必须在重排**前**取:重排后 ci 处已是别的 clip(顺序陷阱)
                 let after = serde_json::to_value(&p.tracks[ti].clips[ci]).unwrap();
+                if p.tracks[ti].clips[ci].start_ms != old_start {
+                    let moved = p.tracks[ti].clips.remove(ci);
+                    let pos = p.tracks[ti]
+                        .clips
+                        .partition_point(|c| c.start_ms < moved.start_ms);
+                    p.tracks[ti].clips.insert(pos, moved);
+                }
                 enforce_no_overlap(p, ti)?;
                 Ok((
                     path,

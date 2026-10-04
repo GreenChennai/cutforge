@@ -668,9 +668,11 @@ mod tests {
         let root = lib.join("p");
         make_project(&root, "p");
         // 崩溃残留锁(pid 已死 + 心跳过期:mtime 拨旧)不阻塞移动;活锁阻塞
+        // 死 pid 用跨平台助手(Linux pid=1 是 init 恒活,不得硬编码)
         fsutil::ensure(&root.join(".cutforge")).unwrap();
         let stale_lock = root.join(".cutforge/lock");
-        write_atomic(&stale_lock, b"pid=4194303 boot= ts=1").unwrap();
+        let dead = crate::probe::definitely_dead_pid();
+        write_atomic(&stale_lock, format!("pid={dead} boot= ts=1").as_bytes()).unwrap();
         // 作用域内拨旧 mtime;句柄必须先 Drop(Windows:未关句柄会挡住目录 rename)
         {
             let f = std::fs::OpenOptions::new()

@@ -156,15 +156,18 @@ mod tests {
         .unwrap();
     }
 
-    fn forge_stale_lock(root: &Path) {
+    fn forge_stale_lock(root: &Path) -> u32 {
         fsutil::ensure(&root.join(".cutforge")).unwrap();
-        // 假 pid:Windows PID 恒为 4 的倍数,4194303 必不存活;
+        // 假 pid:用跨平台"必死"助手(Linux 的 pid=1 是 init 恒活,高段 pid 也
+        // 可能被占,须探测;Windows 取 pid 空间外的奇数 4194303);
         // mtime 拨旧(心跳过期,与锁龄超阈值同证)。
+        let dead = crate::probe::definitely_dead_pid();
         let lock = root.join(".cutforge/lock");
-        crate::library::write_atomic(&lock, b"pid=4194303 boot= ts=1").unwrap();
+        crate::library::write_atomic(&lock, format!("pid={dead} boot= ts=1").as_bytes()).unwrap();
         let f = std::fs::OpenOptions::new().write(true).open(&lock).unwrap();
         f.set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2))
             .unwrap();
+        dead
     }
 
     #[test]
@@ -172,11 +175,11 @@ mod tests {
         let lib = fsutil::temp_dir("recover-scan");
         let p = lib.join("crashed");
         make_project(&p);
-        forge_stale_lock(&p);
+        let dead = forge_stale_lock(&p);
         // 扫描命中且证据齐全
         let stale = scan_stale(&lib);
         assert_eq!(stale.len(), 1);
-        assert_eq!(stale[0].pid, Some(4194303));
+        assert_eq!(stale[0].pid, Some(dead));
         assert!(!stale[0].pid_alive, "假 pid 必判死");
         assert!(stale[0].age_ms > STALE_LOCK_MS, "ts=1 必然超龄");
         // 活进程持锁(本进程 pid,锁龄 0)不算恢复对象

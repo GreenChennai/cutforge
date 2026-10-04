@@ -115,6 +115,31 @@ pub fn pid_start_time(pid: u32) -> Option<String> {
     }
 }
 
+/// 返回一个当前探测为**不存在进程**的 pid(测试伪造崩溃残留锁的跨平台助手)。
+/// 两平台语义一致:返回值满足 `pid_alive(return) == false`。
+/// - Windows:pid 恒为 4 的倍数,取 4194303(奇数,必在 pid 空间之外,tasklist 必无匹配);
+/// - Linux:`pid 1 = init/systemd 恒活`(lock 测试在 Linux CI 翻红的根因),
+///   故读 `/proc/sys/kernel/pid_max`(缺省 4194304,下限 32768),自高向低
+///   找第一个 `/proc` 中不存在的 pid(高段被占满的概率工程上为零,兜底取 pid_max−1)。
+#[doc(hidden)]
+pub fn definitely_dead_pid() -> u32 {
+    #[cfg(target_os = "windows")]
+    {
+        4_194_303
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let pid_max = std::fs::read_to_string("/proc/sys/kernel/pid_max")
+            .ok()
+            .and_then(|t| t.trim().parse::<u32>().ok())
+            .unwrap_or(4_194_304);
+        (1..=32u32)
+            .map(|i| pid_max - i)
+            .find(|&p| !pid_alive(p))
+            .unwrap_or_else(|| pid_max.saturating_sub(1))
+    }
+}
+
 pub fn probe(path: &Path) -> io::Result<MediaInfo> {
     // -show_streams 与 -show_format 同批输出:B12 接线后 media_probe 需要分辨率
     // 与音轨存在性(来自 streams),时长仍统一取 format.duration(单一口径)。

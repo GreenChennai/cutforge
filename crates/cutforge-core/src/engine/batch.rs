@@ -87,7 +87,17 @@ impl Engine {
         for ((_, patch), (ti, ci)) in updates.iter().zip(locs.iter()) {
             let mut clip = p.tracks[*ti].clips[*ci].clone();
             n_changes += patch.clone().apply_to(&mut clip).len();
+            let old_start = p.tracks[*ti].clips[*ci].start_ms;
             p.tracks[*ti].clips[*ci] = clip;
+            // BUG-05 补口(与 clip_update 同款):patch 改 startMs 且跨兄弟位置时
+            // 原地更新破坏轨道升序不变量 → remove + 二分重插
+            if p.tracks[*ti].clips[*ci].start_ms != old_start {
+                let moved = p.tracks[*ti].clips.remove(*ci);
+                let pos = p.tracks[*ti]
+                    .clips
+                    .partition_point(|c| c.start_ms < moved.start_ms);
+                p.tracks[*ti].clips.insert(pos, moved);
+            }
         }
         for &ti in &touched {
             enforce_no_overlap(p, ti)?;

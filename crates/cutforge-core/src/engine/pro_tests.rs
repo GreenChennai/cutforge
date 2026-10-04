@@ -999,6 +999,134 @@ fn tc_core_compound_001_shell_early_insert_and_unbind_sorted() {
     );
 }
 
+// ---- CI 回归(gate 37225964239 / web-e2e M10):clip_update 跨位 startMs ----
+
+/// TC-CORE-UPDATE-001:clip_update 把 startMs 改到**跨兄弟位置**(V1-003:
+/// 2000→8400,越过 V1-002@4000)→ 命令必须成功且数组重排保持升序。
+/// 现状(修前):原地更新破坏有序不变量 → debug_assert panic → serve 请求
+/// 线程崩 → web 端 rev 永久卡死(M10 全红根因)。并锁定 rev 分配完整性:
+/// receipt.rev == engine.rev == oplog 末条 Op.rev == 前值+1。
+#[test]
+fn tc_core_update_001_start_patch_cross_position_keeps_sorted() {
+    let mut eng = Engine::new(sample_cross_project()).unwrap();
+    eng.apply(
+        Command::ClipSplit {
+            clip_id: "V1-001".into(),
+            t_ms: 2000,
+        },
+        agent(),
+        ApplyOpts::default(),
+    )
+    .unwrap();
+    let rev1 = eng.rev();
+    let r = eng
+        .apply(
+            Command::ClipUpdate {
+                clip_id: "V1-003".into(),
+                patch: crate::command::ClipPatch {
+                    start_ms: Some(8400),
+                    ..Default::default()
+                },
+            },
+            agent(),
+            ApplyOpts::default(),
+        )
+        .unwrap();
+    assert_eq!(r.rev, rev1 + 1, "receipt rev 必须 +1");
+    assert_eq!(eng.rev(), rev1 + 1);
+    let last = eng.oplog().ops().last().unwrap();
+    assert_eq!(last.rev, Some(rev1 + 1), "oplog 末条 Op 必带分配的 rev");
+    let seq: Vec<u64> = eng.project().tracks[0]
+        .clips
+        .iter()
+        .map(|c| c.start_ms)
+        .collect();
+    assert_eq!(
+        seq,
+        vec![0, 4000, 8400],
+        "跨位 start 更新后数组必须重排为升序: {seq:?}"
+    );
+    eng.undo(agent()).unwrap();
+    let seq: Vec<u64> = eng.project().tracks[0]
+        .clips
+        .iter()
+        .map(|c| c.start_ms)
+        .collect();
+    assert_eq!(seq, vec![0, 2000, 4000], "undo 必须还原跨位更新: {seq:?}");
+    eng.redo(agent()).unwrap();
+    let seq: Vec<u64> = eng.project().tracks[0]
+        .clips
+        .iter()
+        .map(|c| c.start_ms)
+        .collect();
+    assert_eq!(seq, vec![0, 4000, 8400], "redo 必须复现跨位更新: {seq:?}");
+}
+
+/// TC-CORE-UPDATE-002:跨位 clip_update 的 Op(数组级 before/after)回放等价。
+#[test]
+fn tc_core_update_002_cross_position_update_replay_eq() {
+    let base_project = sample_cross_project();
+    let mut eng = Engine::new(base_project.clone()).unwrap();
+    eng.apply(
+        Command::ClipSplit {
+            clip_id: "V1-001".into(),
+            t_ms: 2000,
+        },
+        agent(),
+        ApplyOpts::default(),
+    )
+    .unwrap();
+    eng.apply(
+        Command::ClipUpdate {
+            clip_id: "V1-003".into(),
+            patch: crate::command::ClipPatch {
+                start_ms: Some(8400),
+                ..Default::default()
+            },
+        },
+        agent(),
+        ApplyOpts::default(),
+    )
+    .unwrap();
+    let expected = eng.state_hash();
+    let replayed = Engine::replay(base_project, eng.oplog().ops()).unwrap();
+    assert_eq!(
+        replayed.state_hash(),
+        expected,
+        "跨位 clip_update 的 Op 必须可回放且等价"
+    );
+}
+
+/// TC-CORE-UPDATE-003(批量族同口):ClipsPatch 携带跨位 startMs → 数组重排升序。
+#[test]
+fn tc_core_update_003_clips_patch_start_reorders_sorted() {
+    let mut eng = Engine::new(sample_cross_project()).unwrap();
+    eng.apply(
+        Command::ClipsPatch {
+            updates: vec![(
+                "V1-001".into(),
+                crate::command::ClipPatch {
+                    start_ms: Some(8400),
+                    ..Default::default()
+                },
+            )],
+        },
+        agent(),
+        ApplyOpts::default(),
+    )
+    .unwrap();
+    let seq: Vec<(&str, u64)> = eng.project().tracks[0]
+        .clips
+        .iter()
+        .map(|c| (c.id.as_str(), c.start_ms))
+        .collect();
+    assert_eq!(
+        seq,
+        vec![("V1-002", 4000), ("V1-001", 8400)],
+        "批量 patch 跨位 start 后必须重排: {seq:?}"
+    );
+}
+
 #[test]
 fn delete_insert_move_and_request_id_dedup() {
     let mut eng = Engine::new(sample_project()).unwrap();
@@ -1064,4 +1192,19 @@ fn delete_insert_move_and_request_id_dedup() {
         ApplyOpts::default(),
     );
     assert!(matches!(r4, Err(Reject::InvariantViolation(_))));
+}
+
+/// e2e M10 夹具同款(两段视频,中间留 2000ms 空隙供跨位更新回归)。
+fn sample_cross_project() -> crate::model::Project {
+    let v = serde_json::json!({
+        "version": 1, "schemaVersion": "2.0.0", "slug": "tc-update", "fps": 30,
+        "canvas": {"width": 1080, "height": 1920},
+        "tracks": [
+            {"id": "V1", "kind": "video", "clips": [
+                {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 4000},
+                {"id": "V1-002", "src": "a.mp4", "startMs": 4000, "durationMs": 4400}
+            ]}
+        ]
+    });
+    crate::model::Project::from_value(&v).unwrap()
 }

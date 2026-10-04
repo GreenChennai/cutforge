@@ -18,6 +18,8 @@ pub(crate) const WATCHDOG_POLL: Duration = Duration::from_millis(250);
 
 /// 统一 spawn 形态:Windows 下加 CREATE_NO_WINDOW
 pub(crate) fn command(program: &Path) -> Command {
+    // mut 仅 Windows 分支使用(CREATE_NO_WINDOW);非 Windows 下允许 unused_mut
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut cmd = Command::new(program);
     #[cfg(windows)]
     {

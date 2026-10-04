@@ -141,13 +141,14 @@ fn tc_io_lock_001_alive_holder_not_taken_over() {
 #[test]
 fn tc_io_lock_002_dead_holder_takeover_after_stale() {
     let root = cutforge_io::tests_fixture("tc-lock-002").unwrap();
-    // Windows PID 恒为 4 的倍数,4194303 必不存活
-    forge_lock(&root, 4_194_303, 120_000, 120_000);
+    // 死 pid 用跨平台助手(Linux pid=1 是 init 恒活,硬编码高段也可能被占)
+    let dead = probe::definitely_dead_pid();
+    forge_lock(&root, dead, 120_000, 120_000);
     assert!(
         lock::acquire(&root, 30_000, 0).is_ok(),
         "pid 死 + 锁龄 120s + 心跳过期 → 必须接管"
     );
-    drop_root_and_redo(&root, 4_194_303, 0, 120_000);
+    drop_root_and_redo(&root, dead, 0, 120_000);
     fsutil::cleanup(&root);
 }
 

@@ -238,7 +238,9 @@ pub(super) fn write_project_op(
                 ));
             }
         }
-        return apply_value_at(project, &ptr, value);
+        apply_value_at(project, &ptr, value)?;
+        reorder_clip_at(project, ti, ci);
+        return Ok(());
     }
     if let Some(want) = expect {
         let cur = project_value_at(project, &op.target.path)?;
@@ -249,7 +251,40 @@ pub(super) fn write_project_op(
             ));
         }
     }
-    apply_value_at(project, &op.target.path, value)
+    let ptr = op.target.path.clone();
+    let clip_obj = is_clip_pointer(&ptr);
+    apply_value_at(project, &ptr, value)?;
+    // 旧格式 clip 对象指针写回后同样归位(历史跨位 start 更新在重放时补齐数组序;
+    // 值不变,只定序——与 mutate 内重插同规则)
+    if clip_obj && let Some((ti, ci)) = parse_clip_pointer(&ptr) {
+        reorder_clip_at(project, ti, ci);
+    }
+    Ok(())
+}
+
+/// `/tracks/{ti}/clips/{ci}` 形判(clip 对象指针;write_project_op 归位重排判据)。
+fn is_clip_pointer(path: &str) -> bool {
+    parse_clip_pointer(path).is_some()
+}
+
+fn parse_clip_pointer(path: &str) -> Option<(usize, usize)> {
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.len() != 4 || segs[0] != "tracks" || segs[2] != "clips" {
+        return None;
+    }
+    Some((segs[1].parse().ok()?, segs[3].parse().ok()?))
+}
+
+/// 把 (ti, ci) 处的 clip 按 start_ms 归位(remove + 二分重插,与 mutate 内
+/// 跨位更新的重插同规则)。撤销/重做/回放写回跨位历史对象后恢复轨道升序。
+/// 同轨无同 start 兄弟(enforce_no_overlap),插入位置无歧义。
+fn reorder_clip_at(project: &mut Project, ti: usize, ci: usize) {
+    let clip = project.tracks[ti].clips[ci].clone();
+    project.tracks[ti].clips.remove(ci);
+    let pos = project.tracks[ti]
+        .clips
+        .partition_point(|c| c.start_ms < clip.start_ms);
+    project.tracks[ti].clips.insert(pos, clip);
 }
 
 /// 便捷:构造测试样本工程。

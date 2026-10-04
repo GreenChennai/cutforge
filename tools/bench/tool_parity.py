@@ -413,6 +413,24 @@ def _num_or_none(v) -> float | None:
     return None
 
 
+def _loudness_inputs_within_tolerance(g: dict, a: dict) -> bool:
+    """within1LU 派生布尔的输入族是否全部落在响度容差内。
+
+    within1LU 骑在 0.5LU 量化档界上,跨 ffmpeg build 的测量漂移(ubuntu 实证
+    inputLra 11.5 vs 11 恰跨档)会让布尔翻转——布尔本身不承载输入容差之外的
+    行为语义,输入族全过 LOUDNESS_TOL 时随输入降级为 WARN。缺键不挡(输入族
+    可能只暴露子集);任一可配对输入超差 → False(布尔差异仍按 DRIFT 严格报)。"""
+    seen = False
+    for k, tol in LOUDNESS_TOL.items():
+        gv, av = _num_or_none(g.get(k)), _num_or_none(a.get(k))
+        if gv is None or av is None:
+            continue
+        seen = True
+        if abs(gv - av) > tol:
+            return False
+    return seen
+
+
 def _tolerant_pair(k: str, g, a, path: str, extras: list[str]) -> bool:
     """audio_beats 启发式面 + 响度测量字段族的唯一宽口径(严格对比前尝试;
     返回 True = 已按容差记 WARN)。
@@ -485,6 +503,11 @@ def compare(golden, actual, path: str, diffs: list[str], extras: list[str]) -> N
         for k, gv in golden.items():
             if k not in actual:
                 diffs.append(f"{path}.{k}: 键缺失(实际响应没有 golden 的键)")
+            elif (k == "within1LU" and isinstance(gv, bool) and isinstance(actual[k], bool)
+                  and gv != actual[k]
+                  and _loudness_inputs_within_tolerance(golden, actual)):
+                extras.append(f"{path}.{k}: 派生布尔随响度测量容差翻转(输入族全在 "
+                              f"LOUDNESS_TOL 内,golden={gv} actual={actual[k]};仅警告)")
             elif _tolerant_pair(k, gv, actual[k], f"{path}.{k}", extras):
                 pass  # audio_beats 启发式容差命中,已记 WARN
             else:

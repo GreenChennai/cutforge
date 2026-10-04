@@ -33,6 +33,8 @@ const MARGIN_LR: u64 = 40;
 const MARGIN_V_PERMILLE: u64 = 100;
 
 /// 文本渲染路径的结构化 WARN(渲染端降级留痕;exec_subtitle 并入进度事件)。
+/// BUG-13 第一步:改写必须显式留痕——文本含覆写标签花括号的行(escape_text
+/// 将中和其定界符)逐条列出 clip id 与原文。
 pub fn generation_warnings(project: &Project) -> Vec<String> {
     let mut out = Vec::new();
     for t in text_tracks(project) {
@@ -40,6 +42,12 @@ pub fn generation_warnings(project: &Project) -> Vec<String> {
             let Some(text) = &c.text else { continue };
             if text.trim().is_empty() {
                 continue;
+            }
+            if has_override_tag(text) {
+                out.push(format!(
+                    "clip {} 文本含 ASS 覆写标签,花括号定界已中和(防注入),原文: {};",
+                    c.id, text
+                ));
             }
             if let Some(hz) = &c.huazi
                 && catalog::find_huazi(&hz.template).is_none()
@@ -282,7 +290,7 @@ fn karaoke_body(text: &str, duration_ms: u64) -> String {
             per
         };
         out.push_str(&format!("{{\\kf{k}}}"));
-        out.push(*ch);
+        out.push(escape_karaoke_char(*ch));
     }
     out
 }
@@ -298,6 +306,7 @@ fn perchar_body(kind: &str, text: &str, step_ms: f64, pval: impl Fn(&str, f64) -
     let mut out = String::new();
     for (i, ch) in chars.iter().enumerate() {
         let t0 = (step_ms * i as f64).round() as i64;
+        let ch = escape_karaoke_char(*ch);
         match kind {
             "perchar-pop" => {
                 let o100 = (pval("overshoot", 1.1).clamp(1.0, 1.3) * 100.0).round() as i64;
@@ -321,19 +330,97 @@ fn perchar_body(kind: &str, text: &str, step_ms: f64, pval: impl Fn(&str, f64) -
                     t2 = t0 + 180,
                 ));
             }
-            _ => out.push(*ch),
+            _ => out.push(ch),
         }
     }
     out
 }
 
-/// 渲染层转义(IR 文本不变;仅 ASS 呈现层):换行 → \N,花括号 → 全角
-/// (防止用户文本被 libass 当 override 标签解析)。
+/// 渲染层转义(IR 文本不变;仅 ASS 呈现层;BUG-13/21 唯一实现,subtitle.rs
+/// ass_export 同源调用)。规则:
+/// - 换行 → \N,\r 剥除(不变);
+/// - 花括号**精确中和**:仅当配对 `{...}` 的内容会被 libass 解析为覆写标签
+///   (含 `\`+字母/数字)时,该对花括号替换为全角定界符;其余花括号(无标签
+///   配对、未闭合 `{`、孤立 `}`)原样保留半角——用户文本中的代码/数学/占位符
+///   不再被全角篡改。
+///
+/// 机制注记(本机 ffmpeg 9.0.1/libass 像素级实证,2026-10):工单原案"插
+/// U+200B 打断"无效——`{<ZWSP>\pos(..)}` 与 `{\pos(..)}` 渲染逐像素相等
+/// (PSNR=inf,libass 在块内直接扫描反斜杠标签);全角定界符是唯一有效中和
+/// (非 override 语法,标签不再解析、以字面文本可见)。未闭合 `{` 无注入面
+/// (libass 按字面渲染整段,含反斜杠)。
 pub fn escape_text(text: &str) -> String {
-    text.replace('\r', "")
-        .replace('\n', "\\N")
-        .replace('{', "｛")
-        .replace('}', "｝")
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut i = 0usize;
+    while i < chars.len() {
+        match chars[i] {
+            '\r' => i += 1,
+            '\n' => {
+                out.push_str("\\N");
+                i += 1;
+            }
+            '{' => match chars[i + 1..].iter().position(|&c| c == '}') {
+                Some(off) => {
+                    let close = i + 1 + off;
+                    let content: String = chars[i + 1..close].iter().collect();
+                    if has_override_tag(&content) {
+                        out.push('｛');
+                        push_escaped_body(&mut out, &content);
+                        out.push('｝');
+                    } else {
+                        out.push('{');
+                        push_escaped_body(&mut out, &content);
+                        out.push('}');
+                    }
+                    i = close + 1;
+                }
+                // 未闭合 '{':无解析面,半角保真
+                None => {
+                    out.push('{');
+                    let rest: String = chars[i + 1..].iter().collect();
+                    push_escaped_body(&mut out, &rest);
+                    i = chars.len();
+                }
+            },
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// 块内正文换行归一(\r 剥除、\n → \N;与外层同规则)。
+fn push_escaped_body(out: &mut String, content: &str) {
+    for c in content.chars() {
+        match c {
+            '\r' => {}
+            '\n' => out.push_str("\\N"),
+            c => out.push(c),
+        }
+    }
+}
+
+/// 判定 ASS override 块内容是否含可解析的覆写标签:存在 `\` 紧跟 ASCII
+/// 字母/数字(如 \b1、\pos(...)、\1c、\t(..))即视为标签序列。纯文本内容
+/// (占位符/数学式)不含该形态,半角保真。
+pub fn has_override_tag(content: &str) -> bool {
+    let b = content.as_bytes();
+    b.windows(2)
+        .any(|w| w[0] == b'\\' && w[1].is_ascii_alphanumeric())
+}
+
+/// 卡拉OK/逐字动画通道路径的用户字符转义:该通道把每个用户字符夹在自产
+/// `{..}` 标签之间,半角 `{` 会吞掉后续自产标签的闭合(逐字结构破坏)——
+/// 无配对上下文可判,用户花括号一律全角化(字面可见,结构安全)。
+fn escape_karaoke_char(c: char) -> char {
+    match c {
+        '{' => '｛',
+        '}' => '｝',
+        _ => c,
+    }
 }
 
 /// ms → ASS H:MM:SS.CC(厘秒四舍五入;确定性与溢出安全)。
@@ -576,17 +663,115 @@ mod tests {
         );
     }
 
-    /// 转义:换行 → \N;花括号 → 全角(IR 文本不变,仅呈现层)。
+    /// 转义(BUG-13 新契约):换行 → \N;仅"内容含合法 ASS 覆写标签"的花括号对
+    /// 才中和,其余半角保真(IR 文本不变,仅呈现层)。
     #[test]
     fn escaping_newlines_and_braces() {
         assert_eq!(escape_text("a\nb"), "a\\Nb");
+        // \b1 是合法覆写标签 → 该花括号对被中和(全角定界符)
         assert_eq!(escape_text("a{\\b1}b"), "a｛\\b1｝b");
         assert_eq!(escape_text("x\r\ny"), "x\\Ny");
+        // 无标签内容 → 半角保真(旧实现全角篡改,此断言即 TC-TEXT-001 红点)
+        assert_eq!(escape_text("use {name} here"), "use {name} here");
         let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
             {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "上\n下"}
         ]}])));
         let ass = generate(&p).unwrap();
         assert!(ass.contains("上\\N下"), "{ass}");
+    }
+
+    /// TC-RENDER-TEXT-001:半角花括号保真——用户文本中的代码/数学/占位符
+    /// 形态不再被全角篡改;未闭合 '{' 与孤立 '}' 无解析面(libass 对未闭合块
+    /// 按字面渲染,本机 ffmpeg 9.0.1/libass 实证),一律保留半角。
+    #[test]
+    fn tc_render_text_001_halfwidth_braces_preserved() {
+        assert_eq!(escape_text("use {name} here"), "use {name} here");
+        assert_eq!(escape_text("f(x) = {1,2,3}"), "f(x) = {1,2,3}");
+        assert_eq!(escape_text("集合{a}与{b}对齐"), "集合{a}与{b}对齐");
+        assert_eq!(escape_text("未闭合{abc"), "未闭合{abc");
+        assert_eq!(escape_text("孤立}括号"), "孤立}括号");
+        // 端到端:generate 产物的 Dialogue 行保留半角原文
+        let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
+            {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "use {name} here"}
+        ]}])));
+        let ass = generate(&p).unwrap();
+        assert!(
+            ass.contains(",,use {name} here"),
+            "Dialogue 行必须保真: {ass}"
+        );
+    }
+
+    /// TC-RENDER-TEXT-002:覆写标签注入被中和(\pos 越界注入不再生效)。
+    /// 机制注记:工单原案"插 U+200B 打断"经本机 libass 实证无效——
+    /// `{<ZWSP>\pos(...)}` 与 `{\pos(...)}` 渲染逐像素相等(PSNR=inf,标签照常
+    /// 解析);全角定界符是实证唯一有效中和(标签不再解析,以字面文本可见)。
+    #[test]
+    fn tc_render_text_002_pos_injection_neutralized() {
+        let out = escape_text("{\\pos(999,999)} Injected");
+        assert!(!out.contains("{\\pos"), "半角标签定界必须被中和: {out}");
+        assert!(
+            out.contains('｛') && out.contains('｝'),
+            "全角定界中和: {out}"
+        );
+        // 混合形态:无标签片段保真,注入片段逐个中和
+        let mixed = escape_text("A{ok}B{\\frz90}C{\\pos(1,2)}D");
+        assert!(mixed.contains("{ok}"), "无标签片段保真: {mixed}");
+        assert!(
+            mixed.contains("｛\\frz90｝") && mixed.contains("｛\\pos(1,2)｝"),
+            "注入片段逐个中和: {mixed}"
+        );
+        // 端到端:烧录 ASS 的 Dialogue 行不再含半角标签定界
+        let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
+            {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "{\\pos(999,999)}X"}
+        ]}])));
+        let ass = generate(&p).unwrap();
+        let dialogue = ass.lines().find(|l| l.starts_with("Dialogue")).unwrap();
+        assert!(!dialogue.contains("{\\pos"), "{dialogue}");
+    }
+
+    /// BUG-13 第一步(静默变显式):generation_warnings 列出被中和改写的行
+    /// (clip id + 原文),干净文本不告警。
+    #[test]
+    fn tc_render_text_warnings_list_neutralized_lines() {
+        let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
+            {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "a{\\pos(9,9)}b"},
+            {"id": "T1-002", "startMs": 1000, "durationMs": 1000, "text": "干净文本"}
+        ]}])));
+        let warns = generation_warnings(&p);
+        assert!(
+            warns
+                .iter()
+                .any(|w| w.contains("T1-001") && w.contains("a{\\pos(9,9)}b")),
+            "改写行必须留痕: {warns:?}"
+        );
+        assert!(
+            !warns.iter().any(|w| w.contains("T1-002")),
+            "干净文本不告警: {warns:?}"
+        );
+    }
+
+    /// 卡拉OK/逐字动画通道的用户花括号字符必须中和(半角 '{' 会吞掉自产逐字
+    /// 标签的闭合,破坏逐字结构;该通道逐字符夹在自产 {..} 标签之间,无配对
+    /// 上下文,一律全角化最安全)。
+    #[test]
+    fn karaoke_and_perchar_neutralize_user_braces() {
+        let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
+            {"id": "T1-001", "startMs": 0, "durationMs": 2000, "text": "A{B",
+             "textStyle": {"karaoke": true}}
+        ]}])));
+        let ass = generate(&p).unwrap();
+        // 黄金形态:3 字 2000ms → kf 66/66/68(尾字吸收);用户 '{' 全角化,
+        // 后随自产标签(旧实现此处为半角 '{',会吞掉 {\\kf68} 的闭合)
+        assert!(ass.contains("{\\kf66}A{\\kf66}｛{\\kf68}B"), "{ass}");
+        let p = project(base(json!([{"id": "T1", "kind": "text", "clips": [
+            {"id": "T1-001", "startMs": 0, "durationMs": 1000, "text": "C}D",
+             "huazi": {"template": "hz.pop"}}
+        ]}])));
+        let ass = generate(&p).unwrap();
+        assert!(
+            ass.contains("}｝"),
+            "逐字动画用户花括号须中和(标签闭合紧跟全角): {ass}"
+        );
     }
 
     #[test]

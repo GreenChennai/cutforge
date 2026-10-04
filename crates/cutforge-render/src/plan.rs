@@ -193,6 +193,9 @@ pub struct RenderOptions {
     pub verbose_cmd: bool,
     pub export: Option<crate::export::ExportSpec>,
     pub preview_output: Option<PathBuf>,
+    /// ffmpeg 子进程超时秒数(R-07 编排层透传接口;None = 缺省策略:
+    /// 10min,encode 按预估时长×3 放大且不低于 10min)。MCP/CLI 按需透传。
+    pub ff_timeout_secs: Option<u64>,
 }
 
 impl RenderPlan {

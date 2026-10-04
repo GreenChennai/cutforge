@@ -1,0 +1,48 @@
+{
+  "task": "V2-W2-KERNEL2(R-12/R-13):内核 apply 去全量 clone + 增量校验 + OpLog 压实底盘",
+  "capturedAt": "2026-10-04T20:46:30+08:00",
+  "buildProfile": "debug(本机纪律:禁 --release;前/后同 profile 同机)",
+  "fixture": "1000 clips / 8 轨(V1-V4 video、A1-A4 audio;每轨 125×240ms=30s),T1.8 同款",
+  "workload": "500 × clip_update(volume 0.5↔0.8 交替,真实变更各产一条 Op)",
+  "r12_apply": {
+    "metric": "1k 片段 × 500 命令总耗时(cargo test --test perf_apply_bench -- --ignored,1 轮预热后计时)",
+    "before": {
+      "totalMs": 71158,
+      "perOpUs": 142316.0,
+      "capturedAt": "2026-10-04T20:30:49.348Z",
+      "dataFile": "kernel-apply-baseline-2026-10-04.json",
+      "impl": "每命令全量 clone Project + 全量 to_validated_value(schema 全树走查 + 全 clip 关键帧走查)"
+    },
+    "after": {
+      "totalMs": 396,
+      "perOpUs": 792.0,
+      "capturedAt": "2026-10-04T20:46:30.570Z",
+      "dataFile": "kernel-apply-after-2026-10-04.json",
+      "rerun": "同机并行构建负载下复跑 610ms(2026-10-04T21:0x);区间 396–610ms",
+      "impl": "Revert 逆向回滚(受影响容器变更前值,Op 面同源)+ 增量校验(受影响子树 schema + 关键帧 + 全局 id 唯一)"
+    },
+    "reduction": "99.1%–99.4%(396–610 / 71158;验收线 ≥80% 达标,余量 116×)",
+    "note": "失败/幂等路径同样受益:回滚成本从 O(全工程) 降为 O(受影响轨)"
+  },
+  "r13_open": {
+    "metric": "TC-PERF-OPEN-001:10 万 Op 工程 open 热路径(core 侧代理 = 逐行 parse + 去重装载 + 撤销栈重建 + 压实规划 + Engine::restore;io Workspace::open 接线待 io 层收口)",
+    "measuredMs": 1094,
+    "runs": [1094, 1266, 1161, 1171],
+    "budgetMs": 2000,
+    "verdict": "绿(<2s;37 MB jsonl,debug profile)",
+    "note": "压实后 io open 只需回放快照后缀,盘面 I/O 随日志截断同比例下降;io 接线为本工单遗留协调项"
+  },
+  "testCounts": {
+    "before": 153,
+    "after": 164,
+    "breakdown": {
+      "lib单元测试": "88(113 − 27 迁出 pro_tests + 2 新增[TC-CORE-VALIDATE-001/压实规划门])",
+      "pro_commands_rs": "27(自 src/engine/pro_tests.rs include! 迁出,零丢失)",
+      "rollback_eq_rs": "5(TC-CORE-APPLY-099 五条失败路径)",
+      "oplog_compact_rs": "3(TC-IO-SNAP-001/002 + TC-PERF-OPEN-001)",
+      "perf_apply_bench_rs": "1(TC-PERF-APPLY-001 预算门;bench 本体 #[ignore] 手动跑)",
+      "既有集成测试": "40(edit_ops_engine 14/file_level_undo 4/keyframes_clear 1/merge_property 1/merge_table 6/notes_anchor 3/oplog_replay_hash_eq 3/text_style_batch 5/undo_redo_roundtrip 3,零改动)"
+    },
+    "existingPreserved": true
+  }
+}

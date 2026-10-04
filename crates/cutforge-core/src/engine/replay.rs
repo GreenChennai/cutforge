@@ -17,8 +17,21 @@ impl Engine {
     /// 而非 open 失败**;与 R-03 半行截断同入 RepairReport 模式);旧日志缺 rev
     /// 字段(serde default None)按顺推兼容,零迁移。
     pub fn replay(base: Project, ops: &[Op]) -> Result<Self, Reject> {
+        Self::replay_from_snapshot(base, 0, ops)
+    }
+
+    /// 从**最近快照**增量回放(R-13③):`base` 为快照时刻的工程态,
+    /// `snapshot_rev` 为快照覆盖到的 rev,`ops` 为快照之后的 Op 后缀
+    /// (`engine` 压实协议下即 `compact::retained_ops` 的结果)。
+    /// rev 链从 snapshot_rev+1 起校验;全量日志回放 = snapshot_rev 0 的特例
+    /// ([`Engine::replay`])。
+    pub fn replay_from_snapshot(
+        base: Project,
+        snapshot_rev: u64,
+        ops: &[Op],
+    ) -> Result<Self, Reject> {
         let mut eng = Engine::new(base).map_err(Reject::SchemaInvalid)?;
-        eng.rev = 0;
+        eng.rev = snapshot_rev;
         for op in ops {
             // rev 链校验先行:断链不得半应用(状态保持可重放从干净基线起步)
             let expected = eng.rev + 1;
@@ -39,7 +52,15 @@ impl Engine {
                 // 稳定 id 寻址(BUG-06):新 Op 按 target_id 定位,旧 Op 走指针
                 write_project_op(&mut project, op, op.after.clone(), None)
                     .map_err(Reject::InvariantViolation)?;
-                if let Err(errs) = project.to_validated_value() {
+                // R-12②:回放与 apply 同走增量校验(受影响子树 + 全局不变量);
+                // 遗留叶指针形态由 validate 的 Full 兜底降级全量,语义不缩水
+                let errs = super::validate::validate_affected(
+                    &project,
+                    &op.target.path,
+                    op.target_id.as_deref(),
+                    &op.after,
+                );
+                if !errs.is_empty() {
                     return Err(Reject::SchemaInvalid(errs));
                 }
                 eng.project = project;
@@ -61,8 +82,18 @@ impl Engine {
 /// 重做栈同样可从日志确定性重建:M9 修复前 restore 把 redo 置空,而 MCP 每次
 /// dispatch 都重开工程 → redo 跨 dispatch 永远失效(NOTHING_TO_REDO)。
 pub fn rebuild_stacks(ops: &[Op]) -> (Vec<String>, Vec<String>) {
-    let mut undo_stack: Vec<String> = Vec::new();
-    let mut redo_stack: Vec<String> = Vec::new();
+    rebuild_stacks_incremental((Vec::new(), Vec::new()), ops)
+}
+
+/// 从快照增量重建撤销/重做双栈(R-13③):`stacks_at_snapshot` 为快照副本日志
+/// 上 `rebuild_stacks` 的结果(或快照持久化的栈态),`ops` 为快照之后的 Op 后缀
+/// ——只折叠后缀,不再全量重放前缀。Undo 弹栈、Redo 压回,auto 类跳过,
+/// 与 [`rebuild_stacks`] 逐语义一致(rebuild_stacks = 空前缀特例)。
+pub fn rebuild_stacks_incremental(
+    stacks_at_snapshot: (Vec<String>, Vec<String>),
+    ops: &[Op],
+) -> (Vec<String>, Vec<String>) {
+    let (mut undo_stack, mut redo_stack) = stacks_at_snapshot;
     for op in ops {
         match op.op_kind {
             OpKind::Undo => {

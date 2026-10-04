@@ -1,9 +1,16 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
-// apply 命令单测(册五 T5.4 起部分拆分自 engine::apply——行数红线 A1-3,
-// 纯移动;`#[path]` 内联回 apply::tests,断言路径与语义零变化)。
+//! apply 命令集成测试(册五 T5.4 + V2-W1 内核数据正确性 + CI 回归)。
+//! A-05:自 `src/engine/pro_tests.rs` 的 `include!` 内联迁出至标准 `tests/`
+//! 布局——纯移动,断言与语义零变化;测试发现回归 cargo 原生粒度。
 
-use super::*;
+use cutforge_core::command::{ClipPatch, Command, TrimEdge, TrimMode};
+use cutforge_core::engine::{Answer, ApplyOpts, Engine, Query, Reject, patch, sample_project};
+use cutforge_core::oplog::Actor;
 use serde_json::json;
+
+fn agent() -> Actor {
+    Actor::agent("test")
+}
 
 // ---- 册五 T5.4:compound_create / compound_unbind / track_split_at ----
 
@@ -329,7 +336,7 @@ fn proj_engine(tracks: serde_json::Value) -> Engine {
         "canvas": {"width": 1080, "height": 1920},
         "tracks": tracks
     });
-    Engine::new(crate::model::Project::from_value(&v).unwrap()).unwrap()
+    Engine::new(cutforge_core::model::Project::from_value(&v).unwrap()).unwrap()
 }
 
 fn clip_of(eng: &Engine, id: &str) -> serde_json::Value {
@@ -432,8 +439,8 @@ fn tc_core_split_003_speed_curve_analytic_agreement() {
         "解析解 5000+2250: {right}"
     );
     // 右段自身积分 = 500×2.0 = 1000 → 右段源窗 [7250, 8250) = 原窗尾部(守恒)
-    let c: crate::model::Clip = serde_json::from_value(right.clone()).unwrap();
-    let read = crate::model::source_read_ms(&c);
+    let c: cutforge_core::model::Clip = serde_json::from_value(right.clone()).unwrap();
+    let read = cutforge_core::model::source_read_ms(&c);
     assert!(
         (read - 1000.0).abs() < 1e-9,
         "右段源读时长必须与原曲线一致: {read}"
@@ -646,7 +653,7 @@ fn tc_tchema_001_source_in_schema_upper_bound() {
             ]}
         ]
     });
-    let errs = crate::model::Project::from_value(&v).unwrap_err();
+    let errs = cutforge_core::model::Project::from_value(&v).unwrap_err();
     assert!(
         errs.iter().any(|e| e.contains("sourceInMs")),
         "schema 必须拒绝天文数字 sourceInMs: {errs:?}"
@@ -663,7 +670,7 @@ fn tc_tchema_001_source_in_schema_upper_bound() {
         ]
     });
     assert!(
-        crate::model::Project::from_value(&ok).is_ok(),
+        cutforge_core::model::Project::from_value(&ok).is_ok(),
         "上界内合法值不得误拒"
     );
 }
@@ -796,7 +803,7 @@ fn tc_core_move_001_cross_track_keeps_clip_id() {
     eng.apply(
         Command::ClipUpdate {
             clip_id: "V1-001".into(),
-            patch: crate::command::ClipPatch {
+            patch: cutforge_core::command::ClipPatch {
                 volume: Some(0.7),
                 ..Default::default()
             },
@@ -842,7 +849,7 @@ fn tc_core_move_002_track_stays_sorted_by_start() {
     // 跨轨移动:目标轨二分插入保有序
     eng.apply(
         Command::TrackAdd {
-            kind: crate::model::TrackKind::Video,
+            kind: cutforge_core::model::TrackKind::Video,
             request_id: None,
         },
         agent(),
@@ -883,7 +890,7 @@ fn tc_core_insert_001_early_insert_keeps_track_sorted() {
     let mut clip = clip_of(&eng, "V1-001").clone();
     clip["id"] = json!("V1-002");
     clip["startMs"] = json!(0);
-    let clip: crate::model::Clip = serde_json::from_value(clip).unwrap();
+    let clip: cutforge_core::model::Clip = serde_json::from_value(clip).unwrap();
     eng.apply(
         Command::ClipInsert {
             to_track: "V1".into(),
@@ -924,7 +931,7 @@ fn tc_core_insert_002_batch_insert_unsorted_batch_sorted_array() {
             {"id": "V1-001", "src": "a.mp4", "startMs": 6000, "durationMs": 1000}
         ]}
     ]));
-    let mk = |id: &str, start: u64| -> crate::model::Clip {
+    let mk = |id: &str, start: u64| -> cutforge_core::model::Clip {
         serde_json::from_value(json!({
             "id": id, "src": "a.mp4", "startMs": start, "durationMs": 1000
         }))
@@ -1023,7 +1030,7 @@ fn tc_core_update_001_start_patch_cross_position_keeps_sorted() {
         .apply(
             Command::ClipUpdate {
                 clip_id: "V1-003".into(),
-                patch: crate::command::ClipPatch {
+                patch: cutforge_core::command::ClipPatch {
                     start_ms: Some(8400),
                     ..Default::default()
                 },
@@ -1079,7 +1086,7 @@ fn tc_core_update_002_cross_position_update_replay_eq() {
     eng.apply(
         Command::ClipUpdate {
             clip_id: "V1-003".into(),
-            patch: crate::command::ClipPatch {
+            patch: cutforge_core::command::ClipPatch {
                 start_ms: Some(8400),
                 ..Default::default()
             },
@@ -1105,7 +1112,7 @@ fn tc_core_update_003_clips_patch_start_reorders_sorted() {
         Command::ClipsPatch {
             updates: vec![(
                 "V1-001".into(),
-                crate::command::ClipPatch {
+                cutforge_core::command::ClipPatch {
                     start_ms: Some(8400),
                     ..Default::default()
                 },
@@ -1195,7 +1202,7 @@ fn delete_insert_move_and_request_id_dedup() {
 }
 
 /// e2e M10 夹具同款(两段视频,中间留 2000ms 空隙供跨位更新回归)。
-fn sample_cross_project() -> crate::model::Project {
+fn sample_cross_project() -> cutforge_core::model::Project {
     let v = serde_json::json!({
         "version": 1, "schemaVersion": "2.0.0", "slug": "tc-update", "fps": 30,
         "canvas": {"width": 1080, "height": 1920},
@@ -1206,5 +1213,5 @@ fn sample_cross_project() -> crate::model::Project {
             ]}
         ]
     });
-    crate::model::Project::from_value(&v).unwrap()
+    cutforge_core::model::Project::from_value(&v).unwrap()
 }

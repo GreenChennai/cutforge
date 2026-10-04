@@ -11,7 +11,9 @@
 //! T1.1(册一):原单文件 lib.rs 拆分为模块目录(纯移动重构,导出面与行为零变化):
 //! - `registry`:契约常量(mcp-tools/capability-matrix/ui-fields 编译期嵌入)+ 注册表
 //!   + 结果协议 envelope + 5.4 错误码表;
-//! - `dispatch`:单一分发表(所有通道共用)+ JSON-RPC 面 + 参数解析与错误映射;
+//! - `dispatch`:通道入口/执行面路由/幂等预检与错误映射(所有通道共用);
+//! - `handlers`:命令处理器注册表(A-01:85 工具按域分文件,新增命令 = 一个文件
+//!   + 注册一行;schema/覆盖/文档面从注册表派生);
 //! - `tools_nolock`:免开工作区工具(project_new/media_probe/media_browse/render_probe/stage_status);
 //! - `orchestrate`:CutFlow 脚本编排(py_launcher/orchestrate);
 //! - `progress`:cutforge-render 后端同步/异步渲染与进度轮询;
@@ -28,6 +30,7 @@ mod dispatch;
 mod edit_ops;
 mod export_tools;
 mod grade_tools;
+mod handlers;
 mod library_tools;
 mod media_library;
 mod media_tools;
@@ -47,6 +50,7 @@ mod workspace_svc;
 
 // ---- 公开 API:路径与拆分前完全一致(main.rs、cutforge-cli、tests/ 零改动) ----
 pub use dispatch::{dispatch, dispatch_with_actor, handle_rpc, handle_rpc_as};
+pub use handlers::{CommandHandler, HandlerCtx, Stage};
 pub use plugin::{
     DEFAULT_PROCESS_LIMITS, PluginError, ProcessLimits, authorize, authorize_call,
     check_filesystem_access, disable_plugin, is_plugin_disabled, plugin_actor,

@@ -11,11 +11,17 @@ serde_json = "1"
 cutforge-core = { path = "../cutforge-core" }
 cutforge-io = { path = "../cutforge-io" }
 cutforge-schema = { path = "../cutforge-schema" }
-# M2 架构注记(V2-W1 联合验收登记):本依赖边为 HEAD 基线存量——cutforge-mcp
-# 直接依赖 cutforge-render 做渲染编排(progress::resolve_render_bin 只做同目录/
-# PATH 可执行定位,渲染本体一律子进程 CLI 透传,不链其 Rust API);依赖边解耦
-# (编排面收敛到注册表/进程发现)由 A-01 dispatch 注册表化轮统一重构,本轮不
-# 强制;门禁豁免由主会话与 GATES 落。
+# 依赖边永久登记(A-01 注册表化轮收口,替代 V2-W1"归 A-01 解耦"的临时登记):
+# 本边 = 纯函数元数据消费——analyze::{rms_envelope,onset_strength,frame_diffs,
+# pcm_lag,pick_cuts}(波形/节拍/场景检测单一实现)、grade::parse_cube(LUT 解析)、
+# encode::{HW_CANDIDATES,hw_encoder_usable}(硬编降级判定,与渲染端执行面同源)、
+# subtitle::{parse_auto,ExportClip,srt_export_clips,ass_export}(SRT/ASS 解析导出
+# 单一实现)、plan::RenderPlan/export::{window_project,source_advance_ms,
+# clip_play_ms,preset_canvas}(导出矩阵时间窗纯计算)、RENDERER_VERSION(队列
+# 事件版本位,渲染缓存同源版本戳);渲染本体一律经 resolve_render_bin 定位后
+# 子进程 CLI 透传,不链其 Rust API。真解耦 = 上述纯函数迁 core/新契约 crate
+# (跨 crate 大动作,动 render 本体,需主会话另立工单);消解前此边合法,
+# cli check-deps 白名单已同步永久登记。
 cutforge-render = { path = "../cutforge-render" }
 cutforge-script = { path = "../cutforge-script" }
 

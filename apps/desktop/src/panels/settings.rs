@@ -16,36 +16,7 @@ use sable::widgets::theme::theme;
 use sable::widgets::tokens::FONT_SIZE_CAPTION;
 
 use crate::app::DesktopApp;
-
-/// 快捷键速查表(键位/入口 → 动作;与 DesktopApp::on_key 与预览面板实装一一对应)。
-const SHORTCUTS: &[(&str, &str)] = &[
-    ("空格", "播放 / 暂停(流畅=引擎 · 精确=逐帧)"),
-    ("K", "暂停"),
-    ("L", "正向倍速循环 1→2→4→1(≠1x 自动静音)"),
-    ("Shift+L", "慢放倍速循环 1→0.5→0.25"),
-    ("J", "减速方向 4→2→1→0.5→0.25(到 0.25 停)"),
-    ("← / →", "步退 / 步进一帧(Shift = 1 秒)"),
-    ("Home / End", "跳到开头 / 结尾"),
-    ("Esc", "退出沉浸预览"),
-    ("S", "在播放头分割选中片段"),
-    ("T", "在播放头分割全部轨道"),
-    ("D", "复制选中片段到播放头"),
-    ("Ctrl+C / Ctrl+X", "复制 / 剪切选中片段"),
-    ("Ctrl+V", "粘贴到播放头(源轨)"),
-    ("G", "关闭播放头所在空隙"),
-    ("Del / Backspace", "删除选中片段"),
-    ("Ctrl+Z / Ctrl+Y", "撤销 / 重做"),
-    ("+ / −", "时间轴缩放"),
-    ("循环按钮", "当前片段 A→B 循环(传输条 ↻)"),
-    ("静音按钮", "静音开关(传输条 🔊/🔇;无声卡提示 toast)"),
-    ("画质按钮", "流畅(引擎直解码)/ 精确(逐帧 render_frame)"),
-    ("截图按钮", "当前帧落 <工程>/screenshots/(预览右下)"),
-    ("沉浸按钮", "收起其他面板只留预览(非系统全屏;Esc 退出)"),
-    ("拖进度条", "按下拖动直接映射(零动画);松手才 seek"),
-    ("拖动片段", "移动(松手提交;拖拽中本地预览)"),
-    ("点标尺/轨道空白", "跳转播放头"),
-    ("吸附按钮", "开关片段边缘/播放头吸附"),
-];
+use crate::app::shortcut_rows;
 
 pub struct SettingsPanel {
     app: WeakEntity<DesktopApp>,
@@ -225,19 +196,30 @@ impl Render for SettingsPanel {
                 ),
         );
 
-        // —— 快捷键速查 ——
-        let mut rows = v_flex().gap(px(SpacingTokens::XS));
-        for (keys, action) in SHORTCUTS {
-            rows = rows.child(
-                PropertyRow::new(*keys).control(
-                    div()
-                        .text_size(px(FONT_SIZE_CAPTION))
-                        .text_color(colors.text_secondary)
-                        .child(*action),
-                ),
-            );
+        // —— 快捷键速查(BUG-22:从命令注册表生成,与 on_key 分发同源;按组分节)——
+        let rows = shortcut_rows();
+        let mut shortcut_sections = Vec::new();
+        for group in ["播放", "编辑", "视图"] {
+            let mut list = v_flex().gap(px(SpacingTokens::XS));
+            let mut any = false;
+            for (g, keys, label) in &rows {
+                if *g != group {
+                    continue;
+                }
+                any = true;
+                list = list.child(
+                    PropertyRow::new(keys.join(" / ")).control(
+                        div()
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(colors.text_secondary)
+                            .child(*label),
+                    ),
+                );
+            }
+            if any {
+                shortcut_sections.push(section(format!("快捷键 · {group}"), list));
+            }
         }
-        let shortcuts = section("快捷键", rows);
 
         // —— 候内核(诚实边界)——
         let pending = section(
@@ -263,7 +245,7 @@ impl Render for SettingsPanel {
             .child(behavior)
             .child(playback)
             .child(kernel)
-            .child(shortcuts)
+            .children(shortcut_sections)
             .child(pending)
     }
 }

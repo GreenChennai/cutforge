@@ -1,0 +1,152 @@
+// ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
+//! golden 参数样例表(TC-MCP-DISPATCH-001,`#[cfg(test)]`):注册表每个 handler
+//! 一份"已知可被 schema 接受的最小合法调用样例",取形自 tool_parity 黄金对拍
+//! 序列与夹具工程真实路径——schema 必须接受真实调用形态,实现与契约永不脱节。
+//! 新增命令:在 [`golden_args`] 注册一行样例(负向测试强制:必填参数缺失必须
+//! 被校验器拒绝)。
+
+#[cfg(test)]
+pub(crate) fn golden_args(name: &str) -> serde_json::Value {
+    use serde_json::json;
+    // 金样根占位:仅参与 schema 类型/形态校验,不触盘
+    const R: &str = "D:/cutforge-golden-fixture";
+    match name {
+        // ---- 静态契约面 ----
+        "capability_matrix" => json!({}),
+        "plugin_validate" => json!({"manifest": {
+            "id": "golden-plugin", "name": "金样插件", "version": "1.0.0",
+            "form": "worker", "entry": "main.js", "description": "golden 夹具",
+            "permissions": {"read": true, "write": true},
+            "contributes": {"commands": [{"id": "cmd-1", "title": "命令甲"}]},
+        }}),
+        // ---- 渲染系 ----
+        "render" => json!({"root": R, "backend": "cutforge"}),
+        "render_run" => json!({"root": R}),
+        "render_progress" => json!({"root": R, "runId": "golden-run"}),
+        "render_frame" => json!({"root": R, "atMs": 500}),
+        "preview_zone_render" => json!({"root": R, "startMs": 0, "endMs": 1000}),
+        "render_queue" => json!({"root": R, "action": "list"}),
+        // ---- 免开工作区 ----
+        "project_new" => json!({"root": R, "slug": "golden", "fps": 30,
+            "canvasW": 1080, "canvasH": 1920, "tracks": ["video", "audio"]}),
+        "media_probe" => json!({"root": R, "src": "01_原始素材/take1.mp4"}),
+        "media_browse" => json!({"root": R, "dir": "01_原始素材"}),
+        "render_probe" => json!({"root": R}),
+        "stage_status" => json!({"root": R}),
+        "media_peaks" => json!({"root": R, "src": "01_原始素材/bgm.mp3", "level": "coarse"}),
+        "media_thumbnail" => json!({"root": R, "src": "01_原始素材/take1.mp4", "atMs": 500}),
+        "media_thumbs" => json!({"root": R, "src": "01_原始素材/take1.mp4", "atMs": [100, 500]}),
+        "media_proxy" => json!({"root": R, "src": "01_原始素材/take1.mp4"}),
+        "audio_beats" => json!({"root": R, "src": "01_原始素材/bgm.mp3", "sensitivity": 0.5}),
+        "lut_import" => json!({"root": R, "src": "01_原始素材/test.cube"}),
+        "scope_data" => json!({"root": R, "src": "01_原始素材/frame.png"}),
+        "audio_loudness" => json!({"root": R, "src": "01_原始素材/bgm.mp3", "target": -14}),
+        "encode_probe" => json!({"root": R, "trial": false}),
+        "multicam_sync" => json!({"root": R,
+            "angles": ["01_原始素材/take1.mp4", "01_原始素材/take2.mp4"]}),
+        "otio_import" => json!({"root": R, "src": "06_成片输出/final.otio"}),
+        "migrate_layout" => json!({"root": R, "to": "v3"}),
+        "library_manage" => json!({"root": R, "action": "new", "name": "golden-a",
+            "slug": "金样库", "fps": 30}),
+        "library_list" => json!({"root": R}),
+        "library_recover" => json!({"root": R, "action": "list"}),
+        "export_preflight" => json!({"root": R}),
+        "export_all_variants" => json!({"root": R, "ratios": ["9x16", "16x9"],
+            "qualityTier": "480p"}),
+        "media_library" => json!({"root": R, "action": "list"}),
+        "media_import" => {
+            json!({"root": R, "src": "libbgm.mp3", "libraryRoot": "D:/golden-medlib"})
+        }
+        "project_package" => json!({"root": R, "out": "D:/golden-pkg.cfpkg"}),
+        "project_unpackage" => json!({"root": R, "src": "D:/golden-pkg.cfpkg"}),
+        // ---- AI 预演/批准 ----
+        "preview_plan" => json!({"root": R, "plan": [
+            {"id": "p-golden", "tool": "clip_update",
+             "args": {"clipId": "V1-001", "patch": {"volume": 0.8}}}],
+        }),
+        "apply_plan" => json!({"root": R, "planId": "plan-golden", "plan": [
+            {"id": "p-golden", "tool": "clip_update",
+             "args": {"clipId": "V1-001", "patch": {"volume": 0.8}}}],
+            "approvals": {"approveAll": true},
+        }),
+        // ---- 只读查询 ----
+        "project_get" => json!({"root": R}),
+        "wordline_get" => json!({"root": R}),
+        "cutlist_get" => json!({"root": R, "applied": false}),
+        "notes_list" => json!({"root": R}),
+        "oplog_tail" => json!({"root": R, "limit": 5}),
+        "conflict_list" => json!({"root": R}),
+        "timeline_get" => json!({"root": R}),
+        "session_report" => json!({"root": R, "sinceRev": 0}),
+        // ---- 写操作 ----
+        "clip_add" => json!({"root": R, "trackId": "V1",
+            "src": "01_原始素材/take1.mp4", "startMs": 0, "durationMs": 4000,
+            "volume": 1.0}),
+        "clip_update" => json!({"root": R, "clipId": "V1-001", "patch": {"volume": 0.9},
+            "summary": "golden:微调音量"}),
+        "transition_set" => json!({"root": R, "clipId": "V1-001", "type": "fade",
+            "durMs": 300, "reason": "topic"}),
+        "motion_set" => json!({"root": R, "clipId": "V1-001", "in": "zoomIn",
+            "inMs": 280, "out": "fadeOut", "outMs": 260}),
+        "bgm_set" => json!({"root": R, "src": "01_原始素材/bgm.mp3",
+            "gainDb": -12, "ducking": true, "loop": true}),
+        "subtitle_set" => json!({"root": R, "clipId": "V1-001", "text": "第一句字幕"}),
+        "subtitle_retime" => json!({"root": R, "clipId": "V1-001",
+            "startMs": 0, "durationMs": 1800}),
+        "overlay_add" => json!({"root": R, "trackId": "T1",
+            "element": {"src": "01_原始素材/take1.mp4", "atMs": 1000, "durationMs": 2000,
+                        "overlay": {"x": 84, "y": 240, "w": 400, "h": 200, "opacity": 0.5}}}),
+        "sfx_add" => json!({"root": R, "tMs": 500, "src": "01_原始素材/sfx.mp3",
+            "volume": 0.8}),
+        "cut_apply" => json!({"root": R,
+            "patch": {"script": [{"action": "review", "text": "golden 补丁旁白"}]}}),
+        "undo" => json!({"root": R}),
+        "redo" => json!({"root": R}),
+        "clip_split" => json!({"root": R, "clipId": "V1-001", "tMs": 2000}),
+        "clip_delete" => json!({"root": R, "clipId": "V1-001"}),
+        "clip_move" => json!({"root": R, "clipId": "V1-001", "startMs": 12000}),
+        "clip_duplicate" => json!({"root": R, "clipId": "V1-001", "startMs": 20000}),
+        "clip_trim" => json!({"root": R, "clipId": "V1-002", "mode": "trim",
+            "edge": "out", "deltaMs": -1000}),
+        "clip_split_all" => json!({"root": R, "tMs": 5000}),
+        "clip_gap_delete" => json!({"root": R, "trackId": "V1", "tMs": 1900}),
+        "clip_copy" => json!({"root": R, "clipId": "V1-003"}),
+        "clip_paste_at" => json!({"root": R, "trackId": "V1", "startMs": 15000}),
+        "track_add" => json!({"root": R, "kind": "video"}),
+        "track_update" => json!({"root": R, "trackId": "T1",
+            "patch": {"name": "字幕轨", "color": "#22CC88", "heightPx": 120}}),
+        "notes_add" => json!({"root": R, "anchor": {"kind": "clip", "ref": "V1-001", "tMs": 0},
+            "body": "这里语速偏快", "author": "agent", "tags": ["golden"]}),
+        "notes_resolve" => json!({"root": R, "noteId": "n-0001", "reply": "已微调",
+            "opIds": ["op-1"]}),
+        "notes_reject" => json!({"root": R, "noteId": "n-0001", "reason": "风格即如此"}),
+        "note_reply" => json!({"root": R, "noteId": "n-0001", "body": "追问:一并调整?",
+            "author": "user"}),
+        "text_add" => json!({"root": R, "text": "新文本", "atMs": 0, "durationMs": 900,
+            "textStyle": {"fontSize": 64, "color": "#FFFFFF"}}),
+        "subtitle_import" => json!({"root": R, "src": "05_时间线工程/subs.srt"}),
+        "subtitle_export" => json!({"root": R, "format": "srt", "trackId": "T1"}),
+        "subtitle_replace" => json!({"root": R, "find": "第一句", "replace": "改一句"}),
+        // ---- 专业编辑 ----
+        "compound_create" => json!({"root": R, "clipIds": ["V2-001", "V2-002"],
+            "toTrack": "V2", "startMs": 0}),
+        "compound_unbind" => json!({"root": R, "clipId": "V2-001"}),
+        "multicam_cut" => json!({"root": R, "trackId": "V1", "startMs": 20000,
+            "durationMs": 4000,
+            "angles": [{"src": "01_原始素材/take1.mp4", "offsetMs": 0},
+                       {"src": "01_原始素材/take2.mp4", "offsetMs": 250}],
+            "switches": [{"tMs": 0, "angle": 0}, {"tMs": 1500, "angle": 1}]}),
+        "scene_detect" => json!({"root": R, "src": "01_原始素材/hardcut.mp4",
+            "sampleFps": 5}),
+        "otio_export" => json!({"root": R, "format": "otio"}),
+        // ---- 编排 ----
+        "stage_run" => json!({"root": R, "stage": "S3", "scriptArgs": ["--only", "S3"]}),
+        "stage_rebuild" => json!({"root": R, "dir": "05_时间线工程",
+            "scriptArgs": ["05_时间线工程"]}),
+        "verify_run" => json!({"root": R, "level": "L1", "scriptArgs": ["--level", "L1"]}),
+        "sync_check" => json!({"root": R, "video": "06_成片输出/final.mp4",
+            "qc": true, "scriptArgs": ["--video", "06_成片输出/final.mp4"]}),
+        "export_jianying" => json!({"root": R, "name": "golden 成片"}),
+        other => panic!("golden 参数样例缺工具: {other}(新增命令必须同步注册样例)"),
+    }
+}

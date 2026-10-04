@@ -350,3 +350,229 @@ pub fn project_timeline(snap: &Snapshot) -> (Timeline, HashMap<u64, String>) {
         .unwrap_or(0);
     (tl, id_map)
 }
+
+// ---------------------------------------------------------------------------
+// 单测(A-07 / TC-DESK-PROJ-001):投影纯函数 golden 对拍
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn clip(id: &str, track: &str, start: u64, dur: u64) -> Value {
+        // 内核投影形状:endMs(时长合计消费)与 durationMs 并存
+        json!({ "id": id, "track": track, "startMs": start, "durationMs": dur, "endMs": start + dur })
+    }
+
+    // ---- track_metas ----
+
+    #[test]
+    fn track_metas_golden_shape() {
+        let metas = track_metas(&json!({ "tracks": [
+            {"id": "V1", "kind": "video", "name": "主轨", "mute": true, "locked": false},
+            {"id": "A1", "kind": "audio", "name": "", "locked": true}
+        ]}));
+        assert_eq!(metas.len(), 2);
+        assert_eq!(
+            (metas[0].id.as_str(), metas[0].name.as_str()),
+            ("V1", "主轨")
+        );
+        assert!(metas[0].mute && !metas[0].locked);
+        assert!(matches!(metas[0].kind, TrackKind::Video));
+        // 空名回落轨道 id
+        assert_eq!((metas[1].id.as_str(), metas[1].name.as_str()), ("A1", "A1"));
+        assert!(matches!(metas[1].kind, TrackKind::Audio));
+        assert!(metas[1].locked);
+    }
+
+    #[test]
+    fn track_metas_kind_mapping_and_missing_tracks() {
+        let metas = track_metas(&json!({ "tracks": [
+            {"id": "T1", "kind": "text"}, {"id": "V1", "kind": "weird"}
+        ]}));
+        assert!(matches!(metas[0].kind, TrackKind::Subtitle)); // text → Subtitle
+        assert!(matches!(metas[1].kind, TrackKind::Video)); // 未知 → Video 兜底
+        assert!(track_metas(&json!({})).is_empty());
+        assert!(track_metas(&Value::Null).is_empty());
+    }
+
+    // ---- media_entries ----
+
+    #[test]
+    fn media_entries_filters_cache_and_hidden() {
+        let entries = media_entries(&json!({ "files": [
+            {"path": "a.mp4", "name": "a.mp4", "kind": "video", "bytes": 10},
+            {"path": ".cutforge/cache.png", "name": "cache.png", "kind": "image"},
+            {"path": ".hidden", "name": ".hidden", "kind": "video"},
+            {"path": "", "name": "empty", "kind": "video"},
+            {"path": "music/a.mp3", "name": "", "kind": "audio", "durationMs": 3000}
+        ]}));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "a.mp4");
+        assert_eq!(entries[0].bytes, 10);
+        // 空名回落路径末段
+        assert_eq!(entries[1].name, "a.mp3");
+        assert_eq!(entries[1].duration_ms, Some(3000));
+    }
+
+    #[test]
+    fn media_entries_absent_files_is_empty() {
+        assert!(media_entries(&json!({})).is_empty());
+        assert!(media_entries(&Value::Null).is_empty());
+    }
+
+    // ---- 片段/快照纯函数 ----
+
+    #[test]
+    fn clip_speed_default_curved_and_degenerate() {
+        assert!((clip_speed(&json!({"speed": 2.0})) - 2.0).abs() < 1e-9);
+        assert!((clip_speed(&json!({})) - 1.0).abs() < 1e-9);
+        // speedCurve 分段变速:暂按 1.0(已知局限,以导出为准)
+        assert!((clip_speed(&json!({"speedCurve": [{"t": 0}]})) - 1.0).abs() < 1e-9);
+        assert!((clip_speed(&json!({"speed": 0})) - 1.0).abs() < 1e-9);
+        assert!((clip_speed(&json!({"speed": -3})) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn snapshot_duration_is_max_end() {
+        let snap = Snapshot {
+            clips: vec![clip("a", "V1", 0, 500), clip("b", "V1", 700, 900)],
+            ..Default::default()
+        };
+        assert_eq!(snap.duration_ms(), 1600);
+        assert_eq!(Snapshot::default().duration_ms(), 0);
+    }
+
+    #[test]
+    fn snapshot_fps_defaults_and_guards() {
+        assert!((Snapshot::default().fps() - 30.0).abs() < 1e-9);
+        let snap = Snapshot {
+            project: json!({"fps": 25}),
+            ..Default::default()
+        };
+        assert!((snap.fps() - 25.0).abs() < 1e-9);
+        let bad = Snapshot {
+            project: json!({"fps": 0}),
+            ..Default::default()
+        };
+        assert!((bad.fps() - 30.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn first_track_of_skips_locked() {
+        let snap = Snapshot {
+            tracks: vec![
+                TrackMeta {
+                    id: "V1".into(),
+                    kind: TrackKind::Video,
+                    name: "V1".into(),
+                    mute: false,
+                    locked: true,
+                },
+                TrackMeta {
+                    id: "V2".into(),
+                    kind: TrackKind::Video,
+                    name: "V2".into(),
+                    mute: false,
+                    locked: false,
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            snap.first_track_of(&[TrackKind::Video]).as_deref(),
+            Some("V2")
+        );
+        let none = Snapshot {
+            tracks: vec![TrackMeta {
+                id: "A1".into(),
+                kind: TrackKind::Audio,
+                name: "A1".into(),
+                mute: false,
+                locked: false,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(none.first_track_of(&[TrackKind::Video]), None);
+    }
+
+    #[test]
+    fn video_clip_at_requires_video_with_src_and_half_open() {
+        let snap = Snapshot {
+            clips: vec![
+                json!({"id": "t", "track": "T1", "trackKind": "video", "src": "", "startMs": 0, "endMs": 100}),
+                json!({"id": "img", "track": "V1", "trackKind": "video", "src": "p.png", "startMs": 0, "endMs": 100}),
+                json!({"id": "v", "track": "V1", "trackKind": "video", "src": "a.mp4", "startMs": 0, "endMs": 100}),
+                json!({"id": "v2", "track": "V2", "trackKind": "video", "src": "b.mp4", "startMs": 0, "endMs": 100}),
+            ],
+            ..Default::default()
+        };
+        // 同点重叠取轨道清单靠后者(上层叠加)
+        assert_eq!(snap.video_clip_at(50).unwrap().get("id").unwrap(), "v2");
+        assert!(snap.video_clip_at(100).is_none()); // 半开区间
+        assert!(snap.video_clip_at(999).is_none());
+    }
+
+    // ---- project_timeline golden ----
+
+    #[test]
+    fn project_timeline_golden_two_tracks_three_clips() {
+        let snap = Snapshot {
+            tracks: vec![
+                TrackMeta {
+                    id: "V1".into(),
+                    kind: TrackKind::Video,
+                    name: "V1".into(),
+                    mute: false,
+                    locked: false,
+                },
+                TrackMeta {
+                    id: "A1".into(),
+                    kind: TrackKind::Audio,
+                    name: "A1".into(),
+                    mute: false,
+                    locked: false,
+                },
+            ],
+            clips: vec![
+                clip("c3", "A1", 100, 400),
+                clip("c1", "V1", 200, 300),
+                clip("c2", "V1", 0, 100),
+                clip("ghost", "VX", 0, 100), // 未知轨 → 跳过
+            ],
+            ..Default::default()
+        };
+        let (tl, id_map) = project_timeline(&snap);
+        assert_eq!(tl.tracks.len(), 2);
+        assert!(matches!(tl.tracks[0].kind, TrackKind::Video));
+        assert!(matches!(tl.tracks[1].kind, TrackKind::Audio));
+        // 未知轨片段不计入 id_map
+        assert_eq!(id_map.len(), 3);
+        // 同轨按 startMs 升序(视图不变量),id 映射完整
+        let v1: Vec<u64> = tl.tracks[0].clips.iter().map(|c| c.start_ms).collect();
+        assert_eq!(v1, vec![0, 200]);
+        assert_eq!(tl.duration_ms, 500); // A1@100+400
+    }
+
+    #[test]
+    fn project_timeline_display_name_from_src_basename_or_text() {
+        let snap = Snapshot {
+            tracks: vec![TrackMeta {
+                id: "V1".into(),
+                kind: TrackKind::Video,
+                name: "V1".into(),
+                mute: false,
+                locked: false,
+            }],
+            clips: vec![
+                json!({"id": "c1", "track": "V1", "startMs": 0, "durationMs": 10, "src": "dir/clip 名.mp4"}),
+                json!({"id": "c2", "track": "V1", "startMs": 20, "durationMs": 10, "text": "这是一条很长的字幕文本应当被截断到十六字"}),
+            ],
+            ..Default::default()
+        };
+        let (tl, _) = project_timeline(&snap);
+        assert_eq!(tl.tracks[0].clips[0].asset.path, "clip 名.mp4");
+        assert_eq!(tl.tracks[0].clips[1].asset.path.chars().count(), 16);
+    }
+}

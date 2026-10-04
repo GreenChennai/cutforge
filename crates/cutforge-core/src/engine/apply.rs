@@ -1,9 +1,12 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 命令接口:唯一写入口(计划书 2.6)。`apply`/`record_file_change` 负责幂等/
 //! 前置检查 → 变更 → schema 验证 → 产出 Op 入 OpLog;`mutate` 承担 Command →
-//! (路径, before, after, 摘要) 的就地变更;复合/多轨分割体在 engine::pro_cmds。
+//! Mutated(路径/before/after/摘要/回滚令牌)的就地变更;复合/多轨分割体在
+//! engine::pro_cmds。R-12①:失败回滚走 Revert 逆向写回,不再全量 clone 工程;
+//! R-12②:变更后校验走 engine::validate 增量(受影响子树+全局不变量)。
 
 use super::invariants::enforce_no_overlap;
+use super::revert::{MutateError, Mutated, Revert, fail_with};
 use super::{Engine, Reject};
 use crate::command::{Command, TrimEdge, TrimMode};
 use crate::model::Project;
@@ -77,13 +80,22 @@ impl Engine {
             .iter()
             .map(Project::track_order_ok)
             .collect();
-        let snapshot = self.project.clone();
         let outcome = self.mutate(cmd.clone());
-        let (path, before, after, summary, kind, target_id) = match outcome {
-            Ok(o) => o,
-            Err(rej) => {
-                self.project = snapshot;
-                return Err(rej);
+        let Mutated {
+            path,
+            before,
+            after,
+            summary,
+            kind,
+            target_id,
+            revert,
+        } = match outcome {
+            Ok(m) => m,
+            Err(me) => {
+                // R-12①:逆向回滚——被触达容器写回变更前值(逐字节还原原态,
+                // TC-CORE-APPLY-099),取代全量 clone 快照
+                me.revert.restore(&mut self.project);
+                return Err(me.reject);
             }
         };
         debug_assert!(
@@ -101,16 +113,20 @@ impl Engine {
         );
         // 通用幂等:命令未产生任何变化 → 不升 rev、不产 Op,回执标注 idempotent
         if before == after {
-            self.project = snapshot;
+            revert.restore(&mut self.project);
             return Ok(OpReceipt {
                 op_ids: Vec::new(),
                 rev: self.rev,
                 idempotent: true,
             });
         }
-        // 变更后强制 schema 验证(契约优先;失败即回滚)
-        if let Err(errs) = self.project.to_validated_value() {
-            self.project = snapshot;
+        // 变更后强制校验(R-12② 增量:受影响子树 + 全局不变量[clip/track id
+        // 唯一];契约优先;失败即回滚)。全量契约保留在装载面(Engine::new/
+        // restore/replay 首帧、undo/redo)与 doctor 入口 Engine::validate_full。
+        let errs =
+            super::validate::validate_affected(&self.project, &path, target_id.as_deref(), &after);
+        if !errs.is_empty() {
+            revert.restore(&mut self.project);
             return Err(Reject::SchemaInvalid(errs));
         }
 
@@ -154,7 +170,7 @@ impl Engine {
             // op_id 撞车(并发分配同一 id):本次不生效,按幂等回执
             None => {
                 self.rev -= 1;
-                self.project = snapshot;
+                revert.restore(&mut self.project);
                 Ok(OpReceipt {
                     op_ids: vec![op_id],
                     rev: self.rev,
@@ -266,15 +282,12 @@ impl Engine {
         }
     }
 
-    /// 命令 → (路径, before, after, 摘要, Op 类型, target_id)。变更就地生效;
-    /// 失败时调用方回滚快照。target_id = clip 对象指针 Op 的稳定 id 寻址记录
+    /// 命令 → Mutated(路径/before/after/摘要/Op 类型/target_id/回滚令牌)。
+    /// 变更就地生效;失败携带令牌由 apply 逆向回滚(R-12①:取代全量 clone)。
+    /// target_id = clip 对象指针 Op 的稳定 id 寻址记录
     /// (BUG-06;撤销/重做/回放按 id 定位,对下标漂移免疫)。
     /// 批量命令(ClipsInsert/ClipsPatch,册四 T4.7)委托 engine::batch(行数红线)。
-    #[allow(clippy::type_complexity)]
-    fn mutate(
-        &mut self,
-        cmd: Command,
-    ) -> Result<(String, Value, Value, String, OpKind, Option<String>), Reject> {
+    fn mutate(&mut self, cmd: Command) -> Result<Mutated, MutateError> {
         if let Some(outcome) = self.mutate_dispatch_batch(&cmd) {
             return outcome;
         }
@@ -282,11 +295,16 @@ impl Engine {
         match cmd {
             Command::ClipUpdate { clip_id, patch } => {
                 if patch.is_empty() {
-                    return Err(Reject::EmptyPatch(clip_id));
+                    return Err(MutateError::bare(Reject::EmptyPatch(clip_id)));
                 }
                 let (ti, ci) = p
                     .find_clip(&clip_id)
-                    .ok_or(Reject::UnknownClip(clip_id.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownClip(clip_id.clone())))?;
+                let revert = Revert::track_clips(p, ti);
+                let abort = |r: Reject| MutateError {
+                    reject: r,
+                    revert: Box::new(revert.clone()),
+                };
                 // Op 面保持 clip 对象指针(撤销/回放经 target_id 稳定寻址,对数组
                 // 重排与外部漂移免疫);数组序由 write_project_op 写回后归位重排,
                 // 与 mutate 内的重插同规则(BUG-05 补口)。
@@ -314,20 +332,21 @@ impl Engine {
                         .partition_point(|c| c.start_ms < moved.start_ms);
                     p.tracks[ti].clips.insert(pos, moved);
                 }
-                enforce_no_overlap(p, ti)?;
-                Ok((
+                enforce_no_overlap(p, ti).map_err(abort)?;
+                Ok(Mutated {
                     path,
                     before,
                     after,
-                    format!("clip_update {clip_id}: {summary}"),
-                    OpKind::Set,
-                    Some(clip_id),
-                ))
+                    summary: format!("clip_update {clip_id}: {summary}"),
+                    kind: OpKind::Set,
+                    target_id: Some(clip_id),
+                    revert,
+                })
             }
             Command::ClipSplit { clip_id, t_ms } => {
                 let (ti, ci) = p
                     .find_clip(&clip_id)
-                    .ok_or(Reject::UnknownClip(clip_id.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownClip(clip_id.clone())))?;
                 // 幂等语义(计划书 5.2:已切则返回既有结果):切点边界已存在 → 无操作
                 if p.tracks[ti]
                     .clips
@@ -336,56 +355,60 @@ impl Engine {
                 {
                     let arr = serde_json::to_value(&p.tracks[ti].clips).unwrap();
                     let before = arr.clone();
-                    return Ok((
-                        clips_pointer(ti),
+                    return Ok(Mutated {
+                        path: clips_pointer(ti),
                         before,
-                        arr,
-                        format!("clip_split {clip_id}@{t_ms}(已切,幂等)"),
-                        OpKind::Split,
-                        None,
-                    ));
+                        after: arr,
+                        summary: format!("clip_split {clip_id}@{t_ms}(已切,幂等)"),
+                        kind: OpKind::Split,
+                        target_id: None,
+                        revert: Revert::None,
+                    });
                 }
                 let path = clips_pointer(ti);
                 let before = serde_json::to_value(&p.tracks[ti].clips).unwrap();
+                let revert = Revert::track_clips(p, ti);
                 // 切分语义收口 Clip::split_at(BUG-01/02:sourceIn 走 speed 积分、
                 // 关键帧/曲线 rebase、fade/transition 归属);engine 只补 id 与落位
                 let right_id = Project::next_clip_id(&p.tracks[ti]);
-                let (left, mut right) =
-                    clip_ref(p, ti, ci)
-                        .split_at(t_ms)
-                        .map_err(|e| Reject::SplitOutside {
-                            clip_id: e.clip_id,
-                            t_ms: e.t_ms,
-                        })?;
+                let (left, mut right) = clip_ref(p, ti, ci).split_at(t_ms).map_err(|e| {
+                    MutateError::bare(Reject::SplitOutside {
+                        clip_id: e.clip_id,
+                        t_ms: e.t_ms,
+                    })
+                })?;
                 right.id = right_id;
                 p.tracks[ti].clips[ci] = left;
                 p.tracks[ti].clips.insert(ci + 1, right);
                 let after = serde_json::to_value(&p.tracks[ti].clips).unwrap();
-                Ok((
+                Ok(Mutated {
                     path,
-                    before.clone(),
+                    before,
                     after,
-                    format!("clip_split {clip_id}@{t_ms}"),
-                    OpKind::Split,
-                    None,
-                ))
+                    summary: format!("clip_split {clip_id}@{t_ms}"),
+                    kind: OpKind::Split,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::ClipDelete { clip_id } => {
                 let (ti, ci) = p
                     .find_clip(&clip_id)
-                    .ok_or(Reject::UnknownClip(clip_id.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownClip(clip_id.clone())))?;
                 let path = clips_pointer(ti);
                 let before = serde_json::to_value(&p.tracks[ti].clips).unwrap();
+                let revert = Revert::track_clips(p, ti);
                 p.tracks[ti].clips.remove(ci);
                 let after = serde_json::to_value(&p.tracks[ti].clips).unwrap();
-                Ok((
+                Ok(Mutated {
                     path,
                     before,
                     after,
-                    format!("clip_delete {clip_id}"),
-                    OpKind::Delete,
-                    None,
-                ))
+                    summary: format!("clip_delete {clip_id}"),
+                    kind: OpKind::Delete,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::ClipMove {
                 clip_id,
@@ -395,9 +418,10 @@ impl Engine {
                 None => {
                     let (ti, ci) = p
                         .find_clip(&clip_id)
-                        .ok_or(Reject::UnknownClip(clip_id.clone()))?;
+                        .ok_or_else(|| MutateError::bare(Reject::UnknownClip(clip_id.clone())))?;
                     let path = clips_pointer(ti);
                     let before = serde_json::to_value(&p.tracks[ti].clips).unwrap();
+                    let revert = Revert::track_clips(p, ti);
                     // 同轨移动 = remove + 按 startMs 二分重插(BUG-05:轨道有序
                     // 不变量;Op 面为整轨 clips 数组,撤销/回放逐字节还原数组序)
                     let mut clip = p.tracks[ti].clips.remove(ci);
@@ -407,34 +431,39 @@ impl Engine {
                         .partition_point(|c| c.start_ms < new_start_ms);
                     p.tracks[ti].clips.insert(pos, clip);
                     let after = serde_json::to_value(&p.tracks[ti].clips).unwrap();
-                    enforce_no_overlap(p, ti)?;
-                    Ok((
+                    enforce_no_overlap(p, ti).map_err(fail_with(&revert))?;
+                    Ok(Mutated {
                         path,
                         before,
                         after,
-                        format!("clip_move {clip_id}→{new_start_ms}ms"),
-                        OpKind::Move,
-                        None,
-                    ))
+                        summary: format!("clip_move {clip_id}→{new_start_ms}ms"),
+                        kind: OpKind::Move,
+                        target_id: None,
+                        revert,
+                    })
                 }
                 Some(track_id) => {
                     let ti = p
                         .find_track(&track_id)
-                        .ok_or(Reject::UnknownTrack(track_id.clone()))?;
+                        .ok_or_else(|| MutateError::bare(Reject::UnknownTrack(track_id.clone())))?;
                     let (src_ti, ci) = p
                         .find_clip(&clip_id)
-                        .ok_or(Reject::UnknownClip(clip_id.clone()))?;
+                        .ok_or_else(|| MutateError::bare(Reject::UnknownClip(clip_id.clone())))?;
                     if p.tracks[src_ti].kind != p.tracks[ti].kind {
-                        return Err(Reject::InvariantViolation(format!(
+                        return Err(MutateError::bare(Reject::InvariantViolation(format!(
                             "跨轨移动必须同 kind:{}→{}",
                             p.tracks[src_ti].kind.kind_json(),
                             p.tracks[ti].kind.kind_json()
-                        )));
+                        ))));
                     }
                     let path = "/tracks".to_string();
                     let before = serde_json::to_value(&p.tracks).unwrap();
                     // BUG-05:clip id 是 Op target/锚点/缓存的身份基础——移动轨道是
                     // 位置变更不是身份变更,保 id;目标轨按 startMs 二分插入保有序
+                    let revert = Revert::Multi(vec![
+                        Revert::track_clips(p, src_ti),
+                        Revert::track_clips(p, ti),
+                    ]);
                     let mut clip = p.tracks[src_ti].clips.remove(ci);
                     clip.start_ms = new_start_ms;
                     let pos = p.tracks[ti]
@@ -442,29 +471,31 @@ impl Engine {
                         .partition_point(|c| c.start_ms < new_start_ms);
                     p.tracks[ti].clips.insert(pos, clip);
                     let after = serde_json::to_value(&p.tracks).unwrap();
-                    enforce_no_overlap(p, ti)?;
-                    Ok((
+                    enforce_no_overlap(p, ti).map_err(fail_with(&revert))?;
+                    Ok(Mutated {
                         path,
                         before,
                         after,
-                        format!("clip_move {clip_id}→{track_id}@{new_start_ms}ms"),
-                        OpKind::Move,
-                        None,
-                    ))
+                        summary: format!("clip_move {clip_id}→{track_id}@{new_start_ms}ms"),
+                        kind: OpKind::Move,
+                        target_id: None,
+                        revert,
+                    })
                 }
             },
             Command::ClipInsert { to_track, clip, .. } => {
                 let ti = p
                     .find_track(&to_track)
-                    .ok_or(Reject::UnknownTrack(to_track.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownTrack(to_track.clone())))?;
                 if p.tracks
                     .iter()
                     .any(|t| t.clips.iter().any(|c| c.id == clip.id))
                 {
-                    return Err(Reject::DuplicateClipId(clip.id));
+                    return Err(MutateError::bare(Reject::DuplicateClipId(clip.id)));
                 }
                 let path = clips_pointer(ti);
                 let before = serde_json::to_value(&p.tracks[ti].clips).unwrap();
+                let revert = Revert::track_clips(p, ti);
                 // BUG-05 补口:按 startMs 二分插入(与 clip_move 同款)——text_add 等
                 // 早位置插入不得 push 尾部破坏"轨道 startMs 升序"不变量
                 let pos = p.tracks[ti]
@@ -472,15 +503,16 @@ impl Engine {
                     .partition_point(|c| c.start_ms < clip.start_ms);
                 p.tracks[ti].clips.insert(pos, clip.clone());
                 let after = serde_json::to_value(&p.tracks[ti].clips).unwrap();
-                enforce_no_overlap(p, ti)?;
-                Ok((
+                enforce_no_overlap(p, ti).map_err(fail_with(&revert))?;
+                Ok(Mutated {
                     path,
                     before,
                     after,
-                    format!("clip_insert {}→{to_track}", clip.id),
-                    OpKind::Insert,
-                    None,
-                ))
+                    summary: format!("clip_insert {}→{to_track}", clip.id),
+                    kind: OpKind::Insert,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::TrackAdd {
                 kind,
@@ -489,6 +521,7 @@ impl Engine {
                 let id = p.next_track_id(kind);
                 let path = "/tracks".to_string();
                 let before = serde_json::to_value(&p.tracks).unwrap();
+                let revert = Revert::PopTrack;
                 p.tracks.push(crate::model::Track {
                     id: id.clone(),
                     kind,
@@ -504,31 +537,33 @@ impl Engine {
                     clips: Vec::new(),
                 });
                 let after = serde_json::to_value(&p.tracks).unwrap();
-                Ok((
+                Ok(Mutated {
                     path,
                     before,
                     after,
-                    format!("track_add {id}"),
-                    OpKind::Insert,
-                    None,
-                ))
+                    summary: format!("track_add {id}"),
+                    kind: OpKind::Insert,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::ClipMerge { left_id, right_id } => {
                 let (lt, li) = p
                     .find_clip(&left_id)
-                    .ok_or(Reject::UnknownClip(left_id.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownClip(left_id.clone())))?;
                 let (rt, ri) = p
                     .find_clip(&right_id)
-                    .ok_or(Reject::UnknownClip(right_id.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownClip(right_id.clone())))?;
                 if lt != rt || ri != li + 1 {
-                    return Err(Reject::NotAdjacent { left_id, right_id });
+                    return Err(MutateError::bare(Reject::NotAdjacent { left_id, right_id }));
                 }
                 let left_end = p.tracks[lt].clips[li].start_ms + p.tracks[lt].clips[li].duration_ms;
                 if left_end != p.tracks[rt].clips[ri].start_ms {
-                    return Err(Reject::NotAdjacent { left_id, right_id });
+                    return Err(MutateError::bare(Reject::NotAdjacent { left_id, right_id }));
                 }
                 let path = clips_pointer(lt);
                 let before = serde_json::to_value(&p.tracks[lt].clips).unwrap();
+                let revert = Revert::track_clips(p, lt);
                 // BUG-04:合并 = 声明"这两段本是一段"——语义连续性谓词(同源/同速/
                 // 内容窗积分相接)在 Clip::merge_with;并同时完成关键帧/曲线/fade
                 // 等字段并回(split 的精确逆,TC-CORE-MERGE-003 往返不变量)
@@ -536,25 +571,27 @@ impl Engine {
                 let right = p.tracks[rt].clips[ri].clone();
                 let merged = left
                     .merge_with(&right)
-                    .map_err(Reject::InvariantViolation)?;
+                    .map_err(|e| MutateError::bare(Reject::InvariantViolation(e)))?;
                 p.tracks[lt].clips[li] = merged;
                 p.tracks[lt].clips.remove(ri);
                 let after = serde_json::to_value(&p.tracks[lt].clips).unwrap();
-                Ok((
+                Ok(Mutated {
                     path,
                     before,
                     after,
-                    format!("clip_merge {left_id}+{right_id}"),
-                    OpKind::Merge,
-                    None,
-                ))
+                    summary: format!("clip_merge {left_id}+{right_id}"),
+                    kind: OpKind::Merge,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::BgmSet { patch } => {
                 // 新建前置:工程尚无 bgm 时必须携带 src(拒绝 src 为空的幽灵背景乐)
                 if p.bgm.is_none() && patch.src.is_none() {
-                    return Err(Reject::MissingBgm);
+                    return Err(MutateError::bare(Reject::MissingBgm));
                 }
                 let before = serde_json::to_value(&p.bgm).unwrap_or(Value::Null);
+                let revert = Revert::bgm(p);
                 let changes = patch.apply_to(&mut p.bgm);
                 let summary = if changes.is_empty() {
                     "无实际变更".to_string()
@@ -566,26 +603,29 @@ impl Engine {
                         .join(", ")
                 };
                 let after = serde_json::to_value(&p.bgm).unwrap_or(Value::Null);
-                Ok((
-                    "/bgm".to_string(),
+                Ok(Mutated {
+                    path: "/bgm".to_string(),
                     before,
                     after,
-                    format!("bgm_set: {summary}"),
-                    OpKind::Set,
-                    None,
-                ))
+                    summary: format!("bgm_set: {summary}"),
+                    kind: OpKind::Set,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::BgmClear => {
                 let before = serde_json::to_value(&p.bgm).unwrap_or(Value::Null);
+                let revert = Revert::bgm(p);
                 p.bgm = None;
-                Ok((
-                    "/bgm".to_string(),
+                Ok(Mutated {
+                    path: "/bgm".to_string(),
                     before,
-                    Value::Null,
-                    "bgm_clear".to_string(),
-                    OpKind::Delete,
-                    None,
-                ))
+                    after: Value::Null,
+                    summary: "bgm_clear".to_string(),
+                    kind: OpKind::Delete,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::ClipTrim {
                 clip_id,
@@ -595,7 +635,7 @@ impl Engine {
             } => {
                 let (ti, ci) = p
                     .find_clip(&clip_id)
-                    .ok_or(Reject::UnknownClip(clip_id.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownClip(clip_id.clone())))?;
                 let d = delta_ms as i128;
                 // roll/slide 联动多片段 → Op 面为整轨 clips 数组;trim/slip 单片段
                 let multi = matches!(mode, TrimMode::Roll | TrimMode::Slide);
@@ -609,192 +649,206 @@ impl Engine {
                 } else {
                     serde_json::to_value(&p.tracks[ti].clips[ci]).unwrap()
                 };
-                match mode {
-                    TrimMode::Trim => {
-                        let clip = &mut p.tracks[ti].clips[ci];
-                        let (ns, nd) = match edge {
-                            TrimEdge::In => {
-                                (clip.start_ms as i128 + d, clip.duration_ms as i128 - d)
+                let revert = Revert::track_clips(p, ti);
+                // 改后裁决(overlap/素材入点守卫)统一收进 step 闭包:闭包内
+                // return/? 语义 = Result<(), Reject>,出口统一映射为携带回滚令牌的
+                // 失败(R-12①;裁决点与映射前逐字一致)
+                let mut step = || -> Result<(), Reject> {
+                    match mode {
+                        TrimMode::Trim => {
+                            let clip = &mut p.tracks[ti].clips[ci];
+                            let (ns, nd) = match edge {
+                                TrimEdge::In => {
+                                    (clip.start_ms as i128 + d, clip.duration_ms as i128 - d)
+                                }
+                                TrimEdge::Out => {
+                                    (clip.start_ms as i128, clip.duration_ms as i128 + d)
+                                }
+                            };
+                            if ns < 0 {
+                                return Err(Reject::InvariantViolation(format!(
+                                    "trim 越出时间轴起点: start {ns}ms"
+                                )));
                             }
-                            TrimEdge::Out => (clip.start_ms as i128, clip.duration_ms as i128 + d),
-                        };
-                        if ns < 0 {
-                            return Err(Reject::InvariantViolation(format!(
-                                "trim 越出时间轴起点: start {ns}ms"
-                            )));
+                            if nd <= 0 {
+                                return Err(Reject::InvariantViolation(format!(
+                                    "trim 后时长必须 > 0: {nd}ms"
+                                )));
+                            }
+                            if edge == TrimEdge::In
+                                && let Some(si) = clip.source_in_ms
+                            {
+                                let nsi = si as i128 + d;
+                                if nsi < 0 {
+                                    return Err(Reject::InvariantViolation(format!(
+                                        "trim-in 越出素材入点: sourceIn {nsi}ms < 0"
+                                    )));
+                                }
+                                clip.source_in_ms = Some(nsi as u64);
+                            }
+                            clip.start_ms = ns as u64;
+                            clip.duration_ms = nd as u64;
+                            enforce_no_overlap(p, ti)?;
                         }
-                        if nd <= 0 {
-                            return Err(Reject::InvariantViolation(format!(
-                                "trim 后时长必须 > 0: {nd}ms"
-                            )));
-                        }
-                        if edge == TrimEdge::In
-                            && let Some(si) = clip.source_in_ms
-                        {
-                            let nsi = si as i128 + d;
+                        TrimMode::Slip => {
+                            // 内容平移:sourceInMs 平移,时间线占位不变;素材时长约束
+                            // (sourceIn+duration ≤ 素材长)在派发层经 ffprobe 承接(内核无媒体知识)
+                            let clip = &mut p.tracks[ti].clips[ci];
+                            let nsi = clip.source_in_ms.unwrap_or(0) as i128 + d;
                             if nsi < 0 {
                                 return Err(Reject::InvariantViolation(format!(
-                                    "trim-in 越出素材入点: sourceIn {nsi}ms < 0"
+                                    "slip 越出素材入点: sourceIn {nsi}ms < 0"
                                 )));
                             }
                             clip.source_in_ms = Some(nsi as u64);
                         }
-                        clip.start_ms = ns as u64;
-                        clip.duration_ms = nd as u64;
-                        enforce_no_overlap(p, ti)?;
-                    }
-                    TrimMode::Slip => {
-                        // 内容平移:sourceInMs 平移,时间线占位不变;素材时长约束
-                        // (sourceIn+duration ≤ 素材长)在派发层经 ffprobe 承接(内核无媒体知识)
-                        let clip = &mut p.tracks[ti].clips[ci];
-                        let nsi = clip.source_in_ms.unwrap_or(0) as i128 + d;
-                        if nsi < 0 {
-                            return Err(Reject::InvariantViolation(format!(
-                                "slip 越出素材入点: sourceIn {nsi}ms < 0"
-                            )));
+                        TrimMode::Roll => {
+                            // 双边联动:与 clip 在 edge 侧**贴合**的相邻片段边界同移,总时长不变;
+                            // 无贴合邻居 → InvariantViolation(roll 需要相邻片段)
+                            let clip_start = p.tracks[ti].clips[ci].start_ms as i128;
+                            let clip_end = clip_start + p.tracks[ti].clips[ci].duration_ms as i128;
+                            let neighbor = match edge {
+                                TrimEdge::In => p.tracks[ti].clips.iter().position(|c| {
+                                    c.id != clip_id
+                                        && c.start_ms < clip_start as u64
+                                        && c.start_ms as i128 + c.duration_ms as i128 == clip_start
+                                }),
+                                TrimEdge::Out => p.tracks[ti].clips.iter().position(|c| {
+                                    c.id != clip_id && c.start_ms as i128 == clip_end
+                                }),
+                            };
+                            let Some(ni) = neighbor else {
+                                return Err(Reject::InvariantViolation(format!(
+                                    "roll 需要 {} 侧贴合相邻片段({clip_id} 的 {} 边界无邻居)",
+                                    match edge {
+                                        TrimEdge::In => "入点",
+                                        TrimEdge::Out => "出点",
+                                    },
+                                    match edge {
+                                        TrimEdge::In => "in",
+                                        TrimEdge::Out => "out",
+                                    }
+                                )));
+                            };
+                            let nb = match edge {
+                                TrimEdge::In => clip_start + d,
+                                TrimEdge::Out => clip_end + d,
+                            };
+                            let left_bound = match edge {
+                                TrimEdge::In => p.tracks[ti].clips[ni].start_ms as i128,
+                                TrimEdge::Out => clip_start,
+                            };
+                            let right_bound = match edge {
+                                TrimEdge::In => clip_end,
+                                TrimEdge::Out => {
+                                    let n = &p.tracks[ti].clips[ni];
+                                    n.start_ms as i128 + n.duration_ms as i128
+                                }
+                            };
+                            if nb <= left_bound {
+                                return Err(Reject::InvariantViolation(format!(
+                                    "roll 后边界一侧时长必须 > 0: 边界 {nb}ms ≤ {left_bound}ms"
+                                )));
+                            }
+                            if nb >= right_bound {
+                                return Err(Reject::InvariantViolation(format!(
+                                    "roll 后边界另一侧时长必须 > 0: 边界 {nb}ms ≥ {right_bound}ms"
+                                )));
+                            }
+                            match edge {
+                                TrimEdge::In => {
+                                    let shift = nb - clip_start;
+                                    let n = &mut p.tracks[ti].clips[ni];
+                                    n.duration_ms = (nb - n.start_ms as i128) as u64;
+                                    let cid = p.tracks[ti].clips[ci].id.clone();
+                                    let c = &mut p.tracks[ti].clips[ci];
+                                    c.start_ms = nb as u64;
+                                    c.duration_ms = (clip_end - nb) as u64;
+                                    if let Some(si) = c.source_in_ms {
+                                        // BUG-03:拒绝式守卫(负 i128 as u64 会回绕成天文数字)
+                                        c.source_in_ms = Some(
+                                            super::invariants::checked_source_in(si, shift, &cid)?,
+                                        );
+                                    }
+                                }
+                                TrimEdge::Out => {
+                                    let n = &mut p.tracks[ti].clips[ni];
+                                    let shift = nb - n.start_ms as i128;
+                                    n.duration_ms =
+                                        ((n.start_ms + n.duration_ms) as i128 - nb) as u64;
+                                    n.start_ms = nb as u64;
+                                    let cid = n.id.clone();
+                                    if let Some(si) = n.source_in_ms {
+                                        n.source_in_ms = Some(
+                                            super::invariants::checked_source_in(si, shift, &cid)?,
+                                        );
+                                    }
+                                    let c = &mut p.tracks[ti].clips[ci];
+                                    c.duration_ms = (nb - clip_start) as u64;
+                                }
+                            }
                         }
-                        clip.source_in_ms = Some(nsi as u64);
-                    }
-                    TrimMode::Roll => {
-                        // 双边联动:与 clip 在 edge 侧**贴合**的相邻片段边界同移,总时长不变;
-                        // 无贴合邻居 → InvariantViolation(roll 需要相邻片段)
-                        let clip_start = p.tracks[ti].clips[ci].start_ms as i128;
-                        let clip_end = clip_start + p.tracks[ti].clips[ci].duration_ms as i128;
-                        let neighbor = match edge {
-                            TrimEdge::In => p.tracks[ti].clips.iter().position(|c| {
+                        TrimMode::Slide => {
+                            // 位置平移:内容窗不变,贴合邻居随之让位(邻居边界跟随闭合)/压缩;
+                            // 非贴合邻居不动,越界相撞交 enforce_no_overlap 裁决
+                            let clip = &p.tracks[ti].clips[ci];
+                            let old_start = clip.start_ms as i128;
+                            let dur = clip.duration_ms as i128;
+                            let old_end = old_start + dur;
+                            let ns = old_start + d;
+                            if ns < 0 {
+                                return Err(Reject::InvariantViolation(format!(
+                                    "slide 越出时间轴起点: start {ns}ms"
+                                )));
+                            }
+                            let ne = ns + dur;
+                            let li = p.tracks[ti].clips.iter().position(|c| {
                                 c.id != clip_id
-                                    && c.start_ms < clip_start as u64
-                                    && c.start_ms as i128 + c.duration_ms as i128 == clip_start
-                            }),
-                            TrimEdge::Out => p.tracks[ti]
+                                    && c.start_ms as i128 + c.duration_ms as i128 == old_start
+                            });
+                            let ri = p.tracks[ti]
                                 .clips
                                 .iter()
-                                .position(|c| c.id != clip_id && c.start_ms as i128 == clip_end),
-                        };
-                        let Some(ni) = neighbor else {
-                            return Err(Reject::InvariantViolation(format!(
-                                "roll 需要 {} 侧贴合相邻片段({clip_id} 的 {} 边界无邻居)",
-                                match edge {
-                                    TrimEdge::In => "入点",
-                                    TrimEdge::Out => "出点",
-                                },
-                                match edge {
-                                    TrimEdge::In => "in",
-                                    TrimEdge::Out => "out",
+                                .position(|c| c.id != clip_id && c.start_ms as i128 == old_end);
+                            if let Some(li) = li {
+                                let l = &mut p.tracks[ti].clips[li];
+                                let l_start = l.start_ms as i128;
+                                if ns <= l_start {
+                                    return Err(Reject::InvariantViolation(format!(
+                                        "slide 后左邻时长必须 > 0: 新边界 {ns}ms ≤ 左邻起点 {l_start}ms"
+                                    )));
                                 }
-                            )));
-                        };
-                        let nb = match edge {
-                            TrimEdge::In => clip_start + d,
-                            TrimEdge::Out => clip_end + d,
-                        };
-                        let left_bound = match edge {
-                            TrimEdge::In => p.tracks[ti].clips[ni].start_ms as i128,
-                            TrimEdge::Out => clip_start,
-                        };
-                        let right_bound = match edge {
-                            TrimEdge::In => clip_end,
-                            TrimEdge::Out => {
-                                let n = &p.tracks[ti].clips[ni];
-                                n.start_ms as i128 + n.duration_ms as i128
+                                l.duration_ms = (ns - l_start) as u64;
                             }
-                        };
-                        if nb <= left_bound {
-                            return Err(Reject::InvariantViolation(format!(
-                                "roll 后边界一侧时长必须 > 0: 边界 {nb}ms ≤ {left_bound}ms"
-                            )));
-                        }
-                        if nb >= right_bound {
-                            return Err(Reject::InvariantViolation(format!(
-                                "roll 后边界另一侧时长必须 > 0: 边界 {nb}ms ≥ {right_bound}ms"
-                            )));
-                        }
-                        match edge {
-                            TrimEdge::In => {
-                                let shift = nb - clip_start;
-                                let n = &mut p.tracks[ti].clips[ni];
-                                n.duration_ms = (nb - n.start_ms as i128) as u64;
-                                let cid = p.tracks[ti].clips[ci].id.clone();
-                                let c = &mut p.tracks[ti].clips[ci];
-                                c.start_ms = nb as u64;
-                                c.duration_ms = (clip_end - nb) as u64;
-                                if let Some(si) = c.source_in_ms {
+                            if let Some(ri) = ri {
+                                let r = &mut p.tracks[ti].clips[ri];
+                                let r_end = (r.start_ms + r.duration_ms) as i128;
+                                if ne >= r_end {
+                                    return Err(Reject::InvariantViolation(format!(
+                                        "slide 后右邻时长必须 > 0: 新边界 {ne}ms ≥ 右邻终点 {r_end}ms"
+                                    )));
+                                }
+                                let shift = ne - r.start_ms as i128;
+                                r.duration_ms = (r_end - ne) as u64;
+                                r.start_ms = ne as u64;
+                                let rid = r.id.clone();
+                                if let Some(si) = r.source_in_ms {
                                     // BUG-03:拒绝式守卫(负 i128 as u64 会回绕成天文数字)
-                                    c.source_in_ms = Some(super::invariants::checked_source_in(
-                                        si, shift, &cid,
+                                    r.source_in_ms = Some(super::invariants::checked_source_in(
+                                        si, shift, &rid,
                                     )?);
                                 }
                             }
-                            TrimEdge::Out => {
-                                let n = &mut p.tracks[ti].clips[ni];
-                                let shift = nb - n.start_ms as i128;
-                                n.duration_ms = ((n.start_ms + n.duration_ms) as i128 - nb) as u64;
-                                n.start_ms = nb as u64;
-                                let cid = n.id.clone();
-                                if let Some(si) = n.source_in_ms {
-                                    n.source_in_ms = Some(super::invariants::checked_source_in(
-                                        si, shift, &cid,
-                                    )?);
-                                }
-                                let c = &mut p.tracks[ti].clips[ci];
-                                c.duration_ms = (nb - clip_start) as u64;
-                            }
+                            p.tracks[ti].clips[ci].start_ms = ns as u64;
+                            enforce_no_overlap(p, ti)?;
                         }
                     }
-                    TrimMode::Slide => {
-                        // 位置平移:内容窗不变,贴合邻居随之让位(邻居边界跟随闭合)/压缩;
-                        // 非贴合邻居不动,越界相撞交 enforce_no_overlap 裁决
-                        let clip = &p.tracks[ti].clips[ci];
-                        let old_start = clip.start_ms as i128;
-                        let dur = clip.duration_ms as i128;
-                        let old_end = old_start + dur;
-                        let ns = old_start + d;
-                        if ns < 0 {
-                            return Err(Reject::InvariantViolation(format!(
-                                "slide 越出时间轴起点: start {ns}ms"
-                            )));
-                        }
-                        let ne = ns + dur;
-                        let li = p.tracks[ti].clips.iter().position(|c| {
-                            c.id != clip_id
-                                && c.start_ms as i128 + c.duration_ms as i128 == old_start
-                        });
-                        let ri = p.tracks[ti]
-                            .clips
-                            .iter()
-                            .position(|c| c.id != clip_id && c.start_ms as i128 == old_end);
-                        if let Some(li) = li {
-                            let l = &mut p.tracks[ti].clips[li];
-                            let l_start = l.start_ms as i128;
-                            if ns <= l_start {
-                                return Err(Reject::InvariantViolation(format!(
-                                    "slide 后左邻时长必须 > 0: 新边界 {ns}ms ≤ 左邻起点 {l_start}ms"
-                                )));
-                            }
-                            l.duration_ms = (ns - l_start) as u64;
-                        }
-                        if let Some(ri) = ri {
-                            let r = &mut p.tracks[ti].clips[ri];
-                            let r_end = (r.start_ms + r.duration_ms) as i128;
-                            if ne >= r_end {
-                                return Err(Reject::InvariantViolation(format!(
-                                    "slide 后右邻时长必须 > 0: 新边界 {ne}ms ≥ 右邻终点 {r_end}ms"
-                                )));
-                            }
-                            let shift = ne - r.start_ms as i128;
-                            r.duration_ms = (r_end - ne) as u64;
-                            r.start_ms = ne as u64;
-                            let rid = r.id.clone();
-                            if let Some(si) = r.source_in_ms {
-                                // BUG-03:拒绝式守卫(负 i128 as u64 会回绕成天文数字)
-                                r.source_in_ms =
-                                    Some(super::invariants::checked_source_in(si, shift, &rid)?);
-                            }
-                        }
-                        p.tracks[ti].clips[ci].start_ms = ns as u64;
-                        enforce_no_overlap(p, ti)?;
-                    }
-                }
+                    Ok(())
+                };
+                step().map_err(|r| MutateError {
+                    reject: r,
+                    revert: Box::new(revert.clone()),
+                })?;
                 let after = if multi {
                     serde_json::to_value(&p.tracks[ti].clips).unwrap()
                 } else {
@@ -826,22 +880,24 @@ impl Engine {
                     TrimMode::Trim | TrimMode::Slip => Some(clip_id),
                     TrimMode::Roll | TrimMode::Slide => None,
                 };
-                Ok((
+                Ok(Mutated {
                     path,
                     before,
                     after,
-                    label,
-                    if matches!(mode, TrimMode::Slide) {
+                    summary: label,
+                    kind: if matches!(mode, TrimMode::Slide) {
                         OpKind::Move
                     } else {
                         OpKind::Set
                     },
                     target_id,
-                ))
+                    revert,
+                })
             }
             Command::ClipSplitAll { t_ms } => {
                 let path = "/tracks".to_string();
                 let before = serde_json::to_value(&p.tracks).unwrap();
+                let revert = Revert::tracks(p);
                 let mut n = 0usize;
                 for track in p.tracks.iter_mut() {
                     // 先收集命中下标再改,避免插队导致的下标漂移
@@ -856,11 +912,13 @@ impl Engine {
                         let ci = i + offset;
                         // 切分语义收口 Clip::split_at(与 clip_split 同口径,BUG-01/02)
                         let right_id = Project::next_clip_id(track);
-                        let (left, mut right) = track.clips[ci].split_at(t_ms).map_err(|e| {
-                            Reject::InvariantViolation(format!(
-                                "clip_split_all 命中片段越界(不应发生): {e:?}"
-                            ))
-                        })?;
+                        let (left, mut right) =
+                            track.clips[ci].split_at(t_ms).map_err(|e| MutateError {
+                                reject: Reject::InvariantViolation(format!(
+                                    "clip_split_all 命中片段越界(不应发生): {e:?}"
+                                )),
+                                revert: Box::new(revert.clone()),
+                            })?;
                         right.id = right_id;
                         track.clips[ci] = left;
                         track.clips.insert(ci + 1, right);
@@ -868,24 +926,26 @@ impl Engine {
                     }
                 }
                 let after = serde_json::to_value(&p.tracks).unwrap();
-                Ok((
+                Ok(Mutated {
                     path,
                     before,
                     after,
-                    format!("clip_split_all @{t_ms}({n} 段)"),
-                    OpKind::Split,
-                    None,
-                ))
+                    summary: format!("clip_split_all @{t_ms}({n} 段)"),
+                    kind: OpKind::Split,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::TrackUpdate { track_id, patch } => {
                 if patch.is_empty() {
-                    return Err(Reject::EmptyPatch(track_id));
+                    return Err(MutateError::bare(Reject::EmptyPatch(track_id)));
                 }
                 let ti = p
                     .find_track(&track_id)
-                    .ok_or(Reject::UnknownTrack(track_id.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownTrack(track_id.clone())))?;
                 let path = format!("/tracks/{ti}");
                 let before = serde_json::to_value(&p.tracks[ti]).unwrap();
+                let revert = Revert::track(p, ti);
                 let changes = patch.apply_to(&mut p.tracks[ti]);
                 let summary = if changes.is_empty() {
                     "无实际变更".to_string()
@@ -897,25 +957,27 @@ impl Engine {
                         .join(", ")
                 };
                 let after = serde_json::to_value(&p.tracks[ti]).unwrap();
-                Ok((
+                Ok(Mutated {
                     path,
                     before,
                     after,
-                    format!("track_update {track_id}: {summary}"),
-                    OpKind::Set,
-                    None,
-                ))
+                    summary: format!("track_update {track_id}: {summary}"),
+                    kind: OpKind::Set,
+                    target_id: None,
+                    revert,
+                })
             }
             Command::ClipGapDelete { track_id, t_ms } => {
                 let ti = p
                     .find_track(&track_id)
-                    .ok_or(Reject::UnknownTrack(track_id.clone()))?;
+                    .ok_or_else(|| MutateError::bare(Reject::UnknownTrack(track_id.clone())))?;
                 let before = serde_json::to_value(&p.tracks[ti].clips).unwrap();
+                let revert = Revert::track_clips(p, ti);
                 let clips = &mut p.tracks[ti].clips;
                 if clips.is_empty() {
-                    return Err(Reject::InvariantViolation(format!(
+                    return Err(MutateError::bare(Reject::InvariantViolation(format!(
                         "{track_id} 轨上无片段,无间隙可删"
-                    )));
+                    ))));
                 }
                 // 按 start 排序的视图定位包含 t_ms 的间隙 [prev_end, next_start);
                 // 首段之前的空档视作 [0, first.start)
@@ -932,9 +994,9 @@ impl Engine {
                     prev_end = prev_end.max(s + clips[i].duration_ms);
                 }
                 let (gs, ge) = gap.ok_or_else(|| {
-                    Reject::InvariantViolation(format!(
+                    MutateError::bare(Reject::InvariantViolation(format!(
                         "t_ms={t_ms} 处无间隙可删(位于片段内部或全部片段之后)"
-                    ))
+                    )))
                 })?;
                 let shift = ge - gs;
                 for c in clips.iter_mut() {
@@ -943,14 +1005,15 @@ impl Engine {
                     }
                 }
                 let after = serde_json::to_value(&p.tracks[ti].clips).unwrap();
-                Ok((
-                    clips_pointer(ti),
+                Ok(Mutated {
+                    path: clips_pointer(ti),
                     before,
                     after,
-                    format!("clip_gap_delete {track_id}@{t_ms} 闭合 {shift}ms"),
-                    OpKind::Move,
-                    None,
-                ))
+                    summary: format!("clip_gap_delete {track_id}@{t_ms} 闭合 {shift}ms"),
+                    kind: OpKind::Move,
+                    target_id: None,
+                    revert,
+                })
             }
             // 批量命令(册四 T4.7):mutate 入口已委托 engine::batch,此臂仅穷尽性
             Command::ClipsInsert { .. } | Command::ClipsPatch { .. } => {
@@ -1313,11 +1376,6 @@ mod tests {
         );
     }
 
-    #[cfg(test)]
-    mod pro_tests {
-        // include! 相对当前文件(engine/)解析,POSIX/Windows 一致;super = apply::tests,
-        // 与原 #[path] 内联挂载同语义(#[path] 的相对链在内联模块下会命中不存在的
-        // 目录段,POSIX 不做词法 .. 归一——CI ubuntu 实证)。
-        include!("pro_tests.rs");
-    }
+    // A-05:pro_tests 已迁标准布局 `crates/cutforge-core/tests/pro_commands.rs`
+    // (include! 清理,测试发现回归 cargo 原生粒度;27 个用例零丢失)。
 }

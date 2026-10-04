@@ -1053,9 +1053,21 @@ fn check_deps(json: bool) -> i32 {
             "cutforge-cli",
             vec!["cutforge-core", "cutforge-io", "cutforge-mcp"],
         ),
-        // render 边 = HEAD 基线存量豁免(审查报告 v2 集成收口):mcp 消费 render 的
-        // 纯函数面(analyze/grade/encode 元数据/RENDERER_VERSION),渲染本体仍子进程
-        // 透传;解耦归 A-01 dispatch 注册表化轮(docs/tickets/V2-W2-MCP2),债务已登记。
+        // render 边 = **永久登记豁免**(A-01 注册表化轮收口,替代原"归 A-01 解耦"
+        // 的临时登记):mcp 对 render 的消费经逐点盘点为**纯函数元数据面**——
+        // analyze::{rms_envelope,onset_strength,frame_diffs,pcm_lag,pick_cuts}(波形/
+        // 节拍/场景检测的单一实现)、grade::parse_cube(LUT 解析)、
+        // encode::{HW_CANDIDATES,hw_encoder_usable}(硬件编码降级判定,与渲染端
+        // 执行面同源)、subtitle::{parse_auto,ExportClip,srt_export_clips,ass_export}
+        // (SRT/ASS 解析导出单一实现,subtitle_import/export 零旁路解析器)、
+        // plan::RenderPlan/export::{window_project,source_advance_ms,clip_play_ms,
+        // preset_canvas}(导出矩阵时间窗纯计算)、RENDERER_VERSION(队列事件版本位,
+        // 渲染缓存护城河 #4 的同源版本戳);渲染本体一律经 resolve_render_bin 定位
+        // 后子进程 CLI 透传,不链其 Rust API——运行时无 render 链接语义,该边是
+        // "单一实现不复制"纪律对纯函数的合法表达。真解耦 = 把这批纯函数迁往
+        // core 或新契约 crate:跨 crate 大动作(动 render 本体),超出 A-01 文件域,
+        // 需主会话另立工单;消费点清单:media_tools.rs/grade_tools.rs/pro_ops.rs/
+        // export_tools.rs/subtitle_ops.rs/progress.rs(二进制定位 + RENDERER_VERSION)。
         (
             "cutforge-mcp",
             vec![

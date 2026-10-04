@@ -4,33 +4,72 @@
 //! ③ sfx 不做 adelay → 全部音效 0 秒同时炸响。
 //! 三条在本文件全部作为硬断言;ffmpeg 缺失即失败(不得静默跳过)。
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn ffmpeg_ok() -> bool {
-    Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn ff(args: &[&str], cwd: &Path) {
-    let out = Command::new("ffmpeg").args(args).current_dir(cwd).output().expect("ffmpeg 必须存在");
-    assert!(out.status.success(), "ffmpeg 失败: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("ffmpeg")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("ffmpeg 必须存在");
+    assert!(
+        out.status.success(),
+        "ffmpeg 失败: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// 生成合成素材:带音频的测试视频 + 纯音效。
 fn make_media(dir: &Path) {
-    ff(&[
-        "-y", "-v", "error",
-        "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=3",
-        "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
-        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-shortest",
-        "voice.mp4",
-    ], dir);
-    ff(&[
-        "-y", "-v", "error",
-        "-f", "lavfi", "-i", "sine=frequency=880:duration=0.5",
-        "-c:a", "libmp3lame", "sfx.mp3",
-    ], dir);
+    ff(
+        &[
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x240:rate=30:duration=3",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=3",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "voice.mp4",
+        ],
+        dir,
+    );
+    ff(
+        &[
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:duration=0.5",
+            "-c:a",
+            "libmp3lame",
+            "sfx.mp3",
+        ],
+        dir,
+    );
 }
 
 fn write_project(dir: &Path, v: &Value) {
@@ -44,8 +83,18 @@ fn write_project(dir: &Path, v: &Value) {
 
 fn probe_resolution(p: &Path) -> (u32, u32) {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-print_format", "json", "-select_streams", "v:0", "-show_streams"])
-        .arg(p).output().expect("ffprobe 必须存在");
+        .args([
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-select_streams",
+            "v:0",
+            "-show_streams",
+        ])
+        .arg(p)
+        .output()
+        .expect("ffprobe 必须存在");
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     let w = v["streams"][0]["width"].as_u64().unwrap() as u32;
     let h = v["streams"][0]["height"].as_u64().unwrap() as u32;
@@ -58,19 +107,28 @@ fn silence_regions(p: &Path) -> Vec<(f64, f64)> {
         .args(["-nostats", "-i"])
         .arg(p)
         .args(["-af", "silencedetect=noise=-45dB:d=0.3", "-f", "null", "-"])
-        .output().expect("ffmpeg 必须存在");
+        .output()
+        .expect("ffmpeg 必须存在");
     let err = String::from_utf8_lossy(&out.stderr);
     let mut starts: Vec<f64> = Vec::new();
     let mut regions = Vec::new();
     for line in err.lines() {
         // split_whitespace 自带首尾空白容忍,无需 trim(纯 lint 化简,解析口径零变化)
         if let Some(pos) = line.find("silence_start:")
-            && let Ok(t) = line[pos + 14..].split_whitespace().next().unwrap_or("").parse::<f64>()
+            && let Ok(t) = line[pos + 14..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .parse::<f64>()
         {
             starts.push(t);
         }
         if let Some(pos) = line.find("silence_end:")
-            && let Ok(t) = line[pos + 13..].split_whitespace().next().unwrap_or("").parse::<f64>()
+            && let Ok(t) = line[pos + 13..]
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .parse::<f64>()
             && let Some(s) = starts.pop()
         {
             regions.push((s, t));
@@ -112,11 +170,21 @@ fn render_matrix_fixture() {
                 {"id":"V1-001","src":"voice.mp4","startMs":0,"durationMs":2000,"sourceInMs":0,"role":"voice","volume":1.0}]},
                 {"id":"A1","kind":"audio","clips":[]}]})).unwrap();
     let out1 = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
-    assert_eq!(probe_resolution(&out1.output), (1080, 1920), "9x16 变体分辨率必须为真");
-    p.canvas = cutforge_core::model::Canvas { width: 1920, height: 1080 };
+    assert_eq!(
+        probe_resolution(&out1.output),
+        (1080, 1920),
+        "9x16 变体分辨率必须为真"
+    );
+    p.canvas = cutforge_core::model::Canvas {
+        width: 1920,
+        height: 1080,
+    };
     let out2 = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
-    assert_eq!(probe_resolution(&out2.output), (1920, 1080),
-        "P0-3:16x9 变体不得命中 9x16 的分段缓存(修复前文件名 1920x1080、画面 1080x1920)");
+    assert_eq!(
+        probe_resolution(&out2.output),
+        (1920, 1080),
+        "P0-3:16x9 变体不得命中 9x16 的分段缓存(修复前文件名 1920x1080、画面 1080x1920)"
+    );
     // 同画幅重渲:缓存命中(键稳定)
     let out3 = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
     assert!(out3.cache_hits >= 1, "同画幅重复渲染必须命中段缓存");
@@ -142,7 +210,10 @@ fn render_matrix_fixture() {
     let regions = silence_regions(&out.output);
     // 成片 0–1.2s 应为静音(修复前:人声从 0 秒起播)。留 0.25s 编解码容差。
     let head_silence = regions.iter().any(|(s, e)| *s <= 0.3 && *e >= 0.95);
-    assert!(head_silence, "P0-4:人声段必须按 clip.start_ms 落点(startMs=1200 → 头部静音),实际静音区: {regions:?}");
+    assert!(
+        head_silence,
+        "P0-4:人声段必须按 clip.start_ms 落点(startMs=1200 → 头部静音),实际静音区: {regions:?}"
+    );
 
     // ---- 用例 3:sfx adelay 落点(修复前全部 0 秒炸响) ----
     let dir3 = project_root_tag("sfx");
@@ -166,7 +237,10 @@ fn render_matrix_fixture() {
     let out = cutforge_render::render(&p3, &dir3, None, &mut |_| {}).unwrap();
     let regions = silence_regions(&out.output);
     let head_silence = regions.iter().any(|(s, e)| *s <= 0.3 && *e >= 1.25);
-    assert!(head_silence, "sfx 必须在 startMs=1500 起播(0–1.5s 静音),实际静音区: {regions:?}");
+    assert!(
+        head_silence,
+        "sfx 必须在 startMs=1500 起播(0–1.5s 静音),实际静音区: {regions:?}"
+    );
 
     for d in [&dir, &dir2, &dir3] {
         let _ = std::fs::remove_dir_all(d);
@@ -194,7 +268,8 @@ fn out_dir_follows_layout_tri_state() {
         "tracks": [{"id": "V1", "kind": "video", "clips": [
             {"id": "V1-001", "src": "a.mp4", "startMs": 0, "durationMs": 1000, "role": "voice"}]
         }]
-    })).unwrap();
+    }))
+    .unwrap();
     for (tag, marker, extra, want) in [
         ("v3", "project.json", None, "exports"),
         ("v2", "05_时间线工程/project.json", None, "06_成片输出"),
@@ -203,7 +278,11 @@ fn out_dir_follows_layout_tri_state() {
         let root = base.join(tag);
         mk(&root, marker, extra);
         let plan = cutforge_render::plan::RenderPlan::build(&proj, &root, None);
-        assert_eq!(plan.out_dir, root.join(want), "{tag}: 导出产物目录必须随布局");
+        assert_eq!(
+            plan.out_dir,
+            root.join(want),
+            "{tag}: 导出产物目录必须随布局"
+        );
     }
     let _ = std::fs::remove_dir_all(&base);
 }

@@ -76,6 +76,10 @@ fn main() {
                 }
             }
             "--verbose-cmd" => opts.verbose_cmd = true,
+            // R-07:ffmpeg 子进程超时秒数(缺省 10min,encode 预估×3;编排层透传面)
+            "--ff-timeout" => {
+                opts.ff_timeout_secs = args.get(i + 1).and_then(|v| v.parse::<u64>().ok())
+            }
             // 册六 T6.3 导出矩阵
             "--export-format" => {
                 export_format = args

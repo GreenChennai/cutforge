@@ -20,12 +20,14 @@ mod invariants;
 mod pro_cmds;
 mod projection;
 mod replay;
+mod revert;
 mod undo;
+mod validate;
 
 pub use apply::{ApplyOpts, OpReceipt};
 pub use invariants::Reject;
 pub use projection::{Answer, Query, canonical_json};
-pub use replay::{rebuild_stacks, rebuild_undo_stack};
+pub use replay::{rebuild_stacks, rebuild_stacks_incremental, rebuild_undo_stack};
 
 use crate::command::ClipPatch;
 use crate::model::Project;
@@ -128,6 +130,13 @@ impl Engine {
         let files: Vec<String> = self.dirty_files.iter().cloned().collect();
         self.dirty_files.clear();
         files
+    }
+
+    /// doctor 入口(R-12②):全量契约校验(to_validated_value 同口径)。
+    /// 发布版 apply 走增量校验后,全量校验保留在装载面(Engine::new/restore/
+    /// replay 首帧、undo/redo)与本显式入口;cli/mcp doctor 接线由对应层完成。
+    pub fn validate_full(&self) -> Result<(), Vec<String>> {
+        self.project.to_validated_value().map(|_| ())
     }
 }
 

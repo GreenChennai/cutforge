@@ -375,7 +375,7 @@ pub fn render_frame_opts(
         ass_rels.push(write_ass("text-frame", text)?);
     }
     let args = frame_extract_args(&base_video, at_compose, fmt, &ass_rels, &out);
-    let r = crate::run_ff_in(&cache_root, "ffmpeg", &crate::strs(&args));
+    let r = crate::ff::run_ff_in("frame", &cache_root, "ffmpeg", &crate::strs(&args));
     for local in &ass_rels {
         let _ = cutforge_io::atomic::remove(&cache_root.join(local));
     }

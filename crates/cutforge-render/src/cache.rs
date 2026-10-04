@@ -81,11 +81,14 @@ pub struct CacheIndex {
 }
 
 impl CacheIndex {
-    /// 读取清单;缺失/损坏 → 空清单(缓存退化为全 miss,绝不误报命中)。
+    /// 读取清单;缺失/损坏/`hash_algo` 版本位不符 → 空清单(缓存退化为全 miss,
+    /// 绝不误报命中)。R-06:算法版本位不符(含旧版无字段)即整体失效——
+    /// 键值已随算法变化,版本位是第二道保险(未来再换算法时 bump [`HASH_ALGO`])。
     pub fn load(root: &Path) -> CacheIndex {
         std::fs::read_to_string(root.join(INDEX_FILE))
             .ok()
             .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .filter(|v| v.get("hash_algo").and_then(|h| h.as_str()) == Some(HASH_ALGO))
             .map(|v| {
                 let entries = v
                     .get("entries")
@@ -103,11 +106,36 @@ impl CacheIndex {
             .unwrap_or_default()
     }
 
-    /// 原子写清单(唯一落盘点纪律:走 cutforge_io::atomic)。
+    /// 原子写清单(唯一落盘点纪律:走 cutforge_io::atomic)。R-06:读改写全程
+    /// 持 `<root>/.cutforge/cache-index.lock`,且为**合并语义**——以盘上最新
+    /// 清单为底,本内存态条目按 (layer,key) 覆盖:长渲染会话落盘时,并发的
+    /// 他进程期间写入的条目不丢失(TC-RENDER-CACHE-002)。gc 等需要覆盖语义
+    /// 的调用方走 [`CacheIndex::save_exclusive`]。
     pub fn save(&self, root: &Path) -> Result<(), String> {
+        let _guard = index_lock(root, INDEX_LOCK_WAIT)?;
+        let mut merged = CacheIndex::load(root);
+        for e in &self.entries {
+            merged
+                .entries
+                .retain(|m| !(m.layer == e.layer && m.key == e.key));
+            merged.entries.push(e.clone());
+        }
+        Self::write_doc(&merged.entries, root)
+    }
+
+    /// 同 [`CacheIndex::save`],**覆盖语义**(gc 专用:锁外刚做的 load→删除对账
+    /// 已含全部盘上条目,合并反而会复活已删条目;锁内全量写回零丢失)。
+    pub fn save_exclusive(&self, root: &Path) -> Result<(), String> {
+        let _guard = index_lock(root, INDEX_LOCK_WAIT)?;
+        Self::write_doc(&self.entries, root)
+    }
+
+    /// 清单落盘单点(hash_algo 版本位随写盖当前值)。
+    fn write_doc(entries: &[CacheEntry], root: &Path) -> Result<(), String> {
         let doc = json!({
             "version": 1,
-            "entries": self.entries.iter().map(|e| e.to_json()).collect::<Vec<_>>(),
+            "hash_algo": HASH_ALGO,
+            "entries": entries.iter().map(|e| e.to_json()).collect::<Vec<_>>(),
         });
         cutforge_io::atomic::atomic_write(&root.join(INDEX_FILE), doc.to_string().as_bytes())
             .map_err(|e| e.to_string())
@@ -190,12 +218,90 @@ fn layer_ext(layer: &str) -> &'static str {
     }
 }
 
-/// 统一哈希入口(复用仓库既有 DefaultHasher 文本哈希,与拆分前同源)。
+/// 统一哈希入口(R-06):FNV-1a 64——跨 Rust 版本/平台**字节级确定**
+/// (原 DefaultHasher 是未固定键的 SipHash,工具链升级即全缓存静默失效)。
+/// 与 cutforge-io::fresh 的磁盘指纹 FNV 同源同参(io 层为私有实现,依 ADR-0009
+/// 纯 std 纪律按同式落此;算法由 TC-RENDER-CACHE-001 黄金断言锚定,漂移即红)。
 pub fn hash_text(text: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    text.hash(&mut h);
-    h.finish()
+    fnv1a_64(text.as_bytes())
+}
+
+/// FNV-1a 64(offset basis 0xcbf29ce484222325,prime 0x100000001b3)。
+pub fn fnv1a_64(data: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in data {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// cache-index.json 的哈希算法版本位(R-06):与 [`hash_text`] 绑定。算法变更
+/// 必须 bump 此值——旧索引读入即整体失效(键值本身也随算法变化,双保险),
+/// **不连带升 RENDERER_VERSION**(哈希算法变更由索引版本位失效,不是渲染语义变更)。
+pub const HASH_ALGO: &str = "fnv1a-1";
+
+/// 索引锁获取等待上限(读改写临界区毫秒级,30s 仅兜底异常堆积)。
+const INDEX_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+/// 锁接管阈值:持锁临界区(load+原子写)毫秒级,mtime 超龄 60s = 持锁方已崩。
+const INDEX_LOCK_STALE_MS: u64 = 60_000;
+
+/// cache-index.json 跨进程互斥锁(R-06):`<工程>/.cutforge/cache-index.lock`,
+/// 原语复用 io 层 `atomic::create_exclusive`(io 是 render 的合法依赖)。
+/// Drop 删锁;残留锁按 mtime 超龄([`INDEX_LOCK_STALE_MS`])接管。
+pub fn index_lock(
+    cache_root: &Path,
+    timeout: std::time::Duration,
+) -> Result<IndexLockGuard, String> {
+    let dir = cache_root
+        .parent()
+        .ok_or_else(|| "缓存根无父目录".to_string())?
+        .join(".cutforge");
+    let path = dir.join("cache-index.lock");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let content = format!(
+        "pid={} ts={}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    );
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match cutforge_io::atomic::create_exclusive(&path, content.as_bytes()) {
+            Ok(()) => return Ok(IndexLockGuard { path }),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // 崩溃残留接管:mtime 超龄即删重试(活进程临界区毫秒级,不会误夺)
+                let stale = std::fs::metadata(&path)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|m| m.elapsed().ok())
+                    .map(|d| d.as_millis() as u64 > INDEX_LOCK_STALE_MS)
+                    .unwrap_or(false);
+                if stale {
+                    let _ = cutforge_io::atomic::remove(&path);
+                    continue;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!("cache-index 锁被占用: {}", path.display()));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+/// [`index_lock`] 的持有凭据(Drop 删锁;崩溃残留由 mtime 超龄接管)。
+pub struct IndexLockGuard {
+    path: PathBuf,
+}
+
+impl Drop for IndexLockGuard {
+    fn drop(&mut self) {
+        let _ = cutforge_io::atomic::remove(&self.path);
+    }
 }
 
 /// 键 = 输入 spec 的 16 位十六进制哈希(spec 必须已含 RENDERER_VERSION 等全部输入)。
@@ -499,6 +605,8 @@ pub fn cache_info(root: &Path) -> Result<CacheInfoReport, String> {
 
 /// cache gc:先清超龄孤儿(旧版遗留 / tmp 超龄件),再按 LRU + 容量上限淘汰
 /// 清单条目。删文件走 atomic::remove(唯一落盘点纪律);`now` 入参便于测试控时。
+/// R-06:写回走 save_exclusive(覆盖语义——本函数的内存态已含全部盘上条目,
+/// 锁外删除过的条目不能被合并语义复活)。
 pub fn cache_gc(root: &Path, capacity_bytes: u64, now: u64) -> Result<GcReport, String> {
     let mut idx = CacheIndex::load(root);
     idx.prune_missing(root);
@@ -543,7 +651,7 @@ pub fn cache_gc(root: &Path, capacity_bytes: u64, now: u64) -> Result<GcReport, 
         freed += size;
     }
     idx.entries.retain(|e| root.join(&e.file).is_file());
-    idx.save(root)?;
+    idx.save_exclusive(root)?;
     Ok(GcReport {
         removed,
         freed_bytes: freed,
@@ -597,6 +705,163 @@ mod tests {
             key_hex(&v(2)),
             "输入变 → 键变(零陈旧复用的根基)"
         );
+    }
+
+    /// TC-RENDER-CACHE-001(R-06):哈希算法黄金断言——缓存键从跨版本不稳定的
+    /// DefaultHasher(SipHash,未固定键)换为确定性 FNV-1a 64(与 cutforge-io
+    /// fresh.rs 指纹同源)。黄金值锚定算法本身:算法被意外改动时本测试红。
+    #[test]
+    fn tc_render_cache_001_golden_hash_fnv1a() {
+        assert_eq!(
+            format!("{:016x}", hash_text("cutforge-cache-golden")),
+            "aeb61636dc0c54b5",
+            "FNV-1a 64 黄金值(算法漂移即红)"
+        );
+        assert_eq!(
+            key_hex(&json!({"algo": "fnv1a-1", "probe": 1})),
+            "74dd29bb301e5243",
+            "键 = spec 规范 JSON 的 FNV-1a 64 十六进制"
+        );
+        assert_eq!(
+            format!("{:016x}", hash_text("")),
+            "cbf29ce484222325",
+            "空输入 = FNV offset basis(算法指纹)"
+        );
+    }
+
+    /// R-06 版本位:cache-index.json 增 hash_algo 字段——读入时算法不符(含旧版
+    /// 无字段)→ 整清单视为空(条目自动失效,键值已随算法变化,双保险)。
+    #[test]
+    fn index_invalidated_when_hash_algo_mismatches() {
+        let root = TempRoot::new("algo");
+        // 旧版索引(DefaultHasher 时代,无 hash_algo 字段)
+        let legacy = json!({
+            "version": 1,
+            "entries": [{
+                "layer": "seg", "key": "legacy0123456789ab", "file": "seg/legacy.mp4",
+                "size": 1, "createdAt": 1, "lastUsedAt": 1, "hits": 0, "input": {},
+            }],
+        });
+        cutforge_io::atomic::atomic_write(&root.0.join(INDEX_FILE), legacy.to_string().as_bytes())
+            .unwrap();
+        std::fs::create_dir_all(root.0.join("seg")).unwrap();
+        cutforge_io::atomic::atomic_write(&root.0.join("seg/legacy.mp4"), b"x").unwrap();
+        assert!(
+            CacheIndex::load(&root.0).entries.is_empty(),
+            "无 hash_algo 字段的旧索引必须整体失效"
+        );
+        // 算法字段不符(未来再换算法)→ 同样失效
+        let other = json!({
+            "version": 1, "hash_algo": "future-algo",
+            "entries": [{
+                "layer": "seg", "key": "k", "file": "seg/k.mp4",
+                "size": 1, "createdAt": 1, "lastUsedAt": 1, "hits": 0, "input": {},
+            }],
+        });
+        cutforge_io::atomic::atomic_write(&root.0.join(INDEX_FILE), other.to_string().as_bytes())
+            .unwrap();
+        assert!(
+            CacheIndex::load(&root.0).entries.is_empty(),
+            "算法不符必须失效"
+        );
+        // 当前算法写入 → 读回条目在
+        let mut idx = CacheIndex::default();
+        idx.record("seg", "cur", json!(1), 1);
+        cutforge_io::atomic::atomic_write(&root.0.join("seg/cur.mp4"), b"x").unwrap();
+        idx.save(&root.0).unwrap();
+        let doc: Value =
+            serde_json::from_str(&std::fs::read_to_string(root.0.join(INDEX_FILE)).unwrap())
+                .unwrap();
+        assert_eq!(doc["hash_algo"], "fnv1a-1", "索引必须带算法版本位");
+        assert!(CacheIndex::load(&root.0).find("seg", "cur").is_some());
+    }
+
+    /// TC-RENDER-CACHE-002(R-06):两进程并发写索引零丢失更新——
+    /// cache-index.json 的读改写全程持 `<root>/.cutforge/cache-index.lock`。
+    /// 本测试自 spawn 4 个子进程(同测试二进制,env 触发子模式),每个做 4 次
+    /// 「load → record → save」;父进程断言 16 条全在。
+    #[test]
+    fn tc_render_cache_002_concurrent_writers_no_lost_update() {
+        // ---- 子进程模式:与生产渲染同形,锁在 save 内部(锁内合并读改写);
+        // index_lock 不可重入,显式持锁再 save 会自等超时 ----
+        if let Ok(w) = std::env::var("CF_CACHE_IDX_CHILD") {
+            let root = PathBuf::from(std::env::var("CF_CACHE_IDX_ROOT").unwrap());
+            let worker: u32 = w.parse().unwrap();
+            for k in 0..4u32 {
+                let mut idx = CacheIndex::load(&root);
+                let key = format!("w{worker}-k{k}");
+                let rel = idx.record("seg", &key, json!({"w": worker, "k": k}), now_secs());
+                cutforge_io::atomic::atomic_write(&root.join(&rel), b"x").unwrap();
+                idx.save(&root)
+                    .expect("子进程 save(锁内合并读改写)必须成功");
+            }
+            std::process::exit(0);
+        }
+        // ---- 父进程:spawn 4 个子进程并发写同一索引 ----
+        // 缓存根取 TempRoot 内子目录:锁文件落在 TempRoot 内部的 .cutforge/,
+        // 不与并行测试/系统临时目录的 .cutforge 交叉(测试卫生)。
+        let root = TempRoot::new("concurrent");
+        let cache_root = root.0.join(".cutforge/render-cache");
+        std::fs::create_dir_all(&cache_root).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let mut kids = Vec::new();
+        for w in 0..4u32 {
+            kids.push(
+                std::process::Command::new(&exe)
+                    .env("CF_CACHE_IDX_CHILD", w.to_string())
+                    .env("CF_CACHE_IDX_ROOT", &cache_root)
+                    .args([
+                        "--exact",
+                        "cache::tests::tc_render_cache_002_concurrent_writers_no_lost_update",
+                        "--nocapture",
+                    ])
+                    .spawn()
+                    .expect("spawn 子进程"),
+            );
+        }
+        for mut k in kids {
+            assert!(k.wait().expect("wait 子进程").success(), "子进程必须成功");
+        }
+        let idx = CacheIndex::load(&cache_root);
+        let mut keys: Vec<&str> = idx.entries.iter().map(|e| e.key.as_str()).collect();
+        keys.sort();
+        assert_eq!(keys.len(), 16, "4 写者 × 4 条目零丢失更新: {keys:?}");
+        for w in 0..4u32 {
+            for k in 0..4u32 {
+                let key = format!("w{w}-k{k}");
+                assert!(keys.contains(&key.as_str()), "缺条目 {key}: {keys:?}");
+            }
+        }
+    }
+
+    /// 索引锁互斥:持有期间第二次获取(短超时)必须失败;释放后可再获取。
+
+    #[test]
+
+    fn index_lock_is_exclusive_and_released_on_drop() {
+        let root = TempRoot::new("idxlock");
+
+        let g = crate::cache::index_lock(&root.0, std::time::Duration::from_millis(300))
+            .expect("首次获取");
+
+        let lock_path = root.0.parent().unwrap().join(".cutforge/cache-index.lock");
+
+        assert!(
+            lock_path.is_file(),
+            "锁文件在 <root>/.cutforge/: {lock_path:?}"
+        );
+
+        assert!(
+            crate::cache::index_lock(&root.0, std::time::Duration::from_millis(300)).is_err(),
+            "持有期间必须互斥"
+        );
+
+        drop(g);
+
+        assert!(!lock_path.exists(), "Drop 必须删锁文件");
+
+        crate::cache::index_lock(&root.0, std::time::Duration::from_millis(300))
+            .expect("释放后可再获取");
     }
 
     /// 册四 A4 T4.4/T4.9 验证:seg 键对 clip JSON 全量哈希——新字段(曲线/倒放/

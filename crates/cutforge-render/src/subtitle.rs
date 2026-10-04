@@ -19,16 +19,22 @@ pub struct SubLine {
 }
 
 /// SRT 时间戳 `HH:MM:SS,mmm`(兼容 `.` 分隔)→ ms;非法 → None。
+/// BUG-14:毫秒段 1~3 位**右对齐补零**(",5" → 500ms、",50" → 500ms)——
+/// 合法宽变体不再被拒;4 位以上/空段/非数字仍非法。
 pub fn srt_time_parse(s: &str) -> Option<u64> {
     let s = s.trim();
     let (hms, msm) = match s.split_once(',') {
         Some((a, b)) => (a, b),
         None => s.split_once('.')?,
     };
-    let msm = if msm.len() == 3 {
-        msm
-    } else {
-        msm.split('.').nth(1)?
+    // 毫秒段:1~3 位纯数字,右对齐补零到 3 位(千分位)
+    if msm.is_empty() || msm.len() > 3 || !msm.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let ms: u64 = match msm.len() {
+        1 => msm.parse::<u64>().ok()? * 100,
+        2 => msm.parse::<u64>().ok()? * 10,
+        _ => msm.parse::<u64>().ok()?,
     };
     let parts: Vec<&str> = hms.split(':').collect();
     if parts.len() != 3 {
@@ -37,7 +43,6 @@ pub fn srt_time_parse(s: &str) -> Option<u64> {
     let h: u64 = parts[0].trim().parse().ok()?;
     let m: u64 = parts[1].trim().parse().ok()?;
     let sec: u64 = parts[2].trim().parse().ok()?;
-    let ms: u64 = msm.parse().ok()?;
     Some(h * 3_600_000 + m * 60_000 + sec * 1000 + ms)
 }
 
@@ -54,38 +59,55 @@ pub fn srt_time_format(ms: u64) -> String {
 
 /// SRT 解析:块间空行分隔;序号行可选;时间行 `-->`;正文多行(保留换行)。
 /// 非法块跳过(逐块容错);零合法块 → None(调用方报协议错)。
+/// 需要诊断面(哪些块被跳过、为何)请走 [`srt_parse_reported`]。
 pub fn srt_parse(input: &str) -> Option<Vec<SubLine>> {
+    srt_parse_reported(input).0
+}
+
+/// SRT 解析(带诊断,BUG-14):(合法字幕行,错误列表)。错误只报"含 -->
+/// 但时间戳非法/时窗倒置"的块,格式 `第 {行} 行: {原文}`(行号全文 1 起);
+/// 无时间行的杂块不报(既有容错纪律:非法块跳过不中断)。
+pub fn srt_parse_reported(input: &str) -> (Option<Vec<SubLine>>, Vec<String>) {
+    let norm = input.replace("\r\n", "\n");
     let mut out: Vec<SubLine> = Vec::new();
-    for block in input.replace("\r\n", "\n").split("\n\n") {
-        let lines: Vec<&str> = block.lines().filter(|l| !l.trim().is_empty()).collect();
-        if lines.is_empty() {
-            continue;
+    let mut errs: Vec<String> = Vec::new();
+    // 块起始行号(1 起;块间以一个空行分隔)
+    let mut base_line = 1usize;
+    for block in norm.split("\n\n") {
+        let phys: Vec<&str> = block.lines().collect();
+        if let Some(ti) = phys.iter().position(|l| l.contains("-->")) {
+            let mut seg = phys[ti].trim().split("-->");
+            match (seg.next(), seg.next()) {
+                (Some(a), Some(b)) => match (srt_time_parse(a), srt_time_parse(b)) {
+                    (Some(at), Some(end)) if end > at => {
+                        let text = phys[ti + 1..]
+                            .iter()
+                            .filter(|l| !l.trim().is_empty())
+                            .copied()
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if !text.trim().is_empty() {
+                            out.push(SubLine {
+                                at_ms: at,
+                                duration_ms: end - at,
+                                text,
+                            });
+                        }
+                    }
+                    _ => errs.push(format!("第 {} 行: {}", base_line + ti, phys[ti].trim())),
+                },
+                _ => {
+                    errs.push(format!("第 {} 行: {}", base_line + ti, phys[ti].trim()));
+                }
+            }
         }
-        // 时间行定位(序号行可选):第一处含 "-->" 的行
-        let Some(ti) = lines.iter().position(|l| l.contains("-->")) else {
-            continue;
-        };
-        let mut seg = lines[ti].split("-->");
-        let (Some(a), Some(b)) = (seg.next(), seg.next()) else {
-            continue;
-        };
-        let (Some(at), Some(end)) = (srt_time_parse(a), srt_time_parse(b)) else {
-            continue;
-        };
-        if end <= at {
-            continue;
-        }
-        let text = lines[ti + 1..].join("\n");
-        if text.trim().is_empty() {
-            continue;
-        }
-        out.push(SubLine {
-            at_ms: at,
-            duration_ms: end - at,
-            text,
-        });
+        base_line += phys.len() + 1;
     }
-    if out.is_empty() { None } else { Some(out) }
+    if out.is_empty() {
+        (None, errs)
+    } else {
+        (Some(out), errs)
+    }
 }
 
 /// SRT 导出:序号从 1 连续;块间空行;时间戳毫秒精度零损失。
@@ -211,11 +233,9 @@ pub fn ass_export(clips: &[ExportClip], canvas_w: u32, canvas_h: u32) -> String 
             "Dialogue: 0,{},{},CF_{id},,0,0,0,,{}\n",
             crate::textass::ass_time(c.at_ms),
             crate::textass::ass_time(c.at_ms + c.duration_ms),
-            c.text
-                .replace('\r', "")
-                .replace('\n', "\\N")
-                .replace('{', "｛")
-                .replace('}', "｝"),
+            // BUG-21 收口:转义唯一实现 = textass::escape_text(内联 replace 链已删,
+            // 两导出路径字节同源,TC-RENDER-TEXT-003 锁定)
+            crate::textass::escape_text(&c.text),
         ));
     }
     format!(
@@ -490,6 +510,112 @@ mod tests {
         let ass = "Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,甲\n";
         assert_eq!(parse_auto(ass), ass_parse(ass), "无 --> 识别为 ASS");
         assert!(parse_auto("两者皆非").is_none());
+    }
+
+    /// TC-RENDER-SRT-001(BUG-14):毫秒段 1~3 位右对齐补零——",5"/",50"/",500"
+    /// 三变体解析相等;4 位以上/空/非数字仍非法;变体经 parse→format 归一到
+    /// 规范形(毫秒恒 3 位)。
+    #[test]
+    fn tc_render_srt_001_millisecond_variants() {
+        assert_eq!(srt_time_parse("00:00:01,5"), Some(1500));
+        assert_eq!(srt_time_parse("00:00:01,50"), Some(1500));
+        assert_eq!(srt_time_parse("00:00:01,500"), Some(1500));
+        assert_eq!(srt_time_parse("0:00:01.5"), Some(1500), "点分隔同规则");
+        assert_eq!(srt_time_parse("00:00:01,0"), Some(1000), "单 0 补零");
+        assert_eq!(srt_time_parse("00:00:01,5000"), None, "4 位非法");
+        assert_eq!(srt_time_parse("00:00:01,"), None, "空段非法");
+        assert_eq!(srt_time_parse("00:00:01,5x"), None, "非数字非法");
+        // 宽变体文件:解析 → 语义正确 → format 回规范形
+        let loose = "1\n00:00:00,5 --> 00:00:02,50\n宽变体\n\n";
+        let lines = srt_parse(loose).expect("宽变体必须可解析");
+        assert_eq!(
+            lines[0],
+            SubLine {
+                at_ms: 500,
+                duration_ms: 2000,
+                text: "宽变体".into()
+            }
+        );
+        assert!(
+            srt_format(&lines).starts_with("1\n00:00:00,500 --> 00:00:02,500\n"),
+            "导出归一规范形: {}",
+            srt_format(&lines)
+        );
+    }
+
+    /// TC-RENDER-SRT-002(BUG-14):非法时间行显式报错,错误携带行号(1 起,
+    /// 全文计)与原文;合法块照常解析不中断。
+    #[test]
+    fn tc_render_srt_002_error_reports_line_and_text() {
+        let src =
+            "1\n00:00:00,000 --> 00:00:01,000\n好的\n\n2\n00:00:02,5x --> 00:00:03,000\n坏行\n\n";
+        let (lines, errs) = srt_parse_reported(src);
+        assert_eq!(lines.unwrap().len(), 1, "合法块照常解析");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(errs[0].contains("第 6 行"), "行号全文 1 起: {errs:?}");
+        assert!(
+            errs[0].contains("00:00:02,5x --> 00:00:03,000"),
+            "原文在案: {errs:?}"
+        );
+        // 时窗倒置同样报错(旧行为静默跳过)
+        let (_, errs) = srt_parse_reported("1\n00:00:05,000 --> 00:00:01,000\n倒置\n\n");
+        assert_eq!(errs.len(), 1, "{errs:?}");
+        assert!(
+            errs[0].contains("第 2 行") && errs[0].contains("00:00:05,000 --> 00:00:01,000"),
+            "{errs:?}"
+        );
+        // 无时间行的杂块不算错(既有容错纪律:非法块跳过不中断)
+        let (_, errs) = srt_parse_reported("这不是字幕块\n\n");
+        assert!(errs.is_empty(), "{errs:?}");
+    }
+
+    /// TC-RENDER-TEXT-003(BUG-21):两条导出路径——工具面 ass_export 与渲染端
+    /// textass::generate——对同一输入产出**逐字节相等**的转义正文(唯一实现判据)。
+    #[test]
+    fn tc_render_text_003_export_paths_byte_equal() {
+        let cases = [
+            "use {name} here",
+            "a{\\b1}b",
+            "{\\pos(999,999)}注入",
+            "多行一\n多行二",
+            "无花括号",
+            "未闭合{abc",
+        ];
+        for (i, text) in cases.iter().enumerate() {
+            let id = format!("T1-{i:03}");
+            let clips = vec![ExportClip {
+                id: id.clone(),
+                at_ms: 500,
+                duration_ms: 2000,
+                text: text.to_string(),
+            }];
+            let exported = ass_export(&clips, 1080, 1920);
+            let tool_body = dialogue_body_of(&exported);
+            // 渲染端:同文本走 textass::generate(无 textStyle.x/y → 无 \pos 前缀,
+            // Dialogue 正文 = 纯转义结果;样式行/时窗与工具面同构)
+            let pj = serde_json::json!({
+                "version": 1, "schemaVersion": "2.0.0", "slug": "t", "fps": 30,
+                "canvas": {"width": 1080, "height": 1920},
+                "tracks": [{"id": "T1", "kind": "text", "clips": [
+                    {"id": id, "startMs": 500, "durationMs": 2000, "text": text}
+                ]}]
+            });
+            let project: cutforge_core::model::Project = serde_json::from_value(pj).unwrap();
+            let ass = crate::textass::generate(&project).unwrap();
+            let render_body = dialogue_body_of(&ass);
+            assert_eq!(
+                tool_body, render_body,
+                "case {i} ({text:?}) 两导出路径正文必须逐字节相等"
+            );
+        }
+    }
+
+    /// Dialogue 行第 10 字段(正文;逗号安全切分,ass_parse 同规则)。
+    fn dialogue_body_of(doc: &str) -> String {
+        doc.lines()
+            .find(|l| l.starts_with("Dialogue"))
+            .map(|l| l.splitn(10, ',').nth(9).unwrap_or_default().to_string())
+            .unwrap_or_default()
     }
 
     // ---- 册五 T5.5:WebVTT(SRT→VTT 时间格式差异:逗号→点,WEBVTT 头) ----

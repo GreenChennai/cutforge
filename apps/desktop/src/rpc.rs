@@ -165,3 +165,126 @@ pub fn render_timeout(tool: &str) -> Duration {
         Duration::from_secs(10)
     }
 }
+
+// ---------------------------------------------------------------------------
+// 单测(A-07 / TC-DESK-RPC-001):envelope 解析与超时分类,表驱动
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 表驱动:envelope 样例 → 期望(Ok(data) 或 Err(消息))。
+    #[test]
+    fn parse_envelope_table_driven() {
+        let cases: Vec<(&str, Value, Result<Value, String>)> = vec![
+            (
+                "ok+data 对象",
+                json!({"ok": true, "data": {"files": []}}),
+                Ok(json!({"files": []})),
+            ),
+            ("ok 缺 data → Null", json!({"ok": true}), Ok(Value::Null)),
+            (
+                "ok+data 数组",
+                json!({"ok": true, "data": [1, 2]}),
+                Ok(json!([1, 2])),
+            ),
+            ("ok+data 标量", json!({"ok": true, "data": 7}), Ok(json!(7))),
+            (
+                "失败带 code+message",
+                json!({"ok": false, "code": "E_LOCK", "message": "工程被锁"}),
+                Err("t 失败[E_LOCK]:工程被锁".into()),
+            ),
+            (
+                "失败缺 code → UNKNOWN",
+                json!({"ok": false, "message": " boom"}),
+                Err("t 失败[UNKNOWN]: boom".into()),
+            ),
+            (
+                "失败缺 message → 无错误详情",
+                json!({"ok": false, "code": "E_X"}),
+                Err("t 失败[E_X]:无错误详情".into()),
+            ),
+            (
+                "失败全缺 → UNKNOWN+无错误详情",
+                json!({"ok": false}),
+                Err("t 失败[UNKNOWN]:无错误详情".into()),
+            ),
+            (
+                "ok:null 视为失败",
+                json!({"ok": null, "code": "E_N"}),
+                Err("t 失败[E_N]:无错误详情".into()),
+            ),
+            (
+                "空对象视为失败",
+                json!({}),
+                Err("t 失败[UNKNOWN]:无错误详情".into()),
+            ),
+            (
+                "message 非字符串 → 无错误详情",
+                json!({"ok": false, "code": "E_T", "message": 3}),
+                Err("t 失败[E_T]:无错误详情".into()),
+            ),
+            (
+                "失败也带 data(忽略)",
+                json!({"ok": false, "code": "E_D", "message": "m", "data": {"x": 1}}),
+                Err("t 失败[E_D]:m".into()),
+            ),
+            (
+                "ok 字符串 \"true\" 视为失败(严格 bool)",
+                json!({"ok": "true", "code": "E_S"}),
+                Err("t 失败[E_S]:无错误详情".into()),
+            ),
+            (
+                "code 非字符串 → UNKNOWN",
+                json!({"ok": false, "code": 5, "message": "m"}),
+                Err("t 失败[UNKNOWN]:m".into()),
+            ),
+            (
+                "data null 显式",
+                json!({"ok": true, "data": null}),
+                Ok(Value::Null),
+            ),
+        ];
+        for (name, env, want) in &cases {
+            let got = parse_envelope(env, "t");
+            let matches = match (&want, &got) {
+                (Ok(w), Ok(g)) => g == w,
+                (Err(w), Err(g)) => g == w,
+                _ => false,
+            };
+            assert!(
+                matches,
+                "case {name} 结果分支不符:want={want:?} got={got:?}"
+            );
+        }
+        assert!(cases.len() >= 15, "表驱动用例数 ≥15,当前 {}", cases.len());
+    }
+
+    #[test]
+    fn render_timeout_classification() {
+        // 渲染类 300s
+        for tool in [
+            "render",
+            "render_run",
+            "export_jianying",
+            "render_frame",
+            "preview_zone_render",
+        ] {
+            assert_eq!(render_timeout(tool), Duration::from_secs(300), "{tool}");
+        }
+        // 普通工具 10s
+        for tool in ["clip_add", "undo", "project_get", "media_browse"] {
+            assert_eq!(render_timeout(tool), Duration::from_secs(10), "{tool}");
+        }
+    }
+
+    #[test]
+    fn percent_encode_safe_passthrough_and_escaping() {
+        assert_eq!(percent_encode("/a/B_1.2~x\\"), "/a/B_1.2~x\\");
+        assert_eq!(percent_encode("a b"), "a%20b");
+        assert_eq!(percent_encode("中文"), "%E4%B8%AD%E6%96%87");
+        assert_eq!(percent_encode("a&b=c?"), "a%26b%3Dc%3F");
+    }
+}

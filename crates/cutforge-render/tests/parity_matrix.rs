@@ -5,53 +5,115 @@
 //! crop(源域裁剪)/flip(镜像)。ffmpeg 缺失即失败,不得静默跳过。
 //! 证据回填 docs/capability-matrix.json(status/evidence,M11-1)。
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn ffmpeg_ok() -> bool {
-    Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn ff(args: &[&str], cwd: &Path) -> String {
-    let out = Command::new("ffmpeg").args(args).current_dir(cwd).output().expect("ffmpeg 必须存在");
-    assert!(out.status.success(), "ffmpeg 失败: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("ffmpeg")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("ffmpeg 必须存在");
+    assert!(
+        out.status.success(),
+        "ffmpeg 失败: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stderr).to_string()
 }
 
 fn ff_out(args: &[&str], cwd: &Path) -> (String, String) {
-    let out = Command::new("ffmpeg").args(args).current_dir(cwd).output().expect("ffmpeg 必须存在");
-    assert!(out.status.success(), "ffmpeg 失败: {}", String::from_utf8_lossy(&out.stderr));
-    (String::from_utf8_lossy(&out.stdout).to_string(), String::from_utf8_lossy(&out.stderr).to_string())
+    let out = Command::new("ffmpeg")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("ffmpeg 必须存在");
+    assert!(
+        out.status.success(),
+        "ffmpeg 失败: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+    )
 }
 
 fn make_media(dir: &Path) {
     // 4s 人声视频(音画齐备)
-    ff(&[
-        "-y", "-v", "error",
-        "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=4",
-        "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
-        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-shortest",
-        "voice.mp4",
-    ], dir);
+    ff(
+        &[
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=320x240:rate=30:duration=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "voice.mp4",
+        ],
+        dir,
+    );
     // 2s BGM
-    ff(&[
-        "-y", "-v", "error",
-        "-f", "lavfi", "-i", "sine=frequency=220:duration=2",
-        "-c:a", "libmp3lame", "bgm.mp3",
-    ], dir);
+    ff(
+        &[
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=220:duration=2",
+            "-c:a",
+            "libmp3lame",
+            "bgm.mp3",
+        ],
+        dir,
+    );
     // 红色方块 logo
-    ff(&[
-        "-y", "-v", "error",
-        "-f", "lavfi", "-i", "color=c=red:size=60x60",
-        "-frames:v", "1", "logo.png",
-    ], dir);
+    ff(
+        &[
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=red:size=60x60",
+            "-frames:v",
+            "1",
+            "logo.png",
+        ],
+        dir,
+    );
 }
 
 fn probe_duration_sec(p: &Path) -> f64 {
     let out = Command::new("ffprobe")
         .args(["-v", "error", "-print_format", "json", "-show_format"])
-        .arg(p).output().expect("ffprobe 必须存在");
+        .arg(p)
+        .output()
+        .expect("ffprobe 必须存在");
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
     v["format"]["duration"].as_str().unwrap().parse().unwrap()
 }
@@ -60,59 +122,136 @@ fn probe_duration_sec(p: &Path) -> f64 {
 /// 转场截断虫曾借此逃过夹具①;零漂移断言一律以视频流为准)。
 fn video_stream_duration_sec(p: &Path) -> f64 {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-select_streams", "v:0", "-print_format", "json",
-               "-show_entries", "stream=duration"])
-        .arg(p).output().expect("ffprobe 必须存在");
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-print_format",
+            "json",
+            "-show_entries",
+            "stream=duration",
+        ])
+        .arg(p)
+        .output()
+        .expect("ffprobe 必须存在");
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    v["streams"][0]["duration"].as_str().unwrap().parse().unwrap()
+    v["streams"][0]["duration"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap()
 }
 
 /// **音频流**时长(acrossfade 链零漂移断言用)。
 fn audio_stream_duration_sec(p: &Path) -> f64 {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-select_streams", "a:0", "-print_format", "json",
-               "-show_entries", "stream=duration"])
-        .arg(p).output().expect("ffprobe 必须存在");
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-print_format",
+            "json",
+            "-show_entries",
+            "stream=duration",
+        ])
+        .arg(p)
+        .output()
+        .expect("ffprobe 必须存在");
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    v["streams"][0]["duration"].as_str().unwrap().parse().unwrap()
+    v["streams"][0]["duration"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap()
 }
 
 /// 视频流帧数。
 fn video_frame_count(p: &Path) -> u64 {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-select_streams", "v:0", "-print_format", "json",
-               "-show_entries", "stream=nb_frames"])
-        .arg(p).output().expect("ffprobe 必须存在");
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-print_format",
+            "json",
+            "-show_entries",
+            "stream=nb_frames",
+        ])
+        .arg(p)
+        .output()
+        .expect("ffprobe 必须存在");
     let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-    v["streams"][0]["nb_frames"].as_str().unwrap().parse().unwrap()
+    v["streams"][0]["nb_frames"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap()
 }
 
 /// 整帧原始字节(rawvideo rgb24;帧级差异断言用)
 fn frame_bytes(p: &Path, at_sec: f64) -> Vec<u8> {
-    let out = Command::new("ffmpeg").args([
-        "-ss", &format!("{at_sec}"), "-i", p.to_str().unwrap(),
-        "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
-    ]).current_dir(Path::new(".")).output().expect("ffmpeg 必须存在");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(!out.stdout.is_empty(), "无帧输出: {} at {at_sec}s", p.display());
+    let out = Command::new("ffmpeg")
+        .args([
+            "-ss",
+            &format!("{at_sec}"),
+            "-i",
+            p.to_str().unwrap(),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ])
+        .current_dir(Path::new("."))
+        .output()
+        .expect("ffmpeg 必须存在");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.stdout.is_empty(),
+        "无帧输出: {} at {at_sec}s",
+        p.display()
+    );
     out.stdout
 }
 
 /// 音频窗口 RMS(dB)
 fn rms_of_window(p: &Path, from: f64, to: f64) -> f64 {
-    let (_o, err) = ff_out(&[
-        "-i", p.to_str().unwrap(),
-        "-af", &format!("atrim={from}:{to},astats=metadata=1"), "-f", "null", "-",
-    ], Path::new("."));
+    let (_o, err) = ff_out(
+        &[
+            "-i",
+            p.to_str().unwrap(),
+            "-af",
+            &format!("atrim={from}:{to},astats=metadata=1"),
+            "-f",
+            "null",
+            "-",
+        ],
+        Path::new("."),
+    );
     let pos = err.rfind("RMS level dB:").expect(err.as_str());
-    err[pos + 13..].split_whitespace().next().unwrap().parse().unwrap()
+    err[pos + 13..]
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap()
 }
 
 fn write_project(dir: &Path, slug: &str, v: &Value) -> PathBuf {
     let _ = slug; // slug 已在 v 内;参数仅为可读性
     // 唯一落盘点纪律(M2-4):测试夹具同样走 atomic.rs(临时文件+rename 原子替换,父目录自建)
     let p = dir.join("05_ir/project.json");
-    cutforge_io::atomic::atomic_write(&p, serde_json::to_string_pretty(v).unwrap().as_bytes()).unwrap();
+    cutforge_io::atomic::atomic_write(&p, serde_json::to_string_pretty(v).unwrap().as_bytes())
+        .unwrap();
     p
 }
 
@@ -166,29 +305,79 @@ fn is_blueish(p: (u8, u8, u8)) -> bool {
 /// 两色分段源:前段 c0(时长 d0 秒)+ 后段 c1(d1 秒),320x240@30 带 440Hz 人声。
 /// 用于 speedCurve(色变时刻 = 分段积分的可观测锚点)与 reverse(首末帧对调)。
 fn make_two_tone(dir: &Path, name: &str, c0: &str, c1: &str, d0: f64, d1: f64) {
-    ff(&[
-        "-y", "-v", "error",
-        "-f", "lavfi", "-i", &format!("color=c={c0}:size=320x240:rate=30:duration={d0}"),
-        "-f", "lavfi", "-i", &format!("color=c={c1}:size=320x240:rate=30:duration={d1}"),
-        "-f", "lavfi", "-i", &format!("sine=frequency=440:duration={}", d0 + d1),
-        "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0[v]",
-        "-map", "[v]", "-map", "2:a",
-        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-shortest", name,
-    ], dir);
+    ff(
+        &[
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("color=c={c0}:size=320x240:rate=30:duration={d0}"),
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("color=c={c1}:size=320x240:rate=30:duration={d1}"),
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("sine=frequency=440:duration={}", d0 + d1),
+            "-filter_complex",
+            "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+            "-map",
+            "[v]",
+            "-map",
+            "2:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-shortest",
+            name,
+        ],
+        dir,
+    );
 }
 
 /// 左红右蓝源(hstack):320x240,左半 red 右半 blue,带人声。
 /// 用于 rotation(转置后红上蓝下)/crop(裁右半全蓝)/flip(镜像后红右蓝左)。
 fn make_left_red_right_blue(dir: &Path, name: &str, dur: f64) {
-    ff(&[
-        "-y", "-v", "error",
-        "-f", "lavfi", "-i", &format!("color=c=red:size=160x240:rate=30:duration={dur}"),
-        "-f", "lavfi", "-i", &format!("color=c=blue:size=160x240:rate=30:duration={dur}"),
-        "-f", "lavfi", "-i", &format!("sine=frequency=440:duration={dur}"),
-        "-filter_complex", "[0:v][1:v]hstack=inputs=2[v]",
-        "-map", "[v]", "-map", "2:a",
-        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", "-shortest", name,
-    ], dir);
+    ff(
+        &[
+            "-y",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("color=c=red:size=160x240:rate=30:duration={dur}"),
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("color=c=blue:size=160x240:rate=30:duration={dur}"),
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("sine=frequency=440:duration={dur}"),
+            "-filter_complex",
+            "[0:v][1:v]hstack=inputs=2[v]",
+            "-map",
+            "[v]",
+            "-map",
+            "2:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-shortest",
+            name,
+        ],
+        dir,
+    );
 }
 
 #[test]
@@ -233,7 +422,10 @@ fn parity_matrix_full() {
         let p = parse_project(v);
         let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
         let dur = probe_duration_sec(&out.output);
-        assert!((dur - 4.0).abs() <= 0.1, "2x 变速后总时长应仍为 4s(每段消费 4s 源): {dur}");
+        assert!(
+            (dur - 4.0).abs() <= 0.1,
+            "2x 变速后总时长应仍为 4s(每段消费 4s 源): {dur}"
+        );
         achieved.push("2 变速:setpts/atempo 消费(2x → 时长保持语义)");
     }
 
@@ -275,7 +467,9 @@ fn parity_matrix_full() {
         let f_logo = frame_bytes(&out.output, 0.5);
         let f_after = frame_bytes(&out.output, 2.5); // overlay 时间窗外(clip 2s 后)
         assert_ne!(f_logo, f_after, "overlay 时间窗未生效");
-        achieved.push("4 位置/缩放/旋转:overlay 绝对像素落点 + 时间窗(旋转自 A4-BE2 起入契约,见旋转夹具)");
+        achieved.push(
+            "4 位置/缩放/旋转:overlay 绝对像素落点 + 时间窗(旋转自 A4-BE2 起入契约,见旋转夹具)",
+        );
     }
 
     // ---- ⑤ BGM ducking:人声区间 BGM 被压(duck on/off 能量差) ----
@@ -308,17 +502,32 @@ fn parity_matrix_full() {
         let out_off = cutforge_render::render(&p_off, &dir, None, &mut |_| {}).unwrap();
         // 全频段被人声主导;用带通隔离 BGM 频段(220Hz)测压制量(实测 ≈7dB)
         let bgm_band_rms = |p: &Path| {
-            let (_o, err) = ff_out(&[
-                "-i", p.to_str().unwrap(),
-                "-af", "bandpass=f=220:w=60,atrim=0.8:1.6,astats=metadata=1", "-f", "null", "-",
-            ], Path::new("."));
+            let (_o, err) = ff_out(
+                &[
+                    "-i",
+                    p.to_str().unwrap(),
+                    "-af",
+                    "bandpass=f=220:w=60,atrim=0.8:1.6,astats=metadata=1",
+                    "-f",
+                    "null",
+                    "-",
+                ],
+                Path::new("."),
+            );
             let pos = err.rfind("RMS level dB:").expect(err.as_str());
-            err[pos + 13..].split_whitespace().next().unwrap().parse().unwrap()
+            err[pos + 13..]
+                .split_whitespace()
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
         };
         let rms_on: f64 = bgm_band_rms(&out_on.output);
         let rms_off: f64 = bgm_band_rms(&out_off.output);
-        assert!(rms_on < rms_off - 3.0,
-            "ducking 开启时 BGM 频段应被压制 ≥3dB: on={rms_on} off={rms_off}");
+        assert!(
+            rms_on < rms_off - 3.0,
+            "ducking 开启时 BGM 频段应被压制 ≥3dB: on={rms_on} off={rms_off}"
+        );
         achieved.push("9 BGM ducking:sidechain 侧链(on/off 能量差可测)");
     }
 
@@ -337,8 +546,10 @@ fn parity_matrix_full() {
         // 淡入不是静音:断言头部 200ms RMS 显著低于稳态区间(线性淡入 800ms)
         let rms_head = rms_of_window(&out.output, 0.02, 0.2);
         let rms_mid = rms_of_window(&out.output, 1.5, 2.5);
-        assert!(rms_head < rms_mid - 6.0,
-            "afade in 800ms:头部应显著低于稳态(≥6dB): head={rms_head} mid={rms_mid}");
+        assert!(
+            rms_head < rms_mid - 6.0,
+            "afade in 800ms:头部应显著低于稳态(≥6dB): head={rms_head} mid={rms_mid}"
+        );
         achieved.push("3 音量/淡入淡出:afade 消费(音量 M8 已生效)");
     }
 
@@ -355,8 +566,15 @@ fn parity_matrix_full() {
         write_project(&dir, "bad*slug:<>", &v);
         let p = parse_project(v);
         let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
-        assert!(out.output.is_file(), "消毒后文件名必须可用: {}", out.output.display());
-        assert!(!out.output.to_string_lossy().contains('*'), "文件名不得含敌对字符");
+        assert!(
+            out.output.is_file(),
+            "消毒后文件名必须可用: {}",
+            out.output.display()
+        );
+        assert!(
+            !out.output.to_string_lossy().contains('*'),
+            "文件名不得含敌对字符"
+        );
         achieved.push("14 多画幅/文件名消毒:敌对字符替换为 _");
         achieved.push("13 文本轨:文本片段经 textass 生成 ASS 烧录可见(册四 BE3b;像素证据见 parity_text_audio ①)");
     }
@@ -384,7 +602,11 @@ fn parity_matrix_full() {
                 .count()
         };
         // 画幅无关层:mix(纯音频)两变体共享 → 全局仅一份(真分叉的核心判据)
-        assert_eq!(count_layer("mix"), 1, "两个画幅必须共享同一份 mix(画幅无关层仅一份)");
+        assert_eq!(
+            count_layer("mix"),
+            1,
+            "两个画幅必须共享同一份 mix(画幅无关层仅一份)"
+        );
         // 画幅相关层:video/encode 真分叉(compose/sub 每画幅一份;seg = 2 clip × 2 画幅)
         assert_eq!(count_layer("compose"), 2, "compose 必须按画幅分叉");
         assert_eq!(count_layer("sub"), 2, "sub 合流必须按画幅分叉");
@@ -418,18 +640,29 @@ fn parity_matrix_full() {
         let p = parse_project(v);
         // 投影口径:endMs = startMs+durationMs = 2000;渲染时长必须与之一致(红线)
         assert_eq!(
-            p.tracks[0].clips[0].start_ms + p.tracks[0].clips[0].duration_ms, 2000,
+            p.tracks[0].clips[0].start_ms + p.tracks[0].clips[0].duration_ms,
+            2000,
             "内核 endMs 口径"
         );
         let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
         let dur = probe_duration_sec(&out.output);
-        assert!((dur - 2.0).abs() <= 0.1, "曲线段总时长必须 = durationMs(分段拼接): {dur}");
+        assert!(
+            (dur - 2.0).abs() <= 0.1,
+            "曲线段总时长必须 = durationMs(分段拼接): {dur}"
+        );
         let f_early = frame_bytes(&out.output, 0.5);
         let f_late = frame_bytes(&out.output, 1.9);
         let w = 1080usize; // base_project 画布宽(画幅归一后帧宽)
-        assert!(is_reddish(px(&f_early, 540, 960, w)), "0.5s 应为红(段 1 @1.0x)");
-        assert!(is_blueish(px(&f_late, 540, 960, w)), "1.9s 应为蓝(段 2 @2.0x 已越过源 2.5s 分界;恒速假解下仍是红)");
-        achieved.push("16 曲线变速 speedCurve:时长对拍=分段积分(两段曲线,色变时刻落在 1.75s 预测点)");
+        assert!(
+            is_reddish(px(&f_early, 540, 960, w)),
+            "0.5s 应为红(段 1 @1.0x)"
+        );
+        assert!(
+            is_blueish(px(&f_late, 540, 960, w)),
+            "1.9s 应为蓝(段 2 @2.0x 已越过源 2.5s 分界;恒速假解下仍是红)"
+        );
+        achieved
+            .push("16 曲线变速 speedCurve:时长对拍=分段积分(两段曲线,色变时刻落在 1.75s 预测点)");
     }
 
     // ---- ⑪ reverse 倒放(册四 T4.4):短片首末帧对调(reverse 整段缓冲,夹具用短片段) ----
@@ -448,7 +681,9 @@ fn parity_matrix_full() {
         let plan = cutforge_render::RenderPlan::build(&p, &dir, None);
         let mix_args = cutforge_render::steps::mix_pass_a_args(&plan, Path::new("x.m4a"));
         assert!(
-            mix_args.iter().any(|a| a.contains("areverse,asetpts=N/SR/TB")),
+            mix_args
+                .iter()
+                .any(|a| a.contains("areverse,asetpts=N/SR/TB")),
             "倒放音频必须走 areverse+asetpts 链"
         );
         let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
@@ -458,8 +693,14 @@ fn parity_matrix_full() {
         // 首末帧对调:时间线开头显示源结尾(蓝),结尾显示源开头(红)
         let f_head = frame_bytes(&out.output, 0.1);
         let f_tail = frame_bytes(&out.output, 1.0);
-        assert!(is_blueish(px(&f_head, 540, 960, w)), "倒放后 0.1s 应为源尾(蓝)");
-        assert!(is_reddish(px(&f_tail, 540, 960, w)), "倒放后 1.0s 应为源头(红)");
+        assert!(
+            is_blueish(px(&f_head, 540, 960, w)),
+            "倒放后 0.1s 应为源尾(蓝)"
+        );
+        assert!(
+            is_reddish(px(&f_tail, 540, 960, w)),
+            "倒放后 1.0s 应为源头(红)"
+        );
         achieved.push("17 倒放 reverse:首末帧对调(视频 reverse+PTS 重盖;音频 areverse 链同步锁定)");
     }
 
@@ -479,8 +720,16 @@ fn parity_matrix_full() {
         // 源左红右蓝;90° 顺时针(transpose=1)后红在上、蓝在下。
         // 320x240 旋转成 240x320 → fit 1080x1920 → 内容 1080x1440,y ∈ [240,1680)。
         let f = frame_bytes(&out.output, 0.5);
-        assert!(is_reddish(px(&f, 540, 400, w)), "90° 顺时针:顶部应为红(源左侧),实得 {:?}", px(&f, 540, 400, w));
-        assert!(is_blueish(px(&f, 540, 1500, w)), "90° 顺时针:底部应为蓝(源右侧),实得 {:?}", px(&f, 540, 1500, w));
+        assert!(
+            is_reddish(px(&f, 540, 400, w)),
+            "90° 顺时针:顶部应为红(源左侧),实得 {:?}",
+            px(&f, 540, 400, w)
+        );
+        assert!(
+            is_blueish(px(&f, 540, 1500, w)),
+            "90° 顺时针:底部应为蓝(源右侧),实得 {:?}",
+            px(&f, 540, 1500, w)
+        );
         achieved.push("4/18 旋转 rotation:90° transpose 宽高互换(左红右蓝→红上蓝下,朝向像素断言)");
     }
 
@@ -501,7 +750,11 @@ fn parity_matrix_full() {
         // 裁掉左半(红)后仅剩右半(蓝),缩放铺满画幅宽度
         let f = frame_bytes(&out.output, 0.5);
         for (x, y) in [(200usize, 700usize), (540, 960), (880, 1200)] {
-            assert!(is_blueish(px(&f, x, y, w)), "crop 右半后 ({x},{y}) 应为蓝,实得 {:?}", px(&f, x, y, w));
+            assert!(
+                is_blueish(px(&f, x, y, w)),
+                "crop 右半后 ({x},{y}) 应为蓝,实得 {:?}",
+                px(&f, x, y, w)
+            );
         }
         achieved.push("19 裁剪 crop:源域像素矩形(裁左留右,红被裁出画外)");
     }
@@ -522,7 +775,11 @@ fn parity_matrix_full() {
         let f = frame_bytes(&out.output, 0.5);
         // hflip 后:左侧=源右半(蓝),右侧=源左半(红)
         assert!(is_blueish(px(&f, 200, 960, w)), "hflip 后左侧应为蓝");
-        assert!(is_reddish(px(&f, 880, 960, w)), "hflip 后右侧应为红,实得 {:?}", px(&f, 880, 960, w));
+        assert!(
+            is_reddish(px(&f, 880, 960, w)),
+            "hflip 后右侧应为红,实得 {:?}",
+            px(&f, 880, 960, w)
+        );
         achieved.push("20 翻转 flip:水平镜像(hflip,左右色块对调)");
     }
 
@@ -548,23 +805,37 @@ fn parity_matrix_full() {
         };
         // 每分类 2 项,全部经 fx=tr.<id> 直通(目录路径而非旧枚举)
         let sweep: Vec<(&str, &str)> = vec![
-            ("基础", "tr.fade"), ("基础", "tr.dissolve"),
-            ("滑动", "tr.slideleft"), ("滑动", "tr.coverright"),
-            ("擦除", "tr.wipeleft"), ("擦除", "tr.wiperight"),
-            ("图形", "tr.circleopen"), ("图形", "tr.zoomin"),
-            ("模糊", "tr.hblur"), ("模糊", "tr.pixelize"),
+            ("基础", "tr.fade"),
+            ("基础", "tr.dissolve"),
+            ("滑动", "tr.slideleft"),
+            ("滑动", "tr.coverright"),
+            ("擦除", "tr.wipeleft"),
+            ("擦除", "tr.wiperight"),
+            ("图形", "tr.circleopen"),
+            ("图形", "tr.zoomin"),
+            ("模糊", "tr.hblur"),
+            ("模糊", "tr.pixelize"),
         ];
         for (cat, tr) in sweep {
             let id = tr.trim_start_matches("tr.");
             let p = small(&format!("m11-cat-{id}"), tr);
             let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
             let vdur = video_stream_duration_sec(&out.output);
-            assert!((vdur - 4.0).abs() <= FRAME, "[{cat}/{id}] 视频流零漂移: {vdur}");
-            assert_eq!(video_frame_count(&out.output), 120, "[{cat}/{id}] 帧数 = Σdur×fps");
+            assert!(
+                (vdur - 4.0).abs() <= FRAME,
+                "[{cat}/{id}] 视频流零漂移: {vdur}"
+            );
+            assert_eq!(
+                video_frame_count(&out.output),
+                120,
+                "[{cat}/{id}] 帧数 = Σdur×fps"
+            );
             // 转场窗中间帧存在(渲染非空且可 seek)
             let _ = frame_bytes(&out.output, 2.0);
         }
-        achieved.push("21 转场库 50+(AC-4.3):五分类各 2 项经 tr.* 目录直通实渲,视频流零漂移(120 帧/4s)");
+        achieved.push(
+            "21 转场库 50+(AC-4.3):五分类各 2 项经 tr.* 目录直通实渲,视频流零漂移(120 帧/4s)",
+        );
     }
 
     // ---- ⑯ acrossfade 音频链(册四 T4.5 / M11-R1):声画同窗 + 音频流零漂移 ----
@@ -611,23 +882,51 @@ fn parity_matrix_full() {
         };
         let w = 320usize;
         // 基准(无 fx)
-        let base = cutforge_render::render(&mk("m11-fx-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let base =
+            cutforge_render::render(&mk("m11-fx-base", json!(null)), &dir, None, &mut |_| {})
+                .unwrap();
         let f_base = frame_bytes(&base.output, 1.0);
         // ① fx.mono 黑白:全帧去色(R≈G≈B)
-        let mono = cutforge_render::render(&mk("m11-fx-mono", json!({"combo": [{"fx": "fx.mono"}]})), &dir, None, &mut |_| {}).unwrap();
+        let mono = cutforge_render::render(
+            &mk("m11-fx-mono", json!({"combo": [{"fx": "fx.mono"}]})),
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let f_mono = frame_bytes(&mono.output, 1.0);
         let mut max_channel_gap = 0u32;
         for px_idx in (0..(w * 240 * 3)).step_by(3 * 7) {
-            let (r, g, b) = (f_mono[px_idx] as u32, f_mono[px_idx + 1] as u32, f_mono[px_idx + 2] as u32);
+            let (r, g, b) = (
+                f_mono[px_idx] as u32,
+                f_mono[px_idx + 1] as u32,
+                f_mono[px_idx + 2] as u32,
+            );
             max_channel_gap = max_channel_gap.max(r.max(g).max(b) - r.min(g).min(b));
         }
-        assert!(max_channel_gap <= 8, "黑白滤镜后通道差应≤8(去色),实得 {max_channel_gap}");
+        assert!(
+            max_channel_gap <= 8,
+            "黑白滤镜后通道差应≤8(去色),实得 {max_channel_gap}"
+        );
         assert_ne!(f_mono, f_base, "黑白滤镜必须真实改变像素");
         // ② fx.vignette 暗角:白场源(画布 320x240)角部显著暗于中心
-        ff(&[
-            "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=white:size=320x240:rate=30:duration=2",
-            "-c:v", "libx264", "-preset", "veryfast", "white.mp4",
-        ], &dir);
+        ff(
+            &[
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=white:size=320x240:rate=30:duration=2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "white.mp4",
+            ],
+            &dir,
+        );
         let v = json!({
             "version": 1, "schemaVersion": "2.0.0", "slug": "m11-fx-vig", "fps": 30,
             "canvas": {"width": 320, "height": 240},
@@ -641,13 +940,34 @@ fn parity_matrix_full() {
         let f_vig = frame_bytes(&vig.output, 1.0);
         let corner = f_vig[(10 * w + 10) * 3] as u32;
         let center = f_vig[(120 * w + 160) * 3] as u32;
-        assert!(corner + 20 < center, "暗角:角部({corner})应显著暗于中心({center})");
+        assert!(
+            corner + 20 < center,
+            "暗角:角部({corner})应显著暗于中心({center})"
+        );
         // ③ fx.grain 胶片颗粒:与基准逐帧不同(时变噪声)
-        let grain = cutforge_render::render(&mk("m11-fx-grain", json!({"combo": [{"fx": "fx.grain", "params": {"strength": 40}}]})), &dir, None, &mut |_| {}).unwrap();
+        let grain = cutforge_render::render(
+            &mk(
+                "m11-fx-grain",
+                json!({"combo": [{"fx": "fx.grain", "params": {"strength": 40}}]}),
+            ),
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let f_grain = frame_bytes(&grain.output, 1.0);
         assert_ne!(f_grain, f_base, "颗粒噪声必须真实改变像素");
         // ④ fx.mosaic 马赛克:同块内像素归并(testsrc2 渐变域内相邻像素差消失)
-        let mos = cutforge_render::render(&mk("m11-fx-mos", json!({"combo": [{"fx": "fx.mosaic", "params": {"block": 16}}]})), &dir, None, &mut |_| {}).unwrap();
+        let mos = cutforge_render::render(
+            &mk(
+                "m11-fx-mos",
+                json!({"combo": [{"fx": "fx.mosaic", "params": {"block": 16}}]}),
+            ),
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let f_mos = frame_bytes(&mos.output, 1.0);
         // 画布 320x240 → 归一后整帧铺满;取 (16,16) 块内两点(避开块边界)
         let px = |f: &[u8], x: usize, y: usize| -> (u8, u8, u8) {
@@ -661,7 +981,10 @@ fn parity_matrix_full() {
         let near = |x: (u8, u8, u8), y: (u8, u8, u8)| {
             x.0.abs_diff(y.0) <= 4 && x.1.abs_diff(y.1) <= 4 && x.2.abs_diff(y.2) <= 4
         };
-        assert!(near(a, b), "马赛克:同块内像素应归并(±4),实得 {a:?} vs {b:?}");
+        assert!(
+            near(a, b),
+            "马赛克:同块内像素应归并(±4),实得 {a:?} vs {b:?}"
+        );
         assert_ne!(f_mos, f_base, "马赛克必须真实改变像素");
         achieved.push("23 特效库(册四 T4.6):mono 去色/vignette 角部衰减/grain 时变噪声/mosaic 块归并,像素级实渲断言");
     }
@@ -684,24 +1007,54 @@ fn parity_matrix_full() {
         };
         let w = 320usize;
         // ① fadeIn:开头帧亮度显著低于稳态(黑场淡入)
-        let fin = cutforge_render::render(&mk("m11-mo-fin", json!({"in": "fadeIn", "inMs": 600})), &dir, None, &mut |_| {}).unwrap();
+        let fin = cutforge_render::render(
+            &mk("m11-mo-fin", json!({"in": "fadeIn", "inMs": 600})),
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let f_head = frame_bytes(&fin.output, 0.05);
         let f_mid = frame_bytes(&fin.output, 1.5);
         let luma = |f: &[u8]| -> u32 {
-            (0..f.len()).step_by(3 * 11).map(|i| f[i] as u32).sum::<u32>()
+            (0..f.len())
+                .step_by(3 * 11)
+                .map(|i| f[i] as u32)
+                .sum::<u32>()
         };
-        assert!(luma(&f_head) * 3 < luma(&f_mid), "fadeIn 首帧应显著暗于稳态");
+        assert!(
+            luma(&f_head) * 3 < luma(&f_mid),
+            "fadeIn 首帧应显著暗于稳态"
+        );
         // ② slideInLeft:内容自左缘滑入(x:-W→0)——未完成时右侧尚为黑底,稳态后铺满
-        let sli = cutforge_render::render(&mk("m11-mo-sli", json!({"in": "slideInLeft", "inMs": 600})), &dir, None, &mut |_| {}).unwrap();
+        let sli = cutforge_render::render(
+            &mk("m11-mo-sli", json!({"in": "slideInLeft", "inMs": 600})),
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let f_slide = frame_bytes(&sli.output, 0.1);
         let right_dark = f_slide[(120 * w + 290) * 3] < 40;
-        assert!(right_dark, "slideInLeft 未完成时右侧应为黑(内容自左滑入),实得 {:?}", &f_slide[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3]);
+        assert!(
+            right_dark,
+            "slideInLeft 未完成时右侧应为黑(内容自左滑入),实得 {:?}",
+            &f_slide[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3]
+        );
         let f_settled = frame_bytes(&sli.output, 1.5);
-        assert_ne!(&f_slide[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3], &f_settled[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3],
-            "滑入完成后右缘应被内容填充");
+        assert_ne!(
+            &f_slide[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3],
+            &f_settled[(120 * w + 290) * 3..(120 * w + 290) * 3 + 3],
+            "滑入完成后右缘应被内容填充"
+        );
         // 动画不改时长
-        assert!((video_stream_duration_sec(&sli.output) - 2.0).abs() <= FRAME, "motion 不改时长");
-        achieved.push("24 动效库 motion(册四 T4.6):fadeIn 首帧亮度断言 + slideInLeft 黑底平移断言,时长不变");
+        assert!(
+            (video_stream_duration_sec(&sli.output) - 2.0).abs() <= FRAME,
+            "motion 不改时长"
+        );
+        achieved.push(
+            "24 动效库 motion(册四 T4.6):fadeIn 首帧亮度断言 + slideInLeft 黑底平移断言,时长不变",
+        );
     }
 
     // 汇总证据(供矩阵回填)
@@ -709,7 +1062,10 @@ fn parity_matrix_full() {
     for a in &achieved {
         println!("  ✅ {a}");
     }
-    assert!(achieved.len() >= 18, "九项既有 + 五项 A4-BE2 + 四项 A4-BE3a(目录转场/acrossfade/特效/动效)");
+    assert!(
+        achieved.len() >= 18,
+        "九项既有 + 五项 A4-BE2 + 四项 A4-BE3a(目录转场/acrossfade/特效/动效)"
+    );
 }
 
 // ---------------- 册五 T5.1 关键帧对拍矩阵(AC-5.1:逐样本实渲对拍) ----------------
@@ -773,16 +1129,26 @@ fn parity_keyframes_matrix() {
         let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
         let w = 320usize;
         // 求值器预测:offset = (pos.x(t)-0.5)*320;边界 = 160+offset
-        let t05 = cutforge_core::keyframes::eval_property(&p.tracks[0].clips[0], "position.x", 500.0).unwrap();
-        let t15 = cutforge_core::keyframes::eval_property(&p.tracks[0].clips[0], "position.x", 1500.0).unwrap();
+        let t05 =
+            cutforge_core::keyframes::eval_property(&p.tracks[0].clips[0], "position.x", 500.0)
+                .unwrap();
+        let t15 =
+            cutforge_core::keyframes::eval_property(&p.tracks[0].clips[0], "position.x", 1500.0)
+                .unwrap();
         let f05 = frame_bytes(&out.output, 0.5);
         let f15 = frame_bytes(&out.output, 1.5);
         let b05 = red_blue_boundary_x(&f05, 120, w).expect("0.5s 帧必须有红蓝边界");
         let b15 = red_blue_boundary_x(&f15, 120, w).expect("1.5s 帧必须有红蓝边界");
         let e05 = (160.0 + (t05 - 0.5) * 320.0).round() as i64;
         let e15 = (160.0 + (t15 - 0.5) * 320.0).round() as i64;
-        assert!((b05 as i64 - e05).abs() <= 3, "0.5s 边界: 实测 {b05} 预测 {e05}(求值 {t05})");
-        assert!((b15 as i64 - e15).abs() <= 3, "1.5s 边界: 实测 {b15} 预测 {e15}(外延 {t15})");
+        assert!(
+            (b05 as i64 - e05).abs() <= 3,
+            "0.5s 边界: 实测 {b05} 预测 {e05}(求值 {t05})"
+        );
+        assert!(
+            (b15 as i64 - e15).abs() <= 3,
+            "1.5s 边界: 实测 {b15} 预测 {e15}(外延 {t15})"
+        );
         assert!(b15 > b05, "位移必须单调右移: {b05} → {b15}");
         achieved.push("K1 position 关键帧位移:两时刻红蓝边界 vs 求值器预测(±3px)");
     }
@@ -791,12 +1157,25 @@ fn parity_keyframes_matrix() {
     {
         let dir = workspace("kf-scale");
         // 黑底白块源:box [0..200)x[0..150)(5/8 × 5/8,非象限,缩放可观测)
-        ff(&[
-            "-y", "-v", "error",
-            "-f", "lavfi", "-i", "color=c=black:size=320x240:rate=30:duration=2",
-            "-vf", "drawbox=x=0:y=0:w=200:h=150:color=white:t=fill",
-            "-c:v", "libx264", "-preset", "veryfast", "box_src.mp4",
-        ], &dir);
+        ff(
+            &[
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=black:size=320x240:rate=30:duration=2",
+                "-vf",
+                "drawbox=x=0:y=0:w=200:h=150:color=white:t=fill",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "box_src.mp4",
+            ],
+            &dir,
+        );
         let v = json!({
             "version": 1, "schemaVersion": "3.0.0", "slug": "kf-scale", "fps": 30,
             "canvas": {"width": 320, "height": 240},
@@ -817,23 +1196,41 @@ fn parity_keyframes_matrix() {
         let f_early = frame_bytes(&out.output, 0.2);
         let f_late = frame_bytes(&out.output, 1.5);
         let luma_at = |f: &[u8]| -> u32 {
-            let (r, g, b) =
-                (channel(f, 230, 165, w, 0), channel(f, 230, 165, w, 1), channel(f, 230, 165, w, 2));
+            let (r, g, b) = (
+                channel(f, 230, 165, w, 0),
+                channel(f, 230, 165, w, 1),
+                channel(f, 230, 165, w, 2),
+            );
             (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000
         };
         assert!(luma_at(&f_early) < 60, "0.2s(z≈1.4) 采样点应仍在白块外(黑)");
-        assert!(luma_at(&f_late) > 200, "1.5s(z=2.0) 采样点应落入放大的白块内");
+        assert!(
+            luma_at(&f_late) > 200,
+            "1.5s(z=2.0) 采样点应落入放大的白块内"
+        );
         achieved.push("K2 scale 关键帧缩放:zoompan 居中放大,采样点黑→白(尺寸断言)");
     }
 
     // ---- K3 opacity 淡入:0→1 @ [0,1s),中点合成断言 ----
     {
         let dir = workspace("kf-opa");
-        ff(&[
-            "-y", "-v", "error",
-            "-f", "lavfi", "-i", "color=c=white:size=320x240:rate=30:duration=2",
-            "-c:v", "libx264", "-preset", "veryfast", "white.mp4",
-        ], &dir);
+        ff(
+            &[
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=white:size=320x240:rate=30:duration=2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "white.mp4",
+            ],
+            &dir,
+        );
         let v = json!({
             "version": 1, "schemaVersion": "3.0.0", "slug": "kf-opa", "fps": 30,
             "canvas": {"width": 320, "height": 240},
@@ -890,18 +1287,33 @@ fn parity_keyframes_matrix() {
         );
         // 1s 后外延 = 0(静音)
         let rms_tail = rms_of_window(&out.output, 1.2, 1.8);
-        assert!(rms_tail < rms_early - 20.0, "外延末值 0 → 静音: tail={rms_tail} early={rms_early}");
+        assert!(
+            rms_tail < rms_early - 20.0,
+            "外延末值 0 → 静音: tail={rms_tail} early={rms_early}"
+        );
         achieved.push("K4 volume 关键帧:线性包络响度差(早/晚窗 ≥9dB)+ 末值外延静音");
     }
 
     // ---- K5 bezier vs linear 可区分:同区间缓动,中点采样差异断言 ----
     {
         let dir = workspace("kf-bez");
-        let _ = ff(&[
-            "-y", "-v", "error",
-            "-f", "lavfi", "-i", "color=c=white:size=320x240:rate=30:duration=2",
-            "-c:v", "libx264", "-preset", "veryfast", "white.mp4",
-        ], &dir);
+        let _ = ff(
+            &[
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=white:size=320x240:rate=30:duration=2",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "white.mp4",
+            ],
+            &dir,
+        );
         let mk = |slug: &str, bez: bool| {
             let first = if bez {
                 json!({"property": "opacity", "timeMs": 0, "value": 0.0,
@@ -921,8 +1333,10 @@ fn parity_keyframes_matrix() {
             write_project(&dir, slug, &v);
             parse_project(v)
         };
-        let lin = cutforge_render::render(&mk("kf-bez-lin", false), &dir, None, &mut |_| {}).unwrap();
-        let bez = cutforge_render::render(&mk("kf-bez-bez", true), &dir, None, &mut |_| {}).unwrap();
+        let lin =
+            cutforge_render::render(&mk("kf-bez-lin", false), &dir, None, &mut |_| {}).unwrap();
+        let bez =
+            cutforge_render::render(&mk("kf-bez-bez", true), &dir, None, &mut |_| {}).unwrap();
         let w = 320usize;
         let f_lin = frame_bytes(&lin.output, 0.5);
         let f_bez = frame_bytes(&bez.output, 0.5);
@@ -931,7 +1345,10 @@ fn parity_keyframes_matrix() {
         // 求值器预测:bezier(0.1,0.8,0.2,1.0) 在 progress 0.5 处 ≈ 0.8;线性 = 0.5
         let pred = cutforge_core::keyframes::bezier_progress([0.1, 0.8, 0.2, 1.0], 0.5);
         assert!(pred > 0.65, "该控制柄中点应显著快于线性: {pred}");
-        assert!(l_bez > l_lin + 40.0, "bezier({l_bez}) 与 linear({l_lin}) 中点亮度差必须可区分(≥40)");
+        assert!(
+            l_bez > l_lin + 40.0,
+            "bezier({l_bez}) 与 linear({l_lin}) 中点亮度差必须可区分(≥40)"
+        );
         achieved.push("K5 贝塞尔 vs 线性:同区间中点亮度差可区分(求值器预测 ≈0.8 vs 0.5)");
     }
 
@@ -981,9 +1398,15 @@ fn parity_keyframes_matrix() {
                 }
             }
             let b = bb;
-            assert!(best >= 60, "{t_ms}ms 边界梯度不足(alpha 过低?): drop={best}");
+            assert!(
+                best >= 60,
+                "{t_ms}ms 边界梯度不足(alpha 过低?): drop={best}"
+            );
             let e = (160.0 + (pos - 0.5) * 320.0).round() as i64;
-            assert!((b as i64 - e).abs() <= 3, "{t_ms}ms 位置: 实测 {b} vs 求值 {e}(pos={pos})");
+            assert!(
+                (b as i64 - e).abs() <= 3,
+                "{t_ms}ms 位置: 实测 {b} vs 求值 {e}(pos={pos})"
+            );
             // opacity:取边界左侧 40px(内容内)红通道 = 255×alpha(黑底直乘)
             let sx = (b as i64 - 40).max(2) as usize;
             let r = channel(&f, sx, 120, w, 0) as f64 / 255.0;
@@ -999,7 +1422,10 @@ fn parity_keyframes_matrix() {
     for a in &achieved {
         println!("  OK {a}");
     }
-    assert!(achieved.len() >= 6, "关键帧夹具:位置/缩放/淡入/响度/贝塞尔可区分 + 逐样本对拍");
+    assert!(
+        achieved.len() >= 6,
+        "关键帧夹具:位置/缩放/淡入/响度/贝塞尔可区分 + 逐样本对拍"
+    );
 }
 
 // ---------------- 册五 T5.2 调色 + T5.3 音频工作站对拍矩阵(AC-5.2/AC-5.3) ----------------
@@ -1014,23 +1440,50 @@ fn px_near(a: (u8, u8, u8), b: (u8, u8, u8), tol: i32) -> bool {
 /// 频段 RMS(dB;T5.3 EQ 的频域断言:带通 → astats)。
 fn band_rms_db(p: &Path, from: f64, to: f64, lo: u32, hi: u32) -> f64 {
     let fc = (lo + hi) as f64 / 2.0;
-    let (_o, err) = ff_out(&[
-        "-i", p.to_str().unwrap(),
-        // 双级 bandpass(0.2 oct)压泄漏:单级 12dB/oct 时邻频能量盖过深谷
-        "-af", &format!("atrim={from}:{to},bandpass=f={fc}:width_type=o:w=0.2,bandpass=f={fc}:width_type=o:w=0.2,astats=metadata=1"),
-        "-f", "null", "-",
-    ], Path::new("."));
+    let (_o, err) = ff_out(
+        &[
+            "-i",
+            p.to_str().unwrap(),
+            // 双级 bandpass(0.2 oct)压泄漏:单级 12dB/oct 时邻频能量盖过深谷
+            "-af",
+            &format!(
+                "atrim={from}:{to},bandpass=f={fc}:width_type=o:w=0.2,bandpass=f={fc}:width_type=o:w=0.2,astats=metadata=1"
+            ),
+            "-f",
+            "null",
+            "-",
+        ],
+        Path::new("."),
+    );
     let pos = err.rfind("RMS level dB:").expect(err.as_str());
-    err[pos + 13..].split_whitespace().next().unwrap().parse().unwrap()
+    err[pos + 13..]
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap()
 }
 
 /// 成片 LUFS(loudnorm 测量,与 audio_loudness 工具同源参数)。
 fn lufs_of(p: &Path) -> f64 {
-    let (_o, err) = ff_out(&[
-        "-hide_banner", "-nostats", "-i", p.to_str().unwrap(),
-        "-filter_complex", "loudnorm=I=-14:TP=-1.0:print_format=json", "-f", "null", "-",
-    ], Path::new("."));
-    let (s, e) = (err.rfind('{').expect(err.as_str()), err.rfind('}').expect(err.as_str()));
+    let (_o, err) = ff_out(
+        &[
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            p.to_str().unwrap(),
+            "-filter_complex",
+            "loudnorm=I=-14:TP=-1.0:print_format=json",
+            "-f",
+            "null",
+            "-",
+        ],
+        Path::new("."),
+    );
+    let (s, e) = (
+        err.rfind('{').expect(err.as_str()),
+        err.rfind('}').expect(err.as_str()),
+    );
     let m: Value = serde_json::from_str(&err[s..=e]).unwrap();
     m["input_i"].as_str().unwrap().parse().unwrap()
 }
@@ -1038,9 +1491,19 @@ fn lufs_of(p: &Path) -> f64 {
 /// 输出视频流色彩标签(ffprobe;ADR-0020 复验口径)。
 fn color_tags(p: &Path) -> (String, String, String) {
     let o = Command::new("ffprobe")
-        .args(["-v", "error", "-select_streams", "v:0", "-print_format", "json",
-               "-show_entries", "stream=color_primaries,color_transfer,color_space"])
-        .arg(p).output().expect("ffprobe 必须存在");
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-print_format",
+            "json",
+            "-show_entries",
+            "stream=color_primaries,color_transfer,color_space",
+        ])
+        .arg(p)
+        .output()
+        .expect("ffprobe 必须存在");
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
     let s = &v["streams"][0];
     (
@@ -1107,12 +1570,22 @@ fn parity_grade_audio_matrix() {
             write_project(&dir, slug, &v);
             parse_project(v)
         };
-        let base = cutforge_render::render(&mk("lgg-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
-        let graded = cutforge_render::render(&mk("lgg-g", json!({"lift": [0.3, 0.0, 0.0]})), &dir, None, &mut |_| {}).unwrap();
+        let base =
+            cutforge_render::render(&mk("lgg-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let graded = cutforge_render::render(
+            &mk("lgg-g", json!({"lift": [0.3, 0.0, 0.0]})),
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let fb = frame_bytes(&base.output, 1.0);
         let fg = frame_bytes(&graded.output, 1.0);
         let (pb, pg) = (px(&fb, 160, 120, w), px(&fg, 160, 120, w));
-        assert!(pg.0 > pb.0 + 20, "LGG lift 红:暗像素红通道应抬升,基线 {pb:?} → 调色 {pg:?}");
+        assert!(
+            pg.0 > pb.0 + 20,
+            "LGG lift 红:暗像素红通道应抬升,基线 {pb:?} → 调色 {pg:?}"
+        );
         assert!(
             (pg.1 as i32 - pb.1 as i32).abs() <= 10 && (pg.2 as i32 - pb.2 as i32).abs() <= 10,
             "绿蓝通道不动(纯红阴影抬升): 基线 {pb:?} → 调色 {pg:?}"
@@ -1145,11 +1618,18 @@ fn parity_grade_audio_matrix() {
             write_project(&dir, slug, &v);
             parse_project(v)
         };
-        let base = cutforge_render::render(&mk("curve-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let base = cutforge_render::render(&mk("curve-base", json!(null)), &dir, None, &mut |_| {})
+            .unwrap();
         let graded = cutforge_render::render(
-            &mk("curve-g", json!({"curves": {"master": [[0.0, 0.0], [0.5, 0.8], [1.0, 1.0]]}})),
-            &dir, None, &mut |_| {},
-        ).unwrap();
+            &mk(
+                "curve-g",
+                json!({"curves": {"master": [[0.0, 0.0], [0.5, 0.8], [1.0, 1.0]]}}),
+            ),
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let lb = luma_avg(&frame_bytes(&base.output, 1.0), w, 11);
         let lg = luma_avg(&frame_bytes(&graded.output, 1.0), w, 11);
         assert!((lb - 128.0).abs() <= 12.0, "灰源基线中点应 ≈128: {lb}");
@@ -1179,11 +1659,15 @@ fn parity_grade_audio_matrix() {
             write_project(&dir, slug, &v);
             parse_project(v)
         };
-        let base = cutforge_render::render(&mk("lut-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let base =
+            cutforge_render::render(&mk("lut-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
         let graded = cutforge_render::render(
             &mk("lut-g", json!({"lut": ".cutforge/luts/sr.cube"})),
-            &dir, None, &mut |_| {},
-        ).unwrap();
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let fb = frame_bytes(&base.output, 1.0);
         let fg = frame_bytes(&graded.output, 1.0);
         assert_ne!(fb, fg, "LUT 应用后帧面必须改变");
@@ -1247,7 +1731,10 @@ fn parity_grade_audio_matrix() {
         let lt = luma_avg(&f_tail, w, 11);
         assert!(lh < 60.0, "淡入关键帧仍生效(起点近黑): {lh}");
         // 灰(128)×蓝增益 bb=2 → (128,128,255):luma = (299·128+587·128+114·255)/1000 ≈ 142
-        assert!((lt - 142.0).abs() <= 12.0, "grade 蓝增益在 kf 段图内仍生效(末帧蓝抬): {lt}");
+        assert!(
+            (lt - 142.0).abs() <= 12.0,
+            "grade 蓝增益在 kf 段图内仍生效(末帧蓝抬): {lt}"
+        );
         let pt = px(&f_tail, 160, 120, w);
         assert!(pt.2 > pt.0 + 60, "蓝增益方向正确(gain bb=2): {pt:?}");
         achieved.push("G5 grade×关键帧组合:kf 段图内调色链共存,淡入+蓝增益双生效");
@@ -1258,13 +1745,27 @@ fn parity_grade_audio_matrix() {
         let dir = workspace("audio-eq");
         make_media(&dir); // voice.mp4(画面用;volume 0 不进混音)
         // 双音源:440 + 1000 等幅 amix(aac)
-        ff(&[
-            "-y", "-v", "error",
-            "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
-            "-f", "lavfi", "-i", "sine=frequency=1000:duration=3",
-            "-filter_complex", "amix=inputs=2:normalize=0",
-            "-c:a", "aac", "tone2.m4a",
-        ], &dir);
+        ff(
+            &[
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=3",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=1000:duration=3",
+                "-filter_complex",
+                "amix=inputs=2:normalize=0",
+                "-c:a",
+                "aac",
+                "tone2.m4a",
+            ],
+            &dir,
+        );
         let mk = |slug: &str, eq: Value| {
             let v = json!({
                 "version": 1, "schemaVersion": "3.0.0", "slug": slug, "fps": 30,
@@ -1283,11 +1784,21 @@ fn parity_grade_audio_matrix() {
             write_project(&dir, slug, &v);
             parse_project(v)
         };
-        let base = cutforge_render::render(&mk("eq-base", json!(null)), &dir, None, &mut |e| eprintln!("BASE-EV {e}")).unwrap();
+        let base = cutforge_render::render(&mk("eq-base", json!(null)), &dir, None, &mut |e| {
+            eprintln!("BASE-EV {e}")
+        })
+        .unwrap();
         let cut = cutforge_render::render(
-            &mk("eq-cut", json!([{"type": "peaking", "freq": 440, "gain": -18, "q": 1.0}])),
-            &dir, None, &mut |e| eprintln!("CUT-EV {e}"),
-        ).map_err(|e| format!("EQ-CUT-FAIL: {e}")).unwrap();
+            &mk(
+                "eq-cut",
+                json!([{"type": "peaking", "freq": 440, "gain": -18, "q": 1.0}]),
+            ),
+            &dir,
+            None,
+            &mut |e| eprintln!("CUT-EV {e}"),
+        )
+        .map_err(|e| format!("EQ-CUT-FAIL: {e}"))
+        .unwrap();
         let ratio = |o: &cutforge_render::RenderOutcome| {
             // 窄带 ±25Hz(带通默认 12dB/oct,泄漏可忽略);q=1 的 peaking 在中心
             // 频率处为全量 -18dB
@@ -1327,11 +1838,18 @@ fn parity_grade_audio_matrix() {
             write_project(&dir, slug, &v);
             parse_project(v)
         };
-        let base = cutforge_render::render(&mk("dyn-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
+        let base =
+            cutforge_render::render(&mk("dyn-base", json!(null)), &dir, None, &mut |_| {}).unwrap();
         let comp = cutforge_render::render(
-            &mk("dyn-c", json!({"thresholdDb": -27, "ratio": 8, "attackMs": 5, "releaseMs": 100})),
-            &dir, None, &mut |_| {},
-        ).unwrap();
+            &mk(
+                "dyn-c",
+                json!({"thresholdDb": -27, "ratio": 8, "attackMs": 5, "releaseMs": 100}),
+            ),
+            &dir,
+            None,
+            &mut |_| {},
+        )
+        .unwrap();
         let spread = |o: &cutforge_render::RenderOutcome| {
             rms_of_window(&o.output, 0.3, 1.3) - rms_of_window(&o.output, 1.8, 2.8)
         };
@@ -1359,10 +1877,17 @@ fn parity_grade_audio_matrix() {
         write_project(&dir, "audio-lufs", &v);
         let p = parse_project(v);
         let out = cutforge_render::render_with_opts(
-            &p, &dir, None, false,
-            cutforge_render::plan::RenderOptions { loudnorm_i: Some(-16.0), ..Default::default() },
+            &p,
+            &dir,
+            None,
+            false,
+            cutforge_render::plan::RenderOptions {
+                loudnorm_i: Some(-16.0),
+                ..Default::default()
+            },
             &mut |_| {},
-        ).unwrap();
+        )
+        .unwrap();
         let lufs = lufs_of(&out.output);
         assert!(
             (lufs - (-16.0)).abs() <= 1.0,
@@ -1405,21 +1930,48 @@ fn edge_energy(frame: &[u8], w: usize, y: usize, x0: usize, x1: usize) -> f64 {
 
 /// 解码单声道 22050Hz s16le PCM(与 mcp 工具面同参数;夹具自起 ffmpeg)。
 fn decode_mono_pcm(dir: &Path, name: &str) -> Vec<i16> {
-    let out = Command::new("ffmpeg").args([
-        "-v", "error", "-i", name, "-vn", "-ac", "1", "-ar", "22050", "-f", "s16le", "-",
-    ]).current_dir(dir).output().expect("ffmpeg 必须存在");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    out.stdout.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect()
+    let out = Command::new("ffmpeg")
+        .args([
+            "-v", "error", "-i", name, "-vn", "-ac", "1", "-ar", "22050", "-f", "s16le", "-",
+        ])
+        .current_dir(dir)
+        .output()
+        .expect("ffmpeg 必须存在");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out.stdout
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| i16::from_le_bytes(*c))
+        .collect()
 }
 
 /// 解码灰度缩帧(fps 采样 64x36;scene_detect 夹具)。
 fn decode_gray_frames(dir: &Path, name: &str, sample_fps: f64) -> Vec<u8> {
-    let out = Command::new("ffmpeg").args([
-        "-v", "error", "-i", name,
-        "-vf", &format!("fps={sample_fps},scale=64:36,format=gray"),
-        "-f", "rawvideo", "-",
-    ]).current_dir(dir).output().expect("ffmpeg 必须存在");
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("ffmpeg")
+        .args([
+            "-v",
+            "error",
+            "-i",
+            name,
+            "-vf",
+            &format!("fps={sample_fps},scale=64:36,format=gray"),
+            "-f",
+            "rawvideo",
+            "-",
+        ])
+        .current_dir(dir)
+        .output()
+        .expect("ffmpeg 必须存在");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     out.stdout
 }
 
@@ -1434,23 +1986,40 @@ fn make_multicam_angle(dir: &Path, name: &str, delay_s: f64) {
     // ffmpeg 命名色 green = #008000(半亮);内容绿用 0x00FF00(与 parity 色判据一致)
     let colors = ["red", "0x00FF00", "blue"];
     for c in colors {
-        args.extend(["-f".into(), "lavfi".into(), "-i".into(),
-            format!("color=c={c}:size=320x240:rate=30:duration=1")]);
+        args.extend([
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("color=c={c}:size=320x240:rate=30:duration=1"),
+        ]);
     }
     if delay_s > 0.0 {
-        args.extend(["-f".into(), "lavfi".into(), "-i".into(),
-            format!("color=c=black:size=320x240:rate=30:duration={delay_s}")]);
+        args.extend([
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("color=c=black:size=320x240:rate=30:duration={delay_s}"),
+        ]);
     }
     for p in pulses {
-        args.extend(["-f".into(), "lavfi".into(), "-i".into(),
-            "sine=frequency=880:duration=0.05:sample_rate=44100".to_string()]);
+        args.extend([
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            "sine=frequency=880:duration=0.05:sample_rate=44100".to_string(),
+        ]);
         let _ = p;
     }
     // 视频串联(有延迟先拼黑场)+ 六响 adelay → amix
     let n_color = if delay_s > 0.0 { 4 } else { 3 };
     // 角度 B(延迟):黑场**前置**(concat 顺序 = 标签序;black = 输入 3)
     let video_in: Vec<String> = if delay_s > 0.0 {
-        vec!["[3:v]".into(), "[0:v]".into(), "[1:v]".into(), "[2:v]".into()]
+        vec![
+            "[3:v]".into(),
+            "[0:v]".into(),
+            "[1:v]".into(),
+            "[2:v]".into(),
+        ]
     } else {
         (0..n_color).map(|i| format!("[{i}:v]")).collect()
     };
@@ -1462,11 +2031,33 @@ fn make_multicam_angle(dir: &Path, name: &str, delay_s: f64) {
         fc.push(format!("[{idx}:a]adelay={ms}:all=1[d{k}]"));
         audio_refs.push(format!("[d{k}]"));
     }
-    fc.push(format!("{}amix=inputs={}:duration=longest:normalize=0[a]", audio_refs.join(""), pulses.len()));
-    fc.push(format!("{}concat=n={n_color}:v=1:a=0[cv]", video_in.join("")));
-    args.extend(["-filter_complex".into(), fc.join(";"), "-map".into(), "[cv]".into(), "-map".into(), "[a]".into()]);
-    args.extend(["-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
-                 "-c:a".into(), "aac".into(), "-shortest".into(), name.into()]);
+    fc.push(format!(
+        "{}amix=inputs={}:duration=longest:normalize=0[a]",
+        audio_refs.join(""),
+        pulses.len()
+    ));
+    fc.push(format!(
+        "{}concat=n={n_color}:v=1:a=0[cv]",
+        video_in.join("")
+    ));
+    args.extend([
+        "-filter_complex".into(),
+        fc.join(";"),
+        "-map".into(),
+        "[cv]".into(),
+        "-map".into(),
+        "[a]".into(),
+    ]);
+    args.extend([
+        "-c:v".into(),
+        "libx264".into(),
+        "-preset".into(),
+        "veryfast".into(),
+        "-c:a".into(),
+        "aac".into(),
+        "-shortest".into(),
+        name.into(),
+    ]);
     ff(&args.iter().map(|s| s.as_str()).collect::<Vec<_>>(), dir);
 }
 
@@ -1484,11 +2075,21 @@ fn parity_pro_tools_matrix() {
     {
         let dir = workspace("compound");
         make_two_tone(&dir, "inner.mp4", "red", "blue", 1.0, 1.0);
-        ff(&[
-            "-y", "-v", "error",
-            "-f", "lavfi", "-i", "color=c=lime:size=60x60",
-            "-frames:v", "1", "lime.png",
-        ], &dir);
+        ff(
+            &[
+                "-y",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=lime:size=60x60",
+                "-frames:v",
+                "1",
+                "lime.png",
+            ],
+            &dir,
+        );
         let v = json!({
             "version": 1, "schemaVersion": "3.0.0", "slug": "m11-compound", "fps": 30,
             "canvas": {"width": 320, "height": 240},
@@ -1508,25 +2109,46 @@ fn parity_pro_tools_matrix() {
         let p = parse_project(v);
         let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
         let dur = probe_duration_sec(&out.output);
-        assert!((dur - 2.0).abs() <= FRAME, "复合总时长 = 子时间线总时长 2.0s: {dur}");
+        assert!(
+            (dur - 2.0).abs() <= FRAME,
+            "复合总时长 = 子时间线总时长 2.0s: {dur}"
+        );
         // 中间帧颜色序列:0.3s 红(子时间线第一段)→ 1.25s 混合(fade 中点)→ 1.7s 蓝
         let f03 = frame_bytes(&out.output, 0.3);
-        assert!(is_reddish(px(&f03, 160, 120, 320)), "0.3s 必须红: {:?}", px(&f03, 160, 120, 320));
+        assert!(
+            is_reddish(px(&f03, 160, 120, 320)),
+            "0.3s 必须红: {:?}",
+            px(&f03, 160, 120, 320)
+        );
         let f125 = frame_bytes(&out.output, 1.25);
         let mid = px(&f125, 160, 120, 320);
-        assert!(mid.0 > 80 && mid.0 < 180 && mid.2 > 80 && mid.2 < 180,
-            "fade 中点必须红蓝混合: {mid:?}");
+        assert!(
+            mid.0 > 80 && mid.0 < 180 && mid.2 > 80 && mid.2 < 180,
+            "fade 中点必须红蓝混合: {mid:?}"
+        );
         let f17 = frame_bytes(&out.output, 1.7);
-        assert!(is_blueish(px(&f17, 160, 120, 320)), "1.7s 必须蓝: {:?}", px(&f17, 160, 120, 320));
+        assert!(
+            is_blueish(px(&f17, 160, 120, 320)),
+            "1.7s 必须蓝: {:?}",
+            px(&f17, 160, 120, 320)
+        );
         // 叠加上层正确:lime 方块在两个时刻都压在复合画面之上
         for (label, f) in [("0.3s", &f03), ("1.7s", &f17)] {
-            assert!(is_limeish(px(f, 10, 10, 320)), "{label} 叠加上层必须 lime: {:?}", px(f, 10, 10, 320));
+            assert!(
+                is_limeish(px(f, 10, 10, 320)),
+                "{label} 叠加上层必须 lime: {:?}",
+                px(f, 10, 10, 320)
+            );
         }
         // 二级缓存:重渲全命中(子时间线中间段 = compose 层内容寻址,跨渲染复用)
         let out2 = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
-        assert_eq!(out2.cache_misses, 0, "重渲全命中(含复合中间段): hits={} misses={}",
-            out2.cache_hits, out2.cache_misses);
-        achieved.push("C1 compound 两级实渲:总时长 2.0s/红→混合→蓝/叠加上层 lime 正确/二级缓存全命中");
+        assert_eq!(
+            out2.cache_misses, 0,
+            "重渲全命中(含复合中间段): hits={} misses={}",
+            out2.cache_hits, out2.cache_misses
+        );
+        achieved
+            .push("C1 compound 两级实渲:总时长 2.0s/红→混合→蓝/叠加上层 lime 正确/二级缓存全命中");
     }
 
     // ---- ② adjust 调整层时间窗(fx.blur;主合成后按窗再过链) ----
@@ -1555,10 +2177,17 @@ fn parity_pro_tools_matrix() {
         let f_out = frame_bytes(&out.output, 2.5);
         let e_in = edge_energy(&f_in, 320, 120, 100, 220);
         let e_out = edge_energy(&f_out, 320, 120, 100, 220);
-        assert!(e_in < e_out * 0.5, "窗内必须模糊(边缘能量骤降): in={e_in:.1} out={e_out:.1}");
-        assert!(is_reddish(px(&f_out, 80, 120, 320)) && is_blueish(px(&f_out, 240, 120, 320)),
-            "窗外保持左红右蓝: {:?}", px(&f_out, 80, 120, 320));
-        achieved.push("C2 adjust 调整层:fx.blur 时间窗 [0.5,1.5) 内边缘能量骤降,窗外画面与颜色不变");
+        assert!(
+            e_in < e_out * 0.5,
+            "窗内必须模糊(边缘能量骤降): in={e_in:.1} out={e_out:.1}"
+        );
+        assert!(
+            is_reddish(px(&f_out, 80, 120, 320)) && is_blueish(px(&f_out, 240, 120, 320)),
+            "窗外保持左红右蓝: {:?}",
+            px(&f_out, 80, 120, 320)
+        );
+        achieved
+            .push("C2 adjust 调整层:fx.blur 时间窗 [0.5,1.5) 内边缘能量骤降,窗外画面与颜色不变");
     }
 
     // ---- ③ multicam 同步 + 展开(ADR-0019 展开方案;500ms 固定偏移) ----
@@ -1571,8 +2200,10 @@ fn parity_pro_tools_matrix() {
         let pcm_a = decode_mono_pcm(&dir, "angleA.mp4");
         let pcm_b = decode_mono_pcm(&dir, "angleB.mp4");
         let (offset_ms, score) = cutforge_render::analyze::pcm_lag(&pcm_a, &pcm_b, 22050, 5000);
-        assert!((450..=550).contains(&offset_ms),
-            "固定 500ms 偏移必须恢复(±50ms): offset={offset_ms} score={score}");
+        assert!(
+            (450..=550).contains(&offset_ms),
+            "固定 500ms 偏移必须恢复(±50ms): offset={offset_ms} score={score}"
+        );
         assert!(score > 0.5, "同源波形相似度必须高: {score}");
         // 展开(multicam_cut 同口径):切换点 1500ms;B 段 sourceIn = offset + 段内偏移
         let src_in_b = (1500u64).saturating_add(offset_ms.max(0) as u64);
@@ -1591,16 +2222,24 @@ fn parity_pro_tools_matrix() {
         let out = cutforge_render::render(&p, &dir, None, &mut |_| {}).unwrap();
         // 色块时间线无缝:红[0,1) 绿[1,2) 蓝[2,3);切换点 1.5s 两侧同为绿(无黑帧/跳色)
         // 时间线内容:红 [0,1) / 绿 [1,2) / 蓝 [2,3);1.5s 切换点在绿块内部
-        let samples = [(0.5f64, "红", is_reddish as fn((u8, u8, u8)) -> bool),
-                       (1.4, "绿", is_greenish), (1.5, "绿", is_greenish),
-                       (1.6, "绿", is_greenish), (2.4, "蓝", is_blueish),
-                       (2.6, "蓝", is_blueish)];
+        let samples = [
+            (0.5f64, "红", is_reddish as fn((u8, u8, u8)) -> bool),
+            (1.4, "绿", is_greenish),
+            (1.5, "绿", is_greenish),
+            (1.6, "绿", is_greenish),
+            (2.4, "蓝", is_blueish),
+            (2.6, "蓝", is_blueish),
+        ];
         for (at, label, check) in samples {
             let f = frame_bytes(&out.output, at);
             let pv = px(&f, 160, 120, 320);
-            assert!(check(pv), "{at}s 必须是{label}: {pv:?} (offset={offset_ms})");
+            assert!(
+                check(pv),
+                "{at}s 必须是{label}: {pv:?} (offset={offset_ms})"
+            );
         }
-        achieved.push("C3 multicam 同步+展开:500ms 偏移经包络互相关恢复(±1 帧),切换序列渲染色块无缝");
+        achieved
+            .push("C3 multicam 同步+展开:500ms 偏移经包络互相关恢复(±1 帧),切换序列渲染色块无缝");
     }
 
     // ---- ④ scene_detect:硬切色块检测点准确 + TrackSplitAt 切段 ----
@@ -1612,7 +2251,10 @@ fn parity_pro_tools_matrix() {
         let cuts = cutforge_render::analyze::pick_cuts(&diffs, 5.0, 0.5);
         assert_eq!(cuts.len(), 1, "单硬切 → 单检测点: {cuts:?}");
         let (cut_ms, _) = cuts[0];
-        assert!((900..=1100).contains(&cut_ms), "硬切 1.0s 检测点须在 ±100ms: {cut_ms}");
+        assert!(
+            (900..=1100).contains(&cut_ms),
+            "硬切 1.0s 检测点须在 ±100ms: {cut_ms}"
+        );
         // 可选自动切段(Command::TrackSplitAt 单 Op;切点严格包含才切)
         let v = json!({
             "version": 1, "schemaVersion": "3.0.0", "slug": "m11-scene", "fps": 30,
@@ -1624,9 +2266,16 @@ fn parity_pro_tools_matrix() {
         });
         let p = parse_project(v);
         let mut eng = cutforge_core::Engine::new(p).unwrap();
-        let r = eng.apply(cutforge_core::Command::TrackSplitAt {
-            track_id: "V1".into(), t_points: vec![cut_ms],
-        }, cutforge_core::Actor::agent("parity"), Default::default()).unwrap();
+        let r = eng
+            .apply(
+                cutforge_core::Command::TrackSplitAt {
+                    track_id: "V1".into(),
+                    t_points: vec![cut_ms],
+                },
+                cutforge_core::Actor::agent("parity"),
+                Default::default(),
+            )
+            .unwrap();
         assert_eq!(r.op_ids.len(), 1, "自动切段单 Op");
         match eng.query(cutforge_core::Query::Timeline) {
             cutforge_core::Answer::Timeline(tl) => {

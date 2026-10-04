@@ -518,7 +518,13 @@ pub(crate) fn exec_export_encode(
     let mut cmds: Vec<String> = Vec::new();
     for args in &runs {
         cmds.push(args.join(" "));
-        crate::run_ff("ffmpeg", &crate::strs(args))?;
+        crate::ff::run_ff_timeout(
+            "encode",
+            None,
+            "ffmpeg",
+            &crate::strs(args),
+            crate::ff::plan_encode_timeout(&plan.opts, plan.total_ms),
+        )?;
     }
     if format == ExportFormat::Gif {
         let _ = cutforge_io::atomic::remove(&palette);

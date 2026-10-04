@@ -21,6 +21,30 @@
 
 ### 新增
 
+- **V2-W2 性能与架构轮(工单 docs/tickets/V2-W2-*,审查报告 v2 §5/§7/§4)**:
+  **KERNEL2(R-12/R-13/A-05)**——apply 去全量 clone(`engine/revert.rs` 逆向回滚令牌,
+  五条失败路径逐字节相等)+ schema 增量校验(`engine/validate.rs` 受影响子树+全局
+  不变量,全量降级装载面与 `Engine::validate_full()`);**bench 1k×500 命令 71,158ms→
+  396ms(降 99.4%,验收线 ≥80%)**;OpLog 压实纯函数面(`compact.rs` plan/retained_ops,
+  rev>1000+快照存在才压,旧日志缺 rev 放弃)+ `rebuild_stacks_incremental`/
+  `replay_from_snapshot`(10 万 Op open 1.1s;io 层接线归 V2-W3);include! 清理,
+  pro_tests 27 测试迁 `tests/pro_commands.rs`;core 164 测试全绿。
+  **MCP2(A-01)**——dispatch.rs 1150→162 行,`handlers/` 注册表化(85 handler 按域
+  13 文件,`CommandHandler` trait + 三执行面,新增命令=一文件+一行);行为逐字节
+  零变化(parity 0 DRIFT,97→103 测试,TC-MCP-DISPATCH-001 正反向);schema 由
+  mcp-tools.json 编译期嵌入派生;豁免注释升级为永久登记(mcp→render 纯函数消费边,
+  解耦方案留档)。**SHELLA(A-02/BUG-22/A-07)**——app.rs 1971 行拆 app/ 六模块
+  (mod 257/workspace_view 540/playback_facade 591/source_map 451/command_surface 483/
+  keymap 317,全 ≤600 行);纯度约束(command_surface 无 GPUI、workspace_view 无
+  工具名);键位命令注册表 40 行同源(on_key 查表、上下键跨轨遍历、设置页速查表
+  生成、冲突检测);桌面壳测试 30→80 全绿。**RENDER(BUG-13/14/21、R-06/R-07)**——
+  escape_text 收口唯一实现(两导出路径逐字节相等);花括号中和经像素级实证定为
+  「仅配对且含合法 ASS 标签形态才全角中和,未闭合/无标签半角保真」(U+200B 方案
+  经 PSNR=inf 实证无效,证据链入代码注记),generation_warnings 逐条列出被中和行;
+  SRT 毫秒 1~3 位补零+行号诊断;缓存键 FNV-1a+索引 hash_algo 版本位+cache-index.lock
+  锁内合并写;`ff.rs` 单源 ffmpeg 看门狗(超时 kill+FfmpegTimeout{stage}+stderr 4KB
+  尾环,100MB 泼入内存峰值 <50MB),RENDERER_VERSION 11.0→12.0;render 199 测试。
+  **全 workspace 697 测试 0 失败**。
 - **V2-W1 内核数据正确性轮(工单 docs/tickets/V2-W1-KERNEL-data-correctness.md,审查报告 v2 §4)**:
   **BUG-01/02(P0)**——切分 sourceIn 改走 `source_read_ms` 单一真相源(变速/倒放/曲线
   分段积分),新建深模块 `clip_ops.rs`(`Clip::split_at`:关键帧 rebase、fade/transition

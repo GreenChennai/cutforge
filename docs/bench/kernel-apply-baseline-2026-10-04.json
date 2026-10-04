@@ -1,0 +1,10 @@
+{
+  "buildProfile": "debug(本机纪律:禁 --release)",
+  "capturedAt": "2026-10-04T20:30:49.348Z",
+  "fixture": "1000 clips / 8 轨(V1-V4 video、A1-A4 audio;每轨 125×240ms=30s)",
+  "iters": 500,
+  "perOpUs": 142316.0,
+  "totalMs": 71158,
+  "warmup": "1 轮预热后计时",
+  "workload": "500 × clip_update(volume 0.5↔0.8 交替,真实变更各产一条 Op)"
+}

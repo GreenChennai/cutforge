@@ -8,6 +8,7 @@
 pub mod anchor;
 pub mod clip_ops;
 pub mod command;
+pub mod compact;
 mod compound_ir;
 pub mod engine;
 pub mod fx_registry;

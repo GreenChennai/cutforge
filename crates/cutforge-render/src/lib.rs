@@ -14,6 +14,7 @@ pub mod catalog;
 pub mod compound;
 pub mod encode;
 pub mod export;
+pub mod ff;
 pub mod frame;
 pub mod grade;
 pub mod kf_expr;
@@ -25,6 +26,7 @@ pub mod textass;
 pub mod zone;
 
 pub use cache::{CacheEntry, CacheIndex, DEFAULT_CAPACITY_BYTES, GcReport, cache_gc, cache_info};
+pub use ff::{FF_TIMEOUT_DEFAULT, RenderError, encode_timeout};
 pub use frame::{
     FrameFormat, FrameOutcome, frame_done_event, frame_extract_args, quantize_ms, render_frame,
     render_frame_opts,
@@ -37,7 +39,6 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// 渲染器语义版本:任何渲染行为变更都必须 +1(缓存失效的正确来源)。
 /// 4.0:T1.4 render() 分解 + T1.5 缓存全量内容寻址(分层目录 + cache-index.json)。
@@ -68,7 +69,16 @@ use std::process::Command;
 /// - segment:源窗钳制——素材可用时长不足时播放域截到源耗尽点,缺额 tpad 末帧
 ///   定格(越界 -ss/-t 曾让段比标称短);素材不存在/0 字节 → PRECONDITION;
 /// - frame:内容末端守卫同步口径(源耗尽定格计满,只拦整窗无源可读)。
-pub const RENDERER_VERSION: &str = "cutforge-render-11.0";
+///
+/// V2-W2 12.0(文本诚实化):BUG-13/21 行为面变更,旧缓存整体失效——
+/// - escape_text 精确中和:仅"内容含合法 ASS 覆写标签"的花括号对替换为全角
+///   定界符,其余半角保真(旧实现一律全角 = 篡改用户文本);文本含花括号的
+///   工程渲染像素变化,sub 层键虽已含 ASS 字节哈希可自然分键,仍按行为面
+///   登记口径整体升版;
+/// - 卡拉OK/逐字动画通道的用户花括号字符一并中和(旧实现原样透传 = 注入面)。
+///   注:R-06 哈希算法(DefaultHasher→FNV-1a)**不**在本版本位内——键算法变更
+///   由 cache-index.json 的 `hash_algo` 版本位失效,不是渲染语义变更。
+pub const RENDERER_VERSION: &str = "cutforge-render-12.0";
 
 pub struct RenderOutcome {
     pub output: PathBuf,
@@ -83,6 +93,7 @@ pub struct RenderOutcome {
 
 /// E5-2/B13:ffmpeg/ffprobe 定位可配置——env CUTFORGE_FFMPEG / CUTFORGE_FFPROBE 优先,
 /// 缺省按 PATH 名调用(与 CutFlow 侧 WPI_FFMPEG 口径对齐;Windows 不再把 ffmpeg 塞 PATH 不可导出)。
+/// 子进程执行(run_ff 族:超时看门狗 + stderr 流式尾部 4KB)单源在 [`ff`] 模块(R-07)。
 pub fn ff_bin(tool: &str) -> String {
     let key = if tool == "ffmpeg" {
         "CUTFORGE_FFMPEG"
@@ -97,67 +108,9 @@ pub fn ff_bin(tool: &str) -> String {
     tool.to_string()
 }
 
-pub(crate) fn run_ff(tool: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(ff_bin(tool))
-        .args(args)
-        .output()
-        .map_err(|e| format!("启动 {tool} 失败: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "{tool} 失败: {}",
-            String::from_utf8_lossy(&out.stderr)
-                .trim()
-                .chars()
-                .take(800)
-                .collect::<String>()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
-}
-
-/// 双通道捕获版本(loudnorm 测量输出在 stderr)。
-fn run_ff_capture(tool: &str, args: &[&str]) -> Result<(String, String), String> {
-    let out = Command::new(ff_bin(tool))
-        .args(args)
-        .output()
-        .map_err(|e| format!("启动 {tool} 失败: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "{tool} 失败: {}",
-            String::from_utf8_lossy(&out.stderr)
-                .trim()
-                .chars()
-                .take(300)
-                .collect::<String>()
-        ));
-    }
-    Ok((
-        String::from_utf8_lossy(&out.stdout).to_string(),
-        String::from_utf8_lossy(&out.stderr).to_string(),
-    ))
-}
-
-fn run_ff_in(dir: &Path, tool: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new(ff_bin(tool))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .map_err(|e| format!("启动 {tool} 失败: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "{tool} 失败: {}",
-            String::from_utf8_lossy(&out.stderr)
-                .trim()
-                .chars()
-                .take(800)
-                .collect::<String>()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
-}
-
 fn ffprobe_duration_sec(path: &Path) -> Result<f64, String> {
-    let out = run_ff(
+    let out = ff::run_ff(
+        "probe",
         "ffprobe",
         &[
             "-v",
@@ -413,7 +366,7 @@ fn exec_segment(plan: &RenderPlan, idx: &mut CacheIndex) -> Result<SegOutputs, S
                 let rel = idx.record("seg", &key, spec, now);
                 let seg = plan.cache_dir.join(rel);
                 let args = steps::segment_args(plan, clip, tail, &seg);
-                run_ff("ffmpeg", &strs(&args))?;
+                ff::run_ff("segment", "ffmpeg", &strs(&args))?;
                 idx.set_size("seg", &key, file_size(&seg));
                 seg
             }
@@ -452,7 +405,7 @@ fn exec_compose(
                     steps::compose_xfade_args(&plan.video_clips, seg_files, &composed);
                 tr_warns = warns;
                 cmds.push(args.join(" "));
-                run_ff("ffmpeg", &strs(&args))?;
+                ff::run_ff("compose", "ffmpeg", &strs(&args))?;
             } else {
                 // concat 清单写 tmp(内容寻址命名);用完即清。
                 // 条目必须绝对化:concat demuxer 以**清单所在目录**解析相对路径,
@@ -489,7 +442,7 @@ fn exec_compose(
                 .map_err(|e| e.to_string())?;
                 let args = steps::compose_concat_args(&list_path, &composed);
                 cmds.push(args.join(" "));
-                run_ff("ffmpeg", &strs(&args))?;
+                ff::run_ff("compose", "ffmpeg", &strs(&args))?;
                 let _ = cutforge_io::atomic::remove(&list_path);
             }
             idx.set_size("compose", &key, file_size(&composed));
@@ -538,7 +491,7 @@ fn exec_overlay(
             let overlaid = plan.cache_dir.join(rel);
             let args = steps::overlay_args(&plan.overlay_segs, composed, &overlaid);
             let cmd = args.join(" ");
-            run_ff("ffmpeg", &strs(&args))?;
+            ff::run_ff("overlay", "ffmpeg", &strs(&args))?;
             idx.set_size("overlay", &key, file_size(&overlaid));
             (overlaid, false, vec![cmd])
         }
@@ -610,7 +563,7 @@ fn exec_adjust(
                 plan.fps,
             );
             cmds.push(args.join(" "));
-            run_ff("ffmpeg", &strs(&args))?;
+            ff::run_ff("adjust", "ffmpeg", &strs(&args))?;
             idx.set_size("adjust", &key, file_size(&adjusted));
             (adjusted, false)
         }
@@ -669,11 +622,12 @@ fn exec_mix(
     let raw = mixed.with_file_name(format!("{key}.raw.m4a"));
     let args = steps::mix_pass_a_args_with(plan, &raw, &segs_has, bgm_has);
     cmds.push(args.join(" "));
-    run_ff("ffmpeg", &strs(&args))?;
+    ff::run_ff("mix", "ffmpeg", &strs(&args))?;
 
     // pass B:响度(先测后编 linear=true)。数字静音(-inf,无音频工程)跳过:
     // linear=true 遇 -inf 的 measured 值,ffmpeg 报 "Result too large" 直接失败。
-    let (_m_out, m_err) = run_ff_capture(
+    let (_m_out, m_err) = ff::run_ff_capture(
+        "mix-measure",
         ff_bin("ffmpeg").as_str(),
         &strs(&steps::mix_measure_args_t(&raw, target_i, target_tp)),
     )?;
@@ -693,11 +647,11 @@ fn exec_mix(
             &mixed,
         );
         cmds.push(args.join(" "));
-        run_ff(ff_bin("ffmpeg").as_str(), &strs(&args))?;
+        ff::run_ff("mix", ff_bin("ffmpeg").as_str(), &strs(&args))?;
     } else {
         let args = steps::mix_pass_b_silent_args(&raw, &mixed);
         cmds.push(args.join(" "));
-        run_ff(ff_bin("ffmpeg").as_str(), &strs(&args))?;
+        ff::run_ff("mix", ff_bin("ffmpeg").as_str(), &strs(&args))?;
     }
     let _ = cutforge_io::atomic::remove(&raw);
     idx.set_size("mix", &key, file_size(&mixed));
@@ -763,7 +717,7 @@ fn exec_subtitle(
                 // 会被 filtergraph 转义规则吞掉("tmp\ass-k.ass"→"tmpass-k.ass",烧录必炸)
                 let args = steps::subtitle_burn_args(base_video, mixed, &ass_rels, &subbed);
                 cmds.push(args.join(" "));
-                let r = run_ff_in(&plan.cache_dir, "ffmpeg", &strs(&args));
+                let r = ff::run_ff_in("subtitle", &plan.cache_dir, "ffmpeg", &strs(&args));
                 for rel in &ass_rels {
                     let _ = cutforge_io::atomic::remove(&plan.cache_dir.join(rel));
                 }
@@ -771,7 +725,7 @@ fn exec_subtitle(
             } else {
                 let args = steps::subtitle_mux_args(base_video, mixed, &subbed);
                 cmds.push(args.join(" "));
-                run_ff("ffmpeg", &strs(&args))?;
+                ff::run_ff("subtitle", "ffmpeg", &strs(&args))?;
             }
             idx.set_size("sub", &key, file_size(&subbed));
             subbed
@@ -799,7 +753,13 @@ fn exec_encode(
     // 不复验色标(预览语义)。缺省 None = 既有路径逐字不变。
     if let Some(target) = &plan.opts.preview_output {
         let (args, enc) = encode::final_encode_args(video_input, target, &plan.opts, None);
-        run_ff("ffmpeg", &strs(&args))?;
+        ff::run_ff_timeout(
+            "encode",
+            None,
+            "ffmpeg",
+            &strs(&args),
+            ff::plan_encode_timeout(&plan.opts, plan.total_ms),
+        )?;
         let detail = json!({
             "mode": "zone",
             "output": target.to_string_lossy(),
@@ -828,11 +788,12 @@ fn exec_encode(
         }
     }
     let (args, enc_name) = encode::final_encode_args(video_input, &output, &plan.opts, hw);
-    let mut ok = run_ff("ffmpeg", &strs(&args)).is_ok();
+    let enc_to = ff::plan_encode_timeout(&plan.opts, plan.total_ms);
+    let mut ok = ff::run_ff_timeout("encode", None, "ffmpeg", &strs(&args), enc_to).is_ok();
     if !ok && hw.is_some() {
         // 试编通过但全片会话失败(驱动会话/显存等)→ 同样优雅降级
         let (sw_args, sw_name) = encode::final_encode_args(video_input, &output, &plan.opts, None);
-        ok = run_ff("ffmpeg", &strs(&sw_args)).is_ok();
+        ok = ff::run_ff_timeout("encode", None, "ffmpeg", &strs(&sw_args), enc_to).is_ok();
         if ok {
             warns.push(format!(
                 "硬件编码 {enc_name} 全片失败,优雅降级 {sw_name}(AC-5.6);"
@@ -943,7 +904,13 @@ pub fn render_export(
             format,
         );
         let args = export::audio_export_args(format, &mixed, &output);
-        run_ff("ffmpeg", &strs(&args))?;
+        ff::run_ff_timeout(
+            "encode",
+            None,
+            "ffmpeg",
+            &strs(&args),
+            ff::plan_encode_timeout(&plan.opts, plan.total_ms),
+        )?;
         progress(json!({
             "step": "encode", "ok": true, "format": format.as_str(),
             "output": output.to_string_lossy(), "mixCacheHit": mix_hit,

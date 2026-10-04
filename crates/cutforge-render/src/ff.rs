@@ -266,20 +266,56 @@ mod tests {
         assert!(s.contains("TIMEOUT") && s.contains("stage=encode"), "{s}");
     }
 
+    // ---- 跨平台 mock(CI rust-gates 在 ubuntu 跑,无 powershell)----
+    // 只依赖两平台恒在的原语:Windows(ping/powershell)、Unix(sleep/sh/head,
+    // /dev/zero 为 coreutils+procfs 标准;sh 在 ubuntu runner 恒在)。断言口径
+    // 两平台一致:超时 kill+阶段名 / 尾部 4KB 环内容 / 内存峰值预算。
+
+    /// 挂起 mock(FF-001):Windows `ping -n 30`(≈29s)/ Unix `sleep 30`。
+    fn hang_mock() -> (&'static str, Vec<&'static str>) {
+        if cfg!(windows) {
+            ("ping", vec!["-n", "30", "127.0.0.1"])
+        } else {
+            ("sleep", vec!["30"])
+        }
+    }
+
+    /// 大量 stderr mock(FF-002):约 100MB 泼向 stderr;返回期望尾字符。
+    /// Windows:powershell 1000×100KB 的 'x';Unix:`sh -c 'head -c 100000000
+    /// /dev/zero >&2'`(head 默认写 stdout,必须经 shell 重定向到 stderr;
+    /// NUL 流量级等效,旧全量缓冲实现同样会 +100MB)。
+    fn bulk_stderr_mock() -> (&'static str, Vec<&'static str>, char) {
+        if cfg!(windows) {
+            let script = "$b='x'*100000; for($i=0;$i -lt 1000;$i++){[Console]::Error.Write($b)}";
+            ("powershell", vec!["-NoProfile", "-Command", script], 'x')
+        } else {
+            ("sh", vec!["-c", "head -c 100000000 /dev/zero >&2"], '\u{0}')
+        }
+    }
+
+    /// 定量 stderr mock(尾部环测试):恰好 >4KB、以 "0123456789" 收尾(无换行,
+    /// 精确断言尾部字节)。
+    fn tail_probe_mock() -> (&'static str, Vec<&'static str>) {
+        if cfg!(windows) {
+            let script = "$s='0123456789'*600; [Console]::Error.Write($s)";
+            ("powershell", vec!["-NoProfile", "-Command", script])
+        } else {
+            // 667 × "0123456789" = 6670 字节;printf 不带换行 → 尾部精确可断言;
+            // 重定向作用于整个 while 复合命令(>4KB 进 stderr)
+            let script = "i=0; while [ $i -lt 667 ]; do printf 0123456789; i=$((i+1)); done >&2";
+            ("sh", vec!["-c", script])
+        }
+    }
+
     /// TC-RENDER-FF-001:mock 挂起 → 到点 kill + `FfmpegTimeout{stage}`。
-    /// (ping -n 30 ≈ 挂 29s;看门狗 0.5s 即杀。红注:旧 run_ff 无超时参数,
+    /// (挂起 mock ≈ 29~30s;看门狗 0.5s 即杀。红注:旧 run_ff 无超时参数,
     /// 该测试在旧接口下只能永久悬挂——接口级缺失,无法安全演示行为红。)
     #[test]
     fn tc_render_ff_001_hang_is_killed_with_stage() {
+        let (tool, args) = hang_mock();
         let t0 = std::time::Instant::now();
-        let err = run_ff_stage(
-            "tc-ff-001",
-            None,
-            "ping",
-            &["-n", "30", "127.0.0.1"],
-            Duration::from_millis(500),
-        )
-        .expect_err("挂起 mock 必须以超时失败");
+        let err = run_ff_stage("tc-ff-001", None, tool, &args, Duration::from_millis(500))
+            .expect_err("挂起 mock 必须以超时失败");
         assert!(
             matches!(err, RenderError::FfmpegTimeout { ref stage, .. } if stage == "tc-ff-001"),
             "错误必须是 FfmpegTimeout 且带阶段名: {err}"
@@ -296,18 +332,11 @@ mod tests {
     /// 缓冲会 +100MB,流式尾部环应 <1MB(50MB 预算吸收并行测试噪声)。
     #[test]
     fn tc_render_ff_002_mass_stderr_bounded_memory() {
+        let (tool, args, tail_char) = bulk_stderr_mock();
         alloc_probe::reset_peak();
         let before = alloc_probe::peak();
-        // 1000 × 100KB = 100MB 泼向 stderr
-        let script = "$b='x'*100000; for($i=0;$i -lt 1000;$i++){[Console]::Error.Write($b)}";
-        let (_, tail) = run_ff_stage(
-            "tc-ff-002",
-            None,
-            "powershell",
-            &["-NoProfile", "-Command", script],
-            Duration::from_secs(180),
-        )
-        .expect("mock 必须正常退出");
+        let (_, tail) = run_ff_stage("tc-ff-002", None, tool, &args, Duration::from_secs(180))
+            .expect("mock 必须正常退出");
         let peak_delta = alloc_probe::peak().saturating_sub(before);
         assert!(
             peak_delta < 50 * 1024 * 1024,
@@ -318,22 +347,15 @@ mod tests {
             "尾部环上限: {}",
             tail.len()
         );
-        assert!(tail.ends_with('x'), "尾部必须保留最后字节");
+        assert!(tail.ends_with(tail_char), "尾部必须保留最后字节");
     }
 
     /// stderr 尾部环:超量输入只留最后 4KB,且以最后字节收尾。
     #[test]
     fn stderr_tail_keeps_last_bytes() {
-        // 6000 字节可辨识序列
-        let script = "$s='0123456789'*600; [Console]::Error.Write($s)";
-        let (_, tail) = run_ff_stage(
-            "tc-ff-tail",
-            None,
-            "powershell",
-            &["-NoProfile", "-Command", script],
-            Duration::from_secs(60),
-        )
-        .expect("mock 必须正常退出");
+        let (tool, args) = tail_probe_mock();
+        let (_, tail) = run_ff_stage("tc-ff-tail", None, tool, &args, Duration::from_secs(60))
+            .expect("mock 必须正常退出");
         assert!(
             tail.len() <= STDERR_TAIL_BYTES + 1024,
             "尾部环上限: {}",

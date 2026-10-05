@@ -240,8 +240,15 @@ jobs:
         with:
           python-version: "3.13"
       - uses: dtolnay/rust-toolchain@stable
-      - name: Milestone gates A1(行数红线/命名/文档计数,观察模式)
-        run: python tools/gates/gate.py A1 --json
+      - name: Milestone gates A1 静态子集(行数/纯度/字形/散写 ms,观察模式;
+          重活检查由 rust-gates/web-e2e/license-gates 各自 job 承担,此处不重复)
+        run: |-
+          python tools/gates/gate.py A1 --check rust-line-limit --json
+          python tools/gates/gate.py A1 --check desktop-line-limit --json
+          python tools/gates/gate.py A1 --check desktop-box-leak --json
+          python tools/gates/gate.py A1 --check desktop-color-purity --json
+          python tools/gates/gate.py A1 --check desktop-glyph-icon --json
+          python tools/gates/gate.py A1 --check desktop-magic-ms --json
 
   release-upload:
     if: startsWith(github.ref, 'refs/tags/v')

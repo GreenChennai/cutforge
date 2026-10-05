@@ -47,10 +47,6 @@ jobs:
         env:
           # M8-2 夹具再生成校验(真实 IR 来自 CutFlow rs_ir.py)
           CUTFLOW_REPO: ${{ github.workspace }}/../CutFlow
-          # TC-PERF-OPEN-001(10 万 Op open)预算:本地缺省 2000ms 严格口径,
-          # 共享 runner 磁盘/CPU 抖动实测超 2s → CI 放宽到 6000ms
-          # (回归探测力保留:回到 O(n²) 量级是数十秒,仍远超线)
-          CUTFORGE_OPEN_BUDGET_MS: "6000"
         run: |
           git clone --depth 1 https://github.com/GreenChennai/CutFlow.git ../CutFlow
           python3 tools/gen_real_ir_fixture.py --check

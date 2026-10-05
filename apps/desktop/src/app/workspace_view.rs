@@ -5,6 +5,7 @@
 //! 数据流:网络线程 `GET /events` 长轮询置 dirty/rev → 100ms 泵对账重投影
 //! (dirty = 后台重拉全量;snapshot_rev 变 = 本地重投影)→ `Render` 刷新。
 
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -188,6 +189,18 @@ pub(crate) fn assemble_dock(
 impl DesktopApp {
     /// UI 泵(100ms):错误横幅 / 播放推进 / rev 对账重投影。
     pub(crate) fn pump(&mut self, cx: &mut Context<Self>) {
+        // R-17:壳态 10s 防抖落盘(播放头/选择/吸附;小文件,损坏由 load 丢弃)
+        if self.shell_last_save.elapsed() >= std::time::Duration::from_secs(10) {
+            self.shell_last_save = std::time::Instant::now();
+            crate::app::shell_state::save(
+                Path::new(&self.project_dir),
+                &crate::app::shell_state::ShellState {
+                    playhead_ms: self.playhead_ms,
+                    selection: self.selection.clone().into_iter().collect(),
+                    snap_on: self.snap_enabled,
+                },
+            );
+        }
         if let Some(err) = self.shared.take_error() {
             let prefix = if err.contains("失败[") {
                 "操作失败"

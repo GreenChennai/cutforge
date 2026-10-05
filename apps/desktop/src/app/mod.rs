@@ -18,6 +18,7 @@
 //! 引擎构造/加载失败或运行中故障(is_faulted 含 Stalled)→ 自动回落幻灯片,
 //! 原因进状态栏与设置页「播放」小节,不白屏不 panic。
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,6 +31,7 @@ use crate::state::Shared;
 
 mod command_surface;
 mod playback_facade;
+pub mod shell_state;
 mod workspace_view;
 
 /// 命令面对外消费口:设置页速查表从注册表生成(BUG-22 单一真相)。
@@ -51,6 +53,9 @@ pub struct DesktopApp {
     pub id_map: std::collections::HashMap<u64, String>,
     /// 选中 clip 的内核字符串 id
     pub selection: Option<String>,
+    /// 壳态持久化(R-17):距上次落盘是否有变更 / 上次落盘时刻
+    pub(crate) shell_dirty: bool,
+    pub(crate) shell_last_save: Instant,
     pub playhead_ms: u64,
     /// 播放中(壳侧推进播放头)
     pub playing: bool,
@@ -186,6 +191,8 @@ impl DesktopApp {
                 playhead_ms: 0,
                 playing: false,
                 snap_enabled: true,
+                shell_dirty: false,
+                shell_last_save: Instant::now(),
                 clipboard: None,
                 last_frame: Instant::now(),
                 duration_ms: 0,
@@ -218,6 +225,15 @@ impl DesktopApp {
                 pop_miss: false,
             }
         });
+
+        // R-17:壳态恢复(播放头/选择/吸附;损坏/缺失 → 用默认,不崩壳)
+        if let Some(st) = shell_state::load(Path::new(&root_dir)) {
+            app.update(cx, |app, _| {
+                app.playhead_ms = st.playhead_ms;
+                app.snap_enabled = st.snap_on;
+                app.selection = st.selection.first().cloned();
+            });
+        }
 
         // 两阶段组装:面板回调需要 WeakEntity<Self>,先建根再建 dock
         app.update(cx, |app, cx| {

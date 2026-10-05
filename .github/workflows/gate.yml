@@ -211,8 +211,40 @@ jobs:
 
   # 统一附加:三平台矩阵并发跑 "view 不存在则 create" 会撞车(v0.3.0 首跑实测,
   # 输掉竞态的一腿 exit 1 并被 fail-fast 连坐),附加动作只允许这一个 job 执行。
+  # S-05(审查报告 v2 §6):cargo-deny 许可审计——观察模式。
+  # 转阻断条件:首跑收集全部传递依赖许可证据 → 逐个裁决进 deny.toml →
+  # 连续两轮无新增 unknown → 去掉 continue-on-error(纪律同 G-3/G-1)。
+  license-gates:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: cargo deny check licenses
+        run: cargo deny check licenses
+
+  # G-3 尾巴(审查报告 v2 §8.1):A1 行数红线与 bench 阈值——观察模式。
+  # 转阻断条件:①A-01/A-02/A-05 拆分波落地后 `gate.py A1 --check rust-line-limit`
+  # 转绿(当前 crates 存量 11+ 文件 >800 行,拆分进行中);②bench 基线在共享
+  # runner 双跑抖动 <5% 后挂回(见 CONTRIBUTING「门禁扫描面登记」)。
+  legacy-gates:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Milestone gates A1(行数红线/命名/文档计数,观察模式)
+        run: python tools/gates/gate.py A1 --json
+
   release-upload:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v'), 'refs/tags/v')
     needs: release
     runs-on: ubuntu-latest
     # 仓库默认 workflow 权限收紧为只读后,建 release/传资产必须显式申请

@@ -1,0 +1,29 @@
+# cargo-deny 配置(S-05,审查报告 v2 §6):许可审计。
+# 状态:观察模式(CI job continue-on-error)——首次全量许可清单未经人工核验,
+# 预跑收集证据后:①把实际出现的非清单许可逐个裁决进 allow/clarify;
+# ②裁满一轮无新增 → license-gates 转 blocking(与 G-1/G-3 升级口径同纪律)。
+# 本仓自有 crate = ARL-1.0(非 OSI,见 LICENSE/README 声明),不在对第三方
+# 依赖的许可要求内,deny 不扫描 workspace 自身。
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "Zlib",
+    "CC0-1.0",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+]
+
+[[licenses.clarify]]
+name = "sable"
+expression = "MIT OR Apache-2.0"
+description = "上游 UI 库(git 钉 rev);其 crates 声明以仓库 LICENSE 为准,首跑证据核对后定稿"

@@ -38,36 +38,47 @@ struct BootState {
     used: bool,
 }
 
-fn boot() -> &'static std::sync::Mutex<Option<BootState>> {
-    static B: OnceLock<std::sync::Mutex<Option<BootState>>> = OnceLock::new();
-    B.get_or_init(|| std::sync::Mutex::new(None))
+/// 会话引导态按 **root 隔离**(每 serve 一份):同进程多 serve(测试并行形态)
+/// 曾因进程级单例互相覆写凭据,先注册者兑换 401(ubuntu CI 实证)。
+fn boots() -> &'static std::sync::Mutex<std::collections::BTreeMap<PathBuf, BootState>> {
+    static B: OnceLock<std::sync::Mutex<std::collections::BTreeMap<PathBuf, BootState>>> =
+        OnceLock::new();
+    B.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
 }
 
-fn issued_session_tokens() -> &'static std::sync::Mutex<std::collections::BTreeSet<String>> {
-    static T: OnceLock<std::sync::Mutex<std::collections::BTreeSet<String>>> = OnceLock::new();
-    T.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeSet::new()))
+fn issued_session_tokens() -> &'static std::sync::Mutex<
+    std::collections::BTreeMap<PathBuf, std::collections::BTreeSet<String>>,
+> {
+    static T: OnceLock<
+        std::sync::Mutex<std::collections::BTreeMap<PathBuf, std::collections::BTreeSet<String>>>,
+    > = OnceLock::new();
+    T.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()))
 }
 
 /// serve 启动时发放一次性凭据(绑定本进程会话 id;5 分钟过期)。
 /// 返回 (session_id, credential) 供 /session 响应与会话文件落盘。
-pub fn register_session_boot() -> (String, String) {
+pub fn register_session_boot(root: &Path) -> (String, String) {
     let session_id = new_token();
     let credential = new_token();
-    if let Ok(mut b) = boot().lock() {
-        *b = Some(BootState {
-            session_id: session_id.clone(),
-            credential: credential.clone(),
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(CREDENTIAL_TTL_SEC),
-            used: false,
-        });
+    if let Ok(mut b) = boots().lock() {
+        b.insert(
+            root.to_path_buf(),
+            BootState {
+                session_id: session_id.clone(),
+                credential: credential.clone(),
+                expires: std::time::Instant::now()
+                    + std::time::Duration::from_secs(CREDENTIAL_TTL_SEC),
+                used: false,
+            },
+        );
     }
     (session_id, credential)
 }
 
 /// 当前未消费的一次性凭据视图(/session 响应与会话文件;已消费/已过期 → None)。
-pub fn active_credential() -> Option<(String, String)> {
-    let b = boot().lock().ok()?;
-    let st = b.as_ref()?;
+pub fn active_credential(root: &Path) -> Option<(String, String)> {
+    let b = boots().lock().ok()?;
+    let st = b.get(root)?;
     if st.used || std::time::Instant::now() >= st.expires {
         return None;
     }
@@ -76,12 +87,14 @@ pub fn active_credential() -> Option<(String, String)> {
 
 /// 兑换一次性凭据(S-01 语义三重校验:凭据正确 + 绑定 sessionId + 未过期;
 /// 单次使用——兑换成功即消费,二次兑换失败)。
-pub fn consume_credential(credential: &str, session_id: &str) -> bool {
-    let mut b = match boot().lock() {
+pub fn consume_credential(root: &Path, credential: &str, session_id: &str) -> bool {
+    let mut b = match boots().lock() {
         Ok(b) => b,
         Err(_) => return false,
     };
-    let Some(st) = b.as_mut() else { return false };
+    let Some(st) = b.get_mut(root) else {
+        return false;
+    };
     if st.used
         || std::time::Instant::now() >= st.expires
         || !cutforge_mcp_auth_eq(st.credential.as_bytes(), credential.as_bytes())
@@ -99,20 +112,20 @@ fn cutforge_mcp_auth_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// 兑换成功后签发会话 token(进程内有效;与主 token 不同值,可独立撤销面)。
-pub fn issue_session_token() -> String {
+pub fn issue_session_token(root: &Path) -> String {
     let t = new_token();
     if let Ok(mut s) = issued_session_tokens().lock() {
-        s.insert(t.clone());
+        s.entry(root.to_path_buf()).or_default().insert(t.clone());
     }
     t
 }
 
 /// 会话 token 有效性(Bearer 校验的候选面之一)。
-pub fn is_session_token(t: &str) -> bool {
+pub fn is_session_token(root: &Path, t: &str) -> bool {
     issued_session_tokens()
         .lock()
         .ok()
-        .is_some_and(|s| s.contains(t))
+        .is_some_and(|s| s.get(root).is_some_and(|set| set.contains(t)))
 }
 
 // ---------------- RT-1:会话变更摘要(.cutforge/session-summary.json) ----------------

@@ -282,7 +282,7 @@ pub fn serve_workspace(
     };
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(port);
     // S-01:一次性短期凭据(绑会话 id;5 分钟/单次)——主 token 只活在进程内
-    let (session_id, credential) = crate::session::register_session_boot();
+    let (session_id, credential) = crate::session::register_session_boot(Path::new(root));
     let session = json!({
         "root": root.to_string_lossy(),
         "port": port,
@@ -456,7 +456,7 @@ fn handle_workspace_conn(
     let master_ok = check_auth(&req.head, token);
     let session_ok = presented
         .as_deref()
-        .is_some_and(crate::session::is_session_token);
+        .is_some_and(|t| crate::session::is_session_token(Path::new(root), t));
     let url_token = query_param(query, "token");
     let url_master_ok = !master_ok
         && !session_ok
@@ -467,7 +467,7 @@ fn handle_workspace_conn(
         && !session_ok
         && url_token
             .as_deref()
-            .is_some_and(crate::session::is_session_token);
+            .is_some_and(|t| crate::session::is_session_token(Path::new(root), t));
     let authorized = master_ok || session_ok || url_master_ok || url_session_ok;
     // S-01:仅 master 走 URL 面时判弃用(会话 token 经 URL 是设计内通道)
     let deprecation = if url_master_ok {
@@ -484,12 +484,12 @@ fn handle_workspace_conn(
             serde_json::from_str::<Value>(&req.body)
                 .ok()
                 .and_then(|b| b["sessionId"].as_str().map(String::from))
-                .is_some_and(|sid| crate::session::consume_credential(cred, &sid))
+                .is_some_and(|sid| crate::session::consume_credential(Path::new(root), cred, &sid))
         });
         let (status, body) = if ok {
             (
                 "200 OK",
-                json!({"sessionToken": crate::session::issue_session_token(),
+                json!({"sessionToken": crate::session::issue_session_token(Path::new(root)),
                        "note": "凭据已消费(单次使用)"})
                 .to_string(),
             )
@@ -601,7 +601,7 @@ fn handle_workspace_conn(
         }
     } else if is_get_session {
         // S-01:响应体不再携带主 token——只回报一次性凭据视图(已消费则如实标注)
-        let (sid, cred) = match crate::session::active_credential() {
+        let (sid, cred) = match crate::session::active_credential(Path::new(root)) {
             Some(pair) => (json!(pair.0), json!(pair.1)),
             None => (json!(null), json!(null)),
         };

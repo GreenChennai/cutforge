@@ -54,27 +54,58 @@ pub fn ffprobe_available() -> bool {
         .unwrap_or(false)
 }
 
-/// 进程存活判定(崩溃恢复,册六 T6.1):锁文件里的 pid 是否还活着。
-/// 本模块是 IO 层唯一的外部进程调用点,pid 探测同域收敛于此:
-/// Windows 走 `tasklist /FI`(过滤精确 PID,无匹配时输出本地化 INFO 行,不含数字);
-/// unix 走 `/proc/<pid>` 存在性(纯文件系统,零进程派生)。
-pub fn pid_alive(pid: u32) -> bool {
+/// pid 活性三态(R-02 语义精化):接管判定必须能区分"**确证死亡**"与
+/// "**探测失败**"——二者保守度不同:确证死 → 持有者必已亡,立即接管
+/// (锁龄/心跳不再承载信息量);探测失败 → 回退锁龄+心跳的保守门。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PidState {
+    /// 进程不存在 → 原持有者确定性已亡。
+    Dead,
+    /// 进程存在;附启动时间指纹(工具差异取不到 = None)。
+    Alive(Option<String>),
+    /// 探测失败(工具不可用/系统调用失败)→ 活性无法判定。
+    Unknown,
+}
+
+/// 三态 pid 探测(生产路径;[`PidProbe`] 注入面同型)。
+/// - Windows:`tasklist /FI` 精确过滤(命中 → Alive,无匹配 → Dead,
+///   命令失败 → Unknown)+ wmic 启动指纹;
+/// - Linux:`/proc/<pid>` 存在性(存在 → Alive,缺失 → Dead,读失败即 Unknown
+///   语义上的不存在——/proc 正常挂载时缺失即确证死)+ `/proc/<pid>/stat` 第 22 字段。
+pub fn probe_pid(pid: u32) -> PidState {
     #[cfg(target_os = "windows")]
     {
-        Command::new("tasklist")
+        match Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
             .output()
-            .map(|o| {
+        {
+            Ok(o) if o.status.success() => {
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 // CSV 行首列带引号包 PID(精确过滤命中才有一行);INFO 行无该 pid
-                stdout.contains(&format!("\"{pid}\""))
-            })
-            .unwrap_or(false)
+                if stdout.contains(&format!("\"{pid}\"")) {
+                    PidState::Alive(pid_start_time(pid))
+                } else {
+                    PidState::Dead
+                }
+            }
+            _ => PidState::Unknown,
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
-        std::path::Path::new(&format!("/proc/{pid}")).exists()
+        if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            PidState::Alive(pid_start_time(pid))
+        } else {
+            PidState::Dead
+        }
     }
+}
+
+/// 进程存活判定(崩溃恢复,册六 T6.1):锁文件里的 pid 是否还活着。
+/// [`probe_pid`] 的布尔投影;探测失败按**活**处理(全仓调用面都以
+/// "活 → 不动"为保守方向)。本模块是 IO 层唯一的外部进程调用点,pid 探测同域收敛于此。
+pub fn pid_alive(pid: u32) -> bool {
+    matches!(probe_pid(pid), PidState::Alive(_))
 }
 
 /// 进程启动时间(R-02:Windows pid 复用风险的联合判定依据)。

@@ -1,9 +1,16 @@
 // ARL-CORE · CutForge 权利人核心文件(许可见 LICENSE 1.3;清单见 CORE-FILES)
 //! 工程锁(计划书 4.2 步骤 1 / 4.3):`.cutforge/lock`,含 pid + 创建时间 + 启动指纹;
-//! 接管前置链(R-02,按序全过才接管):① 锁龄 ≥ stale 阈值 → ② 持锁方 pid
-//! 不存活(Windows 用 pid+启动时间联合判定防 pid 复用误判)→ ③ 心跳不新鲜
-//! (持锁方每 5s 更新锁文件 mtime;心跳窗口 10s)。活进程慢盘/杀毒扫描/负载
-//! 尖峰下长持锁**不再被误接管**(双写者风险的根治)。Drop 自动释放 + 停心跳。
+//! 接管判定(R-02 语义精化,按 pid 确定性分级):
+//! - **pid 确证不在**(进程不存在,或存在但启动指纹 ≠ 锁内指纹 = pid 被复用)
+//!   → 持有者必已亡,**无视锁龄/心跳立即接管**——锁龄门的本意(防活进程被
+//!   误判死)已由启动时间指纹承担,陈旧锁龄不再承载信息量(强杀/退出进程的
+//!   新鲜锁必须立即可接管,否则 serve 类常驻形态降级只读);
+//! - **pid 活**(含指纹缺失无法证复用)→ 永不接管——活进程的兜底保护
+//!   (心跳 mtime 每 5s 刷新)维持不变;
+//! - **探测失败**(工具不可用)→ 活性无法判定,回退保守门:锁龄 ≥ 阈值
+//!   且心跳过期(原 R-02 三重链,只服务这一退化情形)。
+//!
+//! Drop 自动释放 + 停心跳(写门闩防幽灵锁复活)。
 
 use std::fs;
 use std::io;
@@ -80,16 +87,19 @@ impl LockMeta {
     }
 }
 
-/// pid 探测注入面:返回 (pid 是否存活, 该进程启动时间指纹)。
-/// 生产路径 = [`crate::probe::pid_alive`] + [`crate::probe::pid_start_time`];
-/// 测试注入假探针(pid 复用等真实环境造不出的场景)。
-pub type PidProbe<'a> = &'a dyn Fn(u32) -> (bool, Option<String>);
+/// pid 探测注入面(三态,见 [`crate::probe::PidState`])。
+/// 生产路径 = [`crate::probe::probe_pid`];测试注入假探针
+/// (pid 复用/探测失败等真实环境难造的场景)。
+pub type PidProbe<'a> = &'a dyn Fn(u32) -> crate::probe::PidState;
 
-/// 接管前置链(R-02,按序全过才返回 true):
-/// ① 锁龄 ≥ stale_after_ms;② 持锁方**原进程**已不在
-/// (pid 死,或 pid 活但启动时间指纹与记录不一致 = pid 被复用,原持锁方已亡);
-/// ③ 心跳过期(mtime 距今 > heartbeat_window_ms)。
-/// ts 不可解析(外来/损坏锁文件)→ 一律不接管(宁等勿夺)。
+/// 接管判定(R-02 语义精化,按 pid 确定性分级;详见模块头):
+/// - 探测 = [`PidState::Dead`](进程不存在)→ 立即接管;
+/// - 探测 = 活但启动指纹 ≠ 锁内指纹(pid 复用,原持有者必已亡)→ 立即接管;
+/// - 探测 = 活(含指纹缺失无法证复用)→ 永不接管;
+/// - 探测 = [`PidState::Unknown`](探测失败)→ 回退保守门:锁龄 ≥ 阈值
+///   且心跳过期。
+///
+/// 无 pid 可探测(锁文件无 pid 字段)→ 宁等勿夺,不接管。
 pub fn can_takeover(
     meta: &LockMeta,
     now_ms: u64,
@@ -97,30 +107,31 @@ pub fn can_takeover(
     heartbeat_window_ms: u64,
     probe: PidProbe,
 ) -> bool {
-    let Some(ts) = meta.ts_ms else { return false };
-    if now_ms.saturating_sub(ts) < stale_after_ms {
+    let Some(pid) = meta.pid else {
         return false;
-    }
-    let Some(pid) = meta.pid else { return false };
-    let (alive, start) = probe(pid);
-    // pid 活但启动时间对不上 → 是复用 pid 的无关进程,原持锁方已死
+    };
     let boot_recorded = meta.boot.as_deref().unwrap_or("");
-    let holder_alive =
-        alive && (boot_recorded.is_empty() || start.as_deref().is_none_or(|s| s == boot_recorded));
-    if holder_alive {
-        return false;
-    }
-    match meta.mtime_ms {
-        Some(m) if now_ms.saturating_sub(m) <= heartbeat_window_ms => false, // 心跳新鲜
-        _ => true,
+    match probe(pid) {
+        crate::probe::PidState::Dead => true,
+        crate::probe::PidState::Alive(Some(start)) => {
+            // pid 复用:活进程的启动指纹与锁创建者不符 → 原持有者必已亡
+            !boot_recorded.is_empty() && start != boot_recorded
+        }
+        crate::probe::PidState::Alive(None) => false,
+        crate::probe::PidState::Unknown => {
+            let aged = meta
+                .ts_ms
+                .is_some_and(|ts| now_ms.saturating_sub(ts) >= stale_after_ms);
+            let hb_stale = meta
+                .mtime_ms
+                .is_none_or(|m| now_ms.saturating_sub(m) > heartbeat_window_ms);
+            aged && hb_stale
+        }
     }
 }
 
-fn real_probe(pid: u32) -> (bool, Option<String>) {
-    (
-        crate::probe::pid_alive(pid),
-        crate::probe::pid_start_time(pid),
-    )
+fn real_probe(pid: u32) -> crate::probe::PidState {
+    crate::probe::probe_pid(pid)
 }
 
 /// 锁文件内容(pid + 创建时间 + 本进程启动时间指纹)。
@@ -160,8 +171,8 @@ fn spawn_heartbeat(
 }
 
 /// 获取工程写锁;被占用时最多重试 `retries` 次(每次间隔 50ms);
-/// 持有者满足 [`can_takeover`] 前置链(锁龄+pid 活性+心跳)才接管,
-/// 接管不计入重试次数。
+/// 持有者满足 [`can_takeover`] 分级判定(pid 确证不在 → 立即接管,活 → 不夺,
+/// 探测失败 → 锁龄+心跳保守门)才接管,接管不计入重试次数。
 pub fn acquire(root: &Path, stale_after_ms: u64, retries: u32) -> io::Result<LockGuard> {
     let dir = root.join(".cutforge");
     let path = dir.join("lock");
@@ -179,7 +190,7 @@ pub fn acquire(root: &Path, stale_after_ms: u64, retries: u32) -> io::Result<Loc
                 });
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                // R-02 接管前置链:锁龄 + pid 活性(pid+启动时间联合)+ 心跳,全过才夺
+                // R-02 分级接管判定(见 can_takeover):pid 确证不在 → 立即夺
                 if let Ok(meta) = LockMeta::read(&path)
                     && can_takeover(
                         &meta,
@@ -229,67 +240,122 @@ mod tests {
         }
     }
 
-    fn probe_of(alive: bool, boot: &str) -> impl Fn(u32) -> (bool, Option<String>) + '_ {
-        move |_| (alive, Some(boot.to_string()))
+    /// 注入探针:恒返回给定三态(指纹场景用 Alive(Some(指纹)))。
+    fn probe_const(s: crate::probe::PidState) -> impl Fn(u32) -> crate::probe::PidState {
+        move |_| s.clone()
     }
 
+    use crate::probe::PidState;
+
     #[test]
-    fn takeover_chain_requires_all_three_signals() {
+    fn takeover_semantics_by_pid_certainty() {
         const S: u64 = 30_000;
         const HB: u64 = 10_000;
         let now = now_ms();
-        // ① 锁龄不足 → 不接管(哪怕 pid 已死、心跳过期)
-        assert!(!can_takeover(
-            &meta(4_194_303, 1_000, 9_999, "T1"),
+        // ---- pid 确证不在 → 立即接管,锁龄/心跳不再承载信息量 ----
+        // 新鲜锁 + pid 死(强杀/退出进程的现场,e2e M10 形态)→ 立即接管
+        assert!(can_takeover(
+            &meta(4_194_303, 0, 0, "T1"),
             now,
             S,
             HB,
-            &probe_of(false, "")
+            &probe_const(PidState::Dead)
         ));
-        // ② pid 活且启动指纹一致 → 不接管(哪怕锁龄超、心跳过期——TC-IO-LOCK-001 机制)
-        assert!(!can_takeover(
-            &meta(100, 60_000, 60_000, "T1"),
-            now,
-            S,
-            HB,
-            &probe_of(true, "T1")
-        ));
-        // ③ 心跳新鲜 → 不接管(哪怕锁龄超、pid 存活证据一致——TC-IO-LOCK-003 机制)
-        assert!(!can_takeover(
-            &meta(100, 60_000, 1_000, "T1"),
-            now,
-            S,
-            HB,
-            &probe_of(true, "T1")
-        ));
-        // 全过:锁龄超 + pid 死 + 心跳过期 → 接管(TC-IO-LOCK-002 机制)
+        // 陈旧锁 + pid 死 + 心跳过期 → 照常接管
         assert!(can_takeover(
             &meta(4_194_303, 60_000, 60_000, "T1"),
             now,
             S,
             HB,
-            &probe_of(false, "")
+            &probe_const(PidState::Dead)
         ));
-        // pid 复用:pid 活但启动指纹与记录不一致 → 原持锁方已亡,可接管
+        // pid 复用:活进程启动指纹 ≠ 锁内指纹 → 原持有者必已亡,立即接管
         assert!(can_takeover(
+            &meta(100, 0, 0, "T1"),
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Alive(Some("T2".into())))
+        ));
+        // ---- pid 活 → 永不接管(心跳是其兜底保护,维持) ----
+        // 活进程持锁 60s(TC-IO-LOCK-001 机制:慢盘/负载下长持锁不误夺)
+        assert!(!can_takeover(
             &meta(100, 60_000, 60_000, "T1"),
             now,
             S,
             HB,
-            &probe_of(true, "T2")
+            &probe_const(PidState::Alive(Some("T1".into())))
         ));
-        // 旧版锁文件(无 boot)退化为仅 pid 判定
-        let mut old = meta(4_194_303, 60_000, 60_000, "");
+        // 心跳新鲜(TC-IO-LOCK-003 机制)
+        assert!(!can_takeover(
+            &meta(100, 60_000, 1_000, "T1"),
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Alive(Some("T1".into())))
+        ));
+        // 锁龄不足
+        assert!(!can_takeover(
+            &meta(100, 1_000, 1_000, "T1"),
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Alive(Some("T1".into())))
+        ));
+        // 旧版锁文件(无 boot 指纹):活进程无法证复用 → 保守不接管
+        let mut old = meta(100, 60_000, 60_000, "");
         old.boot = None;
-        assert!(can_takeover(&old, now, S, HB, &probe_of(false, "")));
-        // ts 不可解析 → 不接管
+        assert!(!can_takeover(
+            &old,
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Alive(Some("T1".into())))
+        ));
+        // 探测取不到指纹 → 同样无法证复用 → 不接管
+        assert!(!can_takeover(
+            &meta(100, 60_000, 60_000, "T1"),
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Alive(None))
+        ));
+        // ---- 探测失败 → 回退保守门(锁龄 + 心跳,原三重链只服务此退化情形) ----
+        assert!(!can_takeover(
+            &meta(4_194_303, 1_000, 9_999, "T1"),
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Unknown)
+        ));
+        assert!(can_takeover(
+            &meta(4_194_303, 60_000, 60_000, "T1"),
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Unknown)
+        ));
+        assert!(!can_takeover(
+            &meta(4_194_303, 60_000, 1_000, "T1"),
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Unknown)
+        ));
+        // ---- 无 pid 可探测(锁文件缺 pid 字段)→ 宁等勿夺 ----
         let junk = LockMeta {
             pid: None,
             ts_ms: None,
             boot: None,
             mtime_ms: None,
         };
-        assert!(!can_takeover(&junk, now, S, HB, &probe_of(false, "")));
+        assert!(!can_takeover(
+            &junk,
+            now,
+            S,
+            HB,
+            &probe_const(PidState::Dead)
+        ));
     }
 
     #[test]
@@ -324,15 +390,12 @@ mod tests {
         fsutil::cleanup(&dir);
     }
 
-    /// 测试观察面:对盘上锁文件跑一遍真实接管前置链(真实 pid 探测)。
+    /// 测试观察面:对盘上锁文件跑一遍真实接管判定(真实 pid 三态探测)。
     fn can_takeover_of_file(lock_path: &Path) -> bool {
         LockMeta::read(lock_path)
             .map(|meta| {
                 can_takeover(&meta, now_ms(), 30_000, HEARTBEAT_WINDOW_MS, &|pid: u32| {
-                    (
-                        crate::probe::pid_alive(pid),
-                        crate::probe::pid_start_time(pid),
-                    )
+                    crate::probe::probe_pid(pid)
                 })
             })
             .unwrap_or(false)

@@ -136,29 +136,27 @@ fn tc_io_lock_001_alive_holder_not_taken_over() {
     fsutil::cleanup(&root);
 }
 
-/// TC-IO-LOCK-002:强杀残留(pid 死 + 锁龄超)→ 30s 后可接管;
-/// 但 pid 死而锁龄未到 → 仍不可接管。
+/// TC-IO-LOCK-002(R-02 语义精化):pid 确证不在 → **无视锁龄/心跳立即接管**。
+/// 陈旧残留与强杀/退出的新鲜锁一视同仁——锁龄门不再承载信息量。
 #[test]
-fn tc_io_lock_002_dead_holder_takeover_after_stale() {
+fn tc_io_lock_002_dead_holder_takeover_immediately() {
     let root = cutforge_io::tests_fixture("tc-lock-002").unwrap();
     // 死 pid 用跨平台助手(Linux pid=1 是 init 恒活,硬编码高段也可能被占)
     let dead = probe::definitely_dead_pid();
+    // 陈旧形态:锁龄 120s + 心跳过期 → 接管
     forge_lock(&root, dead, 120_000, 120_000);
     assert!(
         lock::acquire(&root, 30_000, 0).is_ok(),
         "pid 死 + 锁龄 120s + 心跳过期 → 必须接管"
     );
-    drop_root_and_redo(&root, dead, 0, 120_000);
-    fsutil::cleanup(&root);
-}
-
-fn drop_root_and_redo(root: &Path, pid: u32, age_ms: u64, mtime_age_ms: u64) {
     let _ = std::fs::remove_file(root.join(".cutforge/lock"));
-    forge_lock(root, pid, age_ms, mtime_age_ms);
+    // 新鲜形态:锁龄 0 + 心跳新鲜(强杀/退出刚发生,e2e M10 形态)→ 同样立即接管
+    forge_lock(&root, dead, 0, 0);
     assert!(
-        lock::acquire(root, 30_000, 0).is_err(),
-        "pid 死但锁龄未到 30s → 不得接管"
+        lock::acquire(&root, 30_000, 0).is_ok(),
+        "新鲜锁 + pid 死 → 必须立即接管(锁龄门不再拦截)"
     );
+    fsutil::cleanup(&root);
 }
 
 /// TC-IO-LOCK-003:心跳正常(mtime 新鲜)但 pid 存活 → 不接管。
@@ -174,6 +172,65 @@ fn tc_io_lock_003_fresh_heartbeat_alive_pid_no_takeover() {
         err.to_string().contains("锁定"),
         "失败语义必须是'被锁定': {err}"
     );
+    fsutil::cleanup(&root);
+}
+
+/// TC-IO-LOCK-005(e2e M10 形态的多生命周期回归):
+/// A 生命周期独占写一笔后 `exit(9)` 强杀(析构不运行 → 新鲜锁残留,pid 死)
+/// → B 生命周期**立即**独占打开并可写——serve 常驻形态不因新鲜死锁降级只读。
+#[test]
+fn tc_io_lock_005_kill9_lifecycle_b_takes_over_immediately() {
+    if std::env::var("CUTFORGE_LOCK_LIFECYCLE").as_deref() == Ok("a") {
+        let root = PathBuf::from(std::env::var("CUTFORGE_LIFECYCLE_DIR").unwrap());
+        // A:独占打开写一笔,然后 exit(9)——LockGuard 不 Drop,锁文件残留
+        let mut ws = Workspace::open_exclusive(&root).unwrap();
+        ws.apply(
+            Command::TrackAdd {
+                kind: TrackKind::Audio,
+                request_id: Some("lifecycle-a".into()),
+            },
+            Actor::user("A"),
+            Default::default(),
+        )
+        .unwrap();
+        assert_eq!(ws.rev(), 1, "A 写入成功");
+        std::process::exit(9);
+    }
+    let root = cutforge_io::tests_fixture("tc-lock-005").unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let status = std::process::Command::new(exe)
+        .args([
+            "tc_io_lock_005_kill9_lifecycle_b_takes_over_immediately",
+            "--exact",
+            "--nocapture",
+        ])
+        .env("CUTFORGE_LOCK_LIFECYCLE", "a")
+        .env("CUTFORGE_LIFECYCLE_DIR", &root)
+        .status()
+        .unwrap();
+    assert_eq!(status.code(), Some(9), "A 生命周期必须以强杀收场(锁残留)");
+    // A 的残留锁在盘、新鲜(pid 死)
+    let lock_path = root.join(".cutforge/lock");
+    assert!(lock_path.is_file(), "强杀后锁必须残留(无 Drop 释放)");
+    let meta = lock::LockMeta::read(&lock_path).unwrap();
+    assert_ne!(meta.pid, Some(std::process::id()));
+    assert!(
+        now_ms().saturating_sub(meta.ts_ms.unwrap()) < 30_000,
+        "测试前提:锁必须是新鲜的(锁龄 < 30s)"
+    );
+    // B:立即独占接管(锁龄≈0 + pid 死)→ 可写 → A 的 Op 完整保留
+    let mut b = Workspace::open_exclusive(&root).unwrap();
+    assert_eq!(b.rev(), 1, "B 接管后 A 的 Op 必须完整");
+    b.apply(
+        Command::TrackAdd {
+            kind: TrackKind::Text,
+            request_id: Some("lifecycle-b".into()),
+        },
+        Actor::user("B"),
+        Default::default(),
+    )
+    .expect("B 生命周期必须立即可写(serve 不降级只读)");
+    assert_eq!(b.rev(), 2);
     fsutil::cleanup(&root);
 }
 

@@ -2,9 +2,10 @@
 //! 崩溃恢复(册六 T6.1/AC-6.1):强杀进程 → 重启 → 恢复清单 → 清锁 + OpLog 一致性校验。
 //!
 //! 恢复判据(启动检测,R-02 同源):`.cutforge/lock` 在盘且满足与
-//! `lock::acquire` 完全相同的接管前置链——锁龄 ≥ stale 阈值 && 原持锁 pid
-//! 不存活(Windows pid+启动时间联合判定)&& 心跳过期(持锁方 5s 更新 mtime)。
-//! 活进程长持锁(慢盘/杀毒扫描)不是恢复对象,acquire 也不会误接管——两处策略单源。
+//! `lock::acquire` 完全相同的分级判定——pid 确证不在(进程不存在或启动指纹
+//! 不符 = 复用)即算 stale(无视锁龄);pid 活不是恢复对象;探测失败回退
+//! 锁龄+心跳保守门。强杀/退出进程的**新鲜锁**同样立即入恢复清单(与
+//! serve 类常驻形态的立即接管语义一致)。两处策略单源。
 //! 附加证据:`.cutforge/session-summary.json`(RT-1 会话摘要)在盘说明存在未收尾会话,
 //! 恢复清单里如实带出 revFrom/revTo。
 //!
@@ -43,8 +44,8 @@ fn now_ms() -> u128 {
 }
 
 /// 单工程恢复判据(R-02 同源化):锁在盘 && 与 `lock::can_takeover` **同一
-/// 前置链**(锁龄 ≥ stale && 原持锁进程已不在(pid+启动时间联合判定)&&
-/// 心跳过期)。不再出现"acquire 不接管而 recover 清活进程锁"的策略分叉。
+/// 分级判定**(pid 确证不在 → 立即算 stale;活 → 不是;探测失败 → 锁龄+心跳
+/// 保守门)。不再出现"acquire 不接管而 recover 清活进程锁"的策略分叉。
 pub fn detect_stale(root: &Path) -> Option<StaleLock> {
     let lock_path = root.join(".cutforge/lock");
     let meta = LockMeta::read(&lock_path).ok()?;
@@ -53,7 +54,7 @@ pub fn detect_stale(root: &Path) -> Option<StaleLock> {
         now_ms() as u64,
         STALE_LOCK_MS as u64,
         lock::HEARTBEAT_WINDOW_MS,
-        &|pid| (pid_alive(pid), crate::probe::pid_start_time(pid)),
+        &crate::probe::probe_pid,
     );
     // 证据归集:即便不满足接管链(活进程长持锁),锁龄仍如实带出供诊断
     let age_ms = meta
@@ -61,7 +62,7 @@ pub fn detect_stale(root: &Path) -> Option<StaleLock> {
         .map(|ts| now_ms().saturating_sub(ts as u128))
         .unwrap_or(u128::MAX);
     if !takeover {
-        return None; // 活进程持有(或心跳未过期):正常持有,不是恢复对象
+        return None; // 活进程持有(或探测失败且未过保守门):正常持有,不是恢复对象
     }
     let session = std::fs::read_to_string(root.join(".cutforge/session-summary.json"))
         .ok()

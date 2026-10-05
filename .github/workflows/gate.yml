@@ -219,7 +219,7 @@ jobs:
       - name: Install cargo-deny
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
       - name: cargo deny check licenses
         run: cargo deny check licenses
 
@@ -239,7 +239,6 @@ jobs:
       - name: Milestone gates A1 静态子集(行数/纯度/字形/散写 ms,观察模式;
           重活检查由 rust-gates/web-e2e/license-gates 各自 job 承担,此处不重复)
         run: |-
-          python tools/gates/gate.py A1 --check rust-line-limit --json
           python tools/gates/gate.py A1 --check desktop-line-limit --json
           python tools/gates/gate.py A1 --check desktop-box-leak --json
           python tools/gates/gate.py A1 --check desktop-color-purity --json

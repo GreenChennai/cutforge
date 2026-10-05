@@ -19,11 +19,48 @@ allow = [
     "MPL-2.0",
     "Zlib",
     "CC0-1.0",
+    "NCSA",
+    "0BSD",
+    "LicenseRef-ARL-1-0",
     "OpenSSL",
     "CDLA-Permissive-2.0",
 ]
 
+# 自有 9 crate:workspace 继承 license-file = LICENSE(ARL-1.0 闭源自用,ADR-0010);
+# cargo-deny 不解析 workspace 继承 → 逐 crate clarify(hash 省略=跳过文件校验)
 [[licenses.clarify]]
-name = "sable"
-expression = "MIT OR Apache-2.0"
-description = "上游 UI 库(git 钉 rev);其 crates 声明以仓库 LICENSE 为准,首跑证据核对后定稿"
+name = "cutforge-cli"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]
+[[licenses.clarify]]
+name = "cutforge-core"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]
+[[licenses.clarify]]
+name = "cutforge-io"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]
+[[licenses.clarify]]
+name = "cutforge-mcp"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]
+[[licenses.clarify]]
+name = "cutforge-render"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]
+[[licenses.clarify]]
+name = "cutforge-schema"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]
+[[licenses.clarify]]
+name = "cutforge-script"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]
+[[licenses.clarify]]
+name = "cutforge-wasm"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]
+[[licenses.clarify]]
+name = "cutforge-desktop"
+expression = "LicenseRef-ARL-1-0"
+license-files = [{ path = "../../LICENSE", hash = 0x789e0e7f }]

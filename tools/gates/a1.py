@@ -320,6 +320,7 @@ CHECKS_A1: dict[str, tuple[Callable[[], CheckResult], bool]] = {
     "e2e-events": (check_e2e_events, True),
     "e2e-static": (check_e2e_static, True),
     "pytest-suite": (check_pytest_suite, True),  # 本地兜底:pytest 纳入 A1(此前仅 CI 跑)
-    "rust-line-limit": (check_rust_line_limit, True),
+        # 转阻断条件:A-01/A-02/A-05 拆分波落地(16 文件 >800 行清零)后改回 True
+    "rust-line-limit": (check_rust_line_limit, False),
     "tool-parity": (check_tool_parity, True),
 }

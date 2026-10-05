@@ -807,14 +807,20 @@ fn frame_view(image: Arc<RenderImage>, dims: Option<(u32, u32)>) -> impl IntoEle
     )
 }
 
-/// 后台出帧:render_frame(atMs) → 响应里找 PNG 路径 → 读文件 → RGBA。
+/// 后台出帧:render_frame(atMs) → 显式 framePath(BUG-17 契约;宽容扫描仅作
+/// 旧内核一版兼容回退)→ 读文件 → RGBA。
 fn render_frame_at(rpc: &Rpc, t_ms: u64) -> Result<PreviewFrame, String> {
     let data = rpc.call(
         "render_frame",
         serde_json::json!({ "atMs": t_ms }),
         render_timeout("render_frame"),
     )?;
-    let path = find_png_path(&data).ok_or("响应中未找到 PNG 路径")?;
+    let path = data
+        .get("framePath")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| find_png_path(&data))
+        .ok_or("响应中未找到 PNG 路径")?;
     let bytes = std::fs::read(rpc.absolutize(&path)).map_err(|e| format!("读帧文件失败:{e}"))?;
     let img = image::load_from_memory(&bytes).map_err(|e| format!("解码帧失败:{e}"))?;
     let rgba = img.to_rgba8();

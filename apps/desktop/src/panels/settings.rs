@@ -38,7 +38,15 @@ impl Render for SettingsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = theme(cx).colors;
         let app = self.app.upgrade();
-        let (snap_on, rev, kernel_status, engine_status, playback_line) = app
+        let (
+            snap_on,
+            rev,
+            kernel_status,
+            engine_status,
+            playback_line,
+            kernel_watch_ok,
+            kernel_restarts,
+        ) = app
             .as_ref()
             .map(|a| {
                 let a = a.read(cx);
@@ -79,6 +87,13 @@ impl Render for SettingsPanel {
                     },
                     engine,
                     pb,
+                    // BUG-20:内核看门狗健康/重启次数(kernel.rs 看门狗置位)
+                    a.shared
+                        .kernel_health
+                        .load(std::sync::atomic::Ordering::Relaxed),
+                    a.shared
+                        .kernel_restarts
+                        .load(std::sync::atomic::Ordering::Relaxed),
                 )
             })
             .unwrap_or((
@@ -87,6 +102,8 @@ impl Render for SettingsPanel {
                 "未连接".to_string(),
                 "未启动".to_string(),
                 "-".to_string(),
+                true,
+                0,
             ));
         let weak = self.app.clone();
         let weak_motion = weak.clone();
@@ -230,6 +247,27 @@ impl Render for SettingsPanel {
                             .child(playback_line),
                     ),
                 )
+                .child({
+                    // BUG-20:内核看门狗健康/重启次数(kernel.rs 看门狗置位)
+                    PropertyRow::new("内核看门狗").control(
+                        div()
+                            .text_size(px(FONT_SIZE_CAPTION))
+                            .text_color(if kernel_watch_ok {
+                                colors.success
+                            } else {
+                                colors.danger
+                            })
+                            .child(if kernel_watch_ok {
+                                if kernel_restarts > 0 {
+                                    format!("健康(自动重启 {kernel_restarts} 次)")
+                                } else {
+                                    "健康".to_string()
+                                }
+                            } else {
+                                "断连,自动重启中…".to_string()
+                            }),
+                    )
+                })
                 .child(
                     PropertyRow::new("预览口径").control(
                         div()

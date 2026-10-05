@@ -20,6 +20,11 @@ pub struct Shared {
     pub dirty: AtomicBool,
     /// 连接状态(健康探测/任意成功请求置真)
     pub connected: AtomicBool,
+    /// 内核看门狗健康(BUG-20:kernel.rs 看门狗置位,设置页/状态栏消费;
+    /// Arc 由 main 从 Kernel 克隆种入,附着/失败时为常真缺省)
+    pub kernel_health: Arc<AtomicBool>,
+    /// 内核看门狗重启次数(同上)
+    pub kernel_restarts: Arc<AtomicU64>,
     pub inner: Mutex<Snapshot>,
     /// 预览渲染结果槽(后台任务写,UI 泵取;Err 亦占位防卡死)
     pub preview_result: Mutex<Option<Result<PreviewFrame, String>>>,

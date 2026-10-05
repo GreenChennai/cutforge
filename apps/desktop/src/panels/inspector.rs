@@ -188,7 +188,6 @@ impl InspectorPanel {
         }
         let get_app = self.app.clone();
         let set_app = self.app.clone();
-        let key_static: &'static str = Box::leak(key.to_string().into_boxed_str());
         let binding = sable::widgets::binding::Binding::new(
             move |cx: &App| {
                 get_app
@@ -232,7 +231,9 @@ impl InspectorPanel {
                 .step(step)
                 .unit(unit)
                 .element_id(sable::gpui::ElementId::Name(
-                    format!("insp-{key_static}-{ix}").into(),
+                    // key 是 &str 入参,format! 即拷贝——无需 'static 化(BUG-18:原实现泄漏
+                    // 一份 key/字段,长跑单调增长,审查报告 v2 §4)
+                    format!("insp-{key}-{ix}").into(),
                 ))
         });
         self.fields.insert(key.to_string(), entity.clone());

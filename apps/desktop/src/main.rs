@@ -120,6 +120,16 @@ fn main() {
         }
     };
 
+    // 内核看门狗句柄经 Shared 流向全面板(BUG-20:健康/重启次数/日志路径可消费)
+    let (kernel_health, kernel_restarts, kernel_log) = match &kernel {
+        Ok(k) => (
+            Some(k.health_flag()),
+            Some(k.restart_counter()),
+            k.stderr_log(),
+        ),
+        Err(_) => (None, None, None),
+    };
+
     sable::gpui::Application::new()
         .with_assets(ui::icon::Assets)
         .run(move |cx: &mut App| {
@@ -153,7 +163,16 @@ fn main() {
             let token = args.token.clone();
             let root_for_view = root_dir.clone();
             cx.open_window(options, move |window, cx| {
-                let shell = app::DesktopApp::new(base, token, root_for_view, window, cx);
+                let shell = app::DesktopApp::new(
+                    base,
+                    token,
+                    root_for_view,
+                    kernel_health.clone(),
+                    kernel_restarts.clone(),
+                    kernel_log.clone(),
+                    window,
+                    cx,
+                );
                 cx.new(|cx| Root::new(shell, window, cx))
             })
             .expect("桌面壳开窗失败:gpui 平台层初始化异常(显卡驱动/显示服务)");

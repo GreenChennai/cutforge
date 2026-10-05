@@ -26,7 +26,7 @@ pub enum EngineSource {
         /// 本次流覆盖的媒体内区间
         media_in: f64,
         media_out: f64,
-        /// 片段恒速(speed 字段;speedCurve 暂按 1.0,已知局限)
+        /// 片段恒速(speed 字段;speedCurve 片段不进直解码→回落 zone/幻灯片,BUG-16)
         clip_speed: f64,
     },
     /// zone 预渲段(preview_zone_render 产物;1:1 工程时间)
@@ -48,7 +48,7 @@ pub(crate) struct DirectSource {
     /// 本次流覆盖的媒体内区间
     pub media_in: f64,
     pub media_out: f64,
-    /// 片段恒速(speed 字段;speedCurve 暂按 1.0,已知局限)
+    /// 片段恒速(speed 字段;speedCurve 片段不进直解码→回落 zone/幻灯片,BUG-16)
     pub clip_speed: f64,
 }
 
@@ -185,6 +185,16 @@ fn absolutize(root: &Path, path: &str) -> PathBuf {
 /// 媒体偏移 = sourceInMs + (播放头 − 片头) × 片段速度(含 trim 修正)。
 pub(crate) fn resolve_direct_source(snap: &Snapshot, root: &Path, t: u64) -> Option<DirectSource> {
     let clip = snap.video_clip_at(t)?;
+    // BUG-16:speedCurve 分段变速若按恒速直解码,预览节奏与导出不一致(壳零语义,
+    // 不自算分段映射)——曲线片段不进直解码,回落 zone(内核渲染含曲线)或幻灯片
+    // (render_frame 同为内核真相),preview 与导出口径一致。
+    let curved = clip
+        .get("speedCurve")
+        .and_then(Value::as_array)
+        .is_some_and(|a| !a.is_empty());
+    if curved {
+        return None;
+    }
     let clip_id = clip.get("id").and_then(Value::as_str)?.to_string();
     let src_rel = clip.get("src").and_then(Value::as_str)?;
     let cs = clip.get("startMs").and_then(Value::as_u64)?;
@@ -363,6 +373,28 @@ mod tests {
             clips: clips.as_array().cloned().unwrap_or_default(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn resolve_direct_source_skips_speed_curve_clip_bug16() {
+        // TC-DESK-SPEED-002:曲线片段不进直解码(恒速 1.0 与导出节奏不符),
+        // resolve 返回 None → 上层回落 zone/幻灯片(内核真相)。
+        let snap = snap_with_clips(json!([{
+            "id": "c17", "track": "V1", "trackKind": "video", "src": "media/a.mp4",
+            "startMs": 0, "endMs": 4000,
+            "speedCurve": [{"t": 0, "v": 1.0}, {"t": 4000, "v": 2.0}]
+        }]));
+        let root = std::env::temp_dir().join("cutforge-srcmap-curve");
+        assert!(
+            resolve_direct_source(&snap, &root, 2000).is_none(),
+            "speedCurve 片段必须回落 zone/幻灯片,不得按 1.0 直解码"
+        );
+        // 恒速片段不受影响
+        let snap2 = snap_with_clips(json!([{
+            "id": "c18", "track": "V1", "trackKind": "video", "src": "media/a.mp4",
+            "startMs": 0, "endMs": 4000, "speed": 2.0
+        }]));
+        assert!(resolve_direct_source(&snap2, &root, 2000).is_some());
     }
 
     #[test]

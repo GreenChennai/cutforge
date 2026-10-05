@@ -41,6 +41,9 @@ use self::playback_facade::source_map::{EngineSource, ZoneReady};
 pub struct DesktopApp {
     pub rpc: Arc<Rpc>,
     pub shared: Arc<Shared>,
+    /// 内核诊断日志路径(BUG-20;错误卡/设置页可展开;None = 附着模式)。
+    /// 错误卡 UI 属 §9.6⑧ 反馈系统,消费前以 getter 暴露
+    pub kernel_log: Option<std::path::PathBuf>,
     /// 内核投影 rev 的 UI 侧对账值(≠ shared.rev 即待重投影)
     pub(crate) seen_rev: u64,
     pub timeline: Entity<sable::video::model::Timeline>,
@@ -108,16 +111,33 @@ pub struct DesktopApp {
 }
 
 impl DesktopApp {
+    /// 内核诊断日志路径(BUG-20;§9.6⑧ 错误卡消费,UI 接线前允许 dead_code)
+    #[allow(dead_code)]
+    pub fn kernel_log(&self) -> Option<&std::path::PathBuf> {
+        self.kernel_log.as_ref()
+    }
+
     /// 组装根视图(在 `cx.open_window` build 闭包里调用)。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         base: String,
         token: String,
         root_dir: String,
+        kernel_health: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        kernel_restarts: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+        kernel_log: Option<std::path::PathBuf>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         let rpc = Arc::new(Rpc::new(base, &token, root_dir.clone()));
-        let shared = Arc::new(Shared::default());
+        // 内核看门狗句柄(BUG-20;None = 附着模式/启动失败,缺省恒真零重启)
+        let shared = Arc::new(Shared {
+            kernel_health: kernel_health
+                .unwrap_or_else(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true))),
+            kernel_restarts: kernel_restarts
+                .unwrap_or_else(|| std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0))),
+            ..Shared::default()
+        });
         let timeline = cx.new(|_| sable::video::model::Timeline::new());
 
         let focus = cx.focus_handle();
@@ -158,6 +178,7 @@ impl DesktopApp {
             Self {
                 rpc,
                 shared,
+                kernel_log,
                 seen_rev: 0,
                 timeline,
                 id_map: Default::default(),

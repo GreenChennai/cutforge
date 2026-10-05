@@ -24,6 +24,7 @@ use sable::gpui::{
 use sable::video::model::{ClipId, Timeline, TrackKind};
 use sable::widgets::prelude::{SpacingTokens, h_flex, v_flex};
 use sable::widgets::theme::theme;
+use sable::gpui_component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use sable::widgets::timeline_view::{RULER_HEIGHT_PX, TRACK_HEIGHT_PX, TimelineView};
 use sable::widgets::tokens::FONT_SIZE_CAPTION;
 
@@ -834,7 +835,114 @@ impl Render for TimelineHost {
                                 )
                             }),
                     )
-                    .child(div().flex_1().min_w_0().child(self.panel.clone())),
+                    .child(
+                        // §9.6⑨:时间线右键菜单(04 缺口⑥;菜单项与工具行/键位同源命令)
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(self.panel.clone())
+                            .context_menu(move |menu, _window, _cx| {
+                                let weak = app.as_ref().map(|a| a.downgrade());
+                                let mut menu = menu;
+                                if let Some(weak) = weak {
+                                    let item = |menu: PopupMenu,
+                                                label: &'static str,
+                                                tool: &'static str,
+                                                args: serde_json::Value| {
+                                        let weak = weak.clone();
+                                        menu.item(
+                                            PopupMenuItem::new(label).on_click(
+                                                move |_, _, cx| {
+                                                    if let Some(app) = weak.upgrade() {
+                                                        app.update(cx, |app, cx| {
+                                                            app.submit(
+                                                                tool,
+                                                                args.clone(),
+                                                                cx,
+                                                            )
+                                                        });
+                                                    }
+                                                },
+                                            ),
+                                        )
+                                    };
+                                    menu = item(menu, "撤销", "undo", serde_json::json!({}));
+                                    menu = item(menu, "重做", "redo", serde_json::json!({}));
+                                    menu = menu.separator();
+                                    menu = item(
+                                        menu,
+                                        "在播放头分割",
+                                        "clip_split",
+                                        serde_json::json!({}),
+                                    );
+                                    menu = item(
+                                        menu,
+                                        "副本",
+                                        "clip_duplicate",
+                                        serde_json::json!({}),
+                                    );
+                                    menu = item(
+                                        menu,
+                                        "删除选中",
+                                        "clip_delete",
+                                        serde_json::json!({}),
+                                    );
+                                    // 冻结帧=有状态命令(读当前 freezeMs 再 +500),与工具行同逻辑
+                                    menu = menu.item(
+                                        PopupMenuItem::new("冻结帧 +0.5s").on_click({
+                                            let weak = weak.clone();
+                                            move |_, _, cx| {
+                                                if let Some(app) = weak.upgrade() {
+                                                    app.update(cx, |app, cx| {
+                                                        let clip = app.selection.clone();
+                                                        if let Some(clip) = clip {
+                                                            let cur = app
+                                                                .selected_clip()
+                                                                .and_then(|c| {
+                                                                    c.get("freezeMs").cloned()
+                                                                })
+                                                                .and_then(|v| v.as_f64())
+                                                                .unwrap_or(0.0);
+                                                            app.submit(
+                                                                "clip_update",
+                                                                serde_json::json!({
+                                                                    "clipId": clip,
+                                                                    "patch": {
+                                                                        "freezeMs":
+                                                                            (cur + 500.0) as i64
+                                                                    }
+                                                                }),
+                                                                cx,
+                                                            );
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        }),
+                                    );
+                                    menu = menu.separator();
+                                    menu = item(
+                                        menu,
+                                        "关闭空隙",
+                                        "clip_gap_delete",
+                                        serde_json::json!({}),
+                                    );
+                                    menu = item(
+                                        menu,
+                                        "+ 视频轨",
+                                        "track_add",
+                                        serde_json::json!({ "kind": "video" }),
+                                    );
+                                    menu = item(
+                                        menu,
+                                        "+ 音频轨",
+                                        "track_add",
+                                        serde_json::json!({ "kind": "audio" }),
+                                    );
+                                }
+                                menu
+                            }),
+                    ),
             )
             .child(
                 // 底部信息条

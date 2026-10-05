@@ -211,7 +211,9 @@ fn spawn_serve(
     let log_path = log_path.join(format!("kernel-{ts}.log"));
     let log_file = File::create(&log_path)
         .map_err(|e| format!("内核日志创建失败 {}: {e}", log_path.display()))?;
-    if let Some(stderr) = child.stderr.take() {
+    if let Some(stderr) = child.stderr.take()
+        && std::env::var("CUTFORGE_NO_STDERRLOG").is_err()
+    {
         let mut writer = log_file;
         std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines() {

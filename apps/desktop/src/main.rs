@@ -72,7 +72,14 @@ fn main() {
     let args = parse_args();
 
     // 无 --root → 开始界面(不拉内核;选工程后 spawn 自身 --root)
+    eprintln!(
+        "[route] root={:?} attach={:?} exe={:?}",
+        args.root,
+        args.attach,
+        std::env::current_exe().ok()
+    );
     if args.root.is_none() {
+        eprintln!("[route] → 首页(root 缺失)");
         sable::gpui::Application::new()
             .with_assets(ui::icon::Assets)
             .run(move |cx: &mut App| {
@@ -109,6 +116,7 @@ fn main() {
         .expect("root 已分流,编辑器路径必有值")
         .display()
         .to_string();
+    eprintln!("[route] → 编辑器 root={root_dir}");
 
     // 内核:自拉子进程(随壳退出)或附着已有实例
     let kernel = kernel::Kernel::start(&args);

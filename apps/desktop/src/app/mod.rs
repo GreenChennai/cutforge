@@ -53,8 +53,7 @@ pub struct DesktopApp {
     pub id_map: std::collections::HashMap<u64, String>,
     /// 选中 clip 的内核字符串 id
     pub selection: Option<String>,
-    /// 壳态持久化(R-17):距上次落盘是否有变更 / 上次落盘时刻
-    pub(crate) shell_dirty: bool,
+    /// 壳态持久化(R-17):上次落盘时刻(10s 防抖)
     pub(crate) shell_last_save: Instant,
     pub playhead_ms: u64,
     /// 播放中(壳侧推进播放头)
@@ -191,7 +190,6 @@ impl DesktopApp {
                 playhead_ms: 0,
                 playing: false,
                 snap_enabled: true,
-                shell_dirty: false,
                 shell_last_save: Instant::now(),
                 clipboard: None,
                 last_frame: Instant::now(),

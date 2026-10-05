@@ -61,7 +61,13 @@ mod tests {
             "id": "V1-901", "src": "01_materials/a.mp4",
             "startMs": 60000, "durationMs": 10000
         }));
-        std::fs::write(&pj, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        // 模拟外部工具直写:走 sanctioned 原语落盘(check-write-paths 合规;
+        // 语义要点是「内容在 engine apply 之外变化」,落盘机制不参与断言)
+        cutforge_io::atomic::atomic_write(
+            &pj,
+            serde_json::to_string_pretty(&doc).unwrap().as_bytes(),
+        )
+        .unwrap();
         // 3) 重开装载:外部追加必须保留(磁盘为权威)
         let ws2 = Workspace::open(&root).unwrap();
         let view = ws2

@@ -15,6 +15,84 @@ use crate::{atomic, fsutil, paths, tests_fixture};
 mod tests {
     use super::*;
 
+    /// V2-HOTFIX 回归(web-e2e A2 第 13 步外部追加丢失):快照优先装载(R-13②)
+    /// 的重建头态与磁盘 project.json 不一致(外部直写追加 V1-901 + 改 volume)时,
+    /// 必须放弃快照优化、回退全量装载(磁盘为权威)——外部追加不得被快照态
+    /// 静默覆写丢失。修复前:快照 r1(2 clips)优先于磁盘(3 clips)→ 外部追加丢。
+    #[test]
+    fn snapshot_first_load_defers_to_disk_when_externally_modified() {
+        let root = tests_fixture("ws-hotfix-snap").unwrap();
+        // 1) 产编辑史并落快照(R-13 缺省开;显式触发兜底环境缺失形态)
+        let mut ws = Workspace::open_exclusive(&root).unwrap();
+        ws.apply(
+            Command::ClipSplit {
+                clip_id: "V1-001".into(),
+                t_ms: 2000,
+            },
+            Actor::agent("hotfix-test"),
+            ApplyOpts::default(),
+        )
+        .unwrap();
+        drop(ws);
+        // 快照若因 env 缺省关闭而缺席,则本用例场景(快照优先分支)不成立 → 跳过
+        let snap_dir = root.join(".cutforge/snapshots");
+        if snap_dir
+            .read_dir()
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(true)
+        {
+            eprintln!("快照未生成(env 缺省关),跳过快照优先回归");
+            fsutil::cleanup(&root);
+            return;
+        }
+        // 2) 外部直写:追加 V1-901 + 改 V1-001 volume(e2e external_append_clip 同款)
+        let pj = root.join(PROJECT_REL);
+        let mut doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&pj).unwrap()).unwrap();
+        let v1 = doc["tracks"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|t| t["id"] == "V1")
+            .unwrap();
+        let clips = v1["clips"].as_array_mut().unwrap();
+        clips[0]["volume"] = serde_json::json!(0.66);
+        clips.push(serde_json::json!({
+            "id": "V1-901", "src": "01_materials/a.mp4",
+            "startMs": 60000, "durationMs": 10000
+        }));
+        std::fs::write(&pj, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+        // 3) 重开装载:外部追加必须保留(磁盘为权威)
+        let ws2 = Workspace::open(&root).unwrap();
+        let view = ws2
+            .engine()
+            .query(cutforge_core::engine::Query::ProjectView);
+        let cutforge_core::engine::Answer::Project(ref v) = view else {
+            unreachable!()
+        };
+        let clips_out = v["tracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "V1")
+            .unwrap()["clips"]
+            .as_array()
+            .unwrap();
+        let ids: Vec<&str> = clips_out.iter().filter_map(|c| c["id"].as_str()).collect();
+        assert!(
+            ids.contains(&"V1-901"),
+            "外部追加被快照优先装载静默丢弃: {ids:?}"
+        );
+        let vol = clips_out
+            .iter()
+            .find(|c| c["id"] == "V1-001")
+            .and_then(|c| c.get("volume"))
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(vol, serde_json::json!(0.66), "外部修改同样必须保留");
+        fsutil::cleanup(&root);
+    }
+
     #[test]
     fn open_migrates_v1_and_persists_commands() {
         let root = tests_fixture("ws-open").unwrap();

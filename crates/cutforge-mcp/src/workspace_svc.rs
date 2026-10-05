@@ -679,7 +679,10 @@ fn handle_workspace_conn(
         HttpResp {
             status: "200 OK",
             ctype: "application/json".into(),
-            extra: String::new(),
+            // 实时事件面禁缓存:同 URL 高频轮询,浏览器缓存复用会喂陈旧 seq
+            extra: "Cache-Control: no-store
+"
+            .into(),
             body: RespBody::Bytes(v.to_string().into_bytes()),
         }
     } else {

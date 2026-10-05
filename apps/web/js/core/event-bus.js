@@ -17,6 +17,12 @@ const connCbs = new Set();
 let es = null;
 let lpRunning = false;
 let lpBackoffMs = 1000;
+let lpRounds = 0;
+let lpFails = 0;
+/** 长轮询对账周期(成功轮;每轮 ≤1s 挂起 + 处理,5 轮 ≈ 5s 上界)。 */
+const LP_RESYNC_EVERY = 5;
+/** 连续失败多少次触发对账(每次失败含 2s 超时 + 退避,2 次 ≈ 6s 上界)。 */
+const LP_FAIL_RESYNC = 2;
 let lastSeq = 0;
 let started = false;
 
@@ -97,12 +103,28 @@ async function longPollLoop() {
   for (;;) {
     try {
       const v = await pollOnce(lastSeq);
+      lpFails = 0;
+      lpRounds += 1;
       if (v && typeof v.seq === "number") lastSeq = Math.max(lastSeq, v.seq);
       if (v && v.event && v.event !== "none") {
         dispatch(v.event === "workspace.changed" ? "workspace.changed" : v.event, v);
       }
+      // 对账兜底(AC-2.6③ 加固,成功路径):长轮询是降级面,事件可达性不再是
+      // 重投影的唯一触发——每 5 轮(≈5s)合成一次 resync,复用 SSE 同名语义。
+      lpRounds = lpRounds % LP_RESYNC_EVERY;
+      if (lpRounds === 0) {
+        dispatch("resync", { event: "resync", via: "long-poll" });
+      }
       lpBackoffMs = 1000;
     } catch {
+      // 对账兜底(失败路径):请求丢失/超时(代理层、负载)时事件不可达,
+      // 连续 2 次失败即合成 resync 强制全量对账——外部改动最迟一个失败周期
+      // 内仍驱动重投影;传输恢复后与事件路径自然收敛。
+      lpFails += 1;
+      if (lpFails >= LP_FAIL_RESYNC) {
+        lpFails = 0;
+        dispatch("resync", { event: "resync", via: "long-poll-fallback" });
+      }
       emitConn("retry");
       await new Promise((r) => setTimeout(r, lpBackoffMs));
       lpBackoffMs = Math.min(lpBackoffMs * 2, 8000);

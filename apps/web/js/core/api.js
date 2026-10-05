@@ -61,8 +61,9 @@ function authHeaders(extra) {
 }
 
 /** 底层 fetch:超时(AbortController)+ 401 分流;返回 {status, json} 或抛网络错。
- * quietAuth=true 时 401 不触发全局 authFail 回调(会话引导等自有降级路径用)。 */
-async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT_TIMEOUT_MS, headers = {}, quietAuth = false } = {}) {
+ * quietAuth=true 时 401 不触发全局 authFail 回调(会话引导等自有降级路径用)。
+ * cache 透传 RequestInit.cache(实时端点传 "no-store" 禁浏览器缓存复用)。 */
+async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT_TIMEOUT_MS, headers = {}, quietAuth = false, cache } = {}) {
   const ctrl = new AbortController();
   const timer = timeoutMs > 0
     ? setTimeout(() => ctrl.abort("timeout"), timeoutMs)
@@ -74,6 +75,7 @@ async function rawFetch(path, { method = "GET", body = null, timeoutMs = DEFAULT
       headers: authHeaders(headers),
       body: body === null ? undefined : JSON.stringify(body),
       signal: ctrl.signal,
+      ...(cache ? { cache } : {}),
     });
     for (const cb of netOkCbs) cb(); // 传输层活着(A2 接线:断连横幅恢复信号)
     if (resp.status === 401) {
@@ -179,7 +181,8 @@ export async function mediaGet(relPath) {
   const params = since > 0 ? { since } : {};
   const qs = Object.entries(params).map(([k, v]) => `${k}=${v}`).join("&");
   const url = qs ? `/events?${qs}` : "/events";
-  const { status, json } = await rawFetch(url, { timeoutMs: 2000 });
+  // 实时事件面禁浏览器缓存:同 URL 高频轮询,缓存复用会喂陈旧 seq 造成事件流假死
+  const { status, json } = await rawFetch(url, { timeoutMs: 2000, cache: "no-store" });
   if (status !== 200 || !json) throw new Error(`events ${status}`);
   return json;
 }

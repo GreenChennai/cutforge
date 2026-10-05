@@ -34,4 +34,15 @@ S-03(插件强制层:Unix ulimit 包裹+声明层确认+违规禁用;Windows 留
   '"token" in body' 改为 '"credential"'+'"sessionId"'(S-01 新契约)。
   e2e:preview/events/edit_ops/ui_smoke/static/hotkeys 六份全 PASS;cargo test -p cutforge-mcp
   EXIT=0(97)、clippy --all-targets EXIT=0。
+- web-e2e A2 第 13 步红排查(2026-10-05,CI run 37243668955):
+  ① 壳侧迁移与加固已落地(apps/web:pollOnce `cache:'no-store'`;长轮询降级面双路 resync
+  对账兜底——成功 5 轮/连续失败 2 次合成 resync 全量刷新,复用 SSE 同名语义)。服务端
+  `/events` 长轮询响应加 `Cache-Control: no-store`(实时端点禁缓存)。
+  ② 第 13 步红的**最终根因在禁区(core)**:外部直写 project.json 追加 clip 后,守护线程
+  `sync_with_disk` 三路合并**丢弃 disk 侧追加**并以 local 覆写磁盘(最小复现:外部追加
+  3s 后 rpc 与磁盘均回退 2 clips、rev 不变;壳忠实投影服务端真相)。回归窗口钉死在
+  e4605ec「审查报告 v2 第 1 波」(merge.rs BUG-08 序敏感重写,02:50 提交,CI 红紧随其后;
+  此前四轮的 HEAD 尚未含该提交)。已移交:docs/tickets/V2-HOTFIX-external-append-lost-in-merge.md
+  (最小复现/三方输入/丢点嫌疑/验收口径),合并器修复落地后第 13 步立即恢复,
+  本轮加固(resync 对账)同时把同类传输断流的最坏延迟压到 ≤6s。
 - R-09 并发缺陷联合验收修复(2026-10-05):根因 = 摘键式逐出(evict/_clear_for_tests 把 cell 摘出 map,在途借用的旧 Arc 与新建 cell 双锁并存 → 同工程真并发;原全局锁实现"查+插+用"同锁故无此窗口)。修法 = **cell 身份恒定**:Entry API 原子 get-or-insert + cell 入 map 永不摘除,逐出一律逻辑逐出(置 Option=None);强化测试 RESIDENT-002(8 线程×50 笔 barrier 冷启动并发 miss,max=1)与新增 RESIDENT-003(4 工程×3 线程混合负载,同工程 max=1 + 全局峰值≥2 双断言);resident 三连绿(--test-threads=8)、全 lib 8 测试线程两连绿(65/65)、cargo test -p cutforge-mcp EXIT=0(97)、clippy --all-targets EXIT=0。

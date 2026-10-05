@@ -236,7 +236,20 @@ impl Workspace {
         let mut snapshot_state = None;
         if let Some(s_rev) = crate::snapshot::latest_snapshot_rev(root) {
             match load_from_snapshot(root, s_rev, &log, rev) {
-                Ok(state) => snapshot_state = Some(state),
+                Ok(state) => {
+                    // V2-HOTFIX(外部追加丢失定案):磁盘 project.json 是"先文件后
+                    // 记账"的**权威落盘**;快照+重放重建头态若与磁盘不一致,说明
+                    // 存在快照面之外的外部直写/崩溃窗口差异——此时快照优化必须
+                    // 放弃(回退全量装载,以磁盘为真),绝不能静默采用快照态把
+                    // 外部改动覆写丢失(web-e2e A2 第 13 步回归的丢点行)。
+                    if state.project != project {
+                        eprintln!(
+                            "[cutforge-io][warn] 快照优先装载放弃(r{s_rev} 头态与磁盘 project.json 不一致),回退全量装载(磁盘为权威,保留外部改动)"
+                        );
+                    } else {
+                        snapshot_state = Some(state);
+                    }
+                }
                 Err(reason) => eprintln!(
                     "[cutforge-io][warn] 快照优先装载放弃(r{s_rev} 不可信),回退全量装载: {reason}"
                 ),

@@ -63,7 +63,7 @@ mod tests {
         }));
         // 模拟外部工具直写:走 sanctioned 原语落盘(check-write-paths 合规;
         // 语义要点是「内容在 engine apply 之外变化」,落盘机制不参与断言)
-        cutforge_io::atomic::atomic_write(
+        crate::atomic::atomic_write(
             &pj,
             serde_json::to_string_pretty(&doc).unwrap().as_bytes(),
         )

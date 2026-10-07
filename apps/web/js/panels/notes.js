@@ -10,16 +10,58 @@ import { reproject } from "../core/projector.js";
 import { playback } from "../render/preview-loop.js";
 import { toast } from "../ui/toast.js";
 import { call } from "../core/api.js";
+import { startInspect, isInspecting } from "../review/inspect.js";
 
 let bodyInput = null;
 let openBox = null;
 let doneBox = null;
 let orphanBox = null;
 let reportHost = null;
+/** 审片锚定态(MV 审片台移植):undefined = 无锚定;对象 = {tag, atMs, selector} */
+let reviewAnchor = null;
 
 export function mount(container) {
+  // 审片台锚定行(MV 资产包移植):默认锚=选中片段/播放头(原语义,零回归);
+  // 「锚定此帧」把当前 atMs 钉进意见(之后拖时间线不改锚);「拾取元素」进 F12 式
+  // 检查,点击 DOM 元素 → 锚进意见(selector+rect+atMs)。tags=审片(workflow)口径。
+  const anchorBadge = h("span", {
+    class: "hint", id: "note-anchor-badge", testid: "note-anchor-badge",
+  }, ["(锚:选中片段 / 播放头)"]);
   container.appendChild(h("div", { class: "panel tab-page" }, [
-    h("h3", null, ["新建标注(锚定当前选中片段 / 播放头)"]),
+    h("h3", null, ["新建标注(审片意见;默认锚=选中片段/播放头)"]),
+    h("div", { class: "filter-row" }, [
+      h("button", {
+        id: "note-pin-frame", testid: "note-pin-frame",
+        onclick: () => {
+          reviewAnchor = { tag: `此帧 ${nowMs()}ms`, atMs: nowMs() };
+          anchorBadge.textContent = `(锚:${reviewAnchor.tag})`;
+          document.getElementById("note-anchor-clear").disabled = false;
+          toast(`已锚定当前帧 ${reviewAnchor.atMs}ms(创建时写入,拖动播放头不改变)`);
+        },
+        title: "把当前播放头时刻钉进下一条意见(逐帧审阅;之后拖时间线不改变锚)",
+      }, ["锚定此帧"]),
+      h("button", {
+        id: "note-pick", testid: "note-pick",
+        onclick: () => startInspect((info) => {
+          reviewAnchor = {
+            tag: `${info.selector} @ ${info.atMs}ms`,
+            atMs: info.atMs,
+            dom: info.selector,
+          };
+          anchorBadge.textContent = `(锚:${reviewAnchor.tag})`;
+          document.getElementById("note-anchor-clear").disabled = false;
+          // 预填正文模板(人补"要怎么改";可清空重写)
+          bodyInput.value = `[${info.selector}] 这里要怎么改?`;
+          bodyInput.focus();
+        }),
+        title: "F12 式元素检查:点击壳内元素 → 锚定 selector/位置/当前帧进意见(Ctrl+Shift+C 亦可)",
+      }, ["拾取元素"]),
+      h("button", {
+        id: "note-anchor-clear", testid: "note-anchor-clear", disabled: true,
+        onclick: () => { reviewAnchor = null; anchorBadge.textContent = "(锚:选中片段 / 播放头)"; },
+      }, ["清除锚"]),
+      anchorBadge,
+    ]),
     bodyInput = h("input", { type: "text", id: "note-body", testid: "note-body", placeholder: "这里要怎么改?" }),
     h("button", { id: "note-create", testid: "note-create", onclick: () => create() }, ["创建(notes_add)"]),
   ]));
@@ -53,16 +95,56 @@ async function create() {
     toast("标注正文必填", false);
     return;
   }
-  const sel = selectionStore.get().clipId;
-  const anchor = sel
-    ? { kind: "clip", ref: sel, tMs: Math.round(playback.clockMs()) }
-    : { kind: "time", tMs: Math.round(playback.clockMs()) };
-  const env = await addNote(body, anchor);
+  // 锚定优先级:显式审片锚(此帧/拾取)> 选中片段(原语义)> 播放头(原语义)。
+  // 锚定此帧=kind:time 固定 atMs(逐帧审阅核心:之后拖时间线锚不变);
+  // 拾取=kind:time + tags 携带 DOM 锚(壳内元素定位;selector 是壳事实非工程真相)。
+  let anchor;
+  let tags;
+  if (reviewAnchor && reviewAnchor.atMs !== undefined) {
+    anchor = { kind: "time", tMs: reviewAnchor.atMs };
+    tags = reviewAnchor.dom
+      ? ["审片", `dom:${reviewAnchor.dom}`]
+      : ["审片"];
+  } else {
+    const sel = selectionStore.get().clipId;
+    anchor = sel
+      ? { kind: "clip", ref: sel, tMs: Math.round(playback.clockMs()) }
+      : { kind: "time", tMs: Math.round(playback.clockMs()) };
+    tags = undefined;
+  }
+  const env = await addNote(body, anchor, tags);
   if (env && env.ok) {
     bodyInput.value = "";
+    reviewAnchor = null;
+    anchorBadgeReset();
     await refresh();
   }
 }
+
+function anchorBadgeReset() {
+  const badge = document.getElementById("note-anchor-badge");
+  if (badge) badge.textContent = "(锚:选中片段 / 播放头)";
+  const clearBtn = document.getElementById("note-anchor-clear");
+  if (clearBtn) clearBtn.disabled = true;
+}
+
+function nowMs() {
+  return Math.round(playback.clockMs());
+}
+
+// 键位入口(review.inspect)的拾取结果落点:与按钮入口同一锚定态
+window.addEventListener("cutforge:review-pick", (ev) => {
+  const info = ev.detail;
+  reviewAnchor = {
+    tag: `${info.selector} @ ${info.atMs}ms`,
+    atMs: info.atMs,
+    dom: info.selector,
+  };
+  const badge = document.getElementById("note-anchor-badge");
+  if (badge) badge.textContent = `(锚:${reviewAnchor.tag})`;
+  const clearBtn = document.getElementById("note-anchor-clear");
+  if (clearBtn) clearBtn.disabled = false;
+});
 
 /** 刷新 open 列表 + 已结案留档 + 孤儿数(M10-2 ≤5s 全链依赖此处轻快)。 */
 export async function refresh() {

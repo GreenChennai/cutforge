@@ -336,13 +336,13 @@ export function clearBgm() {
 
 /* ---------------- 标注 ---------------- */
 
-export function addNote(body, anchor) {
+export function addNote(body, anchor, tags) {
   return enqueue(async () => {
     if (!body) {
       toast("标注正文必填", false);
       return;
     }
-    const env = await call("notes_add", { anchor, body, author: "user" });
+    const env = await call("notes_add", tags ? { anchor, body, author: "user", tags } : { anchor, body, author: "user" });
     report(env, "notes_add", "标注已创建");
     return env;
   });

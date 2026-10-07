@@ -1,0 +1,40 @@
+/* 审片元素拾取器(MV 审片台资产包 20261007 → cutforge 移植;A-08 口径:
+ * 裸值只出现在 ui/theme 对应文件——web 壳同源 token 引用 tokens.css 语义层)。 */
+
+/* 检查模式:全页 cursor 交叠高亮(铁律⑪ 元素页口径) */
+body.review-inspecting,
+body.review-inspecting * {
+  cursor: crosshair !important;
+}
+
+/* 命中元素高亮框(pointer-events:none 不挡 elementFromPoint) */
+#review-inspect-overlay {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  z-index: 9998;
+  border: 1px solid var(--cf-accent, #4da3ff);
+  background: var(--cf-accent-ghost, rgba(77, 163, 255, 0.14));
+  box-sizing: border-box;
+}
+
+/* 蓝色 tooltip(尺寸/坐标/当前帧;跟随指针) */
+#review-inspect-tip {
+  position: fixed;
+  display: none;
+  pointer-events: none;
+  z-index: 9999;
+  max-width: 260px;
+  padding: 4px 8px;
+  border-radius: var(--cf-r-s, 4px);
+  background: var(--cf-menu-bg, #202838);
+  color: var(--cf-fg, #e9edf5);
+  font: 11px/1.4 var(--cf-font-mono, monospace);
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* 审片锚定徽标(意见面板;有锚时强调色) */
+#note-anchor-badge {
+  font-family: var(--cf-font-mono, monospace);
+}

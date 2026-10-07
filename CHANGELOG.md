@@ -21,6 +21,20 @@
 
 ### 新增
 
+- **审片台闭环(MV 审片台资产包 20261007 → cutforge web 壳移植,零新真相源)**:
+  **逐帧锚定意见**——标注面板「锚定此帧」把当前 atMs 钉进下一条意见
+  (`notes_add` anchor.kind=time;之后拖时间线锚不变,逐帧审阅核心语义),
+  tags=审片 口径随行;**元素拾取**——`Ctrl+Shift+C`/「拾取元素」进 F12 式
+  检查(实时高亮 + 尺寸/坐标/当前帧 tooltip),点击壳内元素 → selector+位置
+  锚进意见并预填正文模板(DOM selector 是壳事实,tags `dom:` 前缀显式声明
+  易变性,不进工程真相);**拾取器零残留**(Esc 退出摘除全部 listener,
+  e2e 断言);键位注册表新增 review.inspect(审片组);样式落
+  `css/components/review.css`(tokens 同源);**审阅工作流铁律**落
+  `apps/web/references/review-loop.md`(铁律⑨意见=Agent 接口/⑩叠加层不改源/
+  ⑬抗打/⑮行内编辑/⑧缓存三防线 + 人/Agent 分工与机检口径,32 条铁律出处
+  标注);回归 `tools/e2e_review_loop.py`(4/4:锚定帧落内核/拾取零残留/
+  预填模板/open 意见机检面)。
+
 - **V2-W3a OpLog 压实接线(R-13 收口)+ 桌面壳视觉基础层(A-08/A-09/§9.7)**:
   **io**——open 快照优先装载(`replay_from_snapshot`+增量双栈,**引擎内存保全量虚拟
   历史**,护城河「OpLog 即历史」在压实后成立;不可信自动回退全量路径绝不静默);

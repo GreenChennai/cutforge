@@ -133,6 +133,20 @@ const RUN = {
   "global.settings": () => openSettings(),
   "global.help": () => openHelpPanel(),
   "view.perf": () => togglePerfPanel(),
+  "review.inspect": () => {
+    // 审片元素拾取(MV 审片台移植):切到标注页签再进检查模式
+    const tab = document.querySelector('[data-tab="notes"]');
+    if (tab) tab.click();
+    import("../panels/notes.js").then((m) => {});
+    import("../review/inspect.js").then((ins) => {
+      ins.startInspect((info) => {
+        // 拾取完成 → 预填标注面板(与 notes.js「拾取元素」按钮同落点)
+        const body = /** @type {HTMLInputElement} */ (document.querySelector('[data-testid="note-body"]'));
+        if (body) body.value = `[${info.selector}] 这里要怎么改?`;
+        window.dispatchEvent(new CustomEvent("cutforge:review-pick", { detail: info }));
+      });
+    });
+  },
 };
 
 /** 绑定定义表(id / 分组 / 文案 / 默认组合)——注册表数据源,顺序即帮助面板展示序。 */
@@ -191,6 +205,8 @@ function defineAll() {
   d("global.settings", "全局", "设置(重绑定键位)", "ctrl+,");
   d("global.help", "全局", "快捷键帮助", "?");
   d("view.perf", "全局", "性能面板(dev)", "shift+d");
+  // ---- 审片(MV 审片台移植)----
+  d("review.inspect", "审片", "元素拾取(点击=锚定审片意见;Esc 退出)", "ctrl+shift+c");
 }
 
 /* ---- 装配 ---- */

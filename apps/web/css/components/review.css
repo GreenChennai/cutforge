@@ -13,8 +13,8 @@ body.review-inspecting * {
   display: none;
   pointer-events: none;
   z-index: 9998;
-  border: 1px solid var(--cf-accent, #4da3ff);
-  background: var(--cf-accent-ghost, rgba(77, 163, 255, 0.14));
+  border: 1px solid var(--cf-accent);
+  background: var(--cf-marquee-bg); /* 拾取高亮衬=框选填充 token */
   box-sizing: border-box;
 }
 
@@ -26,15 +26,16 @@ body.review-inspecting * {
   z-index: 9999;
   max-width: 260px;
   padding: 4px 8px;
-  border-radius: var(--cf-r-s, 4px);
-  background: var(--cf-menu-bg, #202838);
-  color: var(--cf-fg, #e9edf5);
-  font: 11px/1.4 var(--cf-font-mono, monospace);
+  border-radius: var(--cf-r-s);
+  background: var(--cf-menu-bg);
+  color: var(--cf-fg);
+  font: 11px/1.4 var(--cf-font-mono, monospace); /* 字族 token;字号=面板 caption 档 */
   white-space: nowrap;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--cf-shadow-2); /* 菜单/浮层 token */
 }
 
 /* 审片锚定徽标(意见面板;有锚时强调色) */
 #note-anchor-badge {
   font-family: var(--cf-font-mono, monospace);
+  color: var(--cf-dim); /* 次级文本 token */
 }
